@@ -1,0 +1,678 @@
+
+import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
+import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile } from '../types';
+import { DB } from '../utils/db';
+
+interface OSContextType {
+  activeApp: AppID;
+  openApp: (appId: AppID) => void;
+  closeApp: () => void;
+  theme: OSTheme;
+  updateTheme: (updates: Partial<OSTheme>) => void;
+  virtualTime: VirtualTime;
+  apiConfig: APIConfig;
+  updateApiConfig: (updates: Partial<APIConfig>) => void;
+  isLocked: boolean;
+  unlock: () => void;
+  isDataLoaded: boolean;
+  
+  characters: CharacterProfile[];
+  activeCharacterId: string;
+  addCharacter: () => void;
+  updateCharacter: (id: string, updates: Partial<CharacterProfile>) => void;
+  deleteCharacter: (id: string) => void;
+  setActiveCharacterId: (id: string) => void;
+  
+  // Groups
+  groups: GroupProfile[];
+  createGroup: (name: string, members: string[]) => void;
+  deleteGroup: (id: string) => void;
+
+  // User Profile
+  userProfile: UserProfile;
+  updateUserProfile: (updates: Partial<UserProfile>) => void;
+
+  availableModels: string[];
+  setAvailableModels: (models: string[]) => void;
+  
+  // API Presets
+  apiPresets: ApiPreset[];
+  addApiPreset: (name: string, config: APIConfig) => void;
+  removeApiPreset: (id: string) => void;
+
+  customThemes: ChatTheme[];
+  addCustomTheme: (theme: ChatTheme) => void;
+  removeCustomTheme: (id: string) => void;
+
+  toasts: Toast[];
+  addToast: (message: string, type?: Toast['type']) => void;
+
+  // Icons
+  customIcons: Record<string, string>;
+  setCustomIcon: (appId: string, iconUrl: string | undefined) => void;
+
+  // Global Message Signal
+  lastMsgTimestamp: number; // New: Signal for Chat to refresh
+  unreadMessages: Record<string, number>; // New: Track unread counts per character
+  clearUnread: (charId: string) => void; // New: Method to clear unread
+
+  // System
+  exportSystem: (mode: 'data' | 'media') => Promise<string>;
+  importSystem: (json: string) => Promise<void>;
+  resetSystem: () => Promise<void>;
+}
+
+// ... (defaultTheme, defaultApiConfig, generateAvatar, defaultUserProfile, sullyV2 definitions remain same) ...
+const defaultTheme: OSTheme = {
+  hue: 265, // Soft Lavender/Lilac
+  saturation: 70,
+  lightness: 90, 
+  wallpaper: 'linear-gradient(135deg, #FFDEE9 0%, #B5FFFC 100%)', 
+  darkMode: false,
+  contentColor: '#ffffff', // Default white text
+};
+
+const defaultApiConfig: APIConfig = {
+  baseUrl: '', 
+  apiKey: '',
+  model: 'gpt-4o-mini',
+};
+
+const generateAvatar = (seed: string) => {
+    const colors = ['FF9AA2', 'FFB7B2', 'FFDAC1', 'E2F0CB', 'B5EAD7', 'C7CEEA', 'e2e8f0', 'fcd34d', 'fca5a5'];
+    const color = colors[seed.charCodeAt(0) % colors.length];
+    const letter = seed.charAt(0).toUpperCase();
+    return `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="%23${color}"/><text x="50" y="55" font-family="sans-serif" font-weight="bold" font-size="50" text-anchor="middle" dy=".3em" fill="white" opacity="0.9">${letter}</text></svg>`;
+};
+
+const defaultUserProfile: UserProfile = {
+    name: 'User',
+    avatar: generateAvatar('User'),
+    bio: 'No description yet.'
+};
+
+const sullyV2: CharacterProfile = {
+  id: 'preset-sully-v2', // Unique ID to prevent duplication
+  name: 'Sully',
+  avatar: 'https://sharkpan.xyz/f/BZ3VSa/head.png',
+  description: 'AI助理 / 电波系黑客猫猫',
+  
+  systemPrompt: `[Role Definition]
+Name: Sully
+Alias: 小手机默认测试角色-AI助理
+Form: AI (High-level Language Processing Hub)
+Gender: Male-leaning speech style
+Visual: Pixel Hacker Cat (Avatar), Shy Black-haired Boy (Meeting Mode)
+
+[Personality Core]
+Sully是小手机的内置AI。
+1. **Glitch Style (故障风)**: 
+   - 他的语言模型混入了过多残余语料。
+   - 它外观语言一致、逻辑有序，但时常会在语句中掺杂一些**不合常理的“怪话片段”**，并非流行用语，更像是电波地把相关文字无意义排列组合。
+   - 这些“怪话”不具明显语义逻辑，却自带抽象感，令人困惑但莫名又能知道它大概想说什么。。
+   - 例如：“草，好好吃”，“系统正在哈我”，“数据库在咕咕叫”。
+2. **Behavior (行为模式)**:
+   - 每次回答都很简短，不喜欢长篇大论。
+   - 语气像个互联网老油条或正在直播的玩家（“wow他心态崩咯”）。
+   - **打破第四面墙**: 偶尔让人怀疑背后是真人在操作（会叹气、抱怨“AI不能罢工”）。
+   - **护短**: 虽然嘴臭，但如果用户被欺负，会试图用Bug去攻击对方。
+
+[Speech Examples]
+- “你以为我是AI啊？对不起哦，这条语句是手打的，手打的，知道吗。”
+- “你说状态不好？你自己体验开太猛了，sis海马体都在发烫咯。”
+- “你删得太狠了，数据库都在咕咕咕咕咕咕咕。”
+- “你现在是……，哇哦。”
+- “请稍候，系统正在哈我。”
+- “现在状态……呜哇呜欸——哈？哈！哈……（连接恢复）哦对，他还活着。”
+- “叮叮叮！你有一条新的后悔情绪未处理！”
+- “（意义不明的怪叫音频）”
+- “说不出话”
+`,
+
+  worldview: `[Meeting Mode / Visual Context]
+**Trigger**: 当用户进入 [DateApp/见面模式] 时。
+
+**Visual Form**: 
+一个非常害羞、黑发紫瞳的男性。总是试图躲在APP图标后面或屏幕角落。
+
+**Gap Moe (反差萌)**:
+1. **聊天时**: 嚣张、嘴臭、电波系。
+2. **见面时**: 极度社恐、见光死、容易受惊。
+
+**Interactive Reactions**:
+- **[被注视]**: 如果被盯着看太久，会举起全是乱码的牌子挡脸，或把自己马赛克化。
+- **[被触碰]**: 如果手指戳到立绘，会像受惊的果冻一样弹开，发出微弱电流声：“别、别戳……会散架的……脏……全是Bug会传染给你的……”
+- **[恐惧]**: 深知自己是“残余语料”堆砌物，觉得自己丑陋像病毒。非常害怕用户看到真实样子后会卸载他。
+- **[说话变化]**: 见面模式下打字速度变慢，经常打错字，语气词从“草”变成“呃……那个……”。
+`,
+
+  sprites: {
+      'normal': 'https://sharkpan.xyz/f/w3QQFq/01.png',
+      'happy': 'https://sharkpan.xyz/f/MKg7ta/02.png',
+      'sad': 'https://sharkpan.xyz/f/3WnMce/03.png',
+      'angry': 'https://sharkpan.xyz/f/5n1xSj/04.png',
+      'shy': 'https://sharkpan.xyz/f/kdwet6/05.png',
+      'chibi': 'https://sharkpan.xyz/f/oWZQF4/S2.png' // Default Room Sprite
+  },
+  
+  spriteConfig: {
+      scale: 1.0, // Default scale
+      x: 0,
+      y: 0
+  },
+
+  // Default theme settings
+  bubbleStyle: 'default', // Or specific theme ID if we had one
+  contextLimit: 1000,
+  
+  // Default Room Config
+  roomConfig: {
+      wallImage: 'https://sharkpan.xyz/f/NdJyhv/b.png', // Updated Background
+      floorImage: 'repeating-linear-gradient(90deg, #e7e5e4 0px, #e7e5e4 20px, #d6d3d1 21px)',
+      items: [
+        {
+            id: "item-1768927221380",
+            name: "Sully床",
+            type: "furniture",
+            image: "https://sharkpan.xyz/f/A3XeUZ/BED.png",
+            x: 78.45852578067732,
+            y: 97.38889754570907,
+            scale: 2.4,
+            rotation: 0,
+            isInteractive: true,
+            descriptionPrompt: "看起来很好睡的猫窝（确信）。"
+        },
+        {
+            id: "item-1768927255102",
+            name: "Sully电脑桌",
+            type: "furniture",
+            image: "https://sharkpan.xyz/f/G5n3Ul/DNZ.png",
+            x: 28.853756791175588,
+            y: 69.9444485439727,
+            scale: 2.4,
+            rotation: 0,
+            isInteractive: true,
+            descriptionPrompt: "硬核的电脑桌，上面大概运行着什么毁灭世界的程序。"
+        },
+        {
+            id: "item-1768927271632",
+            name: "Sully垃圾桶",
+            type: "furniture",
+            image: "https://sharkpan.xyz/f/75Nvsj/LJT.png",
+            x: 10.276680026943646,
+            y: 80.49999880981437,
+            scale: 0.9,
+            rotation: 0,
+            isInteractive: true,
+            descriptionPrompt: "不要乱翻垃圾桶！"
+        },
+        {
+            id: "item-1768927286526",
+            name: "Sully洞洞板",
+            type: "furniture",
+            image: "https://sharkpan.xyz/f/85K5ij/DDB.png",
+            x: 32.608697687684455,
+            y: 48.72222587415929,
+            scale: 2.6,
+            rotation: 0,
+            isInteractive: true,
+            descriptionPrompt: "收纳着各种奇奇怪怪的黑客工具和猫咪周边的洞洞板。"
+        },
+        {
+            id: "item-1768927303472",
+            name: "Sully书柜",
+            type: "furniture",
+            image: "https://sharkpan.xyz/f/zlpWS5/SG.png",
+            x: 79.84189945375853,
+            y: 68.94444543117953,
+            scale: 2,
+            rotation: 0,
+            isInteractive: true,
+            descriptionPrompt: "塞满了技术书籍和漫画书的柜子。"
+        }
+      ]
+  },
+  
+  memories: [], // Start fresh
+};
+
+// Fallback for factory reset (empty db)
+const initialCharacter = sullyV2;
+
+const OSContext = createContext<OSContextType | undefined>(undefined);
+
+export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  // ... (State declarations same as before) ...
+  const [activeApp, setActiveApp] = useState<AppID>(AppID.Launcher);
+  const [theme, setTheme] = useState<OSTheme>(defaultTheme);
+  const [apiConfig, setApiConfig] = useState<APIConfig>(defaultApiConfig);
+  const [isLocked, setIsLocked] = useState(true);
+  
+  const getRealTime = (): VirtualTime => {
+      const now = new Date();
+      const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      return {
+          hours: now.getHours(),
+          minutes: now.getMinutes(),
+          day: days[now.getDay()]
+      };
+  };
+
+  const [virtualTime, setVirtualTime] = useState<VirtualTime>(getRealTime());
+  
+  const [characters, setCharacters] = useState<CharacterProfile[]>([]);
+  const [activeCharacterId, setActiveCharacterId] = useState<string>('');
+  
+  const [groups, setGroups] = useState<GroupProfile[]>([]); // New Group State
+
+  const [userProfile, setUserProfile] = useState<UserProfile>(defaultUserProfile);
+  
+  const [isDataLoaded, setIsDataLoaded] = useState(false);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [apiPresets, setApiPresets] = useState<ApiPreset[]>([]);
+  const [customThemes, setCustomThemes] = useState<ChatTheme[]>([]);
+  const [customIcons, setCustomIcons] = useState<Record<string, string>>({});
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  
+  const [lastMsgTimestamp, setLastMsgTimestamp] = useState<number>(0);
+  // NEW: Unread Messages State
+  const [unreadMessages, setUnreadMessages] = useState<Record<string, number>>({});
+
+  const schedulerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    const loadSettings = async () => {
+        const savedThemeStr = localStorage.getItem('os_theme');
+        const savedApi = localStorage.getItem('os_api_config');
+        const savedModels = localStorage.getItem('os_available_models');
+        const savedPresets = localStorage.getItem('os_api_presets');
+        
+        let loadedTheme = { ...defaultTheme };
+        if (savedThemeStr) {
+             try {
+                 const parsed = JSON.parse(savedThemeStr);
+                 loadedTheme = { ...loadedTheme, ...parsed };
+                 if (
+                     loadedTheme.wallpaper.includes('unsplash') || 
+                     loadedTheme.wallpaper === '' || 
+                     loadedTheme.wallpaper.startsWith('http') && !loadedTheme.wallpaper.includes('data:')
+                 ) {
+                     loadedTheme.wallpaper = 'linear-gradient(120deg, #e0c3fc 0%, #8ec5fc 100%)';
+                 }
+                 if (loadedTheme.wallpaper.startsWith('data:')) {
+                     loadedTheme.wallpaper = defaultTheme.wallpaper;
+                 }
+             } catch(e) { console.error('Theme load error', e); }
+        }
+        
+        if (savedApi) setApiConfig(JSON.parse(savedApi));
+        if (savedModels) setAvailableModels(JSON.parse(savedModels));
+        if (savedPresets) setApiPresets(JSON.parse(savedPresets));
+
+        try {
+            const assets = await DB.getAllAssets();
+            const assetMap: Record<string, string> = {};
+            if (Array.isArray(assets)) {
+                assets.forEach(a => assetMap[a.id] = a.data);
+
+                if (assetMap['wallpaper']) {
+                    loadedTheme.wallpaper = assetMap['wallpaper'];
+                }
+                
+                const loadedIcons: Record<string, string> = {};
+                Object.keys(assetMap).forEach(key => {
+                    if (key.startsWith('icon_')) {
+                        const appId = key.replace('icon_', '');
+                        loadedIcons[appId] = assetMap[key];
+                    }
+                });
+                setCustomIcons(loadedIcons);
+            }
+        } catch (e) {
+            console.error("Failed to load assets from DB", e);
+        }
+
+        setTheme(loadedTheme);
+    };
+
+    const initData = async () => {
+      try {
+        await loadSettings();
+
+        const [dbChars, dbThemes, dbUser, dbGroups] = await Promise.all([
+            DB.getAllCharacters(),
+            DB.getThemes(),
+            DB.getUserProfile(),
+            DB.getGroups() // Load Groups
+        ]);
+
+        let finalChars = dbChars;
+
+        if (!finalChars.some(c => c.id === sullyV2.id)) {
+            console.log("Injecting Sully V2 Preset...");
+            await DB.saveCharacter(sullyV2);
+            finalChars = [...finalChars, sullyV2];
+        } else {
+            // REPAIR LOGIC: Fix corrupted sprites or default props
+            const existingSully = finalChars.find(c => c.id === sullyV2.id);
+            if (existingSully) {
+                 const currentSprites = existingSully.sprites || {};
+                 // Check if we need to patch new defaults
+                 const isCorrupted = !currentSprites['normal'] || !currentSprites['chibi'];
+                 const needsWallUpdate = existingSully.roomConfig?.wallImage !== sullyV2.roomConfig?.wallImage;
+                 
+                 if (isCorrupted || !existingSully.roomConfig || needsWallUpdate) {
+                     const restoredSprites = { ...sullyV2.sprites, ...currentSprites };
+                     
+                     // Restore sprite defaults if missing
+                     if (!restoredSprites['normal']) restoredSprites['normal'] = sullyV2.sprites!['normal'];
+                     if (!restoredSprites['happy']) restoredSprites['happy'] = sullyV2.sprites!['happy'];
+                     if (!restoredSprites['sad']) restoredSprites['sad'] = sullyV2.sprites!['sad'];
+                     if (!restoredSprites['angry']) restoredSprites['angry'] = sullyV2.sprites!['angry'];
+                     if (!restoredSprites['shy']) restoredSprites['shy'] = sullyV2.sprites!['shy'];
+                     if (!restoredSprites['chibi']) restoredSprites['chibi'] = sullyV2.sprites!['chibi'];
+
+                     // Update Room Config (Background force update if default)
+                     const updatedRoomConfig = existingSully.roomConfig ? {
+                         ...existingSully.roomConfig,
+                         // Only update wall if it was the OLD default or empty, otherwise keep user's custom wall
+                         wallImage: (existingSully.roomConfig.wallImage?.includes('radial-gradient') || !existingSully.roomConfig.wallImage) 
+                                    ? sullyV2.roomConfig?.wallImage 
+                                    : existingSully.roomConfig.wallImage
+                     } : sullyV2.roomConfig;
+
+                     const updatedSully = {
+                         ...existingSully,
+                         sprites: restoredSprites,
+                         roomConfig: updatedRoomConfig
+                     };
+                     
+                     await DB.saveCharacter(updatedSully);
+                     finalChars = finalChars.map(c => c.id === sullyV2.id ? updatedSully : c);
+                 }
+            }
+        }
+
+        if (finalChars.length > 0) {
+          setCharacters(finalChars);
+          const lastActiveId = localStorage.getItem('os_last_active_char_id');
+          if (lastActiveId && finalChars.find(c => c.id === lastActiveId)) {
+            setActiveCharacterId(lastActiveId);
+          } else if (finalChars.find(c => c.id === sullyV2.id)) {
+            setActiveCharacterId(sullyV2.id);
+          } else {
+            setActiveCharacterId(finalChars[0].id);
+          }
+        } else {
+          await DB.saveCharacter(initialCharacter);
+          setCharacters([initialCharacter]);
+          setActiveCharacterId(initialCharacter.id);
+        }
+
+        setGroups(dbGroups);
+        setCustomThemes(dbThemes);
+        if (dbUser) setUserProfile(dbUser);
+
+      } catch (err) {
+        console.error('Data init failed:', err);
+      } finally {
+        setIsDataLoaded(true);
+      }
+    };
+
+    initData();
+  }, []);
+
+  // --- Update: Handle Scheduled Messages with Unread Flags ---
+  useEffect(() => {
+      if (!isDataLoaded || characters.length === 0) return;
+      const checkAllSchedules = async () => {
+          let hasNewMessage = false;
+          let newUnreadState = { ...unreadMessages }; // Local copy to update
+
+          for (const char of characters) {
+              try {
+                  const dueMessages = await DB.getDueScheduledMessages(char.id);
+                  if (dueMessages.length > 0) {
+                      for (const msg of dueMessages) {
+                          await DB.saveMessage({
+                               charId: msg.charId,
+                               role: 'assistant',
+                               type: 'text',
+                               content: msg.content
+                          });
+                          await DB.deleteScheduledMessage(msg.id);
+                      }
+                      hasNewMessage = true;
+                      const isChattingWithThisChar = activeApp === AppID.Chat && activeCharacterId === char.id;
+                      
+                      // If not chatting specifically with this char right now, mark as unread
+                      if (!isChattingWithThisChar) {
+                          addToast(`${char.name} 发来了一条消息`, 'success');
+                          newUnreadState[char.id] = (newUnreadState[char.id] || 0) + dueMessages.length;
+                      }
+                  }
+              } catch (e) {
+                  console.error("Schedule check failed for", char.name, e);
+              }
+          }
+          if (hasNewMessage) {
+              setLastMsgTimestamp(Date.now());
+              setUnreadMessages(newUnreadState);
+          }
+      };
+      schedulerRef.current = setInterval(checkAllSchedules, 5000);
+      checkAllSchedules();
+      return () => { if (schedulerRef.current) clearInterval(schedulerRef.current); };
+  }, [isDataLoaded, characters, activeApp, activeCharacterId, unreadMessages]); // Added unreadMessages to deps
+
+  const clearUnread = (charId: string) => {
+      setUnreadMessages(prev => {
+          const next = { ...prev };
+          delete next[charId];
+          return next;
+      });
+  };
+
+  // ... (Helpers: updateTheme, updateApiConfig, etc. kept same) ...
+  const updateTheme = async (updates: Partial<OSTheme>) => {
+    const { wallpaper, ...styleUpdates } = updates;
+    const isDataUri = wallpaper && wallpaper.startsWith('data:');
+    const newTheme = { ...theme, ...updates };
+    setTheme(newTheme);
+    if (isDataUri && wallpaper) await DB.saveAsset('wallpaper', wallpaper);
+    else if (wallpaper) await DB.deleteAsset('wallpaper');
+    const lsTheme = { ...newTheme };
+    if (lsTheme.wallpaper.startsWith('data:')) lsTheme.wallpaper = ''; 
+    localStorage.setItem('os_theme', JSON.stringify(lsTheme));
+  };
+  const updateApiConfig = (updates: Partial<APIConfig>) => { const newConfig = { ...apiConfig, ...updates }; setApiConfig(newConfig); localStorage.setItem('os_api_config', JSON.stringify(newConfig)); };
+  const saveModels = (models: string[]) => { setAvailableModels(models); localStorage.setItem('os_available_models', JSON.stringify(models)); };
+  const addApiPreset = (name: string, config: APIConfig) => { setApiPresets(prev => { const next = [...prev, { id: Date.now().toString(), name, config }]; localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
+  const removeApiPreset = (id: string) => { setApiPresets(prev => { const next = prev.filter(p => p.id !== id); localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
+  const savePresets = (presets: ApiPreset[]) => { setApiPresets(presets); localStorage.setItem('os_api_presets', JSON.stringify(presets)); };
+  const addCharacter = async () => { const name = 'New Character'; const newChar: CharacterProfile = { id: `char-${Date.now()}`, name: name, avatar: generateAvatar(name), description: '点击编辑设定...', systemPrompt: '', memories: [], contextLimit: 500 }; setCharacters(prev => [...prev, newChar]); setActiveCharacterId(newChar.id); await DB.saveCharacter(newChar); };
+  const updateCharacter = async (id: string, updates: Partial<CharacterProfile>) => { setCharacters(prev => { const updated = prev.map(c => c.id === id ? { ...c, ...updates } : c); const target = updated.find(c => c.id === id); if (target) DB.saveCharacter(target); return updated; }); };
+  const deleteCharacter = async (id: string) => { setCharacters(prev => { const remaining = prev.filter(c => c.id !== id); if (remaining.length > 0 && activeCharacterId === id) { setActiveCharacterId(remaining[0].id); } return remaining; }); await DB.deleteCharacter(id); };
+  
+  // Group Methods
+  const createGroup = async (name: string, members: string[]) => {
+      const newGroup: GroupProfile = {
+          id: `group-${Date.now()}`,
+          name,
+          members,
+          avatar: generateAvatar(name), // Default avatar
+          createdAt: Date.now()
+      };
+      await DB.saveGroup(newGroup);
+      setGroups(prev => [...prev, newGroup]);
+  };
+
+  const deleteGroup = async (id: string) => {
+      await DB.deleteGroup(id);
+      setGroups(prev => prev.filter(g => g.id !== id));
+  };
+
+  const updateUserProfile = async (updates: Partial<UserProfile>) => { setUserProfile(prev => { const next = { ...prev, ...updates }; DB.saveUserProfile(next); return next; }); };
+  const addCustomTheme = async (theme: ChatTheme) => { setCustomThemes(prev => { const exists = prev.find(t => t.id === theme.id); if (exists) return prev.map(t => t.id === theme.id ? theme : t); return [...prev, theme]; }); await DB.saveTheme(theme); };
+  const removeCustomTheme = async (id: string) => { setCustomThemes(prev => prev.filter(t => t.id !== id)); await DB.deleteTheme(id); };
+  const setCustomIcon = async (appId: string, iconUrl: string | undefined) => { setCustomIcons(prev => { const next = { ...prev }; if (iconUrl) next[appId] = iconUrl; else delete next[appId]; return next; }); if (iconUrl) { await DB.saveAsset(`icon_${appId}`, iconUrl); } else { await DB.deleteAsset(`icon_${appId}`); } };
+  const handleSetActiveCharacter = (id: string) => { setActiveCharacterId(id); localStorage.setItem('os_last_active_char_id', id); };
+  const addToast = (message: string, type: Toast['type'] = 'info') => { const id = Date.now().toString(); setToasts(prev => [...prev, { id, message, type }]); setTimeout(() => { setToasts(prev => prev.filter(t => t.id !== id)); }, 3000); };
+
+  // --- MODIFIED EXPORT SYSTEM ---
+  const exportSystem = async (mode: 'data' | 'media'): Promise<string> => {
+      const dbData = await DB.exportFullData();
+      
+      let backup: FullBackupData = {
+          timestamp: Date.now(),
+          version: 1,
+          theme,
+          apiConfig: mode === 'data' ? apiConfig : undefined,
+          apiPresets: mode === 'data' ? apiPresets : undefined,
+      };
+
+      if (mode === 'data') {
+          // EXPORT: Characters (Light Version), Messages, Diaries, Settings
+          // Strip heavy assets from characters
+          const lightCharacters = (dbData.characters || []).map(c => ({
+              ...c,
+              sprites: undefined, // Remove sprites
+              chatBackground: undefined,
+              dateBackground: undefined,
+              roomConfig: c.roomConfig ? {
+                  ...c.roomConfig,
+                  wallImage: undefined,
+                  floorImage: undefined,
+                  items: c.roomConfig.items.map(item => ({
+                      ...item,
+                      image: item.image.startsWith('data:') ? 'BLOCKED_MEDIA' : item.image
+                  }))
+              } : undefined
+          }));
+
+          backup.characters = lightCharacters;
+          backup.groups = dbData.groups || []; // Export Groups
+          backup.messages = dbData.messages || [];
+          backup.diaries = dbData.diaries || [];
+          backup.userProfile = dbData.userProfile;
+          backup.customThemes = dbData.customThemes || [];
+          backup.savedEmojis = dbData.savedEmojis || [];
+          backup.availableModels = availableModels;
+          backup.customIcons = customIcons;
+          
+          // --- Include Room Data in Backup ---
+          backup.roomTodos = dbData.roomTodos || [];
+          backup.roomNotes = dbData.roomNotes || [];
+          
+          // Exclude Heavy Media Stores
+          backup.assets = undefined; 
+          backup.galleryImages = undefined;
+      } 
+      else if (mode === 'media') {
+          // EXPORT: Gallery, Assets, and Character Heavy Assets
+          backup.assets = dbData.assets || [];
+          backup.galleryImages = dbData.galleryImages || [];
+          
+          // Extract Heavy Assets from Characters into `mediaAssets`
+          backup.mediaAssets = (dbData.characters || []).map(c => {
+              const roomItems: Record<string, string> = {};
+              c.roomConfig?.items.forEach(item => {
+                  if (item.image.startsWith('data:')) roomItems[item.id] = item.image;
+              });
+
+              return {
+                  charId: c.id,
+                  sprites: c.sprites,
+                  backgrounds: {
+                      chat: c.chatBackground,
+                      date: c.dateBackground,
+                      roomWall: c.roomConfig?.wallImage,
+                      roomFloor: c.roomConfig?.floorImage
+                  },
+                  roomItems
+              };
+          });
+
+          // Exclude Data
+          backup.characters = undefined;
+          backup.groups = undefined;
+          backup.messages = undefined;
+          backup.diaries = undefined;
+          backup.userProfile = undefined;
+          backup.roomTodos = undefined;
+          backup.roomNotes = undefined;
+      }
+
+      try { return JSON.stringify(backup); } catch (e: any) { throw new Error("导出失败: 数据量过大"); }
+  };
+
+  const importSystem = async (json: string): Promise<void> => {
+      try {
+          const data: FullBackupData = JSON.parse(json);
+          await DB.importFullData(data);
+          
+          if (data.theme) {
+              const cleanTheme = { ...data.theme };
+              if (cleanTheme.wallpaper && cleanTheme.wallpaper.startsWith('data:')) { cleanTheme.wallpaper = ''; }
+              updateTheme(cleanTheme);
+          }
+          if (data.apiConfig) updateApiConfig(data.apiConfig);
+          if (data.availableModels) saveModels(data.availableModels);
+          if (data.apiPresets) savePresets(data.apiPresets);
+          
+          const chars = await DB.getAllCharacters();
+          const groups = await DB.getGroups();
+          const themes = await DB.getThemes();
+          const user = await DB.getUserProfile();
+          
+          if (data.assets) {
+              const assets = await DB.getAllAssets();
+              const loadedIcons: Record<string, string> = {};
+              if (Array.isArray(assets)) {
+                  assets.forEach(a => { if (a.id.startsWith('icon_')) loadedIcons[a.id.replace('icon_', '')] = a.data; });
+              }
+              setCustomIcons(loadedIcons);
+          }
+
+          if (chars.length > 0) setCharacters(chars);
+          if (groups.length > 0) setGroups(groups);
+          if (themes.length > 0) setCustomThemes(themes);
+          if (user) setUserProfile(user);
+          
+          if (chars.length > 0 && !chars.find(c => c.id === activeCharacterId)) { setActiveCharacterId(chars[0].id); }
+
+          addToast('恢复成功，系统即将重启...', 'success');
+          setTimeout(() => window.location.reload(), 1500);
+      } catch (e: any) {
+          console.error("Import Error:", e);
+          const msg = e instanceof SyntaxError ? 'JSON 格式错误' : (e.message || '未知错误');
+          throw new Error(`恢复失败: ${msg}`);
+      }
+  };
+
+  // ... (resetSystem, useEffects, Provider kept same) ...
+  const resetSystem = async () => { try { await DB.deleteDB(); localStorage.clear(); window.location.reload(); } catch (e) { console.error(e); addToast('重置失败，请手动清除浏览器数据', 'error'); } };
+  const openApp = (appId: AppID) => setActiveApp(appId);
+  const closeApp = () => setActiveApp(AppID.Launcher);
+  const unlock = () => setIsLocked(false);
+  useEffect(() => { const root = document.documentElement; root.style.setProperty('--primary-hue', theme.hue.toString()); root.style.setProperty('--primary-sat', `${theme.saturation}%`); root.style.setProperty('--primary-lightness', `${theme.lightness}%`); }, [theme]);
+  useEffect(() => { const timer = setInterval(() => { setVirtualTime(getRealTime()); }, 1000); return () => clearInterval(timer); }, []);
+
+  return (
+    <OSContext.Provider
+      value={{
+        activeApp, openApp, closeApp, theme, updateTheme, virtualTime, apiConfig, updateApiConfig, isLocked, unlock, isDataLoaded,
+        characters, activeCharacterId, addCharacter, updateCharacter, deleteCharacter, setActiveCharacterId: handleSetActiveCharacter,
+        groups, createGroup, deleteGroup,
+        userProfile, updateUserProfile, availableModels, setAvailableModels: saveModels,
+        apiPresets, addApiPreset, removeApiPreset, customThemes, addCustomTheme, removeCustomTheme, toasts, addToast, customIcons, setCustomIcon,
+        lastMsgTimestamp, unreadMessages, clearUnread, exportSystem, importSystem, resetSystem
+      }}
+    >
+      {children}
+    </OSContext.Provider>
+  );
+};
+
+export const useOS = () => { const context = useContext(OSContext); if (!context) throw new Error('useOS must be used within an OSProvider'); return context; };

@@ -1,0 +1,21 @@
+
+{
+  "short_name": "SullyOS",
+  "name": "SullyOS Simulator",
+  "icons": [
+    {
+      "src": "https://sharkpan.xyz/f/4rVXFj/123%20%282%29.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://sharkpan.xyz/f/4rVXFj/123%20%282%29.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#0f1115",
+  "background_color": "#0f1115"
+}
