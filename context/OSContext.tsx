@@ -1,6 +1,8 @@
 
 
 
+
+
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile } from '../types';
 import { DB } from '../utils/db';
@@ -596,6 +598,18 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // --- NEW: Include Social Posts ---
           backup.socialPosts = dbData.socialPosts || [];
 
+          // --- NEW: Include Social App Local Data ---
+          try {
+              backup.socialAppData = {
+                  charHandles: JSON.parse(localStorage.getItem('spark_char_handles') || '{}'),
+                  userProfile: JSON.parse(localStorage.getItem('spark_social_profile') || 'null') || undefined,
+                  userId: localStorage.getItem('spark_user_id') || undefined,
+                  userBg: localStorage.getItem('spark_user_bg') || undefined
+              };
+          } catch (e) {
+              console.warn("Failed to export Social App Data", e);
+          }
+
           // Exclude Heavy Media Stores
           backup.assets = undefined; 
           backup.galleryImages = undefined;
@@ -656,6 +670,14 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (data.availableModels) saveModels(data.availableModels);
           if (data.apiPresets) savePresets(data.apiPresets);
           
+          // --- Restore Social App Data ---
+          if (data.socialAppData) {
+              if (data.socialAppData.charHandles) localStorage.setItem('spark_char_handles', JSON.stringify(data.socialAppData.charHandles));
+              if (data.socialAppData.userProfile) localStorage.setItem('spark_social_profile', JSON.stringify(data.socialAppData.userProfile));
+              if (data.socialAppData.userId) localStorage.setItem('spark_user_id', data.socialAppData.userId);
+              if (data.socialAppData.userBg) localStorage.setItem('spark_user_bg', data.socialAppData.userBg);
+          }
+
           const chars = await DB.getAllCharacters();
           const groups = await DB.getGroups();
           const themes = await DB.getThemes();

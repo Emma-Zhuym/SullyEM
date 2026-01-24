@@ -1,9 +1,12 @@
 
+
+
 import React, { useState, useEffect, useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { CharacterProfile, SocialPost, SocialComment } from '../types';
+import { CharacterProfile, SocialPost, SocialComment, SubAccount, SocialAppProfile } from '../types';
 import { ContextBuilder } from '../utils/context';
+import { processImage } from '../utils/file';
 import Modal from '../components/os/Modal';
 
 // --- Constants & Styles ---
@@ -78,14 +81,20 @@ const Icons = {
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 20.25c4.97 0 9-3.694 9-8.25s-4.03-8.25-9-8.25S3 7.444 3 12c0 2.104.859 4.023 2.273 5.48.432.447.74 1.04.586 1.641a4.483 4.483 0 0 1-.923 1.785A5.969 5.969 0 0 0 6 21c1.282 0 2.47-.402 3.445-1.087.81.22 1.668.337 2.555.337Z" />
         </svg>
     ),
-    Back: ({ onClick }: { onClick: () => void }) => (
-        <svg onClick={onClick} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-6 h-6 cursor-pointer text-slate-800">
+    Back: ({ onClick, className }: { onClick: () => void, className?: string }) => (
+        <svg onClick={onClick} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className={className || "w-6 h-6 cursor-pointer text-slate-800"}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
         </svg>
     ),
     Plus: ({ className }: { className?: string }) => (
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className={className || "w-6 h-6"}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+        </svg>
+    ),
+    Pencil: ({ className, onClick }: { className?: string, onClick?: () => void }) => (
+        <svg onClick={onClick} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={className || "w-4 h-4"}>
+            <path d="m5.433 13.917 1.262-3.155A4 4 0 0 1 7.58 9.42l6.92-6.918a2.121 2.121 0 0 1 3 3l-6.92 6.918c-.383.383-.84.685-1.343.886l-3.154 1.262a.5.5 0 0 1-.65-.65Z" />
+            <path d="M3.5 5.75c0-.69.56-1.25 1.25-1.25H10A.75.75 0 0 0 10 3H4.75A2.75 2.75 0 0 0 2 5.75v9.5A2.75 2.75 0 0 0 4.75 18h9.5A2.75 2.75 0 0 0 17 15.25V10a.75.75 0 0 0-1.5 0v5.25c0 .69-.56 1.25-1.25 1.25h-9.5c-.69 0-1.25-.56-1.25-1.25v-9.5Z" />
         </svg>
     )
 };
@@ -95,7 +104,10 @@ const Icons = {
 const SocialApp: React.FC = () => {
     const { closeApp, characters, updateCharacter, apiConfig, addToast, userProfile, groups } = useOS();
     const [feed, setFeed] = useState<SocialPost[]>([]);
-    const [activeTab, setActiveTab] = useState<'home' | 'create' | 'me'>('home');
+    // Modes: 'home' (Feed) | 'me' (Profile) | 'create' (Modal Overlay)
+    const [activeTab, setActiveTab] = useState<'home' | 'me'>('home');
+    const [isCreateOpen, setIsCreateOpen] = useState(false); 
+    
     const [selectedPost, setSelectedPost] = useState<SocialPost | null>(null);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [loadingComments, setLoadingComments] = useState(false);
@@ -111,13 +123,26 @@ const SocialApp: React.FC = () => {
 
     // Settings / Handle Management
     const [showSettings, setShowSettings] = useState(false);
-    const [tempHandles, setTempHandles] = useState<Record<string, string>>({});
+    const [characterHandles, setCharacterHandles] = useState<Record<string, SubAccount[]>>({});
 
     // Sharing State
     const [showShareModal, setShowShareModal] = useState(false);
 
     // Profile Sub-tab
     const [profileTab, setProfileTab] = useState<'notes' | 'collects'>('notes');
+
+    // User Custom Profile State (Local - Decoupled from Global UserProfile)
+    const [socialProfile, setSocialProfile] = useState<SocialAppProfile>({
+        name: userProfile.name,
+        avatar: userProfile.avatar,
+        bio: '这个人很懒，什么都没写。'
+    });
+    const [userSparkId, setUserSparkId] = useState('95279527');
+    const [userBgImage, setUserBgImage] = useState('');
+    const [isEditingId, setIsEditingId] = useState(false);
+    
+    const userBgInputRef = useRef<HTMLInputElement>(null);
+    const socialAvatarInputRef = useRef<HTMLInputElement>(null);
 
     // Refs
     const commentsEndRef = useRef<HTMLDivElement>(null);
@@ -128,12 +153,57 @@ const SocialApp: React.FC = () => {
                 setFeed(posts.sort((a,b) => b.timestamp - a.timestamp));
             }
         });
-        const initialHandles: Record<string, string> = {};
+        
+        // Load User Config & Social Profile from LocalStorage
+        const savedUserId = localStorage.getItem('spark_user_id');
+        const savedUserBg = localStorage.getItem('spark_user_bg');
+        const savedSocialProfile = localStorage.getItem('spark_social_profile');
+
+        if (savedUserId) setUserSparkId(savedUserId);
+        if (savedUserBg) setUserBgImage(savedUserBg);
+        
+        if (savedSocialProfile) {
+            try {
+                setSocialProfile(JSON.parse(savedSocialProfile));
+            } catch (e) {
+                console.error("Failed to load social profile", e);
+            }
+        } else {
+            // Initial fallback to global user profile only once
+            setSocialProfile({
+                name: userProfile.name,
+                avatar: userProfile.avatar,
+                bio: userProfile.bio || '这个人很懒，什么都没写。'
+            });
+        }
+
+        // Load Handles
+        const savedHandles = localStorage.getItem('spark_char_handles');
+        let initialHandles: Record<string, SubAccount[]> = {};
+        if (savedHandles) {
+            try { initialHandles = JSON.parse(savedHandles); } catch(e) {}
+        }
+        
+        // Ensure every character has at least one default handle
         characters.forEach(c => {
-            initialHandles[c.id] = c.socialProfile?.handle || c.name;
+            if (!initialHandles[c.id] || initialHandles[c.id].length === 0) {
+                initialHandles[c.id] = [{ 
+                    id: 'default', 
+                    handle: c.socialProfile?.handle || c.name, 
+                    note: '主账号' 
+                }];
+            }
         });
-        setTempHandles(initialHandles);
+        setCharacterHandles(initialHandles);
+
     }, [characters.length]);
+
+    // Save Handles to LocalStorage whenever updated
+    useEffect(() => {
+        if (Object.keys(characterHandles).length > 0) {
+            localStorage.setItem('spark_char_handles', JSON.stringify(characterHandles));
+        }
+    }, [characterHandles]);
 
     useEffect(() => {
         if (selectedPost && commentsEndRef.current) {
@@ -141,16 +211,65 @@ const SocialApp: React.FC = () => {
         }
     }, [selectedPost?.comments.length, isReplyingToUser]);
 
-    const getHandle = (char: CharacterProfile) => char.socialProfile?.handle || char.name;
+    // --- Helpers ---
 
-    const saveHandles = () => {
-        characters.forEach(c => {
-            if (tempHandles[c.id] && tempHandles[c.id] !== (c.socialProfile?.handle || c.name)) {
-                updateCharacter(c.id, { socialProfile: { ...c.socialProfile, handle: tempHandles[c.id] } });
+    const addSubAccount = (charId: string) => {
+        const newAcct: SubAccount = {
+            id: `sub-${Date.now()}`,
+            handle: '新马甲',
+            note: '身份备注'
+        };
+        setCharacterHandles(prev => ({
+            ...prev,
+            [charId]: [...(prev[charId] || []), newAcct]
+        }));
+    };
+
+    const updateSubAccount = (charId: string, acctId: string, field: keyof SubAccount, value: string) => {
+        setCharacterHandles(prev => ({
+            ...prev,
+            [charId]: prev[charId].map(a => a.id === acctId ? { ...a, [field]: value } : a)
+        }));
+    };
+
+    const deleteSubAccount = (charId: string, acctId: string) => {
+        setCharacterHandles(prev => ({
+            ...prev,
+            [charId]: prev[charId].filter(a => a.id !== acctId)
+        }));
+    };
+
+    const handleUserBgUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            try {
+                const base64 = await processImage(file, { skipCompression: true });
+                setUserBgImage(base64);
+                localStorage.setItem('spark_user_bg', base64);
+                addToast('背景图已更新', 'success');
+            } catch (err) {
+                addToast('图片处理失败', 'error');
             }
-        });
-        setShowSettings(false);
-        addToast('冲浪名已更新', 'success');
+        }
+    };
+
+    const handleSocialAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            try {
+                const base64 = await processImage(file);
+                setSocialProfile(prev => ({ ...prev, avatar: base64 }));
+            } catch (err: any) {
+                addToast(err.message, 'error');
+            }
+        }
+    };
+
+    const saveUserProfileChanges = () => {
+        localStorage.setItem('spark_user_id', userSparkId);
+        localStorage.setItem('spark_social_profile', JSON.stringify(socialProfile));
+        setIsEditingId(false);
+        addToast('主页资料已保存 (仅在 Spark 生效)', 'success');
     };
 
     const persistFeed = (newFeed: SocialPost[]) => {
@@ -176,22 +295,66 @@ const SocialApp: React.FC = () => {
         setSelectedPost(current => (current?.id === postId ? null : current));
     };
 
-    // --- AI Logic (Kept Identical to Logic, just connected) ---
+    // --- AI Logic (Updated for Multi-Handle) ---
     const handleRefresh = async () => {
         if (!apiConfig.apiKey) { addToast('请配置 API Key', 'error'); return; }
         setIsRefreshing(true);
         try {
             const shuffledChars = [...characters].sort(() => 0.5 - Math.random());
             const selectedChars = shuffledChars.slice(0, Math.min(3, characters.length));
-            const characterMap = selectedChars.map(c => `- 真名: ${c.name} | 网名(Handle): ${getHandle(c)}`).join('\n');
+            
+            // Build Character Map with Multiple Handles Info
             let charContexts = "";
+            let identityMap = "### 角色身份表 (Identities)\n";
+
             for (const char of selectedChars) {
                 const coreContext = ContextBuilder.buildCoreContext(char, userProfile, false);
                 const msgs = await DB.getMessagesByCharId(char.id);
                 const recentStatus = msgs.length > 0 ? `(最近私聊状态: 刚和用户聊过 "${msgs[msgs.length-1].content.substring(0, 20)}...")` : '(最近无私聊，生活平淡)';
-                charContexts += `\n<<< 角色档案: ${char.name} (网名: ${getHandle(char)}) >>>\n${coreContext}\n${recentStatus}\n<<< 档案结束 >>>\n`;
+                
+                const handles = characterHandles[char.id] || [];
+                const handleList = handles.map(h => `- 网名: "${h.handle}" (备注: ${h.note})`).join('\n');
+                
+                identityMap += `\n角色 [${char.name}] 可用账号:\n${handleList}\n`;
+                charContexts += `\n<<< 角色档案: ${char.name} >>>\n${coreContext}\n${recentStatus}\n<<< 档案结束 >>>\n`;
             }
-            const prompt = `### 任务: 模拟社交APP "Spark" 的推荐流\n你需要生成 6-8 条新的社交媒体帖子。\n\n### 🎭 内容构成 (混合模式)\n1. **角色发帖 (30%)**: \n   - 选中的角色: ${selectedChars.map(c => c.name).join(', ')}\n   - **关键规则**: 角色发帖必须使用他们的【网名/Handle】，而不是真名。\n   - **内容方向**: 公开发言，生活日常、吐槽、或者暗戳戳的记录。\n\n2. **路人/网友发帖 (70%)**: \n   - 模拟真实的互联网生态：吃瓜群众、技术宅、美妆博主、情感树洞。\n\n### 🚫 绝对禁令\n1. **禁止扮演用户**: 绝对禁止生成作者名为 "${userProfile.name}" 的帖子。\n2. **禁止上帝视角**。\n\n### 输入上下文\n${characterMap}\n${charContexts}\n\n### 输出格式 (JSON Array)\n[\n  {\n    "isCharacter": true/false,\n    "charId": "如果是角色填ID, 否则null", \n    "authorName": "角色的网名 (Handle) 或 路人昵称",\n    "title": "简短吸睛的标题",\n    "content": "正文内容...",\n    "emojis": ["🎈", "✨"],\n    "likes": 随机数 (0 - 10000)\n  },\n  ...\n]`;
+
+            const prompt = `### 任务: 模拟社交APP "Spark" 的推荐流
+你需要生成 6-8 条新的社交媒体帖子。
+
+### 🎭 内容构成 (混合模式)
+1. **角色发帖 (30%)**: 
+   - 选中的角色: ${selectedChars.map(c => c.name).join(', ')}
+   - **关键规则**: 每个角色有多个马甲(账号)。请根据内容需要，选择最合适的账号身份发帖。
+   - 例如：如果是吐槽，可能用小号；如果是发美照，用大号。请务必使用 **Configured Handle (网名)**。
+   - **内容方向**: 公开发言，生活日常、吐槽、或者暗戳戳的记录。
+
+2. **路人/网友发帖 (70%)**: 
+   - 模拟真实的互联网生态：吃瓜群众、技术宅、美妆博主、情感树洞。
+
+### 身份配置
+${identityMap}
+
+### 🚫 绝对禁令
+1. **禁止扮演用户**: 绝对禁止生成作者名为 "${socialProfile.name}" (用户) 的帖子。
+2. **禁止上帝视角**。
+
+### 输入上下文
+${charContexts}
+
+### 输出格式 (JSON Array)
+[
+  {
+    "isCharacter": true/false,
+    "charId": "如果是角色填ID, 否则null", 
+    "authorName": "必须填身份表中定义的【网名】",
+    "title": "简短吸睛的标题",
+    "content": "正文内容...",
+    "emojis": ["🎈", "✨"],
+    "likes": 随机数 (0 - 10000)
+  },
+  ...
+]`;
             const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
@@ -201,10 +364,15 @@ const SocialApp: React.FC = () => {
             const data = await response.json();
             const json = safeParseJSON(data.choices[0].message.content);
             if (!Array.isArray(json)) throw new Error('Parsed data is not an array');
+            
             const newPosts: SocialPost[] = json.map((item: any) => {
                 let avatar = `https://api.dicebear.com/7.x/notionists/svg?seed=${item.authorName}`;
                 if (item.isCharacter) {
-                    const c = characters.find(char => char.id === item.charId) || characters.find(char => getHandle(char) === item.authorName);
+                    // Try to find matching char by ID first, then by Handle match
+                    const c = characters.find(char => char.id === item.charId) || characters.find(char => {
+                        const handles = characterHandles[char.id] || [];
+                        return handles.some(h => h.handle === item.authorName);
+                    });
                     if (c) avatar = c.avatar;
                 } else {
                     const seeds = ['micah', 'avataaars', 'bottts', 'notionists'];
@@ -238,13 +406,48 @@ const SocialApp: React.FC = () => {
         try {
             const shuffledChars = [...characters].sort(() => 0.5 - Math.random());
             const selectedChars = shuffledChars.slice(0, 2);
-            const globalHandleMap = characters.map(c => `- 网名 "${getHandle(c)}" = 真名 "${c.name}"`).join('\n');
+            
+            let identityMap = "";
+            for (const char of selectedChars) {
+                const handles = characterHandles[char.id] || [];
+                const hList = handles.map(h => `"${h.handle}" (${h.note})`).join(', ');
+                identityMap += `- 角色 ${char.name} 可用身份: ${hList}\n`;
+            }
+
             let contextPrompt = "";
-            for (const char of selectedChars) { contextPrompt += `\n<<< 评论者角色: ${char.name} (网名: ${getHandle(char)}) >>>\n${ContextBuilder.buildCoreContext(char, userProfile, false)}\n`; }
+            for (const char of selectedChars) { contextPrompt += `\n<<< 评论者角色: ${char.name} >>>\n${ContextBuilder.buildCoreContext(char, userProfile, false)}\n`; }
+            
             let authorType = "Stranger";
-            if (post.authorName === userProfile.name) authorType = "User";
-            else { const c = characters.find(ch => getHandle(ch) === post.authorName); if (c) authorType = `Character "${c.name}"`; }
-            const prompt = `### 任务: 模拟社交APP评论区\n**帖子来源**: "Spark" 社区\n**楼主**: "${post.authorName}" (${authorType})\n**帖子**: "${post.title}"\n\n请生成 4-6 条评论。混合使用 **选定角色** 和 **随机路人**。\n\n### 身份识别\n${globalHandleMap}\n\n### 禁令\n- **绝对禁止** 生成署名为 "${userProfile.name}" 的评论。\n\n### 输入上下文\n${contextPrompt}\n\n### 输出格式 (JSON Array)\n[\n  { "author": "网名 (Handle) 或 路人昵称", "content": "评论内容..." }\n]`;
+            if (post.authorName === socialProfile.name) authorType = "User";
+            else { 
+                const c = characters.find(ch => {
+                    const handles = characterHandles[ch.id] || [];
+                    return handles.some(h => h.handle === post.authorName);
+                });
+                if (c) authorType = `Character "${c.name}"`; 
+            }
+
+            const prompt = `### 任务: 模拟社交APP评论区
+**帖子来源**: "Spark" 社区
+**楼主**: "${post.authorName}" (${authorType})
+**帖子**: "${post.title}"
+
+请生成 4-6 条评论。混合使用 **选定角色** 和 **随机路人**。
+角色评论时，请选择一个符合语境的马甲身份。
+
+### 角色身份库
+${identityMap}
+
+### 禁令
+- **绝对禁止** 生成署名为 "${socialProfile.name}" 的评论。
+
+### 输入上下文
+${contextPrompt}
+
+### 输出格式 (JSON Array)
+[
+  { "author": "网名 (Handle) 或 路人昵称", "content": "评论内容..." }
+]`;
             const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
@@ -257,7 +460,13 @@ const SocialApp: React.FC = () => {
                     const comments: SocialComment[] = json.map((c: any) => {
                         const authorName = c.author || c.authorName || 'Unknown';
                         let avatar = `https://api.dicebear.com/7.x/notionists/svg?seed=${authorName}`;
-                        const char = characters.find(ch => getHandle(ch) === authorName);
+                        
+                        // Check if char
+                        const char = characters.find(ch => {
+                            const handles = characterHandles[ch.id] || [];
+                            return handles.some(h => h.handle === authorName);
+                        });
+
                         if (char) avatar = char.avatar;
                         return { id: `cmt-${Math.random()}`, authorName: authorName, authorAvatar: avatar, content: c.content || '...', likes: Math.floor(Math.random() * 100), isCharacter: !!char };
                     });
@@ -271,8 +480,24 @@ const SocialApp: React.FC = () => {
         if (!apiConfig.apiKey) return;
         setIsReplyingToUser(true);
         try {
-            const globalHandleMap = characters.map(c => `- 网名 "${getHandle(c)}" = 真名 "${c.name}"`).join('\n');
-            const prompt = `### 任务: 回复用户的评论\n**场景**: 用户 "${userProfile.name}" 在帖子下发了一条评论: "${userContent}"。\n**帖子**: "${post.title}"\n请生成 1-3 条对用户评论的回复。\n${globalHandleMap}\n\n### 输出格式 (JSON Array)\n[\n  { "author": "网名 (Handle)", "content": "回复内容..." }\n]`;
+            // Simplified handle map for replies
+            let identityMap = "";
+            characters.forEach(char => {
+                const handles = characterHandles[char.id] || [];
+                const hList = handles.map(h => `"${h.handle}"`).join(', ');
+                identityMap += `- ${char.name}: ${hList}\n`;
+            });
+
+            const prompt = `### 任务: 回复用户的评论
+**场景**: 用户 "${socialProfile.name}" 在帖子下发了一条评论: "${userContent}"。
+**帖子**: "${post.title}"
+请生成 1-3 条对用户评论的回复。
+${identityMap}
+
+### 输出格式 (JSON Array)
+[
+  { "author": "网名 (Handle)", "content": "回复内容..." }
+]`;
             const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
@@ -285,9 +510,14 @@ const SocialApp: React.FC = () => {
                     const newReplies: SocialComment[] = json.map((c: any) => {
                         const authorName = c.author || c.authorName || 'Unknown';
                         let avatar = `https://api.dicebear.com/7.x/notionists/svg?seed=${authorName}`;
-                        const char = characters.find(ch => getHandle(ch) === authorName);
+                        
+                        const char = characters.find(ch => {
+                            const handles = characterHandles[ch.id] || [];
+                            return handles.some(h => h.handle === authorName);
+                        });
+
                         if (char) avatar = char.avatar;
-                        return { id: `cmt-reply-${Date.now()}-${Math.random()}`, authorName: authorName, authorAvatar: avatar, content: `回复 @${userProfile.name}: ${c.content}`, likes: Math.floor(Math.random() * 10) };
+                        return { id: `cmt-reply-${Date.now()}-${Math.random()}`, authorName: authorName, authorAvatar: avatar, content: `回复 @${socialProfile.name}: ${c.content}`, likes: Math.floor(Math.random() * 10) };
                     });
                     if (newReplies.length > 0) {
                         updatePostInFeed({ ...post, comments: [...(post.comments || []), ...newReplies] });
@@ -309,14 +539,52 @@ const SocialApp: React.FC = () => {
 
     const handleCreatePost = () => {
         if (!newPostContent.trim()) return;
-        const post: SocialPost = { id: `user-post-${Date.now()}`, authorName: userProfile.name, authorAvatar: userProfile.avatar, title: newPostTitle || '无标题', content: newPostContent, images: [newPostEmoji], likes: 0, isCollected: false, isLiked: false, comments: [], timestamp: Date.now(), tags: ['User'], bgStyle: getRandomStyle().bg };
+        const post: SocialPost = { 
+            id: `user-post-${Date.now()}`, 
+            authorName: socialProfile.name, // Use Local Identity
+            authorAvatar: socialProfile.avatar, // Use Local Identity
+            title: newPostTitle || '无标题', 
+            content: newPostContent, 
+            images: [newPostEmoji], 
+            likes: 0, 
+            isCollected: false, 
+            isLiked: false, 
+            comments: [], 
+            timestamp: Date.now(), 
+            tags: ['User'], 
+            bgStyle: getRandomStyle().bg 
+        };
         persistFeed([post, ...feed]);
-        setNewPostContent(''); setNewPostTitle(''); setActiveTab('home'); addToast('发布成功', 'success');
+        setNewPostContent(''); setNewPostTitle(''); 
+        setIsCreateOpen(false); // Close Modal
+        setActiveTab('home'); 
+        addToast('发布成功', 'success');
     };
 
     const handleDeletePost = (postId: string) => { removePostFromFeed(postId); addToast('帖子已删除', 'success'); };
     const handleLike = (e: any, post: SocialPost) => { e.stopPropagation(); updatePostInFeed({ ...post, isLiked: !post.isLiked, likes: post.isLiked ? post.likes - 1 : post.likes + 1 }); };
-    const handleSendComment = async () => { if (!selectedPost || !commentInput.trim()) return; const updatedPost = { ...selectedPost, comments: [...(selectedPost.comments || []), { id: `cmt-user-${Date.now()}`, authorName: userProfile.name, authorAvatar: userProfile.avatar, content: commentInput.trim(), likes: 0, isCharacter: false }] }; updatePostInFeed(updatedPost); const contentToSend = commentInput; setCommentInput(''); await generateRepliesToUser(updatedPost, contentToSend); };
+    
+    const handleSendComment = async () => { 
+        if (!selectedPost || !commentInput.trim()) return; 
+        
+        const updatedPost = { 
+            ...selectedPost, 
+            comments: [...(selectedPost.comments || []), { 
+                id: `cmt-user-${Date.now()}`, 
+                authorName: socialProfile.name, // Use Local Identity
+                authorAvatar: socialProfile.avatar, // Use Local Identity
+                content: commentInput.trim(), 
+                likes: 0, 
+                isCharacter: false 
+            }] 
+        }; 
+        
+        updatePostInFeed(updatedPost); 
+        const contentToSend = commentInput; 
+        setCommentInput(''); 
+        await generateRepliesToUser(updatedPost, contentToSend); 
+    };
+    
     const handleClearFeed = () => { DB.clearSocialPosts(); setFeed([]); setShowSettings(false); addToast('推荐流已清空', 'success'); };
 
     // --- Renderers ---
@@ -412,7 +680,7 @@ const SocialApp: React.FC = () => {
                 </div>
 
                 {/* Bottom Input Bar - Glass */}
-                <div className="h-16 bg-white/80 backdrop-blur-xl border-t border-white/40 px-4 flex items-center justify-between z-30 shrink-0 gap-4 shadow-[0_-4px_20px_rgba(0,0,0,0.03)]">
+                <div className="h-16 bg-white/80 backdrop-blur-xl border-t border-white/40 px-4 flex items-center justify-between z-30 shrink-0 gap-4 shadow-[0_-4px_20px_rgba(0,0,0,0.03)] absolute bottom-0 w-full pb-safe">
                     <div className="flex-1 bg-slate-100/50 rounded-full px-5 py-2.5 flex items-center gap-2 focus-within:bg-white focus-within:ring-1 focus-within:ring-slate-200 transition-all border border-transparent focus-within:border-slate-200">
                         <input 
                             value={commentInput}
@@ -444,22 +712,60 @@ const SocialApp: React.FC = () => {
             
             {/* --- Modals (Settings, Share) --- */}
             <Modal isOpen={showSettings} title="身份管理" onClose={() => setShowSettings(false)}>
-                <div className="space-y-4">
-                    <div className="max-h-60 overflow-y-auto no-scrollbar space-y-4 px-1">
-                        <p className="text-xs text-slate-400">设置角色的“冲浪名”(Handle)。</p>
+                <div className="space-y-6">
+                    <div className="max-h-[50vh] overflow-y-auto no-scrollbar space-y-6 px-1">
+                        <p className="text-xs text-slate-400 bg-slate-50 p-2 rounded-lg">
+                            为角色添加“马甲”(Sub-Accounts)。AI 发帖时会根据内容选择合适的身份。
+                        </p>
                         {characters.map(c => (
-                            <div key={c.id} className="flex items-center gap-3 border-b border-slate-50 pb-2">
-                                <img src={c.avatar} className="w-8 h-8 rounded-full object-cover ring-1 ring-slate-100" />
-                                <div className="flex-1 space-y-1">
-                                    <div className="text-[10px] text-slate-400">真名: {c.name}</div>
-                                    <input value={tempHandles[c.id] || ''} onChange={e => setTempHandles({...tempHandles, [c.id]: e.target.value})} placeholder="网名" className="w-full bg-slate-50 px-3 py-1.5 rounded-lg text-sm font-medium text-slate-700 outline-none focus:ring-1 focus:ring-[#ff2442]" />
+                            <div key={c.id} className="space-y-3 pb-4 border-b border-slate-50">
+                                <div className="flex items-center gap-2">
+                                    <img src={c.avatar} className="w-6 h-6 rounded-full object-cover" />
+                                    <span className="text-sm font-bold text-slate-700">{c.name}</span>
+                                    <button onClick={() => addSubAccount(c.id)} className="ml-auto text-[10px] bg-[#ff2442] text-white px-2 py-1 rounded-full shadow-sm active:scale-95 transition-transform">+ 添加马甲</button>
+                                </div>
+                                
+                                <div className="space-y-2 pl-4 border-l-2 border-slate-100">
+                                    {(characterHandles[c.id] || []).map((acct) => (
+                                        <div key={acct.id} className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm space-y-2 relative group">
+                                            <div className="flex gap-2">
+                                                <div className="flex-1">
+                                                    <label className="text-[9px] text-slate-400 uppercase font-bold">网名 (Handle)</label>
+                                                    <input 
+                                                        value={acct.handle} 
+                                                        onChange={(e) => updateSubAccount(c.id, acct.id, 'handle', e.target.value)} 
+                                                        className="w-full text-sm font-bold text-slate-800 border-b border-dashed border-slate-200 focus:border-[#ff2442] outline-none py-1" 
+                                                    />
+                                                </div>
+                                                <button 
+                                                    onClick={() => deleteSubAccount(c.id, acct.id)}
+                                                    className="text-slate-300 hover:text-red-400 p-1"
+                                                    title="删除"
+                                                >
+                                                    ×
+                                                </button>
+                                            </div>
+                                            <div>
+                                                <label className="text-[9px] text-slate-400 uppercase font-bold">备注 (Context Note)</label>
+                                                <input 
+                                                    value={acct.note} 
+                                                    onChange={(e) => updateSubAccount(c.id, acct.id, 'note', e.target.value)} 
+                                                    placeholder="例如: 吐槽号 / 认真模式"
+                                                    className="w-full text-xs text-slate-500 bg-slate-50 rounded px-2 py-1 focus:bg-white transition-colors outline-none" 
+                                                />
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {(characterHandles[c.id]?.length || 0) === 0 && (
+                                        <div className="text-[10px] text-red-400 italic">⚠️ 请至少保留一个身份</div>
+                                    )}
                                 </div>
                             </div>
                         ))}
                     </div>
                     <div className="flex gap-3 pt-2">
                         <button onClick={handleClearFeed} className="flex-1 py-3 bg-white border border-slate-200 text-slate-500 font-bold rounded-xl text-xs active:bg-slate-50">清空推荐流</button>
-                        <button onClick={saveHandles} className="flex-1 py-3 bg-[#ff2442] text-white font-bold rounded-xl text-xs shadow-lg shadow-red-200 active:scale-95 transition-transform">保存修改</button>
+                        <button onClick={() => setShowSettings(false)} className="flex-1 py-3 bg-[#ff2442] text-white font-bold rounded-xl text-xs shadow-lg shadow-red-200 active:scale-95 transition-transform">完成</button>
                     </div>
                 </div>
             </Modal>
@@ -475,8 +781,58 @@ const SocialApp: React.FC = () => {
                 </div>
             </Modal>
 
+            {/* --- Create Post Modal (Full Screen Overlay) --- */}
+            {isCreateOpen && (
+                <div className="absolute inset-0 z-50 bg-white flex flex-col animate-slide-up">
+                    {/* Create Header */}
+                    <div className="h-14 flex items-center justify-between px-4 bg-white sticky top-0 z-20 border-b border-slate-50">
+                        <button onClick={() => setIsCreateOpen(false)} className="text-slate-600 text-sm font-bold px-2 py-1">取消</button>
+                        <span className="text-sm font-bold text-slate-800">发布笔记</span>
+                        <button 
+                            onClick={handleCreatePost} 
+                            disabled={!newPostContent.trim()}
+                            className={`px-4 py-1.5 rounded-full text-xs font-bold text-white transition-all ${newPostContent.trim() ? 'bg-[#ff2442] shadow-md shadow-red-200' : 'bg-slate-200 text-slate-400'}`}
+                        >
+                            发布
+                        </button>
+                    </div>
+
+                    {/* Create Content */}
+                    <div className="flex-1 overflow-y-auto no-scrollbar p-6">
+                        <input 
+                            value={newPostTitle} 
+                            onChange={e => setNewPostTitle(e.target.value)} 
+                            placeholder="填写标题会有更多赞哦~" 
+                            className="text-xl font-black placeholder:text-slate-300 outline-none mb-4 w-full" 
+                        />
+                        <textarea 
+                            value={newPostContent} 
+                            onChange={e => setNewPostContent(e.target.value)} 
+                            placeholder="分享你此刻的想法..." 
+                            className="w-full h-auto min-h-[200px] resize-none outline-none text-base leading-relaxed placeholder:text-slate-300 font-medium" 
+                        />
+                        
+                        {/* Sticker Selector - Flowing after text */}
+                        <div className="mt-4 pt-4 border-t border-slate-50">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">添加心情贴纸 (Sticker)</p>
+                            <div className="flex gap-4 overflow-x-auto pb-2 no-scrollbar">
+                                {['✨','🎈','🎨','📷','🎵','🎮','🍔','🏖️','💤','💡'].map(emoji => (
+                                    <button 
+                                        key={emoji} 
+                                        onClick={() => setNewPostEmoji(emoji)} 
+                                        className={`w-12 h-12 rounded-xl border flex items-center justify-center text-2xl transition-all shrink-0 ${newPostEmoji === emoji ? 'border-[#ff2442] bg-red-50' : 'border-slate-100'}`}
+                                    >
+                                        {emoji}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* --- Main Feed View --- */}
-            <div className={`flex-col h-full ${selectedPost ? 'hidden' : 'flex'}`}>
+            <div className={`flex-col h-full ${selectedPost || isCreateOpen ? 'hidden' : 'flex'}`}>
                 
                 {/* Top Nav - Glass */}
                 <div className="h-14 flex items-center justify-between px-4 sticky top-0 bg-white/60 backdrop-blur-xl z-30 border-b border-white/20">
@@ -505,46 +861,77 @@ const SocialApp: React.FC = () => {
                         </div>
                     )}
 
-                    {activeTab === 'create' && (
-                        <div className="flex flex-col h-full bg-white/80 backdrop-blur-xl animate-fade-in">
-                            <div className="p-6 flex-1">
-                                <input value={newPostTitle} onChange={e => setNewPostTitle(e.target.value)} placeholder="填写标题会有更多赞哦~" className="text-2xl font-black placeholder:text-slate-300 outline-none mb-6 w-full bg-transparent" />
-                                <textarea value={newPostContent} onChange={e => setNewPostContent(e.target.value)} placeholder="分享你此刻的想法..." className="w-full h-64 resize-none outline-none text-base leading-relaxed placeholder:text-slate-300 font-medium bg-transparent" />
-                                <div className="flex gap-4 mt-4 overflow-x-auto pb-2">
-                                    {['✨','🎈','🎨','📷','🎵','🎮','🍔','🏖️','💤','💡'].map(emoji => (
-                                        <button key={emoji} onClick={() => setNewPostEmoji(emoji)} className={`w-12 h-12 rounded-xl border flex items-center justify-center text-2xl transition-all ${newPostEmoji === emoji ? 'border-[#ff2442] bg-red-50' : 'border-slate-100 bg-white'}`}>{emoji}</button>
-                                    ))}
-                                </div>
-                            </div>
-                            <div className="p-6 border-t border-slate-100/50">
-                                <button onClick={handleCreatePost} className="w-full py-4 bg-[#ff2442] text-white rounded-full font-bold text-lg shadow-xl shadow-red-200 active:scale-95 transition-transform">发布笔记</button>
-                            </div>
-                        </div>
-                    )}
-
                     {activeTab === 'me' && (
                         <div className="min-h-full bg-white/80 backdrop-blur-xl animate-fade-in">
-                            {/* Profile Header */}
-                            <div className="relative">
-                                <div className="h-40 w-full overflow-hidden">
-                                    <img src={userProfile.avatar} className="w-full h-full object-cover blur-2xl opacity-60 scale-125" />
-                                    <div className="absolute inset-0 bg-white/20 backdrop-blur-sm"></div>
-                                </div>
-                                <div className="px-6 relative -mt-12 flex justify-between items-end">
-                                    <div className="w-24 h-24 rounded-full p-1 bg-white/90 backdrop-blur-md shadow-lg">
-                                        <img src={userProfile.avatar} className="w-full h-full rounded-full object-cover" />
+                            {/* Profile Header (Enhanced) */}
+                            <div className="relative group">
+                                <div className="h-40 w-full overflow-hidden bg-slate-200 relative cursor-pointer" onClick={() => userBgInputRef.current?.click()}>
+                                    {userBgImage ? (
+                                        <img src={userBgImage} className="w-full h-full object-cover" />
+                                    ) : (
+                                        <img src={userProfile.avatar} className="w-full h-full object-cover blur-2xl opacity-60 scale-125" />
+                                    )}
+                                    <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                                        <span className="text-white text-xs font-bold bg-black/30 px-3 py-1 rounded-full backdrop-blur-md">更换背景</span>
                                     </div>
+                                    <input type="file" ref={userBgInputRef} className="hidden" accept="image/*" onChange={handleUserBgUpload} />
+                                </div>
+                                
+                                <div className="px-6 relative -mt-12 flex justify-between items-end">
+                                    {/* Social Avatar - Clickable to change */}
+                                    <div className="w-24 h-24 rounded-full p-1 bg-white/90 backdrop-blur-md shadow-lg relative group cursor-pointer" onClick={() => socialAvatarInputRef.current?.click()}>
+                                        <img src={socialProfile.avatar} className="w-full h-full rounded-full object-cover" />
+                                        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/20 rounded-full">
+                                            <span className="text-white text-[10px] font-bold">更换</span>
+                                        </div>
+                                        <input type="file" ref={socialAvatarInputRef} className="hidden" accept="image/*" onChange={handleSocialAvatarUpload} />
+                                    </div>
+
                                     <div className="flex gap-2 mb-2">
-                                        <button className="px-4 py-1.5 rounded-full border border-slate-200/60 bg-white/50 backdrop-blur-sm text-xs font-bold text-slate-600 hover:bg-white transition-colors">编辑资料</button>
+                                        <button onClick={() => { setIsEditingId(!isEditingId); if(isEditingId) saveUserProfileChanges(); }} className="px-4 py-1.5 rounded-full border border-slate-200/60 bg-white/50 backdrop-blur-sm text-xs font-bold text-slate-600 hover:bg-white transition-colors">
+                                            {isEditingId ? '保存资料' : '编辑资料'}
+                                        </button>
                                         <button className="p-1.5 rounded-full border border-slate-200/60 bg-white/50 backdrop-blur-sm text-slate-600 hover:bg-white transition-colors"><Icons.Share className="w-4 h-4" /></button>
                                     </div>
                                 </div>
                             </div>
                             
                             <div className="px-6 pt-4 pb-6">
-                                <h2 className="text-2xl font-black text-slate-800">{userProfile.name}</h2>
-                                <p className="text-xs text-slate-400 mt-1 font-mono">Spark ID: 95279527</p>
-                                <p className="text-sm text-slate-600 mt-3 leading-relaxed font-light">{userProfile.bio || '这个人很懒，什么都没写。'}</p>
+                                {isEditingId ? (
+                                    <input 
+                                        value={socialProfile.name} 
+                                        onChange={e => setSocialProfile({...socialProfile, name: e.target.value})}
+                                        className="text-2xl font-black text-slate-800 bg-slate-100/50 px-2 rounded outline-none border-b border-dashed border-slate-300 w-full mb-1"
+                                    />
+                                ) : (
+                                    <h2 className="text-2xl font-black text-slate-800">{socialProfile.name}</h2>
+                                )}
+
+                                <div className="flex items-center gap-2 mt-1">
+                                    <span className="text-xs text-slate-400 font-mono">Spark ID: </span>
+                                    {isEditingId ? (
+                                        <input 
+                                            value={userSparkId} 
+                                            onChange={e => setUserSparkId(e.target.value)} 
+                                            className="text-xs font-mono text-slate-600 bg-slate-100 px-1 rounded outline-none border-b border-primary w-24"
+                                        />
+                                    ) : (
+                                        <span className="text-xs text-slate-400 font-mono">{userSparkId}</span>
+                                    )}
+                                </div>
+                                
+                                {isEditingId ? (
+                                    <textarea 
+                                        value={socialProfile.bio} 
+                                        onChange={e => setSocialProfile({...socialProfile, bio: e.target.value})}
+                                        className="w-full mt-3 text-sm text-slate-600 bg-slate-50 p-2 rounded-lg outline-none resize-none border border-slate-200 focus:border-primary/50"
+                                        rows={3}
+                                        placeholder="填写你的个人简介..."
+                                    />
+                                ) : (
+                                    <p className="text-sm text-slate-600 mt-3 leading-relaxed font-light">{socialProfile.bio}</p>
+                                )}
+
                                 <div className="flex gap-6 mt-5 bg-white/40 p-4 rounded-2xl border border-white/50 shadow-sm">
                                     <div className="text-center"><span className="block font-bold text-slate-800">142</span><span className="text-[10px] text-slate-400">关注</span></div>
                                     <div className="text-center"><span className="block font-bold text-slate-800">12.5k</span><span className="text-[10px] text-slate-400">粉丝</span></div>
@@ -560,7 +947,7 @@ const SocialApp: React.FC = () => {
 
                             <div className="p-2 min-h-[300px] bg-slate-50/50 pb-24">
                                 <div className="columns-2 gap-2 space-y-2">
-                                    {feed.filter(p => profileTab === 'notes' ? p.authorName === userProfile.name : p.isCollected).map(post => (
+                                    {feed.filter(p => profileTab === 'notes' ? p.authorName === socialProfile.name : p.isCollected).map(post => (
                                         <div key={post.id} onClick={() => { setSelectedPost(post); generateComments(post); }} className="break-inside-avoid bg-white rounded-xl overflow-hidden shadow-sm border border-slate-100 cursor-pointer">
                                             <div className="aspect-[4/5] flex items-center justify-center text-4xl" style={{ background: post.bgStyle }}>{post.images[0]}</div>
                                             <div className="p-3">
@@ -573,7 +960,7 @@ const SocialApp: React.FC = () => {
                                         </div>
                                     ))}
                                 </div>
-                                {feed.filter(p => profileTab === 'notes' ? p.authorName === userProfile.name : p.isCollected).length === 0 && (
+                                {feed.filter(p => profileTab === 'notes' ? p.authorName === socialProfile.name : p.isCollected).length === 0 && (
                                     <div className="flex flex-col items-center justify-center py-20 text-slate-300 gap-2">
                                         <span className="text-4xl grayscale opacity-30">📦</span>
                                         <span className="text-xs">空空如也</span>
@@ -584,12 +971,12 @@ const SocialApp: React.FC = () => {
                     )}
                 </div>
 
-                {/* Bottom Navigation - Floating Glass Island */}
+                {/* Bottom Navigation - Floating Glass Island (Only shown when not creating) */}
                 <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-[90%] h-16 bg-white/80 backdrop-blur-2xl rounded-full shadow-[0_8px_32px_rgba(0,0,0,0.12)] border border-white/50 flex items-center justify-around z-40">
                     <button onClick={() => setActiveTab('home')} className={`text-sm font-medium flex flex-col items-center justify-center gap-0.5 transition-all w-12 h-12 rounded-full ${activeTab === 'home' ? 'text-slate-900 bg-white shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>
                         <span className="text-xl">🏠</span>
                     </button>
-                    <button onClick={() => setActiveTab('create')} className="w-12 h-12 bg-[#ff2442] text-white rounded-full flex items-center justify-center shadow-lg shadow-red-200 active:scale-95 transition-transform text-2xl font-light -mt-6 border-4 border-white/50">+</button>
+                    <button onClick={() => setIsCreateOpen(true)} className="w-12 h-12 bg-[#ff2442] text-white rounded-full flex items-center justify-center shadow-lg shadow-red-200 active:scale-95 transition-transform text-2xl font-light -mt-6 border-4 border-white/50">+</button>
                     <button onClick={() => setActiveTab('me')} className={`text-sm font-medium flex flex-col items-center justify-center gap-0.5 transition-all w-12 h-12 rounded-full ${activeTab === 'me' ? 'text-slate-900 bg-white shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>
                         <span className="text-xl">👤</span>
                     </button>

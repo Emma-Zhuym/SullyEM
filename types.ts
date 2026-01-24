@@ -1,6 +1,7 @@
 
 
 
+
 export enum AppID {
   Launcher = 'launcher',
   Settings = 'settings',
@@ -346,6 +347,19 @@ export interface SocialPost {
     bgStyle?: string; // CSS gradient for the 'image'
 }
 
+// Social App Specific Types
+export interface SubAccount {
+    id: string;
+    handle: string; // The display name / handle
+    note: string;   // Context note for AI (e.g. "Main Account" or "Secret Identity")
+}
+
+export interface SocialAppProfile {
+    name: string;
+    avatar: string;
+    bio: string;
+}
+
 export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card';
 
 export interface Message {
@@ -387,6 +401,14 @@ export interface FullBackupData {
     roomTodos?: RoomTodo[]; 
     roomNotes?: RoomNote[];
     socialPosts?: SocialPost[]; // Added Social Posts support
+    
+    // Social App Local Configs
+    socialAppData?: {
+        charHandles?: Record<string, SubAccount[]>;
+        userProfile?: SocialAppProfile;
+        userId?: string;
+        userBg?: string;
+    };
     
     mediaAssets?: {
         charId: string;
