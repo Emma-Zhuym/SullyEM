@@ -13,9 +13,10 @@ interface AppIconProps {
 }
 
 const AppIcon: React.FC<AppIconProps> = ({ app, onClick, size = 'md', hideLabel = false, variant = 'default' }) => {
-  const { customIcons } = useOS();
+  const { customIcons, theme } = useOS();
   const IconComponent = Icons[app.icon] || Icons.Settings;
   const customIconUrl = customIcons[app.id];
+  const contentColor = theme.contentColor || '#ffffff';
 
   // Standard sizes
   const sizeClasses = size === 'lg' ? 'w-[4.5rem] h-[4.5rem]' : 'w-[4rem] h-[4rem]';
@@ -41,14 +42,20 @@ const AppIcon: React.FC<AppIconProps> = ({ app, onClick, size = 'md', hideLabel 
         {customIconUrl ? (
             <img src={customIconUrl} className="w-full h-full object-cover rounded-[1.2rem]" alt={app.name} />
         ) : (
-            <div className="w-[50%] h-[50%] text-white drop-shadow-[0_2px_5px_rgba(0,0,0,0.3)] opacity-90 group-hover:opacity-100 transition-opacity">
+            <div 
+                className="w-[50%] h-[50%] drop-shadow-[0_2px_5px_rgba(0,0,0,0.3)] opacity-90 group-hover:opacity-100 transition-opacity"
+                style={{ color: contentColor }}
+            >
                  <IconComponent className="w-full h-full" />
             </div>
         )}
       </div>
       
       {!hideLabel && (
-        <span className={`text-[10px] font-bold text-white tracking-widest uppercase opacity-80 group-hover:opacity-100 text-shadow-md transition-opacity ${variant === 'dock' ? 'hidden' : 'block'}`}>
+        <span 
+            className={`text-[10px] font-bold tracking-widest uppercase opacity-80 group-hover:opacity-100 text-shadow-md transition-opacity ${variant === 'dock' ? 'hidden' : 'block'}`}
+            style={{ color: contentColor }}
+        >
           {app.name}
         </span>
       )}

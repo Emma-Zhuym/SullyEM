@@ -104,9 +104,7 @@ const Launcher: React.FC = () => {
       
       {/* --- Visual Elements (Decorative Background) --- */}
       <div className="absolute inset-0 pointer-events-none">
-          <div className="absolute inset-0 opacity-10" 
-               style={{ backgroundImage: 'linear-gradient(rgba(255,255,255,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.5) 1px, transparent 1px)', backgroundSize: '100px 100px' }} 
-          />
+          {/* Removed Grid Overlay */}
           <div className="absolute -top-20 -right-20 w-80 h-80 bg-white/5 rounded-full blur-3xl"></div>
           <div className="absolute -bottom-20 -left-20 w-80 h-80 bg-blue-500/10 rounded-full blur-3xl"></div>
       </div>
@@ -199,7 +197,7 @@ const Launcher: React.FC = () => {
               
               {/* CALENDAR WIDGET */}
               <div className="bg-white/10 backdrop-blur-2xl rounded-3xl p-6 border border-white/20 shadow-2xl">
-                  <div className="flex justify-between items-center mb-4 text-white">
+                  <div className="flex justify-between items-center mb-4" style={{ color: contentColor }}>
                       <h3 className="text-xl font-bold tracking-widest">{monthName} {currentYear}</h3>
                       <div onClick={() => openApp('schedule' as any)} className="bg-white/20 p-2 rounded-full cursor-pointer hover:bg-white/40 transition-colors">
                           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
@@ -207,7 +205,7 @@ const Launcher: React.FC = () => {
                   </div>
                   
                   <div className="grid grid-cols-7 gap-y-3 gap-x-1 text-center mb-2">
-                      {['S','M','T','W','T','F','S'].map(d => <div key={d} className="text-[10px] font-bold text-white/40">{d}</div>)}
+                      {['S','M','T','W','T','F','S'].map(d => <div key={d} className="text-[10px] font-bold opacity-40" style={{ color: contentColor }}>{d}</div>)}
                   </div>
                   
                   <div className="grid grid-cols-7 gap-y-2 gap-x-1 text-center">
@@ -219,7 +217,10 @@ const Launcher: React.FC = () => {
                           
                           return (
                               <div key={day} className="flex flex-col items-center justify-center h-8 relative">
-                                  <div className={`w-8 h-8 flex items-center justify-center rounded-full text-sm font-medium ${isToday ? 'bg-white text-black font-bold shadow-lg' : 'text-white/80'}`}>
+                                  <div 
+                                    className={`w-8 h-8 flex items-center justify-center rounded-full text-sm font-medium ${isToday ? 'bg-white text-black font-bold shadow-lg' : 'opacity-80'}`}
+                                    style={isToday ? {} : { color: contentColor }}
+                                  >
                                       {day}
                                   </div>
                                   {hasEvent && <div className="w-1.5 h-1.5 bg-purple-400 rounded-full absolute bottom-0 shadow-sm border border-black/20"></div>}
@@ -231,23 +232,23 @@ const Launcher: React.FC = () => {
 
               {/* UPCOMING EVENTS LIST */}
               <div className="bg-white/10 backdrop-blur-2xl rounded-3xl p-5 border border-white/20 shadow-2xl flex-1 overflow-hidden flex flex-col">
-                  <h3 className="text-xs font-bold text-white/60 uppercase tracking-widest mb-4 flex items-center gap-2">
+                  <h3 className="text-xs font-bold opacity-60 uppercase tracking-widest mb-4 flex items-center gap-2" style={{ color: contentColor }}>
                       <span className="w-2 h-2 bg-purple-400 rounded-full"></span> Upcoming Events
                   </h3>
                   <div className="space-y-3 overflow-y-auto no-scrollbar">
                       {anniversaries.length > 0 ? anniversaries.sort((a,b) => a.date.localeCompare(b.date)).slice(0, 5).map(anni => (
-                          <div key={anni.id} className="flex items-center gap-3 p-3 bg-black/20 rounded-xl border border-white/5">
+                          <div key={anni.id} className="flex items-center gap-3 p-3 bg-white/5 rounded-xl border border-white/10">
                               <div className="w-10 h-10 bg-purple-500/20 rounded-lg flex flex-col items-center justify-center text-purple-200 border border-purple-500/30">
                                   <span className="text-[9px] opacity-70">{anni.date.split('-')[1]}</span>
                                   <span className="text-sm font-bold leading-none">{anni.date.split('-')[2]}</span>
                               </div>
                               <div className="flex-1">
-                                  <div className="text-white text-sm font-bold">{anni.title}</div>
-                                  <div className="text-[10px] text-white/50">{characters.find(c => c.id === anni.charId)?.name}</div>
+                                  <div className="text-sm font-bold" style={{ color: contentColor }}>{anni.title}</div>
+                                  <div className="text-[10px] opacity-50" style={{ color: contentColor }}>{characters.find(c => c.id === anni.charId)?.name}</div>
                               </div>
                           </div>
                       )) : (
-                          <div className="text-center text-white/30 text-xs py-8">No upcoming events</div>
+                          <div className="text-center opacity-30 text-xs py-8" style={{ color: contentColor }}>No upcoming events</div>
                       )}
                   </div>
               </div>
@@ -258,8 +259,8 @@ const Launcher: React.FC = () => {
 
       {/* Page Indicators */}
       <div className="absolute bottom-24 left-0 w-full flex justify-center gap-2 pointer-events-none">
-          <div className={`w-1.5 h-1.5 rounded-full transition-all ${activePageIndex === 0 ? 'bg-white w-4' : 'bg-white/40'}`}></div>
-          <div className={`w-1.5 h-1.5 rounded-full transition-all ${activePageIndex === 1 ? 'bg-white w-4' : 'bg-white/40'}`}></div>
+          <div className={`w-1.5 h-1.5 rounded-full transition-all ${activePageIndex === 0 ? 'bg-current w-4' : 'bg-current opacity-40'}`} style={{ color: contentColor }}></div>
+          <div className={`w-1.5 h-1.5 rounded-full transition-all ${activePageIndex === 1 ? 'bg-current w-4' : 'bg-current opacity-40'}`} style={{ color: contentColor }}></div>
       </div>
 
       {/* 4. FLOATING DOCK (Capsule) */}
