@@ -1,5 +1,6 @@
 
 
+
 export enum AppID {
   Launcher = 'launcher',
   Settings = 'settings',
@@ -16,7 +17,8 @@ export enum AppID {
   Journal = 'journal',
   Schedule = 'schedule',
   Room = 'room',
-  CheckPhone = 'check_phone', // New App
+  CheckPhone = 'check_phone',
+  Social = 'social', // New App
 }
 
 export interface AppConfig {
@@ -93,7 +95,7 @@ export interface RoomNote {
     timestamp: number;
     content: string;
     type: 'lyric' | 'doodle' | 'thought' | 'search' | 'gossip';
-    relatedMessageId?: number; // New: Link to chat history message
+    relatedMessageId?: number; 
 }
 
 export interface RoomGeneratedState {
@@ -130,13 +132,13 @@ export interface UserImpression {
         summary: string;
     };
     mbti_analysis?: {
-        type: string; // e.g. "INFP"
+        type: string; 
         reasoning: string;
         dimensions: {
-            e_i: number; // 0 (E) - 100 (I)
-            s_n: number; // 0 (S) - 100 (N)
-            t_f: number; // 0 (T) - 100 (F)
-            j_p: number; // 0 (J) - 100 (P)
+            e_i: number; 
+            s_n: number; 
+            t_f: number; 
+            j_p: number; 
         }
     };
     observed_changes?: string[];
@@ -172,24 +174,22 @@ export interface ChatTheme {
     customCss?: string;
 }
 
-// New: Phone Custom App Definition
 export interface PhoneCustomApp {
     id: string;
     name: string;
-    icon: string; // Emoji
-    color: string; // hex or tailwind class
-    prompt: string; // "Show bank balance"
+    icon: string; 
+    color: string; 
+    prompt: string; 
 }
 
-// New: Phone Evidence Interface
 export interface PhoneEvidence {
     id: string;
-    type: 'chat' | 'order' | 'social' | 'delivery' | string; // Allow custom string types
+    type: 'chat' | 'order' | 'social' | 'delivery' | string; 
     title: string; 
     detail: string; 
     timestamp: number;
     systemMessageId?: number; 
-    value?: string; // For numeric/status data in custom apps
+    value?: string; 
 }
 
 export interface CharacterProfile {
@@ -208,12 +208,18 @@ export interface CharacterProfile {
   bubbleStyle?: string;
   chatBackground?: string;
   contextLimit?: number;
-  hideSystemLogs?: boolean; // New: Option to hide system context messages in chat
+  hideSystemLogs?: boolean; 
   
   dateBackground?: string;
   sprites?: Record<string, string>;
   spriteConfig?: SpriteConfig;
   
+  // New: Social App Identity
+  socialProfile?: {
+      handle: string; // The "Surfing Name" (网名)
+      bio?: string;   // Optional short bio for social app
+  };
+
   roomConfig?: {
       bgImage?: string;
       wallImage?: string;
@@ -228,10 +234,9 @@ export interface CharacterProfile {
   lastRoomDate?: string;
   savedRoomState?: RoomGeneratedState;
 
-  // New: Phone App State
   phoneState?: {
       records: PhoneEvidence[];
-      customApps?: PhoneCustomApp[]; // User created apps
+      customApps?: PhoneCustomApp[]; 
   };
 }
 
@@ -315,7 +320,33 @@ export interface Anniversary {
     lastThoughtGeneratedAt?: number;
 }
 
-export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system';
+// New Social Post Definition
+export interface SocialComment {
+    id: string;
+    authorName: string;
+    authorAvatar?: string;
+    content: string;
+    likes: number;
+    isCharacter?: boolean; // If true, links to a real char
+}
+
+export interface SocialPost {
+    id: string;
+    authorName: string;
+    authorAvatar: string;
+    title: string;
+    content: string;
+    images: string[]; // Use emojis or placeholder colors as images
+    likes: number;
+    isCollected: boolean;
+    isLiked: boolean;
+    comments: SocialComment[];
+    timestamp: number;
+    tags: string[];
+    bgStyle?: string; // CSS gradient for the 'image'
+}
+
+export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card';
 
 export interface Message {
     id: number;
@@ -325,7 +356,12 @@ export interface Message {
     type: MessageType;
     content: string;
     timestamp: number;
-    metadata?: any;
+    metadata?: any; // For social_card, this holds the post data
+    replyTo?: {
+        id: number;
+        content: string;
+        name: string;
+    };
 }
 
 export interface FullBackupData {
@@ -349,7 +385,8 @@ export interface FullBackupData {
     tasks?: Task[];
     anniversaries?: Anniversary[];
     roomTodos?: RoomTodo[]; 
-    roomNotes?: RoomNote[]; 
+    roomNotes?: RoomNote[];
+    socialPosts?: SocialPost[]; // Added Social Posts support
     
     mediaAssets?: {
         charId: string;

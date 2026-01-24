@@ -1,4 +1,6 @@
 
+
+
 import React, { useState, useEffect, useRef, useLayoutEffect, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
@@ -15,19 +17,63 @@ const PRESET_THEME_GROUP: ChatTheme = {
 };
 
 // --- Sub-Component: Group Message Bubble ---
-const GroupMessageItem = React.memo(({ msg, isUser, char, userAvatar, onImageClick }: { msg: Message, isUser: boolean, char?: CharacterProfile, userAvatar: string, onImageClick: (url: string) => void }) => {
+const GroupMessageItem = React.memo(({ 
+    msg, 
+    isUser, 
+    char, 
+    userAvatar, 
+    onImageClick, 
+    selectionMode, 
+    isSelected, 
+    onToggleSelect,
+    onLongPress 
+}: { 
+    msg: Message, 
+    isUser: boolean, 
+    char?: CharacterProfile, 
+    userAvatar: string, 
+    onImageClick: (url: string) => void,
+    selectionMode: boolean,
+    isSelected: boolean,
+    onToggleSelect: (id: number) => void,
+    onLongPress: (id: number) => void
+}) => {
     const avatar = isUser ? userAvatar : char?.avatar;
     const name = isUser ? '我' : char?.name || '未知成员';
+    const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     
     // Time formatting
     const timeStr = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    const handleTouchStart = () => {
+        longPressTimer.current = setTimeout(() => {
+            if (!selectionMode) onLongPress(msg.id);
+        }, 500);
+    };
+
+    const handleTouchEnd = () => {
+        if (longPressTimer.current) {
+            clearTimeout(longPressTimer.current);
+            longPressTimer.current = null;
+        }
+    };
+
+    const handleClick = (e: React.MouseEvent) => {
+        if (selectionMode) {
+            e.stopPropagation();
+            onToggleSelect(msg.id);
+        }
+    };
 
     // Special Content Renderers
     const renderContent = () => {
         switch (msg.type) {
             case 'image':
                 return (
-                    <div className="relative group cursor-pointer" onClick={() => onImageClick(msg.content)}>
+                    <div className="relative group cursor-pointer" onClick={(e) => {
+                        if (selectionMode) handleClick(e);
+                        else onImageClick(msg.content);
+                    }}>
                         <img src={msg.content} className="max-w-[200px] max-h-[200px] rounded-xl shadow-sm border border-black/5" loading="lazy" />
                     </div>
                 );
@@ -54,14 +100,29 @@ const GroupMessageItem = React.memo(({ msg, isUser, char, userAvatar, onImageCli
     };
 
     return (
-        <div className={`flex gap-3 mb-4 w-full animate-fade-in ${isUser ? 'justify-end' : 'justify-start'}`}>
+        <div 
+            className={`flex gap-3 mb-4 w-full animate-fade-in relative ${isUser ? 'justify-end' : 'justify-start'} ${selectionMode ? 'pl-8' : ''}`}
+            onTouchStart={handleTouchStart}
+            onTouchEnd={handleTouchEnd}
+            onMouseDown={handleTouchStart}
+            onMouseUp={handleTouchEnd}
+            onClick={handleClick}
+        >
+            {selectionMode && (
+                <div className="absolute left-0 top-1/2 -translate-y-1/2 cursor-pointer z-10">
+                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-violet-500 border-violet-500' : 'border-slate-300 bg-white'}`}>
+                        {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
+                    </div>
+                </div>
+            )}
+
             {!isUser && (
                 <div className="flex flex-col items-center gap-1 shrink-0">
                     <img src={avatar} className="w-9 h-9 rounded-full object-cover shadow-sm border border-white" loading="lazy" />
                 </div>
             )}
             
-            <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} max-w-[80%]`}>
+            <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} max-w-[80%] ${selectionMode ? 'pointer-events-none' : ''}`}>
                 {!isUser && <span className="text-[10px] text-slate-400 ml-1 mb-1">{name}</span>}
                 {renderContent()}
                 <span className="text-[9px] text-slate-300 mt-1 px-1">{timeStr}</span>
@@ -94,6 +155,10 @@ const GroupChat: React.FC = () => {
     const [isSummarizing, setIsSummarizing] = useState(false);
     const [summaryProgress, setSummaryProgress] = useState('');
     
+    // Selection Mode
+    const [selectionMode, setSelectionMode] = useState(false);
+    const [selectedMsgIds, setSelectedMsgIds] = useState<Set<number>>(new Set());
+
     // Data State
     const [emojis, setEmojis] = useState<{name: string, url: string}[]>([]);
     
@@ -119,10 +184,16 @@ const GroupChat: React.FC = () => {
 
     // Auto Scroll
     useLayoutEffect(() => {
-        if (scrollRef.current) {
+        if (scrollRef.current && !selectionMode) {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
         }
-    }, [messages.length, activeGroup, showActions, showEmojiPicker, isTyping]);
+    }, [messages.length, activeGroup, showActions, showEmojiPicker, isTyping, selectionMode]);
+
+    const canReroll = useMemo(() => {
+        if (isTyping || messages.length === 0) return false;
+        const lastMsg = messages[messages.length - 1];
+        return lastMsg.role === 'assistant';
+    }, [isTyping, messages]);
 
     // --- Helpers ---
 
@@ -157,6 +228,55 @@ const GroupChat: React.FC = () => {
         if (diffMins < 60) return '刚刚才私聊过';
         if (diffHours < 24) return `${diffHours}小时前私聊过`;
         return `${diffDays}天前私聊过`;
+    };
+
+    // --- Logic: Selection & Deletion ---
+
+    const handleMessageLongPress = (id: number) => {
+        setSelectionMode(true);
+        setSelectedMsgIds(new Set([id]));
+        setShowActions(false);
+        setShowEmojiPicker(false);
+    };
+
+    const toggleMessageSelection = (id: number) => {
+        const next = new Set(selectedMsgIds);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        setSelectedMsgIds(next);
+    };
+
+    const deleteSelectedMessages = async () => {
+        if (selectedMsgIds.size === 0) return;
+        await DB.deleteMessages(Array.from(selectedMsgIds));
+        setMessages(prev => prev.filter(m => !selectedMsgIds.has(m.id)));
+        setSelectionMode(false);
+        setSelectedMsgIds(new Set());
+        addToast(`已删除 ${selectedMsgIds.size} 条消息`, 'success');
+    };
+
+    const handleReroll = async () => {
+        if (!canReroll) return;
+        
+        const lastMsg = messages[messages.length - 1];
+        if (lastMsg.role !== 'assistant') return;
+
+        // Find all contiguous assistant messages at the end
+        const toDeleteIds: number[] = [];
+        let index = messages.length - 1;
+        while (index >= 0 && messages[index].role === 'assistant') {
+            toDeleteIds.push(messages[index].id);
+            index--;
+        }
+
+        if (toDeleteIds.length === 0) return;
+
+        await DB.deleteMessages(toDeleteIds);
+        const newHistory = messages.slice(0, index + 1);
+        setMessages(newHistory);
+        addToast('回溯对话中...', 'info');
+
+        triggerDirector(newHistory);
     };
 
     // --- Logic: Group Management ---
@@ -694,27 +814,47 @@ ${recentGroupMsgs}
     return (
         <div className="h-full w-full bg-[#f0f4f8] flex flex-col font-sans relative">
             {/* Header */}
-            <div className="h-24 bg-white/80 backdrop-blur-xl px-5 flex items-end pb-4 border-b border-slate-200/60 shrink-0 z-30 sticky top-0 shadow-sm">
-                <div className="flex items-center gap-3 w-full">
-                    <button onClick={() => setView('list')} className="p-2 -ml-2 rounded-full hover:bg-slate-100 active:bg-slate-200 transition-colors">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 text-slate-600"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
-                    </button>
-                    <div className="flex-1 min-w-0" onClick={() => { setTempGroupName(activeGroup?.name || ''); setModalType('settings'); }}>
-                        <h1 className="text-base font-bold text-slate-800 truncate flex items-center gap-1">
-                            {activeGroup?.name}
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3 text-slate-400"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" /></svg>
-                        </h1>
-                        <p className="text-[10px] text-slate-500 font-medium">{activeGroup?.members.length} 成员</p>
+            <div className="h-24 bg-white/80 backdrop-blur-xl px-5 flex items-end pb-4 border-b border-slate-200/60 shrink-0 z-30 sticky top-0 shadow-sm transition-all">
+                {selectionMode ? (
+                    <div className="flex items-center justify-between w-full">
+                        <button onClick={() => { setSelectionMode(false); setSelectedMsgIds(new Set()); }} className="text-sm font-bold text-slate-500 px-2 py-1">取消</button>
+                        <span className="text-sm font-bold text-slate-800">已选 {selectedMsgIds.size} 项</span>
+                        <div className="w-10"></div>
                     </div>
-                    {/* Manual Trigger Button (Only trigger, not send) */}
-                    <button 
-                        onClick={() => triggerDirector(messages)} 
-                        disabled={isTyping} 
-                        className={`p-2 rounded-full transition-all active:scale-90 ${isTyping ? 'bg-slate-100 text-slate-300' : 'bg-violet-100 text-violet-600 shadow-sm'}`}
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path fillRule="evenodd" d="M14.615 1.595a.75.75 0 0 1 .359.852L12.982 9.75h7.268a.75.75 0 0 1 .548 1.262l-10.5 11.25a.75.75 0 0 1-1.272-.71l1.992-7.302H3.75a.75.75 0 0 1-.548-1.262l10.5-11.25a.75.75 0 0 1 .914-.143Z" clipRule="evenodd" /></svg>
-                    </button>
-                </div>
+                ) : (
+                    <div className="flex items-center gap-3 w-full">
+                        <button onClick={() => setView('list')} className="p-2 -ml-2 rounded-full hover:bg-slate-100 active:bg-slate-200 transition-colors">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 text-slate-600"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
+                        </button>
+                        <div className="flex-1 min-w-0" onClick={() => { setTempGroupName(activeGroup?.name || ''); setModalType('settings'); }}>
+                            <h1 className="text-base font-bold text-slate-800 truncate flex items-center gap-1">
+                                {activeGroup?.name}
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3 text-slate-400"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" /></svg>
+                            </h1>
+                            <p className="text-[10px] text-slate-500 font-medium">{activeGroup?.members.length} 成员</p>
+                        </div>
+                        
+                        {/* Reroll Button (Context Aware) */}
+                        {canReroll && !isTyping && (
+                            <button 
+                                onClick={handleReroll} 
+                                className="p-2 rounded-full bg-slate-100 text-slate-500 hover:text-violet-600 transition-colors"
+                                title="重新生成回复"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+                            </button>
+                        )}
+
+                        {/* Manual Trigger Button (Only trigger, not send) */}
+                        <button 
+                            onClick={() => triggerDirector(messages)} 
+                            disabled={isTyping} 
+                            className={`p-2 rounded-full transition-all active:scale-90 ${isTyping ? 'bg-slate-100 text-slate-300' : 'bg-violet-100 text-violet-600 shadow-sm'}`}
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path fillRule="evenodd" d="M14.615 1.595a.75.75 0 0 1 .359.852L12.982 9.75h7.268a.75.75 0 0 1 .548 1.262l-10.5 11.25a.75.75 0 0 1-1.272-.71l1.992-7.302H3.75a.75.75 0 0 1-.548-1.262l10.5-11.25a.75.75 0 0 1 .914-.143Z" clipRule="evenodd" /></svg>
+                        </button>
+                    </div>
+                )}
             </div>
 
             {/* Messages Area */}
@@ -731,6 +871,10 @@ ${recentGroupMsgs}
                             char={char} 
                             userAvatar={userProfile.avatar} 
                             onImageClick={(url) => window.open(url, '_blank')}
+                            selectionMode={selectionMode}
+                            isSelected={selectedMsgIds.has(m.id)}
+                            onToggleSelect={toggleMessageSelection}
+                            onLongPress={handleMessageLongPress}
                         />
                     );
                 })}
@@ -747,48 +891,59 @@ ${recentGroupMsgs}
 
             {/* Redesigned Input Area (WeChat/iOS Style) */}
             <div className="bg-[#f0f2f5] border-t border-slate-200 pb-safe shrink-0 z-40 relative">
-                <div className="p-2 flex items-end gap-2">
-                    {/* Plus / Actions Button */}
-                    <button 
-                        onClick={() => { setShowActions(!showActions); setShowEmojiPicker(false); }}
-                        className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-transform ${showActions ? 'bg-slate-300 rotate-45' : 'bg-transparent hover:bg-slate-200'}`}
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-7 h-7 text-slate-600"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v6m3-3H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
-                    </button>
-
-                    {/* Input Field Container */}
-                    <div className="flex-1 bg-white rounded-xl flex items-end px-3 py-2 border border-slate-200 focus-within:border-violet-400 focus-within:ring-2 focus-within:ring-violet-100 transition-all">
-                        <textarea 
-                            rows={1} 
-                            value={input} 
-                            onChange={e => setInput(e.target.value)} 
-                            onKeyDown={e => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(input); }}} 
-                            className="flex-1 bg-transparent text-[16px] outline-none resize-none max-h-28 text-slate-800 placeholder:text-slate-400 py-1" 
-                            placeholder="Message..." 
-                            style={{ height: 'auto', minHeight: '24px' }} 
-                        />
-                        {/* Emoji Toggle inside input */}
+                {selectionMode ? (
+                    <div className="p-3 flex justify-center bg-white">
                         <button 
-                            onClick={() => { setShowEmojiPicker(!showEmojiPicker); setShowActions(false); }}
-                            className="p-1 -mr-1 ml-1 text-slate-400 hover:text-yellow-500 transition-colors shrink-0"
+                            onClick={deleteSelectedMessages} 
+                            className="w-full py-3 bg-red-500 text-white font-bold rounded-xl shadow-lg active:scale-95 transition-transform flex items-center justify-center gap-2"
                         >
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.182 15.182a4.5 4.5 0 0 1-6.364 0M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM9.75 9.75c0 .414-.168.75-.375.75S9 10.164 9 9.75 9.168 9 9.375 9s.375.336.375.75Zm-.375 0h.008v.015h-.008V9.75Zm5.625 0c0 .414-.168.75-.375.75s-.375-.336-.375-.75.168-.75.375-.75.375.336.375.75Zm-.375 0h.008v.015h-.008V9.75Z" /></svg>
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
+                            删除 ({selectedMsgIds.size})
                         </button>
                     </div>
-
-                    {/* Send Button */}
-                    {input.trim() ? (
+                ) : (
+                    <div className="p-2 flex items-end gap-2">
+                        {/* Plus / Actions Button */}
                         <button 
-                            onClick={() => handleSendMessage(input)} 
-                            className="h-9 px-4 bg-violet-500 text-white rounded-xl font-bold text-sm shadow-md active:scale-95 transition-all"
+                            onClick={() => { setShowActions(!showActions); setShowEmojiPicker(false); }}
+                            className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-transform ${showActions ? 'bg-slate-300 rotate-45' : 'bg-transparent hover:bg-slate-200'}`}
                         >
-                            发送
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-7 h-7 text-slate-600"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v6m3-3H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
                         </button>
-                    ) : (
-                        // Placeholder or maybe voice button in future, for now empty or minimal
-                        <div className="w-2"></div>
-                    )}
-                </div>
+
+                        {/* Input Field Container */}
+                        <div className="flex-1 bg-white rounded-xl flex items-end px-3 py-2 border border-slate-200 focus-within:border-violet-400 focus-within:ring-2 focus-within:ring-violet-100 transition-all">
+                            <textarea 
+                                rows={1} 
+                                value={input} 
+                                onChange={e => setInput(e.target.value)} 
+                                onKeyDown={e => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(input); }}} 
+                                className="flex-1 bg-transparent text-[16px] outline-none resize-none max-h-28 text-slate-800 placeholder:text-slate-400 py-1" 
+                                placeholder="Message..." 
+                                style={{ height: 'auto', minHeight: '24px' }} 
+                            />
+                            {/* Emoji Toggle inside input */}
+                            <button 
+                                onClick={() => { setShowEmojiPicker(!showEmojiPicker); setShowActions(false); }}
+                                className="p-1 -mr-1 ml-1 text-slate-400 hover:text-yellow-500 transition-colors shrink-0"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.182 15.182a4.5 4.5 0 0 1-6.364 0M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM9.75 9.75c0 .414-.168.75-.375.75S9 10.164 9 9.75 9.168 9 9.375 9s.375.336.375.75Zm-.375 0h.008v.015h-.008V9.75Zm5.625 0c0 .414-.168.75-.375.75s-.375-.336-.375-.75.168-.75.375-.75.375.336.375.75Zm-.375 0h.008v.015h-.008V9.75Z" /></svg>
+                            </button>
+                        </div>
+
+                        {/* Send Button */}
+                        {input.trim() ? (
+                            <button 
+                                onClick={() => handleSendMessage(input)} 
+                                className="h-9 px-4 bg-violet-500 text-white rounded-xl font-bold text-sm shadow-md active:scale-95 transition-all"
+                            >
+                                发送
+                            </button>
+                        ) : (
+                            <div className="w-2"></div>
+                        )}
+                    </div>
+                )}
 
                 {/* --- Action Drawer --- */}
                 {showActions && (

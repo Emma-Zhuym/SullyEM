@@ -1,14 +1,15 @@
 
 
+
 import { 
     CharacterProfile, ChatTheme, Message, UserProfile, 
     Task, Anniversary, DiaryEntry, RoomTodo, RoomNote, 
-    GalleryImage, FullBackupData, GroupProfile 
+    GalleryImage, FullBackupData, GroupProfile, SocialPost 
 } from '../types';
 
 const DB_NAME = 'AetherOS_Data';
 // CRITICAL FIX: Increment version to force `onupgradeneeded` for recent feature updates
-const DB_VERSION = 22; 
+const DB_VERSION = 24; 
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -24,7 +25,8 @@ const STORE_ANNIVERSARIES = 'anniversaries';
 const STORE_ROOM_TODOS = 'room_todos'; 
 const STORE_ROOM_NOTES = 'room_notes'; 
 const STORE_GROUPS = 'groups'; 
-const STORE_JOURNAL_STICKERS = 'journal_stickers'; // New Store for Journal App Stickers
+const STORE_JOURNAL_STICKERS = 'journal_stickers';
+const STORE_SOCIAL_POSTS = 'social_posts'; // New
 
 export interface ScheduledMessage {
     id: string;
@@ -108,6 +110,9 @@ const openDB = (): Promise<IDBDatabase> => {
 
       // Journal Stickers Store
       createStore(STORE_JOURNAL_STICKERS, { keyPath: 'name' });
+
+      // Social Posts Store
+      createStore(STORE_SOCIAL_POSTS, { keyPath: 'id' });
     };
   });
 };
@@ -264,6 +269,38 @@ export const DB = {
           request.onsuccess = () => resolve(request.result || []);
           request.onerror = () => reject(request.error);
       });
+  },
+
+  // --- Social Posts ---
+
+  getSocialPosts: async (): Promise<SocialPost[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_SOCIAL_POSTS)) return [];
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_SOCIAL_POSTS, 'readonly');
+          const store = transaction.objectStore(STORE_SOCIAL_POSTS);
+          const request = store.getAll();
+          request.onsuccess = () => resolve(request.result || []);
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  saveSocialPost: async (post: SocialPost): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_SOCIAL_POSTS, 'readwrite');
+      transaction.objectStore(STORE_SOCIAL_POSTS).put(post);
+  },
+
+  deleteSocialPost: async (id: string): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_SOCIAL_POSTS, 'readwrite');
+      transaction.objectStore(STORE_SOCIAL_POSTS).delete(id);
+  },
+
+  clearSocialPosts: async (): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_SOCIAL_POSTS, 'readwrite');
+      transaction.objectStore(STORE_SOCIAL_POSTS).clear();
   },
 
   // --- Other Stores (Emojis, Themes, etc.) ... Keeping them as is ---
@@ -608,7 +645,7 @@ export const DB = {
           });
       };
 
-      const [characters, messages, themes, emojis, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers] = await Promise.all([
+      const [characters, messages, themes, emojis, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts] = await Promise.all([
           getAllFromStore(STORE_CHARACTERS),
           getAllFromStore(STORE_MESSAGES),
           getAllFromStore(STORE_THEMES),
@@ -623,6 +660,7 @@ export const DB = {
           getAllFromStore(STORE_ROOM_NOTES),
           getAllFromStore(STORE_GROUPS),
           getAllFromStore(STORE_JOURNAL_STICKERS),
+          getAllFromStore(STORE_SOCIAL_POSTS),
       ]);
 
       const userProfile = userProfiles.length > 0 ? {
@@ -632,7 +670,7 @@ export const DB = {
       } : undefined;
 
       return {
-          characters, messages, customThemes: themes, savedEmojis: emojis, assets, galleryImages, userProfile, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, savedJournalStickers: journalStickers
+          characters, messages, customThemes: themes, savedEmojis: emojis, assets, galleryImages, userProfile, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, savedJournalStickers: journalStickers, socialPosts
       };
   },
 
@@ -644,7 +682,7 @@ export const DB = {
           STORE_CHARACTERS, STORE_MESSAGES, STORE_THEMES, STORE_EMOJIS, 
           STORE_ASSETS, STORE_GALLERY, STORE_USER, STORE_DIARIES, 
           STORE_TASKS, STORE_ANNIVERSARIES, STORE_ROOM_TODOS, STORE_ROOM_NOTES,
-          STORE_GROUPS, STORE_JOURNAL_STICKERS
+          STORE_GROUPS, STORE_JOURNAL_STICKERS, STORE_SOCIAL_POSTS
       ].filter(name => db.objectStoreNames.contains(name));
 
       const tx = db.transaction(availableStores, 'readwrite');
@@ -737,6 +775,7 @@ export const DB = {
       if (data.roomNotes) clearAndAdd(STORE_ROOM_NOTES, data.roomNotes);
       if (data.groups) clearAndAdd(STORE_GROUPS, data.groups);
       if (data.savedJournalStickers) clearAndAdd(STORE_JOURNAL_STICKERS, data.savedJournalStickers);
+      if (data.socialPosts) clearAndAdd(STORE_SOCIAL_POSTS, data.socialPosts);
       
       if (data.userProfile) {
           if (availableStores.includes(STORE_USER)) {

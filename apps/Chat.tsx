@@ -1,4 +1,6 @@
 
+
+
 import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB, ScheduledMessage } from '../utils/db';
@@ -148,6 +150,31 @@ const MessageItem = React.memo(({ msg: m, isFirstInGroup, isLastInGroup, activeT
             </div>
     );
 
+    // [New] Social Card Rendering
+    if (m.type === 'social_card' && m.metadata?.post) {
+        const post = m.metadata.post;
+        return commonLayout(
+            <div className="w-64 bg-white rounded-xl overflow-hidden shadow-sm border border-slate-100 cursor-pointer active:opacity-90 transition-opacity">
+                <div className="h-32 w-full flex items-center justify-center text-6xl relative overflow-hidden" style={{ background: post.bgStyle || '#fce7f3' }}>
+                    {post.images?.[0] || '📄'}
+                    <div className="absolute bottom-0 left-0 w-full p-2 bg-gradient-to-t from-black/30 to-transparent">
+                        <div className="text-white text-xs font-bold line-clamp-1">{post.title}</div>
+                    </div>
+                </div>
+                <div className="p-3">
+                    <div className="flex items-center gap-2 mb-2">
+                        <img src={post.authorAvatar} className="w-4 h-4 rounded-full" />
+                        <span className="text-[10px] text-slate-500">{post.authorName}</span>
+                    </div>
+                    <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">{post.content}</p>
+                    <div className="mt-2 pt-2 border-t border-slate-50 flex items-center gap-1 text-[10px] text-slate-400">
+                        <span className="text-red-400">Spark</span> • 笔记分享
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     if (m.type === 'transfer') {
         return commonLayout(
             <div className="w-64 bg-gradient-to-br from-amber-400 to-orange-500 rounded-2xl p-4 text-white shadow-lg relative overflow-hidden group active:scale-[0.98] transition-transform">
@@ -280,7 +307,15 @@ const MessageItem = React.memo(({ msg: m, isFirstInGroup, isLastInGroup, activeT
                 />
             )}
 
-            {/* Layer 3: Text Content */}
+            {/* Layer 3: Reply/Quote Block */}
+            {m.replyTo && (
+                <div className="relative z-10 mb-2 text-xs bg-black/5 p-2 rounded-lg border-l-2 border-current opacity-70 max-w-full flex flex-col gap-0.5">
+                    <span className="font-bold opacity-90">{m.replyTo.name}:</span>
+                    <span className="truncate opacity-80 italic">"{m.replyTo.content}"</span>
+                </div>
+            )}
+
+            {/* Layer 4: Text Content */}
             <div className="relative z-10 text-[15px] leading-relaxed break-words" style={{ color: styleConfig.textColor }}>
                 {renderContent(m.content)}
             </div>
@@ -307,6 +342,9 @@ const Chat: React.FC = () => {
     const scrollRef = useRef<HTMLDivElement>(null);
     const bgInputRef = useRef<HTMLInputElement>(null);
     const chatImageInputRef = useRef<HTMLInputElement>(null);
+
+    // Reply Logic
+    const [replyTarget, setReplyTarget] = useState<Message | null>(null);
 
     // Stats
     const [lastTokenUsage, setLastTokenUsage] = useState<number | null>(null);
@@ -345,6 +383,7 @@ const Chat: React.FC = () => {
             }
             setVisibleCount(30);
             setLastTokenUsage(null);
+            setReplyTarget(null); // Reset reply on char switch
         }
     }, [activeCharacterId]);
 
@@ -472,10 +511,12 @@ ${groupLogStr}
    - 【严禁】在输出中包含时间戳、名字前缀或"[角色名]:"。
    - **【严禁】模仿历史记录中的系统日志格式（如"[你 发送了...]"）。**
    - **发送表情包**: 必须且只能使用命令: \`[[SEND_EMOJI: 表情名称]]\`。可用表情: [${emojiNames || '无'}]。
-4. **环境感知**:
+4. **引用功能 (Quote/Reply)**:
+   - 如果你想专门回复用户某句具体的话，可以在回复开头使用: \`[[QUOTE: 引用内容]]\`。这会在UI上显示为对该消息的引用。
+5. **环境感知**:
    - 留意 [系统提示] 中的时间跨度。如果用户消失了很久，请根据你们的关系做出反应（如撒娇、生气、担心或冷漠）。
    - 如果用户发送了图片，请对图片内容进行评论。
-5. **可用动作**:
+6. **可用动作**:
    - 回戳用户: \`[[ACTION:POKE]]\`
    - 转账: \`[[ACTION:TRANSFER:100]]\`
    - 调取记忆: \`[[RECALL: YYYY-MM]]\`，请注意，当用户提及具体某个月份时，或者当你想仔细想某个月份的事情时，欢迎你随时使该动作
@@ -525,6 +566,11 @@ ${groupLogStr}
                 let content: any = m.content;
                 const timeStr = `[${formatDate(m.timestamp)}]`;
                 
+                // Inject Reply Context
+                if (m.replyTo) {
+                    content = `[回复 "${m.replyTo.content.substring(0, 50)}..."]: ${content}`;
+                }
+
                 if (m.type === 'image') {
                      let textPart = `${timeStr} [User sent an image]`;
                      if (index === msgs.length - 1 && timeGapHint && m.role === 'user') {
@@ -543,6 +589,12 @@ ${groupLogStr}
 
                 if (m.type === 'interaction') content = `${timeStr} [系统: 用户戳了你一下]`; 
                 else if (m.type === 'transfer') content = `${timeStr} [系统: 用户转账 ${m.metadata?.amount}]`;
+                // [NEW] Social Card Interpretation
+                else if (m.type === 'social_card') {
+                    const post = m.metadata?.post || {};
+                    const commentsSample = (post.comments || []).map((c: any) => `${c.authorName}: ${c.content}`).join(' | ');
+                    content = `${timeStr} [用户分享了 Spark 笔记]\n标题: ${post.title}\n内容: ${post.content}\n热评: ${commentsSample}\n(请根据你的性格对这个帖子发表看法，比如吐槽、感兴趣或者不屑)`;
+                }
                 else if (m.type === 'emoji') {
                      const stickerName = emojis.find(e => e.url === m.content)?.name || 'Image/Sticker';
                      content = `${timeStr} [${m.role === 'user' ? '用户' : '你'} 发送了表情包: ${stickerName}]`;
@@ -691,6 +743,23 @@ ${groupLogStr}
             }
             aiContent = aiContent.replace(scheduleRegex, '').trim();
 
+            // Extract Quote if AI used it
+            let aiReplyTarget: { id: number, content: string, name: string } | undefined;
+            const quoteMatch = aiContent.match(/\[\[QUOTE:\s*(.*?)\]\]/);
+            if (quoteMatch) {
+                const quotedText = quoteMatch[1];
+                // Find matching user message in recent history (approximate)
+                const targetMsg = historySlice.reverse().find(m => m.role === 'user' && m.content.includes(quotedText));
+                if (targetMsg) {
+                    aiReplyTarget = {
+                        id: targetMsg.id,
+                        content: targetMsg.content,
+                        name: userProfile.name
+                    };
+                }
+                aiContent = aiContent.replace(quoteMatch[0], '').trim();
+            }
+
             aiContent = aiContent.replace(/\[\[RECALL:.*?\]\]/g, '').trim();
             
             if (aiContent) {
@@ -715,7 +784,11 @@ ${groupLogStr}
                     const chunk = finalChunks[i];
                     const delay = Math.min(Math.max(chunk.length * 50, 500), 2000);
                     await new Promise(r => setTimeout(r, delay));
-                    await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: chunk });
+                    
+                    // Only attach reply to first chunk if multiple
+                    const replyData = i === 0 ? aiReplyTarget : undefined;
+                    
+                    await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: chunk, replyTo: replyData });
                     setMessages(await DB.getMessagesByCharId(char.id));
                 }
             } else {
@@ -796,6 +869,16 @@ ${groupLogStr}
         setModalType('none');
         setSelectedMessage(null);
         addToast('消息已修改', 'success');
+    };
+
+    const handleReplyMessage = () => {
+        if (!selectedMessage) return;
+        setReplyTarget({
+            ...selectedMessage,
+            // Assuming current view is for char chat, name depends on role
+            metadata: { ...selectedMessage.metadata, senderName: selectedMessage.role === 'user' ? '我' : char.name }
+        });
+        setModalType('none');
     };
 
     const handleClearHistory = async () => {
@@ -980,7 +1063,19 @@ ${rawLog.substring(0, 10000)}
             addToast('图片已保存至相册', 'info');
         }
 
-        await DB.saveMessage({ charId: char.id, role: 'user', type, content: text, metadata });
+        const msgPayload: any = { charId: char.id, role: 'user', type, content: text, metadata };
+        
+        // Attach reply context
+        if (replyTarget) {
+            msgPayload.replyTo = {
+                id: replyTarget.id,
+                content: replyTarget.content,
+                name: replyTarget.role === 'user' ? '我' : char.name
+            };
+            setReplyTarget(null); // Clear reply target after sending
+        }
+
+        await DB.saveMessage(msgPayload);
         const updatedMsgs = await DB.getMessagesByCharId(char.id);
         setMessages(updatedMsgs);
         setShowPanel('none');
@@ -1096,7 +1191,10 @@ ${rawLog.substring(0, 10000)}
                 isOpen={modalType === 'message-options'} title="消息操作" onClose={() => setModalType('none')}
             >
                 <div className="space-y-3">
-                    <p className="text-xs text-slate-400 px-1 mb-2">对选中的消息进行操作。</p>
+                    <button onClick={handleReplyMessage} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" /></svg>
+                        引用 / 回复
+                    </button>
                     {selectedMessage?.type === 'text' && (
                         <button onClick={handleEditMessage} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" /></svg>
@@ -1211,6 +1309,19 @@ ${rawLog.substring(0, 10000)}
 
             <div className="bg-white/90 backdrop-blur-2xl border-t border-slate-200/50 pb-safe shrink-0 z-40 shadow-[0_-5px_15px_rgba(0,0,0,0.02)] relative">
                 
+                {/* Reply Banner */}
+                {replyTarget && (
+                    <div className="flex items-center justify-between px-4 py-2 bg-slate-50 border-b border-slate-200 text-xs text-slate-500">
+                        <div className="flex items-center gap-2 truncate">
+                            <span className="font-bold text-slate-700">正在回复:</span>
+                            <span className="truncate max-w-[200px]">{replyTarget.content}</span>
+                        </div>
+                        <button onClick={() => setReplyTarget(null)} className="p-1 text-slate-400 hover:text-slate-600">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" /></svg>
+                        </button>
+                    </div>
+                )}
+
                 <div className="p-3 px-4 flex gap-3 items-end">
                     <button onClick={() => setShowPanel(showPanel === 'actions' ? 'none' : 'actions')} className="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-colors"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg></button>
                     <div className="flex-1 bg-slate-100 rounded-[24px] flex items-center px-1 border border-transparent focus-within:bg-white focus-within:border-primary/30 transition-all">
