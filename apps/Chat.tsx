@@ -1,8 +1,3 @@
-
-
-
-
-
 import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB, ScheduledMessage } from '../utils/db';
@@ -47,10 +42,18 @@ const MessageItem = React.memo(({ msg: m, isFirstInGroup, isLastInGroup, activeT
     const isSystem = m.role === 'system';
     const marginBottom = isLastInGroup ? 'mb-6' : 'mb-1.5';
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const startPos = useRef({ x: 0, y: 0 }); // Track touch start position
 
     const styleConfig = isUser ? activeTheme.user : activeTheme.ai;
 
-    const handleTouchStart = () => {
+    const handleTouchStart = (e: React.TouchEvent | React.MouseEvent) => {
+        // Record initial position
+        if ('touches' in e) {
+            startPos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        } else {
+            startPos.current = { x: e.clientX, y: e.clientY };
+        }
+        
         longPressTimer.current = setTimeout(() => onLongPress(m), 600);
     };
 
@@ -61,12 +64,38 @@ const MessageItem = React.memo(({ msg: m, isFirstInGroup, isLastInGroup, activeT
         }
     };
 
+    // New handler to cancel long press if user drags/scrolls
+    const handleMove = (e: React.TouchEvent | React.MouseEvent) => {
+        if (!longPressTimer.current) return;
+
+        let clientX, clientY;
+        if ('touches' in e) {
+            clientX = e.touches[0].clientX;
+            clientY = e.touches[0].clientY;
+        } else {
+            clientX = e.clientX;
+            clientY = e.clientY;
+        }
+
+        const diffX = Math.abs(clientX - startPos.current.x);
+        const diffY = Math.abs(clientY - startPos.current.y);
+
+        // If moved more than 10px, assume scrolling and cancel long press
+        if (diffX > 10 || diffY > 10) {
+            clearTimeout(longPressTimer.current);
+            longPressTimer.current = null;
+        }
+    };
+
     const interactionProps = {
         onMouseDown: handleTouchStart,
         onMouseUp: handleTouchEnd,
         onMouseLeave: handleTouchEnd,
+        onMouseMove: handleMove,
         onTouchStart: handleTouchStart,
         onTouchEnd: handleTouchEnd,
+        onTouchMove: handleMove,
+        onTouchCancel: handleTouchEnd, // Handle system interruptions
         onContextMenu: (e: React.MouseEvent) => {
             e.preventDefault();
             onLongPress(m);

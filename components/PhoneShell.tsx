@@ -2,6 +2,8 @@
 
 
 
+
+
 import React, { useEffect } from 'react';
 import { useOS } from '../context/OSContext';
 import StatusBar from './os/StatusBar';
@@ -20,7 +22,8 @@ import ScheduleApp from '../apps/ScheduleApp';
 import RoomApp from '../apps/RoomApp'; 
 import CheckPhone from '../apps/CheckPhone';
 import SocialApp from '../apps/SocialApp'; 
-import StudyApp from '../apps/StudyApp'; // New
+import StudyApp from '../apps/StudyApp'; 
+import FAQApp from '../apps/FAQApp'; // New Import
 import { AppID } from '../types';
 import { App as CapApp } from '@capacitor/app';
 import { StatusBar as CapStatusBar, Style as StatusBarStyle } from '@capacitor/status-bar';
@@ -168,7 +171,8 @@ const PhoneShell: React.FC = () => {
       case AppID.Room: return <RoomApp />; 
       case AppID.CheckPhone: return <CheckPhone />;
       case AppID.Social: return <SocialApp />;
-      case AppID.Study: return <StudyApp />; // New
+      case AppID.Study: return <StudyApp />; 
+      case AppID.FAQ: return <FAQApp />; // Render FAQ App
       case AppID.Launcher:
       default: return <Launcher />;
     }

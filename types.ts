@@ -17,7 +17,8 @@ export enum AppID {
   Room = 'room',
   CheckPhone = 'check_phone',
   Social = 'social',
-  Study = 'study', // New App
+  Study = 'study',
+  FAQ = 'faq', // New App
 }
 
 export interface SystemLog {
