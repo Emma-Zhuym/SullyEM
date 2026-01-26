@@ -615,7 +615,7 @@ ${recentGroupMsgs}
                     model: apiConfig.model,
                     messages: [{ role: "user", content: prompt }],
                     temperature: 0.9, // High creativity for banter
-                    max_tokens: 4000
+                    max_tokens: 8000
                 })
             });
 

@@ -162,7 +162,7 @@ const ScheduleApp: React.FC = () => {
                     model: apiConfig.model,
                     messages: messages,
                     temperature: 0.9, 
-                    max_tokens: 2000 
+                    max_tokens: 8000 
                 })
             });
 
@@ -245,7 +245,7 @@ const ScheduleApp: React.FC = () => {
                     model: apiConfig.model,
                     messages: messages,
                     temperature: 0.8,
-                    max_tokens: 2000
+                    max_tokens: 8000
                 })
             });
 

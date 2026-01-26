@@ -373,7 +373,7 @@ For each chapter, provide a title, a brief summary of what it covers, and a diff
                 model: apiConfig.model,
                 messages: [{ role: "user", content: prompt }],
                 temperature: 0.5,
-                max_tokens: 4000
+                max_tokens: 8000
             })
         });
 
@@ -605,7 +605,7 @@ Answer the question based on the source material. Be helpful and encouraging (in
                     model: apiConfig.model,
                     messages: [{ role: "user", content: prompt }],
                     temperature: 0.7,
-                    max_tokens: 4000
+                    max_tokens: 8000
                 })
             });
             

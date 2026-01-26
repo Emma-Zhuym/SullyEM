@@ -1045,7 +1045,7 @@ ${rawLog.substring(0, 200000)}
                         model: apiConfig.model,
                         messages: [{ role: "user", content: prompt }],
                         temperature: 0.5,
-                        max_tokens: 4000 
+                        max_tokens: 8000 
                     })
                 });
 

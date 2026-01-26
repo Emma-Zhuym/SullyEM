@@ -73,7 +73,7 @@ Style: Casual, conversational, strictly NO AI-assistant tone. React as if you re
                     }
                 ],
                 // 关键修复：增加 max_tokens，防止推理模型(Reasoning Models)在思考阶段耗尽Token导致content为空
-                max_tokens: 3000, 
+                max_tokens: 8000, 
                 temperature: 0.7,
                 stream: false // 显式关闭流式传输以简化处理
             };

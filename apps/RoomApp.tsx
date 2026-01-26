@@ -380,7 +380,7 @@ const RoomApp: React.FC = () => {
                     model: apiConfig.model, 
                     messages: [{ role: "user", content: fallbackPrompt }], 
                     temperature: 0.5,
-                    max_tokens: 200 // Keep it tiny
+                    max_tokens: 8000 // Keep it tiny
                 })
             });
 
@@ -524,7 +524,7 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                     model: apiConfig.model, 
                     messages: [{ role: "user", content: prompt }], 
                     temperature: 0.5, // Lower temp for stability
-                    max_tokens: 3000,
+                    max_tokens: 8000,
                     // Safety Settings injection for Gemini-based proxies
                     safetySettings: [
                         { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
