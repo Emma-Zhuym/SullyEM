@@ -211,7 +211,7 @@ const GameApp: React.FC = () => {
                     model: apiConfig.model,
                     messages: [{ role: "user", content: prompt }],
                     temperature: 0.9, 
-                    max_tokens: 4000
+                    max_tokens: 8000
                 })
             });
 
@@ -414,7 +414,7 @@ ${contextLogs.slice(-15).map(l => `[${l.role === 'gm' ? 'GM' : (l.speakerName ||
                     model: apiConfig.model,
                     messages: [{ role: "user", content: prompt }],
                     temperature: 0.85, 
-                    max_tokens: 4000
+                    max_tokens: 8000
                 })
             });
 
