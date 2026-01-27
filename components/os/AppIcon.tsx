@@ -12,7 +12,7 @@ interface AppIconProps {
   variant?: 'default' | 'minimal' | 'dock';
 }
 
-const AppIcon: React.FC<AppIconProps> = ({ app, onClick, size = 'md', hideLabel = false, variant = 'default' }) => {
+const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md', hideLabel = false, variant = 'default' }) => {
   const { customIcons, theme } = useOS();
   const IconComponent = Icons[app.icon] || Icons.Settings;
   const customIconUrl = customIcons[app.id];
@@ -24,7 +24,8 @@ const AppIcon: React.FC<AppIconProps> = ({ app, onClick, size = 'md', hideLabel 
   return (
     <button 
       onClick={onClick}
-      className="flex flex-col items-center gap-1.5 group relative"
+      className="flex flex-col items-center gap-1.5 group relative active:scale-95 transition-transform duration-200"
+      style={{ WebkitTapHighlightColor: 'transparent' }}
     >
       {/* Container: Glass Prism with internal glow */}
       <div className={`${sizeClasses} relative flex items-center justify-center 
@@ -32,18 +33,17 @@ const AppIcon: React.FC<AppIconProps> = ({ app, onClick, size = 'md', hideLabel 
         border-t border-l border-white/40 border-b border-r border-white/10
         shadow-[0_8px_16px_rgba(0,0,0,0.2)]
         transition-all duration-300
-        group-hover:bg-white/20 group-hover:scale-105 group-hover:shadow-[0_0_20px_rgba(255,255,255,0.3)] group-hover:border-white/60
-        group-active:scale-95
+        group-hover:bg-white/20 group-hover:shadow-[0_0_20px_rgba(255,255,255,0.3)] group-hover:border-white/60
       `}>
         
-        {/* Shine effect */}
+        {/* Shine effect - Optimized: Only show on hover/active to save GPU on mobile idle */}
         <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/10 to-transparent rounded-[1.2rem] opacity-0 group-hover:opacity-100 transition-opacity"></div>
 
         {customIconUrl ? (
-            <img src={customIconUrl} className="w-full h-full object-cover rounded-[1.2rem]" alt={app.name} />
+            <img src={customIconUrl} className="w-full h-full object-cover rounded-[1.2rem]" alt={app.name} loading="lazy" />
         ) : (
             <div 
-                className="w-[50%] h-[50%] drop-shadow-[0_2px_5px_rgba(0,0,0,0.3)] opacity-90 group-hover:opacity-100 transition-opacity"
+                className="w-[50%] h-[50%] drop-shadow-[0_2px_5px_rgba(0,0,0,0.3)] opacity-90"
                 style={{ color: contentColor }}
             >
                  <IconComponent className="w-full h-full" />
@@ -53,7 +53,7 @@ const AppIcon: React.FC<AppIconProps> = ({ app, onClick, size = 'md', hideLabel 
       
       {!hideLabel && (
         <span 
-            className={`text-[10px] font-bold tracking-widest uppercase opacity-80 group-hover:opacity-100 text-shadow-md transition-opacity ${variant === 'dock' ? 'hidden' : 'block'}`}
+            className={`text-[10px] font-bold tracking-widest uppercase opacity-80 text-shadow-md transition-opacity ${variant === 'dock' ? 'hidden' : 'block'}`}
             style={{ color: contentColor }}
         >
           {app.name}
@@ -61,6 +61,13 @@ const AppIcon: React.FC<AppIconProps> = ({ app, onClick, size = 'md', hideLabel 
       )}
     </button>
   );
-};
+}, (prev, next) => {
+    // Custom comparison to prevent re-render unless specific props change
+    // We don't check 'onClick' deeply assuming it's stable or we want to ignore function ref changes
+    return prev.app.id === next.app.id && 
+           prev.size === next.size && 
+           prev.hideLabel === next.hideLabel &&
+           prev.variant === next.variant;
+});
 
 export default AppIcon;

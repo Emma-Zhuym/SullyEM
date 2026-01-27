@@ -1,4 +1,6 @@
 
+
+
 import { CharacterProfile, UserProfile } from '../types';
 
 /**
@@ -29,6 +31,28 @@ export const ContextBuilder = {
         // 2. 世界观 (Worldview) - New Centralized Logic
         if (char.worldview && char.worldview.trim()) {
             context += `### 世界观与设定 (World Settings)\n${char.worldview}\n\n`;
+        }
+
+        // [NEW] 挂载的世界书 (Mounted Worldbooks) - GROUPED BY CATEGORY
+        if (char.mountedWorldbooks && char.mountedWorldbooks.length > 0) {
+            context += `### 扩展设定集 (Worldbooks)\n`;
+            
+            // Group books by category
+            const groupedBooks: Record<string, typeof char.mountedWorldbooks> = {};
+            char.mountedWorldbooks.forEach(wb => {
+                const cat = wb.category || '通用设定 (General)';
+                if (!groupedBooks[cat]) groupedBooks[cat] = [];
+                groupedBooks[cat].push(wb);
+            });
+
+            // Output grouped content
+            Object.entries(groupedBooks).forEach(([category, books]) => {
+                context += `#### [${category}]\n`;
+                books.forEach(wb => {
+                    context += `**Title: ${wb.title}**\n${wb.content}\n---\n`;
+                });
+                context += `\n`;
+            });
         }
 
         // 3. 用户画像 (User Profile)

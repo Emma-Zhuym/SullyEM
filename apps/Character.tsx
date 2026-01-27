@@ -1,3 +1,6 @@
+
+
+
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
 import { AppID, CharacterProfile, MemoryFragment, Message, UserImpression, CharacterExportData } from '../types';
@@ -32,7 +35,6 @@ const CharacterCard: React.FC<{
                 </p>
             </div>
         </div>
-        {/* FIX: Removed opacity-0 to make it visible on mobile, added visual cues */}
         <button 
             onClick={onDelete}
             className="absolute top-3 right-3 p-2 rounded-full text-slate-300 hover:bg-red-50 hover:text-red-400 active:bg-red-100 active:text-red-500 transition-all z-10"
@@ -466,7 +468,7 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
 // --- Main Character App ---
 
 const Character: React.FC = () => {
-  const { closeApp, openApp, characters, activeCharacterId, setActiveCharacterId, addCharacter, updateCharacter, deleteCharacter, apiConfig, addToast, userProfile, customThemes, addCustomTheme } = useOS();
+  const { closeApp, openApp, characters, activeCharacterId, setActiveCharacterId, addCharacter, updateCharacter, deleteCharacter, apiConfig, addToast, userProfile, customThemes, addCustomTheme, worldbooks } = useOS();
   const [view, setView] = useState<'list' | 'detail'>('list');
   const [detailTab, setDetailTab] = useState<'identity' | 'memory' | 'impression'>('identity');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -479,7 +481,8 @@ const Character: React.FC = () => {
   const [showImportModal, setShowImportModal] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [showBatchModal, setShowBatchModal] = useState(false); 
-  const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<string | null>(null); // New state for delete confirmation
+  const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<string | null>(null);
+  const [showWorldbookModal, setShowWorldbookModal] = useState(false); // New Modal
 
   const [importText, setImportText] = useState('');
   const [exportText, setExportText] = useState('');
@@ -501,7 +504,7 @@ const Character: React.FC = () => {
             if (target) setFormData(target);
         }
     }
-  }, [editingId, view]); 
+  }, [editingId, view, characters]); // Reload when characters update (e.g. from Worldbook sync)
 
   useEffect(() => {
     if (formData && editingId) {
@@ -521,6 +524,68 @@ const Character: React.FC = () => {
       setFormData({ ...formData, [field]: value });
   };
 
+  // Worldbook Logic
+  const mountWorldbook = (bookId: string) => {
+      if (!formData) return;
+      const book = worldbooks.find(b => b.id === bookId);
+      if (!book) return;
+
+      const currentBooks = formData.mountedWorldbooks || [];
+      if (currentBooks.some(b => b.id === book.id)) {
+          addToast('已挂载该世界书', 'info');
+          return;
+      }
+
+      // CACHE THE CONTENT, include category
+      const newBookEntry = { 
+          id: book.id, 
+          title: book.title, 
+          content: book.content,
+          category: book.category 
+      };
+      handleChange('mountedWorldbooks', [...currentBooks, newBookEntry]);
+      setShowWorldbookModal(false);
+      addToast(`已挂载: ${book.title}`, 'success');
+  };
+
+  // New: Mount entire category
+  const mountCategory = (category: string) => {
+      if (!formData) return;
+      const booksToMount = worldbooks.filter(b => (b.category || '未分类设定 (General)') === category);
+      if (booksToMount.length === 0) return;
+
+      const currentBooks = formData.mountedWorldbooks || [];
+      const newEntries = [];
+      let addedCount = 0;
+
+      for (const book of booksToMount) {
+          if (!currentBooks.some(b => b.id === book.id)) {
+              newEntries.push({
+                  id: book.id,
+                  title: book.title,
+                  content: book.content,
+                  category: book.category
+              });
+              addedCount++;
+          }
+      }
+
+      if (addedCount > 0) {
+          handleChange('mountedWorldbooks', [...currentBooks, ...newEntries]);
+          addToast(`已批量挂载 ${addedCount} 本世界书`, 'success');
+      } else {
+          addToast('该组世界书已全部挂载', 'info');
+      }
+      setShowWorldbookModal(false);
+  };
+
+  const unmountWorldbook = (bookId: string) => {
+      if (!formData) return;
+      const currentBooks = formData.mountedWorldbooks || [];
+      handleChange('mountedWorldbooks', currentBooks.filter(b => b.id !== bookId));
+  };
+
+  // ... (Other handlers unchanged)
   const handleToggleActiveMonth = (year: string, month: string) => {
       if (!formData) return;
       const key = `${year}-${month}`;
@@ -546,13 +611,13 @@ const Character: React.FC = () => {
       }
   };
   
-  // Re-implementing them briefly to ensure context validity
   const handleRefineMonth = async (year: string, month: string, rawText: string) => {
       if (!apiConfig.apiKey) { addToast('请先配置 API Key', 'error'); return; }
       const prompt = `Task: Summarize the following logs (${year}-${month}) into a concise memory. Language: Same as logs (Chinese). ${rawText.substring(0, 5000)}`;
       try {
           const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
               body: JSON.stringify({ model: apiConfig.model, messages: [{ role: "user", content: prompt }], temperature: 0.3 })
           });
           if (!response.ok) throw new Error('API Request failed');
@@ -577,7 +642,6 @@ const Character: React.FC = () => {
         
         try {
             const msgs = await DB.getMessagesByCharId(formData.id);
-             // 【新增这行】：定义一个过滤后的列表
         const validMsgs = msgs.filter(m => !formData.hideBeforeMessageId || m.id >= formData.hideBeforeMessageId);
             const msgsByDate: Record<string, Message[]> = {};
             
@@ -598,7 +662,6 @@ const Character: React.FC = () => {
             const dates = Object.keys(msgsByDate).sort();
             const newMemories: MemoryFragment[] = [];
 
-            // Build Context once
             const baseContext = ContextBuilder.buildCoreContext(formData, userProfile);
 
             for (let i = 0; i < dates.length; i++) {
@@ -608,7 +671,6 @@ const Character: React.FC = () => {
                 const dayMsgs = msgsByDate[date];
                 const rawLog = dayMsgs.map(m => {
                     const time = new Date(m.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', hour12: false});
-                    // FIX: Filter out heavy base64 data from logs sent to LLM
                     let content = m.content;
                     if (m.type === 'image') content = '[图片/Image]';
                     if (m.type === 'emoji') content = `[表情包: ${m.content.split('/').pop() || 'sticker'}]`;
@@ -659,7 +721,7 @@ ${rawLog.substring(0, 200000)}
                 if (response.ok) {
                     const data = await response.json();
                     let summary = data.choices?.[0]?.message?.content || '';
-                    summary = summary.replace(/^["']|["']$/g, '').trim(); // Clean quotes
+                    summary = summary.replace(/^["']|["']$/g, '').trim(); 
                     
                     if (summary) {
                         newMemories.push({
@@ -687,10 +749,7 @@ ${rawLog.substring(0, 200000)}
         }
     };
 
-  // --- Impression Logic ---
-  
   const handleGenerateImpression = async (type: 'initial' | 'update') => {
-      // ... (Implementation kept same)
       if (!formData || !apiConfig.apiKey) {
           addToast('请先配置 API Key', 'error');
           return;
@@ -701,12 +760,10 @@ ${rawLog.substring(0, 200000)}
           const charName = formData.name;
           const boundUser = userProfile;
           
-          // 1. 获取近期聊天记录 (Used for "Current State" and "Changes")
           let messagesToAnalyze = "";
           const msgs = await DB.getMessagesByCharId(formData.id);
-          const recentMsgs = msgs.slice(-50); // Reduced to 50 to focus on immediate context
+          const recentMsgs = msgs.slice(-50); 
           const msgText = recentMsgs.map(m => {
-              // Also filter images in impression generation to save tokens
               let content = m.content;
               if (m.type === 'image') content = '[图片]';
               return `${m.role === 'user' ? boundUser.name : charName}: ${content}`;
@@ -714,13 +771,10 @@ ${rawLog.substring(0, 200000)}
           
           if (msgText) messagesToAnalyze += `\n【最近的聊天记录 (Recent Chats)】:\n${msgText}\n`;
           
-          // 2. 获取长期记忆 (CORE SOURCE OF IMPRESSION)
           const mems = formData.memories || [];
           let memoryText = "";
           if (mems.length > 0) {
-              // Use ALL memories if possible, or a large chunk
-              const sortedMems = [...mems].sort((a,b) => b.date.localeCompare(a.date)); // Newest first
-              // Take up to 100 entries or fit context
+              const sortedMems = [...mems].sort((a,b) => b.date.localeCompare(a.date));
               memoryText = sortedMems.slice(0, 100).map(m => `[${m.date}] ${m.summary}`).join('\n');
               messagesToAnalyze += `\n【长期记忆库 (Long-Term Memories)】:\n${memoryText}\n`;
           }
@@ -752,35 +806,6 @@ ${messagesToAnalyze}
 
 分析指令：五维画像更新 (第一人称视角)
 根据【强制对比协议】和你自己的视角，分析新消息，并${isInitialGeneration ? '【生成】' : '【增量更新】'}以下JSON结构。
-
-第一维：价值地图 (Value Map)
-你对你家${boundUser?.name || 'TA'}的喜好、厌恶有没有什么新发现？
-你觉得TA的【核心价值观】(core_values)是什么？（例如：我感觉TA很重视公平...）
-
-第二维：情绪图谱 (Emotion Schema)
-【情绪触发器】(triggers)：你注意到什么事会立刻让TA开心？什么话题会立刻让TA沉默或反感？
-【压力信号】(stress_signals)：你发现TA在紧张或焦虑时，会表现出什么小动作或口头禅？
-【舒适区】(comfort_zone)：你感觉TA在什么状态下最放松？
-
-第三维：行为档案 (Behavior Profile) - **重点参考近期聊天**
-【情绪总结】(emotion_summary)：你该如何总结TA${isInitialGeneration ? '的' : '最近的'}【整体情绪状态】？例如："我感觉TA最近对工作感到焦虑..."
-【回应模式】(response_patterns)：你该如何总结TA在不同情绪下的典型回应方式？
-【语气风格】(tone_style)：你如何评价TA的沟通风格？
-
-第四维：性格核心 (Personality Core) - **重点参考长期记忆**
-【性格特质】(observed_traits)：你观察到了TA的哪些具体性格特点？
-【互动风格】(interaction_style)：TA在和你互动时，倾向于扮演什么角色？
-【核心总结】(summary)：${summaryInstruction}
-
-第五维：MBTI 侧写 (MBTI Analysis) - **NEW**
-像一个心理侧写师一样，根据TA的所有行为，推测TA的 MBTI 人格类型。
-- 给出你认为最可能的 **Type** (如 INFP)。
-- 给出 **四个维度的倾向值 (0-100)**:
-  - E_I: 0 (Extrovert) 到 100 (Introvert)
-  - S_N: 0 (Sensing) 到 100 (Intuition)
-  - T_F: 0 (Thinking) 到 100 (Feeling)
-  - J_P: 0 (Judging) 到 100 (Perceiving)
-- 给出 **你的推理 (Reasoning)**: 用你的口吻解释为什么你觉得他是这个类型。
 
 输出JSON结构v3.0（严格遵守, 不要用markdown代码块包裹，直接返回JSON）
 {
@@ -861,8 +886,6 @@ ${messagesToAnalyze}
       }
   };
 
-  // --- Character Card Import/Export ---
-
   const handleExportCard = async () => {
       if (!formData) return;
       
@@ -877,7 +900,6 @@ ${messagesToAnalyze}
           type: 'sully_character_card'
       };
 
-      // Check if bubble style is custom and embed it
       if (formData.bubbleStyle) {
           const customTheme = customThemes.find(t => t.id === formData.bubbleStyle);
           if (customTheme) {
@@ -887,7 +909,6 @@ ${messagesToAnalyze}
 
       const json = JSON.stringify(exportData, null, 2);
       
-      // Native Platform Handling (Fix for "App" encapsulation)
       if (Capacitor.isNativePlatform()) {
           try {
               const fileName = `${formData.name || 'Character'}_Card.json`;
@@ -911,7 +932,6 @@ ${messagesToAnalyze}
               addToast('导出失败，请检查权限', 'error');
           }
       } else {
-          // Web Download
           const blob = new Blob([json], { type: 'application/json' });
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
@@ -940,10 +960,7 @@ ${messagesToAnalyze}
                   throw new Error('无效的角色卡文件');
               }
 
-              // Restore Custom Theme if Embedded
               if (data.embeddedTheme) {
-                  // Save theme first
-                  // Check if theme with ID exists, maybe replace or ignore
                   const exists = customThemes.some(t => t.id === data.embeddedTheme!.id);
                   if (!exists) {
                       addCustomTheme(data.embeddedTheme);
@@ -952,20 +969,15 @@ ${messagesToAnalyze}
 
               const newChar: CharacterProfile = {
                   ...data,
-                  id: `char-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, // Generate new unique ID
+                  id: `char-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, 
                   memories: [],
                   refinedMemories: {},
                   activeMemoryMonths: [],
-                  embeddedTheme: undefined // Clean up key
+                  embeddedTheme: undefined 
               } as CharacterProfile;
 
               await DB.saveCharacter(newChar);
-              // Trigger refresh via context action which updates state
-              addCharacter(); // This adds a dummy character which forces re-render of list
-              // A bit hacky: better to reload the list directly or addCharacter accepting params
-              // Since context addCharacter is naive, let's just create it via DB then reload page or rely on DB sync
-              // Actually, we can just update the characters list directly via state in context, but we don't have that exposed cleanly
-              // Simplest way: Reload page or invoke a no-op update
+              addCharacter(); // Force refresh (naive)
               setTimeout(() => window.location.reload(), 500); 
               
               addToast(`角色 ${newChar.name} 导入成功`, 'success');
@@ -987,7 +999,6 @@ ${messagesToAnalyze}
                <div className="px-6 pt-12 pb-4 shrink-0 flex items-center justify-between">
                    <div><h1 className="text-2xl font-light text-slate-800 tracking-tight">神经链接</h1><p className="text-xs text-slate-400 mt-1">已建立 {characters.length} 个角色连接</p></div>
                    <div className="flex gap-2">
-                        {/* Import Button */}
                         <button onClick={() => cardImportRef.current?.click()} className="p-2 rounded-full bg-white/40 hover:bg-white/80 transition-colors text-slate-600" title="导入角色卡">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
@@ -1052,9 +1063,37 @@ ${messagesToAnalyze}
                                <textarea 
                                     value={formData.worldview || ''} 
                                     onChange={(e) => handleChange('worldview', e.target.value)} 
-                                    className="w-full h-40 bg-white rounded-3xl p-5 text-sm shadow-sm resize-none focus:ring-1 focus:ring-primary/20 transition-all" 
+                                    className="w-full h-24 bg-white rounded-3xl p-5 text-sm shadow-sm resize-none focus:ring-1 focus:ring-primary/20 transition-all" 
                                     placeholder="在这个世界里，魔法是存在的..." 
                                 />
+                           </div>
+
+                           {/* Worldbook Section */}
+                           <div>
+                               <div className="flex justify-between items-center mb-2 px-1">
+                                   <label className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest block">📚 扩展设定 (Worldbooks)</label>
+                                   <button onClick={() => setShowWorldbookModal(true)} className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-1 rounded font-bold hover:bg-indigo-100">+ 挂载</button>
+                               </div>
+                               <div className="space-y-2">
+                                   {formData.mountedWorldbooks && formData.mountedWorldbooks.length > 0 ? (
+                                       formData.mountedWorldbooks.map(wb => (
+                                           <div key={wb.id} className="flex items-center justify-between bg-white px-4 py-3 rounded-2xl border border-indigo-50 shadow-sm group">
+                                               <div className="flex items-center gap-2 min-w-0">
+                                                   <span className="text-lg shrink-0">📖</span>
+                                                   <div className="flex flex-col min-w-0">
+                                                       <span className="text-sm font-bold text-slate-700 truncate">{wb.title}</span>
+                                                       {wb.category && <span className="text-[9px] text-slate-400">{wb.category}</span>}
+                                                   </div>
+                                               </div>
+                                               <button onClick={() => unmountWorldbook(wb.id)} className="text-slate-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-1 ml-2">×</button>
+                                           </div>
+                                       ))
+                                   ) : (
+                                       <div className="text-center py-4 bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-slate-400 text-xs">
+                                           暂未挂载任何世界书
+                                       </div>
+                                   )}
+                               </div>
                            </div>
 
                            {/* Export Card Button */}
@@ -1104,6 +1143,7 @@ ${messagesToAnalyze}
            </div>
        )}
        
+       {/* Modals ... */}
        <Modal isOpen={showImportModal} title="记忆导入/清洗" onClose={() => setShowImportModal(false)} footer={<><button onClick={() => setShowImportModal(false)} className="flex-1 py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl">取消</button><button onClick={handleImportMemories} disabled={isProcessingMemory} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl shadow-lg shadow-primary/30 flex items-center justify-center gap-2">{isProcessingMemory && <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>}{isProcessingMemory ? '处理中...' : '开始执行'}</button></>}>
            <div className="space-y-3"><div className="text-xs text-slate-400 leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-100">AI 将自动整理乱序文本为记忆档案。</div>{importStatus && <div className="text-xs text-primary font-medium">{importStatus}</div>}<textarea value={importText} onChange={e => setImportText(e.target.value)} placeholder="在此粘贴文本..." className="w-full h-32 bg-slate-100 border-none rounded-2xl px-4 py-3 text-sm text-slate-700 resize-none focus:ring-2 focus:ring-primary/20 transition-all"/></div>
        </Modal>
@@ -1126,7 +1166,57 @@ ${messagesToAnalyze}
            <div className="bg-slate-50 rounded-2xl p-3 border border-slate-100 space-y-2"><div className="text-[10px] text-slate-400">已自动复制到剪贴板。如果分享失败，请直接手动复制。</div><textarea value={exportText} readOnly className="w-full h-40 bg-transparent border-none text-[10px] font-mono text-slate-600 resize-none focus:ring-0 leading-relaxed select-all" onClick={(e) => e.currentTarget.select()}/></div>
        </Modal>
 
-        {/* Delete Confirmation Modal */}
+        {/* Worldbook Select Modal */}
+        <Modal 
+            isOpen={showWorldbookModal} 
+            title="挂载世界书" 
+            onClose={() => setShowWorldbookModal(false)} 
+        >
+            <div className="max-h-[50vh] overflow-y-auto no-scrollbar space-y-4 p-1">
+                {worldbooks.length === 0 ? (
+                    <div className="text-center text-slate-400 text-xs py-8">
+                        还没有世界书，请去桌面【世界书】App 创建。
+                    </div>
+                ) : (
+                    // Group books for UI
+                    Object.entries(worldbooks.reduce((acc, wb) => {
+                        const cat = wb.category || '未分类设定 (General)';
+                        if (!acc[cat]) acc[cat] = [];
+                        acc[cat].push(wb);
+                        return acc;
+                    }, {} as Record<string, typeof worldbooks>)).map(([category, books]) => (
+                        <div key={category} className="space-y-2">
+                            <div className="flex justify-between items-center px-1">
+                                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">{category}</h4>
+                                <button 
+                                    onClick={() => mountCategory(category)}
+                                    className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded font-bold hover:bg-indigo-100"
+                                >
+                                    挂载整组
+                                </button>
+                            </div>
+                            {books.map(wb => {
+                                const isMounted = formData?.mountedWorldbooks?.some(m => m.id === wb.id);
+                                return (
+                                    <button 
+                                        key={wb.id} 
+                                        onClick={() => !isMounted && mountWorldbook(wb.id)}
+                                        disabled={isMounted}
+                                        className={`w-full p-4 rounded-xl border text-left transition-all ${isMounted ? 'bg-slate-50 border-slate-200 opacity-50 cursor-not-allowed' : 'bg-white border-indigo-100 hover:border-indigo-300 shadow-sm active:scale-95'}`}
+                                    >
+                                        <div className="flex justify-between items-center mb-1">
+                                            <span className="font-bold text-slate-700 text-sm truncate">{wb.title}</span>
+                                            {isMounted && <span className="text-[10px] text-slate-400">已挂载</span>}
+                                        </div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    ))
+                )}
+            </div>
+        </Modal>
+
         <Modal 
             isOpen={!!deleteConfirmTarget} 
             title="断开连接" 

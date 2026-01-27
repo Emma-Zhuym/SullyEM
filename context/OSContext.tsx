@@ -1,6 +1,7 @@
 
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
-import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog } from '../types';
+import JSZip from 'jszip';
+import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook } from '../types';
 import { DB } from '../utils/db';
 
 interface OSContextType {
@@ -23,6 +24,12 @@ interface OSContextType {
   deleteCharacter: (id: string) => void;
   setActiveCharacterId: (id: string) => void;
   
+  // Worldbooks
+  worldbooks: Worldbook[];
+  addWorldbook: (wb: Worldbook) => void;
+  updateWorldbook: (id: string, updates: Partial<Worldbook>) => Promise<void>;
+  deleteWorldbook: (id: string) => void;
+
   // Groups
   groups: GroupProfile[];
   createGroup: (name: string, members: string[]) => void;
@@ -57,9 +64,10 @@ interface OSContextType {
   clearUnread: (charId: string) => void; // New: Method to clear unread
 
   // System
-  exportSystem: (mode: 'data' | 'media') => Promise<string>;
-  importSystem: (json: string) => Promise<void>;
+  exportSystem: (mode: 'data' | 'media') => Promise<Blob>; // Changed return to Blob for ZIP
+  importSystem: (fileOrJson: File | string) => Promise<void>; // Accept File or String
   resetSystem: () => Promise<void>;
+  sysOperation: { status: 'idle' | 'processing', message: string, progress: number }; // Progress state
 
   // Logs
   systemLogs: SystemLog[];
@@ -267,7 +275,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
   const [activeCharacterId, setActiveCharacterId] = useState<string>('');
   
-  const [groups, setGroups] = useState<GroupProfile[]>([]); // New Group State
+  const [groups, setGroups] = useState<GroupProfile[]>([]); 
+  const [worldbooks, setWorldbooks] = useState<Worldbook[]>([]); // New Worldbook State
 
   const [userProfile, setUserProfile] = useState<UserProfile>(defaultUserProfile);
   
@@ -283,6 +292,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   
   // LOGS
   const [systemLogs, setSystemLogs] = useState<SystemLog[]>([]);
+  
+  // Sys Operation Status
+  const [sysOperation, setSysOperation] = useState<{ status: 'idle' | 'processing', message: string, progress: number }>({ status: 'idle', message: '', progress: 0 });
 
   const schedulerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const interceptorsInitialized = useRef(false);
@@ -297,8 +309,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       const patchedFetch = async (...args: [RequestInfo | URL, RequestInit?]) => {
           const [resource, config] = args;
           
-          // Filter out benign requests if needed (e.g. assets)
-          // We mainly want to catch API calls to LLM services
           const urlStr = String(resource);
           
           try {
@@ -345,11 +355,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           }
       };
 
-      // Safely apply the fetch patch
       try {
           window.fetch = patchedFetch;
       } catch (e) {
-          // If simple assignment fails (e.g. read-only property), try Object.defineProperty
           try {
               Object.defineProperty(window, 'fetch', {
                   value: patchedFetch,
@@ -357,23 +365,16 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   configurable: true
               });
           } catch (e2) {
-              console.warn("Failed to install network interceptor (window.fetch is read-only). Logs will be limited.", e2);
+              console.warn("Failed to install network interceptor", e2);
           }
       }
 
-      // 2. Monkey Patch Console.error
-      // Apps use console.error inside try/catch blocks for logic errors
       const originalConsoleError = console.error;
       console.error = (...args) => {
           originalConsoleError(...args);
-          
-          // Try to extract useful info
           const msg = args.map(a => (a instanceof Error ? a.message : String(a))).join(' ');
           const detail = args.map(a => (a instanceof Error ? a.stack : '')).join('\n');
-
-          // Ignore specific benign errors if needed
           if (msg.includes('Warning:')) return;
-
           setSystemLogs(prev => [{
               id: `log-${Date.now()}-${Math.random()}`,
               timestamp: Date.now(),
@@ -382,12 +383,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               message: msg.substring(0, 100),
               detail: detail || msg
           }, ...prev.slice(0, 49)]);
-      };
-
-      return () => {
-          // Ideally we restore, but in a SPA specifically for this OS simulation, persisting is fine.
-          // window.fetch = originalFetch;
-          // console.error = originalConsoleError;
       };
   }, []);
 
@@ -416,6 +411,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                  if (loadedTheme.wallpaper.startsWith('data:')) {
                      loadedTheme.wallpaper = defaultTheme.wallpaper;
                  }
+                 // Reset large data URI if loaded from legacy storage, we fetch from DB below
+                 if (loadedTheme.launcherWidgetImage && loadedTheme.launcherWidgetImage.startsWith('data:')) {
+                     loadedTheme.launcherWidgetImage = undefined;
+                 }
              } catch(e) { console.error('Theme load error', e); }
         }
         
@@ -433,6 +432,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                     loadedTheme.wallpaper = assetMap['wallpaper'];
                 }
                 
+                if (assetMap['launcherWidgetImage']) {
+                    loadedTheme.launcherWidgetImage = assetMap['launcherWidgetImage'];
+                }
+                
                 const loadedIcons: Record<string, string> = {};
                 Object.keys(assetMap).forEach(key => {
                     if (key.startsWith('icon_')) {
@@ -443,7 +446,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                 setCustomIcons(loadedIcons);
             }
         } catch (e) {
-            // Error loading DB is a critical system error
             console.error("Failed to load assets from DB", e);
         }
 
@@ -454,17 +456,17 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       try {
         await loadSettings();
 
-        const [dbChars, dbThemes, dbUser, dbGroups] = await Promise.all([
+        const [dbChars, dbThemes, dbUser, dbGroups, dbWorldbooks] = await Promise.all([
             DB.getAllCharacters(),
             DB.getThemes(),
             DB.getUserProfile(),
-            DB.getGroups() // Load Groups
+            DB.getGroups(),
+            DB.getAllWorldbooks()
         ]);
 
         let finalChars = dbChars;
 
         if (!finalChars.some(c => c.id === sullyV2.id)) {
-            // console.log("Injecting Sully V2 Preset..."); 
             await DB.saveCharacter(sullyV2);
             finalChars = [...finalChars, sullyV2];
         } else {
@@ -472,7 +474,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
             const existingSully = finalChars.find(c => c.id === sullyV2.id);
             if (existingSully) {
                  const currentSprites = existingSully.sprites || {};
-                 // Check if we need to patch new defaults
                  const isCorrupted = !currentSprites['normal'] || !currentSprites['chibi'];
                  const needsWallUpdate = existingSully.roomConfig?.wallImage !== sullyV2.roomConfig?.wallImage;
                  
@@ -522,6 +523,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         }
 
         setGroups(dbGroups);
+        setWorldbooks(dbWorldbooks);
         setCustomThemes(dbThemes);
         if (dbUser) setUserProfile(dbUser);
 
@@ -596,7 +598,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       schedulerRef.current = setInterval(checkAllSchedules, 5000);
       checkAllSchedules();
       return () => { if (schedulerRef.current) clearInterval(schedulerRef.current); };
-  }, [isDataLoaded, characters, activeApp, activeCharacterId, unreadMessages]); // Added unreadMessages to deps
+  }, [isDataLoaded, characters, activeApp, activeCharacterId, unreadMessages]); 
 
   const clearUnread = (charId: string) => {
       setUnreadMessages(prev => {
@@ -606,16 +608,32 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       });
   };
 
-  // ... (Helpers: updateTheme, updateApiConfig, etc. kept same) ...
   const updateTheme = async (updates: Partial<OSTheme>) => {
-    const { wallpaper, ...styleUpdates } = updates;
-    const isDataUri = wallpaper && wallpaper.startsWith('data:');
+    const { wallpaper, launcherWidgetImage, ...styleUpdates } = updates;
     const newTheme = { ...theme, ...updates };
     setTheme(newTheme);
-    if (isDataUri && wallpaper) await DB.saveAsset('wallpaper', wallpaper);
-    else if (wallpaper) await DB.deleteAsset('wallpaper');
+
+    // Persist large assets to IndexedDB
+    if (wallpaper !== undefined) {
+        if (wallpaper && wallpaper.startsWith('data:')) {
+            await DB.saveAsset('wallpaper', wallpaper);
+        } else {
+            await DB.deleteAsset('wallpaper');
+        }
+    }
+
+    if (launcherWidgetImage !== undefined) {
+        if (launcherWidgetImage && launcherWidgetImage.startsWith('data:')) {
+            await DB.saveAsset('launcherWidgetImage', launcherWidgetImage);
+        } else {
+            await DB.deleteAsset('launcherWidgetImage');
+        }
+    }
+
+    // Save lightweight settings to LocalStorage
     const lsTheme = { ...newTheme };
-    if (lsTheme.wallpaper.startsWith('data:')) lsTheme.wallpaper = ''; 
+    if (lsTheme.wallpaper && lsTheme.wallpaper.startsWith('data:')) lsTheme.wallpaper = ''; 
+    if (lsTheme.launcherWidgetImage && lsTheme.launcherWidgetImage.startsWith('data:')) lsTheme.launcherWidgetImage = ''; 
     localStorage.setItem('os_theme', JSON.stringify(lsTheme));
   };
   const updateApiConfig = (updates: Partial<APIConfig>) => { const newConfig = { ...apiConfig, ...updates }; setApiConfig(newConfig); localStorage.setItem('os_api_config', JSON.stringify(newConfig)); };
@@ -633,7 +651,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           id: `group-${Date.now()}`,
           name,
           members,
-          avatar: generateAvatar(name), // Default avatar
+          avatar: generateAvatar(name), 
           createdAt: Date.now()
       };
       await DB.saveGroup(newGroup);
@@ -645,6 +663,79 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       setGroups(prev => prev.filter(g => g.id !== id));
   };
 
+  // Worldbook Methods
+  const addWorldbook = async (wb: Worldbook) => {
+      setWorldbooks(prev => [...prev, wb]);
+      await DB.saveWorldbook(wb);
+  };
+
+  const updateWorldbook = async (id: string, updates: Partial<Worldbook>) => {
+      // 1. Optimistic Update Local State
+      let fullUpdatedWb: Worldbook | undefined;
+      setWorldbooks(prev => {
+          const next = prev.map(wb => {
+              if (wb.id === id) {
+                  fullUpdatedWb = { ...wb, ...updates, updatedAt: Date.now() };
+                  return fullUpdatedWb;
+              }
+              return wb;
+          });
+          return next;
+      });
+
+      // 2. Persist to DB
+      if (fullUpdatedWb) {
+          await DB.saveWorldbook(fullUpdatedWb);
+
+          // 3. AUTO-SYNC: Update Characters that have this book mounted
+          // This ensures data redundancy is kept fresh
+          const charsToSync = characters.filter(c => c.mountedWorldbooks?.some(m => m.id === id));
+          
+          if (charsToSync.length > 0) {
+              const updatedChars = characters.map(char => {
+                  if (char.mountedWorldbooks?.some(m => m.id === id)) {
+                      const newMounted = char.mountedWorldbooks.map(m => 
+                          m.id === id 
+                              // Updated to sync category as well
+                              ? { 
+                                  id: fullUpdatedWb!.id, 
+                                  title: fullUpdatedWb!.title, 
+                                  content: fullUpdatedWb!.content,
+                                  category: fullUpdatedWb!.category
+                                } 
+                              : m
+                      );
+                      // Side effect: Save individual char to DB
+                      const newChar = { ...char, mountedWorldbooks: newMounted };
+                      DB.saveCharacter(newChar); 
+                      return newChar;
+                  }
+                  return char;
+              });
+              setCharacters(updatedChars);
+              addToast(`已同步更新 ${charsToSync.length} 个相关角色的缓存`, 'info');
+          }
+      }
+  };
+
+  const deleteWorldbook = async (id: string) => {
+      setWorldbooks(prev => prev.filter(wb => wb.id !== id));
+      await DB.deleteWorldbook(id);
+      
+      // Sync delete: Remove from characters
+      const updatedChars = characters.map(char => {
+          if (char.mountedWorldbooks?.some(m => m.id === id)) {
+              const newMounted = char.mountedWorldbooks.filter(m => m.id !== id);
+              const newChar = { ...char, mountedWorldbooks: newMounted };
+              DB.saveCharacter(newChar);
+              return newChar;
+          }
+          return char;
+      });
+      setCharacters(updatedChars);
+      addToast('世界书已删除 (同步移除角色挂载)', 'success');
+  };
+
   const updateUserProfile = async (updates: Partial<UserProfile>) => { setUserProfile(prev => { const next = { ...prev, ...updates }; DB.saveUserProfile(next); return next; }); };
   const addCustomTheme = async (theme: ChatTheme) => { setCustomThemes(prev => { const exists = prev.find(t => t.id === theme.id); if (exists) return prev.map(t => t.id === theme.id ? theme : t); return [...prev, theme]; }); await DB.saveTheme(theme); };
   const removeCustomTheme = async (id: string) => { setCustomThemes(prev => prev.filter(t => t.id !== id)); await DB.deleteTheme(id); };
@@ -652,147 +743,258 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const handleSetActiveCharacter = (id: string) => { setActiveCharacterId(id); localStorage.setItem('os_last_active_char_id', id); };
   const addToast = (message: string, type: Toast['type'] = 'info') => { const id = Date.now().toString(); setToasts(prev => [...prev, { id, message, type }]); setTimeout(() => { setToasts(prev => prev.filter(t => t.id !== id)); }, 3000); };
 
-  // --- MODIFIED EXPORT SYSTEM ---
-  const exportSystem = async (mode: 'data' | 'media'): Promise<string> => {
-      const dbData = await DB.exportFullData();
-      
-      let backup: FullBackupData = {
-          timestamp: Date.now(),
-          version: 1,
-          theme,
-          apiConfig: mode === 'data' ? apiConfig : undefined,
-          apiPresets: mode === 'data' ? apiPresets : undefined,
-      };
-
-      if (mode === 'data') {
-          // EXPORT: Characters (Light Version), Messages, Diaries, Settings
-          // Strip heavy assets from characters
-          const lightCharacters = (dbData.characters || []).map(c => ({
-              ...c,
-              sprites: undefined, // Remove sprites
-              chatBackground: undefined,
-              dateBackground: undefined,
-              roomConfig: c.roomConfig ? {
-                  ...c.roomConfig,
-                  wallImage: undefined,
-                  floorImage: undefined,
-                  items: c.roomConfig.items.map(item => ({
-                      ...item,
-                      image: item.image.startsWith('data:') ? 'BLOCKED_MEDIA' : item.image
-                  }))
-              } : undefined
-          }));
-
-          backup.characters = lightCharacters;
-          backup.groups = dbData.groups || []; // Export Groups
-          backup.messages = dbData.messages || [];
-          backup.diaries = dbData.diaries || [];
-          backup.userProfile = dbData.userProfile;
-          backup.customThemes = dbData.customThemes || [];
-          backup.savedEmojis = dbData.savedEmojis || [];
-          backup.availableModels = availableModels;
-          backup.customIcons = customIcons;
+  // --- MODIFIED EXPORT SYSTEM WITH SEPARATED ASSETS ZIP ---
+  const exportSystem = async (mode: 'data' | 'media'): Promise<Blob> => {
+      try {
+          setSysOperation({ status: 'processing', message: '正在初始化打包引擎...', progress: 0 });
           
-          // --- Include Room Data in Backup ---
-          backup.roomTodos = dbData.roomTodos || [];
-          backup.roomNotes = dbData.roomNotes || [];
-          
-          // --- FIX: Include Schedule Data and Journal Stickers ---
-          backup.tasks = dbData.tasks || [];
-          backup.anniversaries = dbData.anniversaries || [];
-          backup.savedJournalStickers = dbData.savedJournalStickers || [];
-          
-          // --- NEW: Include Social Posts ---
-          backup.socialPosts = dbData.socialPosts || [];
+          const zip = new JSZip();
+          const assetsFolder = zip.folder("assets");
+          let assetCount = 0;
 
-          // --- FIX: Include Courses as requested ---
-          backup.courses = dbData.courses || []; 
+          const processObject = (obj: any): any => {
+              if (obj === null || typeof obj !== 'object') return obj;
+              
+              if (Array.isArray(obj)) {
+                  return obj.map(item => processObject(item));
+              }
 
-          // --- NEW: Include Social App Local Data ---
-          try {
-              backup.socialAppData = {
+              const newObj: any = {};
+              for (const key in obj) {
+                  if (Object.prototype.hasOwnProperty.call(obj, key)) {
+                      let value = obj[key];
+                      if (typeof value === 'string' && value.startsWith('data:image/')) {
+                          try {
+                              const extMatch = value.match(/data:image\/([a-zA-Z0-9]+);base64,/);
+                              if (extMatch) {
+                                  const ext = extMatch[1] === 'jpeg' ? 'jpg' : extMatch[1];
+                                  const filename = `asset_${Date.now()}_${assetCount++}.${ext}`;
+                                  const base64Data = value.split(',')[1];
+                                  assetsFolder?.file(filename, base64Data, { base64: true });
+                                  value = `assets/${filename}`;
+                              }
+                          } catch (e) {
+                              console.warn("Failed to process asset", e);
+                          }
+                      } else {
+                          value = processObject(value);
+                      }
+                      newObj[key] = value;
+                  }
+              }
+              return newObj;
+          };
+
+          const storesToProcess = [
+              'characters', 'messages', 'themes', 'emojis', 'assets', 'gallery', 
+              'user_profile', 'diaries', 'tasks', 'anniversaries', 'room_todos', 
+              'room_notes', 'groups', 'journal_stickers', 'social_posts', 'courses', 'games', 'worldbooks'
+          ];
+
+          const backupData: Partial<FullBackupData> = {
+              timestamp: Date.now(),
+              version: 2, 
+              apiConfig: mode === 'data' ? apiConfig : undefined,
+              apiPresets: mode === 'data' ? apiPresets : undefined,
+              availableModels: availableModels,
+              
+              socialAppData: {
                   charHandles: JSON.parse(localStorage.getItem('spark_char_handles') || '{}'),
                   userProfile: JSON.parse(localStorage.getItem('spark_social_profile') || 'null') || undefined,
                   userId: localStorage.getItem('spark_user_id') || undefined,
                   userBg: localStorage.getItem('spark_user_bg') || undefined
-              };
-          } catch (e) {
-              console.warn("Failed to export Social App Data", e);
+              },
+              
+              // Added room custom assets export
+              roomCustomAssets: JSON.parse(localStorage.getItem('room_custom_assets') || '[]'),
+          };
+
+          const totalSteps = storesToProcess.length + 3; // Added step for room assets
+          let currentStep = 0;
+
+          if (backupData.socialAppData?.userProfile?.avatar) {
+              backupData.socialAppData.userProfile = processObject(backupData.socialAppData.userProfile);
+          }
+          if (backupData.socialAppData?.userBg) {
+               if (backupData.socialAppData.userBg.startsWith('data:')) {
+                   const val = backupData.socialAppData.userBg;
+                   const extMatch = val.match(/data:image\/([a-zA-Z0-9]+);base64,/);
+                   if (extMatch) {
+                       const filename = `asset_social_bg_${Date.now()}.${extMatch[1] === 'jpeg' ? 'jpg' : extMatch[1]}`;
+                       assetsFolder?.file(filename, val.split(',')[1], { base64: true });
+                       backupData.socialAppData.userBg = `assets/${filename}`;
+                   }
+               }
+          }
+          
+          // Process Room Custom Assets (Extract images)
+          if (backupData.roomCustomAssets) {
+              backupData.roomCustomAssets = processObject(backupData.roomCustomAssets);
           }
 
-          // Exclude Heavy Media Stores
-          backup.assets = undefined; 
-          backup.galleryImages = undefined;
-      } 
-      else if (mode === 'media') {
-          // EXPORT: Gallery, Assets, and Character Heavy Assets
-          backup.assets = dbData.assets || [];
-          backup.galleryImages = dbData.galleryImages || [];
-          
-          // Extract Heavy Assets from Characters into `mediaAssets`
-          backup.mediaAssets = (dbData.characters || []).map(c => {
-              const roomItems: Record<string, string> = {};
-              c.roomConfig?.items.forEach(item => {
-                  if (item.image.startsWith('data:')) roomItems[item.id] = item.image;
+          for (const storeName of storesToProcess) {
+              currentStep++;
+              setSysOperation({ 
+                  status: 'processing', 
+                  message: `正在打包: ${storeName} ...`, 
+                  progress: (currentStep / totalSteps) * 100 
               });
 
-              return {
-                  charId: c.id,
-                  sprites: c.sprites,
-                  backgrounds: {
-                      chat: c.chatBackground,
-                      date: c.dateBackground,
-                      roomWall: c.roomConfig?.wallImage,
-                      roomFloor: c.roomConfig?.floorImage
-                  },
-                  roomItems
-              };
+              let rawData = await DB.getRawStoreData(storeName); 
+              
+              if (mode === 'data') {
+                  if (storeName === 'gallery') rawData = []; 
+                  if (storeName === 'assets') rawData = [];
+              }
+
+              const processedData = processObject(rawData);
+
+              switch(storeName) {
+                  case 'characters': backupData.characters = processedData; break;
+                  case 'messages': backupData.messages = processedData; break;
+                  case 'themes': backupData.customThemes = processedData; break;
+                  case 'emojis': backupData.savedEmojis = processedData; break;
+                  case 'assets': backupData.assets = processedData; break;
+                  case 'gallery': backupData.galleryImages = processedData; break;
+                  case 'user_profile': if (processedData[0]) backupData.userProfile = processedData[0]; break;
+                  case 'diaries': backupData.diaries = processedData; break;
+                  case 'tasks': backupData.tasks = processedData; break;
+                  case 'anniversaries': backupData.anniversaries = processedData; break;
+                  case 'room_todos': backupData.roomTodos = processedData; break;
+                  case 'room_notes': backupData.roomNotes = processedData; break;
+                  case 'groups': backupData.groups = processedData; break;
+                  case 'journal_stickers': backupData.savedJournalStickers = processedData; break;
+                  case 'social_posts': backupData.socialPosts = processedData; break;
+                  case 'courses': backupData.courses = processedData; break;
+                  case 'games': backupData.games = processedData; break;
+                  case 'worldbooks': backupData.worldbooks = processedData; break;
+              }
+
+              await new Promise(resolve => setTimeout(resolve, 10));
+          }
+
+          setSysOperation({ status: 'processing', message: '正在生成压缩包...', progress: 95 });
+          
+          zip.file("data.json", JSON.stringify(backupData));
+          
+          const content = await zip.generateAsync({ type: "blob" }, (metadata) => {
+              if (Math.random() > 0.8) {
+                  setSysOperation(prev => ({ ...prev, message: `压缩中 ${metadata.percent.toFixed(0)}%...` }));
+              }
           });
 
-          // Exclude Data
-          backup.characters = undefined;
-          backup.groups = undefined;
-          backup.messages = undefined;
-          backup.diaries = undefined;
-          backup.userProfile = undefined;
-          backup.roomTodos = undefined;
-          backup.roomNotes = undefined;
-          backup.tasks = undefined;
-          backup.anniversaries = undefined;
-          backup.savedJournalStickers = undefined;
-          backup.socialPosts = undefined; // Media backup doesn't need text posts, images inside posts are usually URLs or generic
-          backup.courses = undefined; // Media backup doesn't need study texts
-      }
+          setSysOperation({ status: 'idle', message: '', progress: 100 });
+          return content;
 
-      try { return JSON.stringify(backup); } catch (e: any) { throw new Error("导出失败: 数据量过大"); }
+      } catch (e: any) {
+          console.error("Export Failed", e);
+          setSysOperation({ status: 'idle', message: '', progress: 0 });
+          throw new Error("导出失败: " + e.message);
+      }
   };
 
-  const importSystem = async (json: string): Promise<void> => {
+  const importSystem = async (fileOrJson: File | string): Promise<void> => {
       try {
-          const data: FullBackupData = JSON.parse(json);
+          setSysOperation({ status: 'processing', message: '正在解析备份文件...', progress: 0 });
+          let data: FullBackupData;
+          let zip: JSZip | null = null;
+
+          if (typeof fileOrJson === 'string') {
+              data = JSON.parse(fileOrJson);
+          } else {
+              if (!fileOrJson.name.endsWith('.zip')) {
+                  try {
+                      const text = await fileOrJson.text();
+                      data = JSON.parse(text);
+                  } catch (e) {
+                      throw new Error("无效的文件格式，请上传 .zip 或 .json");
+                  }
+              } else {
+                  const loadedZip = await JSZip.loadAsync(fileOrJson);
+                  zip = loadedZip;
+                  const dataFile = loadedZip.file("data.json");
+                  if (!dataFile) throw new Error("损坏的备份包: 缺少 data.json");
+                  const jsonStr = await dataFile.async("string");
+                  data = JSON.parse(jsonStr);
+              }
+          }
+
+          const restoreAssets = async (obj: any): Promise<any> => {
+              if (obj === null || typeof obj !== 'object') return obj;
+              
+              if (Array.isArray(obj)) {
+                  const arr = [];
+                  for (const item of obj) {
+                      arr.push(await restoreAssets(item));
+                  }
+                  return arr;
+              }
+
+              const newObj: any = {};
+              for (const key in obj) {
+                  if (Object.prototype.hasOwnProperty.call(obj, key)) {
+                      let value = obj[key];
+                      if (typeof value === 'string' && value.startsWith('assets/') && zip) {
+                          try {
+                              const filename = value.split('/')[1];
+                              const fileInZip = zip.file(`assets/${filename}`);
+                              if (fileInZip) {
+                                  const base64 = await fileInZip.async("base64");
+                                  const ext = filename.split('.').pop() || 'png';
+                                  let mime = 'image/png';
+                                  if (ext === 'jpg' || ext === 'jpeg') mime = 'image/jpeg';
+                                  if (ext === 'gif') mime = 'image/gif';
+                                  if (ext === 'webp') mime = 'image/webp';
+                                  
+                                  value = `data:${mime};base64,${base64}`;
+                              }
+                          } catch (e) {
+                              console.warn(`Failed to restore asset: ${value}`);
+                          }
+                      } else {
+                          value = await restoreAssets(value);
+                      }
+                      newObj[key] = value;
+                  }
+              }
+              return newObj;
+          };
+
+          setSysOperation({ status: 'processing', message: '正在恢复数据与素材...', progress: 50 });
+          
+          if (zip) {
+              data = await restoreAssets(data);
+          }
+
           await DB.importFullData(data);
           
           if (data.theme) {
               const cleanTheme = { ...data.theme };
               if (cleanTheme.wallpaper && cleanTheme.wallpaper.startsWith('data:')) { cleanTheme.wallpaper = ''; }
+              if (cleanTheme.launcherWidgetImage && cleanTheme.launcherWidgetImage.startsWith('data:')) { cleanTheme.launcherWidgetImage = ''; }
               updateTheme(cleanTheme);
           }
           if (data.apiConfig) updateApiConfig(data.apiConfig);
           if (data.availableModels) saveModels(data.availableModels);
           if (data.apiPresets) savePresets(data.apiPresets);
           
-          // --- Restore Social App Data ---
           if (data.socialAppData) {
               if (data.socialAppData.charHandles) localStorage.setItem('spark_char_handles', JSON.stringify(data.socialAppData.charHandles));
               if (data.socialAppData.userProfile) localStorage.setItem('spark_social_profile', JSON.stringify(data.socialAppData.userProfile));
               if (data.socialAppData.userId) localStorage.setItem('spark_user_id', data.socialAppData.userId);
               if (data.socialAppData.userBg) localStorage.setItem('spark_user_bg', data.socialAppData.userBg);
           }
+          
+          // Restore Room Custom Assets
+          if (data.roomCustomAssets) {
+              localStorage.setItem('room_custom_assets', JSON.stringify(data.roomCustomAssets));
+          }
 
           const chars = await DB.getAllCharacters();
-          const groups = await DB.getGroups();
+          const groupsList = await DB.getGroups();
           const themes = await DB.getThemes();
           const user = await DB.getUserProfile();
+          const books = await DB.getAllWorldbooks();
           
           if (data.assets) {
               const assets = await DB.getAllAssets();
@@ -804,22 +1006,23 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           }
 
           if (chars.length > 0) setCharacters(chars);
-          if (groups.length > 0) setGroups(groups);
+          if (groupsList.length > 0) setGroups(groupsList);
           if (themes.length > 0) setCustomThemes(themes);
           if (user) setUserProfile(user);
+          if (books.length > 0) setWorldbooks(books);
           
-          if (chars.length > 0 && !chars.find(c => c.id === activeCharacterId)) { setActiveCharacterId(chars[0].id); }
-
+          setSysOperation({ status: 'idle', message: '', progress: 100 });
           addToast('恢复成功，系统即将重启...', 'success');
           setTimeout(() => window.location.reload(), 1500);
+
       } catch (e: any) {
           console.error("Import Error:", e);
+          setSysOperation({ status: 'idle', message: '', progress: 0 });
           const msg = e instanceof SyntaxError ? 'JSON 格式错误' : (e.message || '未知错误');
           throw new Error(`恢复失败: ${msg}`);
       }
   };
 
-  // ... (resetSystem, useEffects, Provider kept same) ...
   const resetSystem = async () => { try { await DB.deleteDB(); localStorage.clear(); window.location.reload(); } catch (e) { console.error(e); addToast('重置失败，请手动清除浏览器数据', 'error'); } };
   const openApp = (appId: AppID) => setActiveApp(appId);
   const closeApp = () => setActiveApp(AppID.Launcher);
@@ -833,10 +1036,12 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         activeApp, openApp, closeApp, theme, updateTheme, virtualTime, apiConfig, updateApiConfig, isLocked, unlock, isDataLoaded,
         characters, activeCharacterId, addCharacter, updateCharacter, deleteCharacter, setActiveCharacterId: handleSetActiveCharacter,
         groups, createGroup, deleteGroup,
+        worldbooks, addWorldbook, updateWorldbook, deleteWorldbook, // Export Worldbook Methods
         userProfile, updateUserProfile, availableModels, setAvailableModels: saveModels,
         apiPresets, addApiPreset, removeApiPreset, customThemes, addCustomTheme, removeCustomTheme, toasts, addToast, customIcons, setCustomIcon,
         lastMsgTimestamp, unreadMessages, clearUnread, exportSystem, importSystem, resetSystem,
-        systemLogs, clearLogs // Added Logs
+        systemLogs, clearLogs, 
+        sysOperation 
       }}
     >
       {children}

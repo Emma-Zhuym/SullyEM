@@ -1,9 +1,4 @@
 
-
-
-
-
-
 import React, { useEffect } from 'react';
 import { useOS } from '../context/OSContext';
 import StatusBar from './os/StatusBar';
@@ -23,7 +18,9 @@ import RoomApp from '../apps/RoomApp';
 import CheckPhone from '../apps/CheckPhone';
 import SocialApp from '../apps/SocialApp'; 
 import StudyApp from '../apps/StudyApp'; 
-import FAQApp from '../apps/FAQApp'; // New Import
+import FAQApp from '../apps/FAQApp'; 
+import GameApp from '../apps/GameApp'; 
+import WorldbookApp from '../apps/WorldbookApp';
 import { AppID } from '../types';
 import { App as CapApp } from '@capacitor/app';
 import { StatusBar as CapStatusBar, Style as StatusBarStyle } from '@capacitor/status-bar';
@@ -38,16 +35,10 @@ const PhoneShell: React.FC = () => {
     const initNative = async () => {
         if (Capacitor.isNativePlatform()) {
             try {
-                // 1. 设置状态栏覆盖 WebView (关键：让网页内容延伸到刘海屏区域)
                 await CapStatusBar.setOverlaysWebView({ overlay: true });
-                
-                // 2. 隐藏原生状态栏 (使用我们的模拟状态栏替代)
                 await CapStatusBar.hide();
-                
-                // 3. (可选) 如果隐藏失败，设置状态栏样式为透明/深色模式以融合
                 await CapStatusBar.setStyle({ style: StatusBarStyle.Dark });
 
-                // Request Notification Permissions
                 const permStatus = await LocalNotifications.checkPermissions();
                 if (permStatus.display !== 'granted') {
                     await LocalNotifications.requestPermissions();
@@ -65,12 +56,9 @@ const PhoneShell: React.FC = () => {
             try {
                 await CapApp.removeAllListeners();
                 CapApp.addListener('backButton', ({ canGoBack }) => {
-                    // If an app is open, close it (go to Launcher)
                     if (activeApp !== AppID.Launcher) {
                         closeApp();
                     } else if (!isLocked) {
-                        // If on Launcher and not locked, maybe ask to exit or minimize
-                        // For now, let's just minimize/exit
                         CapApp.exitApp();
                     }
                 });
@@ -80,7 +68,6 @@ const PhoneShell: React.FC = () => {
 
     setupBackButton();
 
-    // Re-bind when activeApp changes to ensure closure captures latest state
     return () => {
         if (Capacitor.isNativePlatform()) {
             CapApp.removeAllListeners().catch(() => {});
@@ -92,7 +79,6 @@ const PhoneShell: React.FC = () => {
     return <div className="w-full h-full bg-black flex items-center justify-center"><div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin"></div></div>;
   }
 
-  // Helper to determine if the wallpaper is an image URL or a CSS gradient
   const getBgStyle = (wp: string) => {
       const isUrl = wp.startsWith('http') || wp.startsWith('data:') || wp.startsWith('blob:');
       return isUrl ? `url(${wp})` : wp;
@@ -109,7 +95,6 @@ const PhoneShell: React.FC = () => {
     return (
       <div 
         onClick={() => {
-            // Request Web Notification Permission on Unlock Interaction
             if ('Notification' in window && Notification.permission !== 'granted') {
                 Notification.requestPermission();
             }
@@ -127,7 +112,6 @@ const PhoneShell: React.FC = () => {
            <div className="text-lg tracking-widest opacity-90 mt-2 uppercase text-xs font-bold">SullyOS Simulation</div>
         </div>
 
-        {/* Lock Screen Notification */}
         {unreadCount > 0 && (
             <div className="absolute top-[40%] left-4 right-4 animate-slide-up">
                 <div className="bg-white/20 backdrop-blur-md rounded-2xl p-4 shadow-lg border border-white/10 flex items-center gap-4">
@@ -172,41 +156,41 @@ const PhoneShell: React.FC = () => {
       case AppID.CheckPhone: return <CheckPhone />;
       case AppID.Social: return <SocialApp />;
       case AppID.Study: return <StudyApp />; 
-      case AppID.FAQ: return <FAQApp />; // Render FAQ App
+      case AppID.FAQ: return <FAQApp />; 
+      case AppID.Game: return <GameApp />; 
+      case AppID.Worldbook: return <WorldbookApp />;
       case AppID.Launcher:
       default: return <Launcher />;
     }
   };
 
   return (
-    // Base container has a fallback gradient (Warm Pink/Purple) so it's never just white.
     <div className="relative w-full h-full overflow-hidden bg-gradient-to-br from-pink-200 via-purple-200 to-indigo-200 text-slate-900 font-sans select-none">
-       {/* Wallpaper Layer */}
+       {/* Optimized Background Layer with Hardware Acceleration Hints */}
        <div 
          className="absolute inset-0 bg-cover bg-center transition-all duration-700 ease-[cubic-bezier(0.25,0.1,0.25,1)]"
          style={{ 
              backgroundImage: bgImageValue,
-             // Only apply blur/scale if it's an app opening, but keep it subtle
-             transform: activeApp !== AppID.Launcher ? 'scale(1.1) blur(10px)' : 'scale(1) blur(0px)',
+             transform: activeApp !== AppID.Launcher ? 'scale(1.1)' : 'scale(1)',
+             filter: activeApp !== AppID.Launcher ? 'blur(10px)' : 'none',
              opacity: activeApp !== AppID.Launcher ? 0.6 : 1,
-             // Removed filter saturation/brightness manipulation to let the gradient shine purely
+             willChange: 'transform, filter, opacity', // Performance Hint
+             backfaceVisibility: 'hidden', // Reduce flicker
+             transformStyle: 'preserve-3d'
          }}
        />
        
-       {/* App Background Overlay (Glass Effect) */}
        <div className={`absolute inset-0 transition-all duration-500 ${activeApp === AppID.Launcher ? 'bg-transparent' : 'bg-white/50 backdrop-blur-3xl'}`} />
        
        <div className="relative z-10 w-full h-full flex flex-col pt-[env(safe-area-inset-top)]">
           <StatusBar />
           <div className="flex-1 relative overflow-hidden flex flex-col">{renderApp()}</div>
           
-          {/* Home Indicator - Absolute Overlay */}
           <div className="absolute bottom-0 left-0 w-full h-6 flex justify-center items-end pb-2 z-50 pointer-events-none">
              <div className="w-32 h-1 bg-slate-900/10 rounded-full backdrop-blur-md"></div>
           </div>
        </div>
 
-       {/* System Toasts - Enhanced Visibility */}
        <div className="absolute top-12 left-0 w-full flex flex-col items-center gap-2 pointer-events-none z-[60]">
           {toasts.map(toast => (
              <div key={toast.id} className="animate-fade-in bg-white/95 backdrop-blur-xl px-4 py-3 rounded-2xl shadow-xl border border-black/5 flex items-center gap-3 max-w-[85%] ring-1 ring-white/20">

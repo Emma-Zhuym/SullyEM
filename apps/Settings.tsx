@@ -10,7 +10,8 @@ const Settings: React.FC = () => {
   const { 
       apiConfig, updateApiConfig, closeApp, availableModels, setAvailableModels, 
       exportSystem, importSystem, addToast, resetSystem,
-      apiPresets, addApiPreset, removeApiPreset 
+      apiPresets, addApiPreset, removeApiPreset,
+      sysOperation // Get progress state
   } = useOS();
   
   const [localKey, setLocalKey] = useState(apiConfig.apiKey);
@@ -21,11 +22,12 @@ const Settings: React.FC = () => {
   
   // UI States
   const [showModelModal, setShowModelModal] = useState(false);
-  const [showExportModal, setShowExportModal] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false); // Used for completion now
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showPresetModal, setShowPresetModal] = useState(false);
   
-  const [exportContent, setExportContent] = useState('');
+  // For web download link
+  const [downloadUrl, setDownloadUrl] = useState<string>('');
   
   const [statusMsg, setStatusMsg] = useState('');
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -94,108 +96,68 @@ const Settings: React.FC = () => {
     }
   };
 
-  // Browser download helper
-  const webDownload = (content: string, filename: string) => {
-      const blob = new Blob([content], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-  };
-
   const handleExport = async (mode: 'data' | 'media') => {
       try {
-          let msg = '打包中...';
-          if (mode === 'data') msg = '正在导出数据 (包含配置)...';
-          if (mode === 'media') msg = '正在打包相册与素材...';
+          // Trigger export (Context handles loading state UI)
+          const blob = await exportSystem(mode);
           
-          addToast(msg, 'info');
-          
-          // Delay to allow toast to render before heavy sync operation blocks thread
-          setTimeout(async () => {
-              try {
-                const json = await exportSystem(mode);
-                setExportContent(json);
-                setShowExportModal(true); 
-
-                // Native Share Handling
-                if (Capacitor.isNativePlatform()) {
-                    const fileName = `Sully_${mode}_${new Date().toISOString().slice(0,10)}.json`;
-                    try {
-                        await Filesystem.writeFile({
-                            path: fileName,
-                            data: json,
-                            directory: Directory.Cache, 
-                            encoding: Encoding.UTF8,
-                        });
-                        const uriResult = await Filesystem.getUri({
-                            directory: Directory.Cache,
-                            path: fileName,
-                        });
-                        await Share.share({
-                            title: `Sully Backup (${mode})`,
-                            files: [uriResult.uri],
-                        });
-                    } catch (nativeErr) {
-                        console.log("Native share skipped/failed", nativeErr);
-                    }
-                } else {
-                     // Auto-copy to clipboard on web
-                    try {
-                        await navigator.clipboard.writeText(json);
-                        addToast('已自动复制到剪贴板', 'success');
-                    } catch (e) { console.error('Clipboard failed', e); }
-                }
-
-              } catch (e: any) {
-                  addToast(`导出失败: ${e.message}`, 'error');
-              }
-          }, 100);
-          
+          if (Capacitor.isNativePlatform()) {
+              // Convert Blob to Base64 for Native Write
+              const reader = new FileReader();
+              reader.readAsDataURL(blob);
+              reader.onloadend = async () => {
+                  const base64data = String(reader.result);
+                  const fileName = `Sully_Backup_${mode}_${Date.now()}.zip`;
+                  
+                  try {
+                      await Filesystem.writeFile({
+                          path: fileName,
+                          data: base64data, // Filesystem accepts data urls? Or need strip prefix
+                          directory: Directory.Cache,
+                      });
+                      const uriResult = await Filesystem.getUri({
+                          directory: Directory.Cache,
+                          path: fileName,
+                      });
+                      await Share.share({
+                          title: `Sully Backup`,
+                          files: [uriResult.uri],
+                      });
+                  } catch (e) {
+                      console.error("Native write failed", e);
+                      addToast("保存文件失败", "error");
+                  }
+              };
+          } else {
+              // Web Download
+              const url = URL.createObjectURL(blob);
+              setDownloadUrl(url);
+              setShowExportModal(true);
+              
+              // Auto click
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `Sully_Backup_${mode}_${new Date().toISOString().slice(0,10)}.zip`;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+          }
       } catch (e: any) {
-          addToast(`导出错误: ${e.message}`, 'error');
+          addToast(e.message, 'error');
       }
-  };
-
-  const handleWebFileDownload = () => {
-      const fileName = `Sully_Backup_${new Date().toISOString().slice(0,10)}.json`;
-      webDownload(exportContent, fileName);
-      addToast('已触发浏览器下载', 'success');
   };
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
 
-      const reader = new FileReader();
-      reader.onload = async (ev) => {
-          const json = ev.target?.result as string;
-          if (importInputRef.current) importInputRef.current.value = '';
-
-          if (!json) {
-              addToast('文件内容为空', 'error');
-              return;
-          }
-
-          try {
-              addToast('正在解析数据...', 'info');
-              await importSystem(json);
-          } catch (err: any) {
-              console.error(err);
-              addToast(err.message || '恢复失败', 'error');
-          }
-      };
-
-      reader.onerror = () => {
-          addToast(`读取文件失败`, 'error');
-          if (importInputRef.current) importInputRef.current.value = '';
-      };
-
-      reader.readAsText(file);
+      // Pass the File object directly to importSystem
+      importSystem(file).catch(err => {
+          console.error(err);
+          addToast(err.message || '恢复失败', 'error');
+      });
+      
+      if (importInputRef.current) importInputRef.current.value = '';
   };
 
   const confirmReset = () => {
@@ -204,7 +166,23 @@ const Settings: React.FC = () => {
   };
 
   return (
-    <div className="h-full w-full bg-slate-50/50 flex flex-col font-light">
+    <div className="h-full w-full bg-slate-50/50 flex flex-col font-light relative">
+      
+      {/* GLOBAL PROGRESS OVERLAY */}
+      {sysOperation.status === 'processing' && (
+          <div className="absolute inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center animate-fade-in">
+              <div className="bg-white p-6 rounded-3xl shadow-2xl flex flex-col items-center gap-4 w-64">
+                  <div className="w-12 h-12 border-4 border-slate-200 border-t-primary rounded-full animate-spin"></div>
+                  <div className="text-sm font-bold text-slate-700">{sysOperation.message}</div>
+                  {sysOperation.progress > 0 && (
+                      <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                          <div className="h-full bg-primary transition-all duration-300" style={{ width: `${sysOperation.progress}%` }}></div>
+                      </div>
+                  )}
+              </div>
+          </div>
+      )}
+
       {/* Header */}
       <div className="h-20 bg-white/70 backdrop-blur-md flex items-end pb-3 px-4 border-b border-white/40 shrink-0 z-10 sticky top-0">
         <div className="flex items-center gap-2 w-full">
@@ -225,33 +203,33 @@ const Settings: React.FC = () => {
                 <div className="p-2 bg-blue-100 rounded-xl text-blue-600">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" /></svg>
                 </div>
-                <h2 className="text-sm font-semibold text-slate-600 tracking-wider">备份与恢复</h2>
+                <h2 className="text-sm font-semibold text-slate-600 tracking-wider">备份与恢复 (ZIP)</h2>
             </div>
             
             <div className="grid grid-cols-2 gap-3 mb-3">
                 <button onClick={() => handleExport('data')} className="py-4 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2 relative overflow-hidden">
-                    <div className="absolute top-0 right-0 px-1.5 py-0.5 bg-blue-100 text-[9px] text-blue-600 rounded-bl-lg font-bold">含配置</div>
+                    <div className="absolute top-0 right-0 px-1.5 py-0.5 bg-blue-100 text-[9px] text-blue-600 rounded-bl-lg font-bold">推荐</div>
                     <div className="p-2 bg-blue-50 rounded-full text-blue-500"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" /></svg></div>
-                    <span>数据备份</span>
+                    <span>完整数据备份</span>
                 </button>
                  <button onClick={() => handleExport('media')} className="py-4 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2">
                     <div className="p-2 bg-pink-50 rounded-full text-pink-500"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg></div>
-                    <span>相册/素材备份</span>
+                    <span>仅媒体素材</span>
                 </button>
             </div>
 
             <div className="grid grid-cols-1 gap-3 mb-4">
                  <div onClick={() => importInputRef.current?.click()} className="py-4 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2 cursor-pointer hover:bg-emerald-50 hover:border-emerald-200">
                     <div className="p-2 bg-emerald-100 rounded-full text-emerald-600"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg></div>
-                    <span>导入/恢复备份</span>
+                    <span>导入备份 (.zip / .json)</span>
                 </div>
-                <input type="file" ref={importInputRef} className="hidden" accept=".json" onChange={handleImport} />
+                <input type="file" ref={importInputRef} className="hidden" accept=".json,.zip" onChange={handleImport} />
             </div>
             
             <p className="text-[10px] text-slate-400 px-1 mb-4 leading-relaxed">
-                • <b>数据备份</b>: 包含角色、聊天、设置、API密钥和预设。体积小，推荐日常使用。<br/>
-                • <b>相册备份</b>: 仅包含相册图片、壁纸等大型素材。<br/>
-                • 请妥善保管包含 API 密钥的备份文件。
+                • <b>新版备份</b>: 采用 ZIP 格式，将图片与数据分离，解决导出卡死问题，且文件体积更小。<br/>
+                • 兼容旧版 JSON 备份文件的导入。<br/>
+                • 包含 API 密钥的备份请妥善保管。
             </p>
             
             <button onClick={() => setShowResetConfirm(true)} className="w-full py-3 bg-red-50 border border-red-100 text-red-500 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
@@ -325,7 +303,7 @@ const Settings: React.FC = () => {
         </section>
 
         <div className="text-center text-[10px] text-slate-300 pb-8 font-mono tracking-widest uppercase">
-            v1.4 (Simplified)
+            v2.0 (Zip Optimized)
         </div>
       </div>
 
@@ -350,24 +328,18 @@ const Settings: React.FC = () => {
       </Modal>
 
       {/* 强制导出 Modal */}
-      <Modal isOpen={showExportModal} title="备份数据" onClose={() => setShowExportModal(false)} footer={
+      <Modal isOpen={showExportModal} title="备份下载" onClose={() => setShowExportModal(false)} footer={
           <div className="flex gap-2 w-full">
-               <button onClick={() => { navigator.clipboard.writeText(exportContent); addToast('已复制', 'success'); }} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl">复制 JSON</button>
-               {Capacitor.isNativePlatform() ? (
-                   <div className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl shadow-lg flex items-center justify-center gap-2 opacity-50 cursor-not-allowed">
-                       <span>已尝试唤起分享</span>
-                   </div>
-               ) : (
-                   <button onClick={handleWebFileDownload} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl shadow-lg flex items-center justify-center gap-2">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" /></svg>
-                        下载文件
-                   </button>
-               )}
+               <button onClick={() => setShowExportModal(false)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl">关闭</button>
           </div>
       }>
-          <div className="space-y-2">
-              <p className="text-[10px] text-slate-500">数据已生成。如果自动分享未触发，请点击下方按钮。</p>
-              <textarea value={exportContent} readOnly className="w-full h-40 bg-slate-100 rounded-xl p-3 text-[10px] font-mono text-slate-500 resize-none focus:outline-none" onClick={(e) => e.currentTarget.select()} />
+          <div className="space-y-4 text-center py-4">
+              <div className="w-16 h-16 bg-green-100 text-green-500 rounded-full flex items-center justify-center mx-auto mb-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-8 h-8"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
+              </div>
+              <p className="text-sm font-bold text-slate-700">备份文件已生成！</p>
+              <p className="text-xs text-slate-500">如果浏览器没有自动下载，请点击下方链接。</p>
+              {downloadUrl && <a href={downloadUrl} download="Sully_Backup.zip" className="text-primary text-sm underline block py-2">点击手动下载 .zip</a>}
           </div>
       </Modal>
 

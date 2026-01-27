@@ -2,12 +2,11 @@
 import { 
     CharacterProfile, ChatTheme, Message, UserProfile, 
     Task, Anniversary, DiaryEntry, RoomTodo, RoomNote, 
-    GalleryImage, FullBackupData, GroupProfile, SocialPost, StudyCourse 
+    GalleryImage, FullBackupData, GroupProfile, SocialPost, StudyCourse, GameSession, Worldbook 
 } from '../types';
 
 const DB_NAME = 'AetherOS_Data';
-// CRITICAL FIX: Increment version to force `onupgradeneeded` for recent feature updates
-const DB_VERSION = 26; 
+const DB_VERSION = 29; // Bumped Version to force update
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -25,7 +24,9 @@ const STORE_ROOM_NOTES = 'room_notes';
 const STORE_GROUPS = 'groups'; 
 const STORE_JOURNAL_STICKERS = 'journal_stickers';
 const STORE_SOCIAL_POSTS = 'social_posts';
-const STORE_COURSES = 'courses'; // New
+const STORE_COURSES = 'courses';
+const STORE_GAMES = 'games';
+const STORE_WORLDBOOKS = 'worldbooks'; 
 
 export interface ScheduledMessage {
     id: string;
@@ -62,7 +63,6 @@ const openDB = (): Promise<IDBDatabase> => {
         msgStore.createIndex('charId', 'charId', { unique: false });
         msgStore.createIndex('groupId', 'groupId', { unique: false }); 
       } else {
-          // Upgrade Path
           const msgStore = (event.target as IDBOpenDBRequest).transaction?.objectStore(STORE_MESSAGES);
           if (msgStore && !msgStore.indexNames.contains(STORE_MESSAGES) && !msgStore.indexNames.contains('groupId')) {
               try {
@@ -106,7 +106,9 @@ const openDB = (): Promise<IDBDatabase> => {
       createStore(STORE_GROUPS, { keyPath: 'id' });
       createStore(STORE_JOURNAL_STICKERS, { keyPath: 'name' });
       createStore(STORE_SOCIAL_POSTS, { keyPath: 'id' });
-      createStore(STORE_COURSES, { keyPath: 'id' }); // New Store
+      createStore(STORE_COURSES, { keyPath: 'id' });
+      createStore(STORE_GAMES, { keyPath: 'id' }); 
+      createStore(STORE_WORLDBOOKS, { keyPath: 'id' }); 
     };
   });
 };
@@ -597,7 +599,6 @@ export const DB = {
       transaction.objectStore(STORE_ROOM_NOTES).delete(id);
   },
 
-  // --- Courses (New) ---
   getAllCourses: async (): Promise<StudyCourse[]> => {
       const db = await openDB();
       if (!db.objectStoreNames.contains(STORE_COURSES)) return [];
@@ -622,6 +623,68 @@ export const DB = {
       transaction.objectStore(STORE_COURSES).delete(id);
   },
 
+  getAllGames: async (): Promise<GameSession[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_GAMES)) return [];
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_GAMES, 'readonly');
+          const store = transaction.objectStore(STORE_GAMES);
+          const request = store.getAll();
+          request.onsuccess = () => resolve(request.result || []);
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  saveGame: async (game: GameSession): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_GAMES, 'readwrite');
+      transaction.objectStore(STORE_GAMES).put(game);
+  },
+
+  deleteGame: async (id: string): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_GAMES, 'readwrite');
+      transaction.objectStore(STORE_GAMES).delete(id);
+  },
+
+  // --- WORLDBOOKS (NEW) ---
+  getAllWorldbooks: async (): Promise<Worldbook[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_WORLDBOOKS)) return [];
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_WORLDBOOKS, 'readonly');
+          const store = transaction.objectStore(STORE_WORLDBOOKS);
+          const request = store.getAll();
+          request.onsuccess = () => resolve(request.result || []);
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  saveWorldbook: async (book: Worldbook): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_WORLDBOOKS, 'readwrite');
+      transaction.objectStore(STORE_WORLDBOOKS).put(book);
+  },
+
+  deleteWorldbook: async (id: string): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_WORLDBOOKS, 'readwrite');
+      transaction.objectStore(STORE_WORLDBOOKS).delete(id);
+  },
+
+  // --- Helper for Sequential Export ---
+  getRawStoreData: async (storeName: string): Promise<any[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(storeName)) return [];
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(storeName, 'readonly');
+          const store = transaction.objectStore(storeName);
+          const request = store.getAll();
+          request.onsuccess = () => resolve(request.result || []);
+          request.onerror = () => reject(request.error);
+      });
+  },
+
   // --- Bulk Export/Import ---
   
   exportFullData: async (): Promise<Partial<FullBackupData>> => {
@@ -640,7 +703,7 @@ export const DB = {
           });
       };
 
-      const [characters, messages, themes, emojis, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses] = await Promise.all([
+      const [characters, messages, themes, emojis, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks] = await Promise.all([
           getAllFromStore(STORE_CHARACTERS),
           getAllFromStore(STORE_MESSAGES),
           getAllFromStore(STORE_THEMES),
@@ -656,7 +719,9 @@ export const DB = {
           getAllFromStore(STORE_GROUPS),
           getAllFromStore(STORE_JOURNAL_STICKERS),
           getAllFromStore(STORE_SOCIAL_POSTS),
-          getAllFromStore(STORE_COURSES), // Included Courses
+          getAllFromStore(STORE_COURSES),
+          getAllFromStore(STORE_GAMES),
+          getAllFromStore(STORE_WORLDBOOKS), // Include Worldbooks
       ]);
 
       const userProfile = userProfiles.length > 0 ? {
@@ -666,7 +731,7 @@ export const DB = {
       } : undefined;
 
       return {
-          characters, messages, customThemes: themes, savedEmojis: emojis, assets, galleryImages, userProfile, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, savedJournalStickers: journalStickers, socialPosts, courses
+          characters, messages, customThemes: themes, savedEmojis: emojis, assets, galleryImages, userProfile, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, savedJournalStickers: journalStickers, socialPosts, courses, games, worldbooks
       };
   },
 
@@ -677,7 +742,7 @@ export const DB = {
           STORE_CHARACTERS, STORE_MESSAGES, STORE_THEMES, STORE_EMOJIS, 
           STORE_ASSETS, STORE_GALLERY, STORE_USER, STORE_DIARIES, 
           STORE_TASKS, STORE_ANNIVERSARIES, STORE_ROOM_TODOS, STORE_ROOM_NOTES,
-          STORE_GROUPS, STORE_JOURNAL_STICKERS, STORE_SOCIAL_POSTS, STORE_COURSES
+          STORE_GROUPS, STORE_JOURNAL_STICKERS, STORE_SOCIAL_POSTS, STORE_COURSES, STORE_GAMES, STORE_WORLDBOOKS
       ].filter(name => db.objectStoreNames.contains(name));
 
       const tx = db.transaction(availableStores, 'readwrite');
@@ -765,7 +830,9 @@ export const DB = {
       if (data.groups) clearAndAdd(STORE_GROUPS, data.groups);
       if (data.savedJournalStickers) clearAndAdd(STORE_JOURNAL_STICKERS, data.savedJournalStickers);
       if (data.socialPosts) clearAndAdd(STORE_SOCIAL_POSTS, data.socialPosts);
-      if (data.courses) clearAndAdd(STORE_COURSES, data.courses); // Import Courses
+      if (data.courses) clearAndAdd(STORE_COURSES, data.courses);
+      if (data.games) clearAndAdd(STORE_GAMES, data.games);
+      if (data.worldbooks) clearAndAdd(STORE_WORLDBOOKS, data.worldbooks); // Import Worldbooks
       
       if (data.userProfile) {
           if (availableStores.includes(STORE_USER)) {

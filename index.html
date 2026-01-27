@@ -61,7 +61,8 @@
         background-color: #0f1115;
         margin: 0;
         overflow: hidden;
-        overscroll-behavior: none;
+        /* Critical: Prevent browser back/forward swipe navigation */
+        overscroll-behavior-x: none;
         /* Prevent text selection to feel like an app */
         user-select: none;
         -webkit-user-select: none;
@@ -99,10 +100,12 @@
     "@capacitor/filesystem": "https://esm.sh/@capacitor/filesystem@^8.0.0",
     "@capacitor/local-notifications": "https://esm.sh/@capacitor/local-notifications@^6.0.0",
     "pdfjs-dist": "https://esm.sh/pdfjs-dist@3.11.174",
-    "katex": "https://esm.sh/katex@0.16.9"
+    "katex": "https://esm.sh/katex@0.16.9",
+    "jszip": "https://esm.sh/jszip@3.10.1"
   }
 }
 </script>
+<link rel="stylesheet" href="/index.css">
 </head>
   <body>
     <div id="root"></div>

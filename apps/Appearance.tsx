@@ -9,6 +9,7 @@ const Appearance: React.FC = () => {
   const { theme, updateTheme, closeApp, setCustomIcon, customIcons, addToast } = useOS();
   const [activeTab, setActiveTab] = useState<'theme' | 'icons'>('theme');
   const wallpaperInputRef = useRef<HTMLInputElement>(null);
+  const widgetImageInputRef = useRef<HTMLInputElement>(null);
   const iconInputRef = useRef<HTMLInputElement>(null);
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
 
@@ -27,6 +28,16 @@ const Appearance: React.FC = () => {
           const dataUrl = await processImage(file, { skipCompression: true });
           updateTheme({ wallpaper: dataUrl });
           addToast('壁纸更新成功', 'success');
+      } catch (e: any) {
+          addToast(e.message, 'error');
+      }
+  };
+
+  const handleWidgetImageUpload = async (file: File) => {
+      try {
+          const dataUrl = await processImage(file, { maxWidth: 800, quality: 0.9 });
+          updateTheme({ launcherWidgetImage: dataUrl });
+          addToast('桌面贴图更新成功', 'success');
       } catch (e: any) {
           addToast(e.message, 'error');
       }
@@ -121,6 +132,7 @@ const Appearance: React.FC = () => {
                     </div>
                 </section>
 
+                {/* Wallpaper Section */}
                 <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
                     <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Wallpaper</h2>
                     <div className="aspect-[9/16] w-1/2 mx-auto bg-slate-100 rounded-2xl overflow-hidden relative shadow-inner mb-4 group cursor-pointer" onClick={() => wallpaperInputRef.current?.click()}>
@@ -131,6 +143,31 @@ const Appearance: React.FC = () => {
                     </div>
                     <input type="file" ref={wallpaperInputRef} className="hidden" accept="image/*" onChange={(e) => e.target.files?.[0] && handleWallpaperUpload(e.target.files[0])} />
                     <p className="text-center text-[10px] text-slate-400">点击预览图上传新壁纸 (支持原画质)</p>
+                </section>
+
+                {/* Widget Section (Page 2 Sticker) */}
+                <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+                    <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">桌面第二页贴图</h2>
+                    <div 
+                        className="w-full h-32 bg-slate-100 rounded-2xl overflow-hidden relative shadow-inner mb-4 group cursor-pointer border-2 border-dashed border-slate-200 hover:border-primary/50 flex items-center justify-center" 
+                        onClick={() => widgetImageInputRef.current?.click()}
+                    >
+                         {theme.launcherWidgetImage ? (
+                             <img src={theme.launcherWidgetImage} className="w-full h-full object-cover" />
+                         ) : (
+                             <div className="text-center text-slate-400">
+                                 <span className="text-2xl block mb-1">🖼️</span>
+                                 <span className="text-xs">上传横幅图片</span>
+                             </div>
+                         )}
+                         <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                             <span className="text-white text-xs font-bold bg-black/20 px-3 py-1 rounded-full backdrop-blur-md">更换贴图</span>
+                         </div>
+                    </div>
+                    <input type="file" ref={widgetImageInputRef} className="hidden" accept="image/*" onChange={(e) => e.target.files?.[0] && handleWidgetImageUpload(e.target.files[0])} />
+                    {theme.launcherWidgetImage && (
+                        <button onClick={() => updateTheme({ launcherWidgetImage: undefined })} className="w-full py-2 text-xs font-bold text-red-400 bg-red-50 rounded-lg hover:bg-red-100">移除贴图</button>
+                    )}
                 </section>
             </>
         ) : (

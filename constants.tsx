@@ -1,10 +1,5 @@
 
 
-
-
-
-
-
 import React from 'react';
 import { AppConfig, AppID } from './types';
 
@@ -92,6 +87,16 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
       <path strokeLinecap="round" strokeLinejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z" />
     </svg>
   ),
+  Game: ({ className }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className={className}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z" />
+    </svg>
+  ),
+  Worldbook: ({ className }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className={className}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 21v-8.25M15.75 21v-8.25M8.25 21v-8.25M3 9l9-6 9 6m-1.5 12V10.332A48.36 48.36 0 0 0 12 9.75c-2.551 0-5.056.2-7.5.582V21M3 21h18M12 6.75h.008v.008H12V6.75Z" />
+    </svg>
+  ),
 };
 
 export const INSTALLED_APPS: AppConfig[] = [
@@ -106,7 +111,9 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.Journal, name: '交换日记', icon: 'Journal', color: 'amber' },
   { id: AppID.Date, name: '见面', icon: 'Date', color: 'pink' },
   { id: AppID.Study, name: '自习室', icon: 'Study', color: 'emerald' }, 
-  { id: AppID.FAQ, name: '使用帮助', icon: 'FAQ', color: 'indigo' }, // New FAQ App
+  { id: AppID.Game, name: 'TRPG', icon: 'Game', color: 'orange' },
+  { id: AppID.Worldbook, name: '世界书', icon: 'Worldbook', color: 'indigo' }, // Changed from teal
+  { id: AppID.FAQ, name: '使用帮助', icon: 'FAQ', color: 'indigo' },
   { id: AppID.Gallery, name: '相册', icon: 'Gallery', color: 'orange' },
   { id: AppID.ThemeMaker, name: '气泡工坊', icon: 'ThemeMaker', color: 'purple' },
   { id: AppID.Appearance, name: '外观', icon: 'Appearance', color: 'slate' },
