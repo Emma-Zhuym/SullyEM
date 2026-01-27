@@ -16,10 +16,10 @@ export const processImage = (file: File, options?: { maxWidth?: number, quality?
             return;
         }
 
-        // GIF 不压缩直接读取（限制大小）
+        // GIF 不压缩直接读取（放宽限制至 50MB）
         if (file.type === 'image/gif') {
-            if (file.size > 4 * 1024 * 1024) {
-                reject(new Error('为了保持流畅，GIF 图片请小于 4MB'));
+            if (file.size > 50 * 1024 * 1024) {
+                reject(new Error('GIF 图片过大(>50MB)，可能导致应用崩溃'));
                 return;
             }
             const reader = new FileReader();
