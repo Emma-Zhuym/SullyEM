@@ -233,17 +233,16 @@ const PhoneShell: React.FC = () => {
        
        {/* 
           CRITICAL FIX: 
-          Added 'overscroll-none' to prevent scroll chaining to the underlying desktop layer.
-          This ensures swipes at the bottom of apps don't pull up the whole shell.
+          Using 'absolute inset-0' prevents layout collapse.
+          REMOVED 'flex flex-col' to fix layout issues in CheckPhone (gap) and SocialApp (jumping).
+          Now it acts as a pure container for full-screen apps.
        */}
-       <div className="absolute inset-0 z-10 w-full h-full overflow-hidden">
+       <div className="absolute inset-0 z-10 w-full h-full overflow-hidden bg-transparent overscroll-none">
           
-          {/* App Container: Forced Full Screen */}
-          <div className="absolute inset-0 w-full h-full overflow-hidden flex flex-col bg-transparent overscroll-none">
-              <AppErrorBoundary onCloseApp={closeApp}>
-                  {renderApp()}
-              </AppErrorBoundary>
-          </div>
+          {/* App Container */}
+          <AppErrorBoundary onCloseApp={closeApp}>
+              {renderApp()}
+          </AppErrorBoundary>
 
           {/* Overlays: Status Bar (Top) */}
           <StatusBar />

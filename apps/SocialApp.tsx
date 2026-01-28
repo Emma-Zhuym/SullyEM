@@ -1,6 +1,4 @@
 
-
-
 import React, { useState, useEffect, useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
@@ -146,6 +144,7 @@ const SocialApp: React.FC = () => {
 
     // Refs
     const commentsEndRef = useRef<HTMLDivElement>(null);
+    const prevCommentCountRef = useRef(0); // Track comment count to prevent initial jump
 
     useEffect(() => {
         DB.getSocialPosts().then(posts => {
@@ -205,11 +204,20 @@ const SocialApp: React.FC = () => {
         }
     }, [characterHandles]);
 
+    // FIX: Only scroll to bottom if comment count INCREASES, not on initial load
+    // This prevents the "jumping" behavior when opening a post
     useEffect(() => {
-        if (selectedPost && commentsEndRef.current) {
-            commentsEndRef.current.scrollIntoView({ behavior: 'smooth' });
+        if (selectedPost) {
+            const currentCount = selectedPost.comments.length;
+            if (currentCount > prevCommentCountRef.current) {
+                // New comment added, safe to scroll. No timeout needed.
+                commentsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+            }
+            prevCommentCountRef.current = currentCount;
+        } else {
+            prevCommentCountRef.current = 0; // Reset
         }
-    }, [selectedPost?.comments.length, isReplyingToUser]);
+    }, [selectedPost?.comments.length]);
 
     // --- Helpers ---
 
@@ -619,98 +627,102 @@ ${identityMap}
     );
 
     // 2. Detail Overlay (Glassmorphism)
+    // FIX: Using a fixed container for backdrop to prevent layout gaps.
+    // REMOVED 'key={selectedPost.id}' to prevent re-mounting jitter.
+    // SEPARATED scrollable container from animation wrapper.
     const renderDetail = () => {
         if (!selectedPost) return null;
         return (
             <div 
-                className="fixed inset-0 z-[60] bg-white/90 backdrop-blur-xl flex flex-col animate-slide-up overscroll-none touch-none"
+                className="fixed inset-0 z-[60] h-full w-full bg-white/90 backdrop-blur-xl flex flex-col"
             >
-                {/* Sticky Header - Block Touches */}
-                <div 
-                    className="h-14 flex items-center justify-between px-4 bg-white/60 backdrop-blur-xl sticky top-0 z-20 border-b border-white/20 shrink-0 touch-none"
-                    onTouchMove={(e) => e.preventDefault()}
-                >
-                    <Icons.Back onClick={() => setSelectedPost(null)} />
-                    <div className="flex items-center gap-2">
-                        <img src={selectedPost.authorAvatar} className="w-8 h-8 rounded-full object-cover border border-white/50" />
-                        <span className="text-sm font-bold text-slate-800">{selectedPost.authorName}</span>
-                    </div>
-                    <Icons.Share onClick={() => setShowShareModal(true)} className="w-6 h-6 text-slate-800 cursor-pointer hover:text-[#ff2442]" />
-                </div>
-
-                <div 
-                    className="flex-1 overflow-y-auto no-scrollbar pb-24 overscroll-none touch-pan-y"
-                    // Stop propagation to prevent parent (root) from catching the scroll touch move
-                    onTouchMove={(e) => e.stopPropagation()} 
-                >
-                    {/* Main Visual */}
-                    <div className="w-full aspect-square flex items-center justify-center text-[8rem] relative overflow-hidden" style={{ background: selectedPost.bgStyle }}>
-                        <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/10"></div>
-                        <div className="relative z-10 drop-shadow-2xl filter saturate-125 animate-bounce-slow">{selectedPost.images[0]}</div>
-                    </div>
-
-                    <div className="p-6 space-y-4">
-                        <h1 className="text-2xl font-black text-slate-900 leading-snug tracking-tight">{selectedPost.title}</h1>
-                        <p className="text-[15px] text-slate-700 leading-relaxed whitespace-pre-wrap font-light">{selectedPost.content}</p>
-                        
-                        <div className="flex gap-2 flex-wrap pt-2">
-                            {selectedPost.tags.map(t => <span key={t} className="text-xs font-bold text-blue-600 bg-blue-50/50 backdrop-blur-sm border border-blue-100 px-2.5 py-1 rounded-full">#{t}</span>)}
+                {/* 
+                   Animation Wrapper. 
+                   We want the whole overlay content to slide up. 
+                   We ensure this doesn't re-render on state changes like comments.
+                */}
+                <div className="flex-1 w-full h-full flex flex-col animate-slide-up relative overflow-hidden">
+                    {/* Header - Shrink 0 to stay at top */}
+                    <div className="h-14 flex items-center justify-between px-4 bg-white/60 backdrop-blur-xl border-b border-white/20 shrink-0 z-20">
+                        <Icons.Back onClick={() => setSelectedPost(null)} />
+                        <div className="flex items-center gap-2">
+                            <img src={selectedPost.authorAvatar} className="w-8 h-8 rounded-full object-cover border border-white/50" />
+                            <span className="text-sm font-bold text-slate-800">{selectedPost.authorName}</span>
                         </div>
-                        <div className="text-xs text-slate-400 font-medium border-b border-slate-100/50 pb-6">{new Date(selectedPost.timestamp).toLocaleDateString()}</div>
+                        <Icons.Share onClick={() => setShowShareModal(true)} className="w-6 h-6 text-slate-800 cursor-pointer hover:text-[#ff2442]" />
                     </div>
 
-                    {/* Comments Section */}
-                    <div className="px-6 pb-6">
-                        <div className="text-sm font-bold text-slate-800 mb-6 flex items-center gap-2">
-                            <span>共 {selectedPost.comments.length} 条评论</span>
-                            {(loadingComments || isReplyingToUser) && <div className="w-3 h-3 border-2 border-slate-300 border-t-[#ff2442] rounded-full animate-spin"></div>}
+                    {/* Scrollable Area */}
+                    <div className="flex-1 overflow-y-auto no-scrollbar pb-24">
+                        {/* Main Visual */}
+                        <div className="w-full aspect-square flex items-center justify-center text-[8rem] relative overflow-hidden" style={{ background: selectedPost.bgStyle }}>
+                            <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/10"></div>
+                            {/* Removed animate-bounce-slow to prevent reflow jitter */}
+                            <div className="relative z-10 drop-shadow-2xl filter saturate-125">{selectedPost.images[0]}</div>
                         </div>
-                        
-                        <div className="space-y-6">
-                            {selectedPost.comments.length === 0 && !loadingComments && <div className="text-center text-slate-300 text-xs py-10">快来抢沙发...</div>}
-                            {selectedPost.comments.map(c => (
-                                <div key={c.id} className="flex gap-3 animate-fade-in group">
-                                    <img src={c.authorAvatar} className="w-9 h-9 rounded-full object-cover shrink-0 border border-slate-100" />
-                                    <div className="flex-1">
-                                        <div className="flex justify-between items-start">
-                                            <span className={`text-xs font-bold ${c.isCharacter ? 'text-slate-800' : 'text-slate-500'}`}>{c.authorName}</span>
-                                            <div className="flex items-center gap-1 text-slate-400 cursor-pointer hover:text-[#ff2442]">
-                                                <Icons.Heart filled={false} className="w-3.5 h-3.5" />
-                                                <span className="text-[10px]">{c.likes}</span>
+
+                        <div className="p-6 space-y-4">
+                            <h1 className="text-2xl font-black text-slate-900 leading-snug tracking-tight">{selectedPost.title}</h1>
+                            <p className="text-[15px] text-slate-700 leading-relaxed whitespace-pre-wrap font-light">{selectedPost.content}</p>
+                            
+                            <div className="flex gap-2 flex-wrap pt-2">
+                                {selectedPost.tags.map(t => <span key={t} className="text-xs font-bold text-blue-600 bg-blue-50/50 backdrop-blur-sm border border-blue-100 px-2.5 py-1 rounded-full">#{t}</span>)}
+                            </div>
+                            <div className="text-xs text-slate-400 font-medium border-b border-slate-100/50 pb-6">{new Date(selectedPost.timestamp).toLocaleDateString()}</div>
+                        </div>
+
+                        {/* Comments Section */}
+                        <div className="px-6 pb-6">
+                            <div className="text-sm font-bold text-slate-800 mb-6 flex items-center gap-2">
+                                <span>共 {selectedPost.comments.length} 条评论</span>
+                                {(loadingComments || isReplyingToUser) && <div className="w-3 h-3 border-2 border-slate-300 border-t-[#ff2442] rounded-full animate-spin"></div>}
+                            </div>
+                            
+                            <div className="space-y-6">
+                                {selectedPost.comments.length === 0 && !loadingComments && <div className="text-center text-slate-300 text-xs py-10">快来抢沙发...</div>}
+                                {selectedPost.comments.map(c => (
+                                    <div key={c.id} className="flex gap-3 animate-fade-in group">
+                                        <img src={c.authorAvatar} className="w-9 h-9 rounded-full object-cover shrink-0 border border-slate-100" />
+                                        <div className="flex-1">
+                                            <div className="flex justify-between items-start">
+                                                <span className={`text-xs font-bold ${c.isCharacter ? 'text-slate-800' : 'text-slate-500'}`}>{c.authorName}</span>
+                                                <div className="flex items-center gap-1 text-slate-400 cursor-pointer hover:text-[#ff2442]">
+                                                    <Icons.Heart filled={false} className="w-3.5 h-3.5" />
+                                                    <span className="text-[10px]">{c.likes}</span>
+                                                </div>
                                             </div>
+                                            <p className="text-[13px] text-slate-700 mt-0.5 leading-normal font-light">{c.content}</p>
                                         </div>
-                                        <p className="text-[13px] text-slate-700 mt-0.5 leading-normal font-light">{c.content}</p>
                                     </div>
-                                </div>
-                            ))}
-                            <div ref={commentsEndRef} />
+                                ))}
+                                <div ref={commentsEndRef} />
+                            </div>
                         </div>
                     </div>
-                </div>
 
-                {/* Bottom Input Bar - Glass - Block Touches */}
-                <div 
-                    className="h-16 bg-white/80 backdrop-blur-xl border-t border-white/40 px-4 flex items-center justify-between z-30 shrink-0 gap-4 shadow-[0_-4px_20px_rgba(0,0,0,0.03)] absolute bottom-0 w-full pb-safe touch-none"
-                    onTouchMove={(e) => e.preventDefault()}
-                >
-                    <div className="flex-1 bg-slate-100/50 rounded-full px-5 py-2.5 flex items-center gap-2 focus-within:bg-white focus-within:ring-1 focus-within:ring-slate-200 transition-all border border-transparent focus-within:border-slate-200">
-                        <input 
-                            value={commentInput}
-                            onChange={(e) => setCommentInput(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && handleSendComment()}
-                            placeholder="说点什么..."
-                            className="bg-transparent text-sm w-full outline-none text-slate-800 placeholder:text-slate-400"
-                        />
-                        {commentInput.trim() && <button onClick={handleSendComment} className="text-[#ff2442] font-bold text-sm animate-fade-in">发送</button>}
-                    </div>
-                    <div className="flex gap-5 text-slate-600 shrink-0 items-center">
-                        <div className="flex flex-col items-center gap-0.5">
-                            <Icons.Heart filled={selectedPost.isLiked} onClick={(e) => handleLike(e, selectedPost)} className="w-6 h-6" />
-                            <span className="text-[10px] font-medium">{selectedPost.likes}</span>
-                        </div>
-                        <div className="flex flex-col items-center gap-0.5">
-                            <Icons.Star filled={selectedPost.isCollected} onClick={() => updatePostInFeed({...selectedPost, isCollected: !selectedPost.isCollected})} className="w-6 h-6" />
-                            <span className="text-[10px] font-medium">{selectedPost.isCollected ? '已收藏' : '收藏'}</span>
+                    {/* Bottom Input Bar - Absolute to sit on top of scroll area at bottom */}
+                    <div className="absolute bottom-0 w-full pb-[env(safe-area-inset-bottom)] z-30 pointer-events-none">
+                         <div className="pointer-events-auto h-16 bg-white/80 backdrop-blur-xl border-t border-white/40 px-4 flex items-center justify-between gap-4 shadow-[0_-4px_20px_rgba(0,0,0,0.03)]">
+                            <div className="flex-1 bg-slate-100/50 rounded-full px-5 py-2.5 flex items-center gap-2 focus-within:bg-white focus-within:ring-1 focus-within:ring-slate-200 transition-all border border-transparent focus-within:border-slate-200">
+                                <input 
+                                    value={commentInput}
+                                    onChange={(e) => setCommentInput(e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && handleSendComment()}
+                                    placeholder="说点什么..."
+                                    className="bg-transparent text-sm w-full outline-none text-slate-800 placeholder:text-slate-400"
+                                />
+                                {commentInput.trim() && <button onClick={handleSendComment} className="text-[#ff2442] font-bold text-sm animate-fade-in">发送</button>}
+                            </div>
+                            <div className="flex gap-5 text-slate-600 shrink-0 items-center">
+                                <div className="flex flex-col items-center gap-0.5">
+                                    <Icons.Heart filled={selectedPost.isLiked} onClick={(e) => handleLike(e, selectedPost)} className="w-6 h-6" />
+                                    <span className="text-[10px] font-medium">{selectedPost.likes}</span>
+                                </div>
+                                <div className="flex flex-col items-center gap-0.5">
+                                    <Icons.Star filled={selectedPost.isCollected} onClick={() => updatePostInFeed({...selectedPost, isCollected: !selectedPost.isCollected})} className="w-6 h-6" />
+                                    <span className="text-[10px] font-medium">{selectedPost.isCollected ? '已收藏' : '收藏'}</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>

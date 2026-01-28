@@ -287,7 +287,11 @@ const MessageItem = React.memo(({
 
                 {!isUser && <div className="mr-3">{renderAvatar(charAvatar)}</div>}
                 
-                <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} max-w-[75%]`} {...interactionProps}>
+                {/* 
+                    UPDATED: Limit bubble max-width to 72% for better spacing. 
+                    Added min-w-0 to prevent flexbox overflow issues.
+                */}
+                <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} max-w-[72%] min-w-0`} {...interactionProps}>
                     <div className={selectionMode ? 'pointer-events-none' : ''}>
                         {content}
                     </div>
@@ -427,6 +431,7 @@ const MessageItem = React.memo(({
     };
 
     // Added stable class names "sully-bubble-user" and "sully-bubble-ai" for Custom CSS targeting
+    // UPDATED: Added whitespace-pre-wrap and break-all to ensure long non-breaking strings wrap correctly
     return commonLayout(
         <div className={`relative shadow-sm px-5 py-3 animate-fade-in border border-black/5 active:scale-[0.98] transition-transform overflow-hidden ${isUser ? 'sully-bubble-user' : 'sully-bubble-ai'}`} style={containerStyle}>
             
@@ -464,7 +469,7 @@ const MessageItem = React.memo(({
             )}
 
             {/* Layer 4: Text Content */}
-            <div className="relative z-10 text-[15px] leading-relaxed break-words" style={{ color: styleConfig.textColor }}>
+            <div className="relative z-10 text-[15px] leading-relaxed whitespace-pre-wrap break-all" style={{ color: styleConfig.textColor }}>
                 {renderContent(m.content)}
             </div>
         </div>

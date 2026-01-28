@@ -1,12 +1,46 @@
 
 
 
+
+
 import React, { useState, useEffect, useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { CharacterProfile, PhoneEvidence, PhoneCustomApp } from '../types';
 import { ContextBuilder } from '../utils/context';
 import Modal from '../components/os/Modal';
+
+// --- Debug Component ---
+const LayoutInspector: React.FC = () => {
+    const [stats, setStats] = useState({ w: 0, h: 0, vh: 0, top: 0 });
+    
+    useEffect(() => {
+        const update = () => {
+            setStats({
+                w: window.innerWidth,
+                h: window.innerHeight,
+                vh: window.visualViewport?.height || 0,
+                top: window.visualViewport?.offsetTop || 0
+            });
+        };
+        window.addEventListener('resize', update);
+        window.visualViewport?.addEventListener('resize', update);
+        window.visualViewport?.addEventListener('scroll', update);
+        update();
+        return () => {
+            window.removeEventListener('resize', update);
+            window.visualViewport?.removeEventListener('resize', update);
+            window.visualViewport?.removeEventListener('scroll', update);
+        };
+    }, []);
+
+    return (
+        <div className="absolute top-0 right-0 z-[9999] bg-red-500/80 text-white text-[10px] font-mono p-1 pointer-events-none select-none">
+            Win: {stats.w}x{stats.h}<br/>
+            VV: {stats.vh.toFixed(0)} (y:{stats.top.toFixed(0)})
+        </div>
+    );
+};
 
 const CheckPhone: React.FC = () => {
     const { closeApp, characters, activeCharacterId, updateCharacter, apiConfig, addToast, userProfile } = useOS();
@@ -26,6 +60,9 @@ const CheckPhone: React.FC = () => {
     const [newAppIcon, setNewAppIcon] = useState('📱');
     const [newAppColor, setNewAppColor] = useState('#3b82f6');
     const [newAppPrompt, setNewAppPrompt] = useState('');
+
+    // Debug Toggle
+    const [showDebug, setShowDebug] = useState(false);
 
     // Derived state for evidence records
     const records = targetChar?.phoneState?.records || [];
@@ -354,9 +391,9 @@ Format:
     const renderChatList = () => {
         const list = records.filter(r => r.type === 'chat').sort((a,b) => b.timestamp - a.timestamp);
         return (
-            <div className="h-full flex flex-col bg-slate-50">
+            <div className="fixed inset-0 w-full h-full flex flex-col bg-slate-50 z-10">
                 {renderHeader('Message', () => setActiveAppId('home'))}
-                <div className="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar pb-24">
+                <div className="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar pb-24 overscroll-contain">
                     {list.length === 0 && <div className="text-center text-slate-400 mt-20 text-xs">暂无聊天记录</div>}
                     {list.map(r => (
                         <div 
@@ -403,10 +440,11 @@ Format:
         });
 
         return (
-            <div className="h-full flex flex-col bg-[#f2f2f2]">
+            // FIX: Changed from 'absolute' to 'fixed inset-0 z-50 w-full h-full' to prevent layout gaps
+            <div className="fixed inset-0 w-full h-full flex flex-col bg-[#f2f2f2] z-50">
                 {renderHeader(selectedChatRecord.title, () => setActiveAppId('chat'))}
                 
-                <div className="flex-1 overflow-y-auto p-4 space-y-3 no-scrollbar pb-24 overscroll-contain">
+                <div className="flex-1 overflow-y-auto p-4 space-y-3 no-scrollbar overscroll-contain">
                     {parsedLines.map((msg, idx) => (
                         <div key={idx} className={`flex ${msg.isMe ? 'justify-end' : 'justify-start'}`}>
                             {!msg.isMe && (
@@ -436,7 +474,7 @@ Format:
                     <div ref={chatEndRef} />
                 </div>
 
-                <div className="absolute bottom-0 w-full p-4 bg-[#f7f7f7] border-t border-gray-200 z-30">
+                <div className="shrink-0 w-full p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] bg-[#f7f7f7] border-t border-gray-200 z-30">
                     <button 
                         onClick={handleContinueChat} 
                         disabled={isLoading}
@@ -449,15 +487,12 @@ Format:
         );
     };
 
-    // ... (renderCallList, renderGenericList, AppIcon, renderDesktop, Main View Logic kept same) ...
-    // Note: Re-inserting other parts for full file completeness
-
     const renderCallList = () => {
         const list = records.filter(r => r.type === 'call').sort((a,b) => b.timestamp - a.timestamp);
         return (
-            <div className="h-full flex flex-col bg-white">
+            <div className="fixed inset-0 w-full h-full flex flex-col bg-white z-10">
                 {renderHeader('Recents', () => setActiveAppId('home'))}
-                <div className="flex-1 overflow-y-auto no-scrollbar pb-24">
+                <div className="flex-1 overflow-y-auto no-scrollbar pb-24 overscroll-contain">
                     {list.length === 0 && <div className="text-center text-slate-400 mt-20 text-xs">暂无通话记录</div>}
                     {list.map(r => {
                         const isMissed = r.value?.includes('未接') || r.value?.includes('Missed');
@@ -494,10 +529,10 @@ Format:
         const list = records.filter(r => r.type === appId).sort((a,b) => b.timestamp - a.timestamp);
         
         return (
-            <div className="h-full flex flex-col bg-slate-50">
+            <div className="fixed inset-0 w-full h-full flex flex-col bg-slate-50 z-10">
                 {renderHeader(appName, () => setActiveAppId('home'))}
                 
-                <div className="flex-1 overflow-y-auto p-4 space-y-3 no-scrollbar pb-24">
+                <div className="flex-1 overflow-y-auto p-4 space-y-3 no-scrollbar pb-24 overscroll-contain">
                     {list.length === 0 && (
                         <div className="flex flex-col items-center justify-center h-64 text-slate-400 gap-2">
                             <span className="text-4xl opacity-20">📭</span>
@@ -555,7 +590,7 @@ Format:
             : { background: 'linear-gradient(to bottom, #1e293b, #0f172a)' };
 
         return (
-            <div className="h-full w-full flex flex-col relative" style={{ ...bgStyle, backgroundSize: 'cover', backgroundPosition: 'center' }}>
+            <div className="absolute inset-0 flex flex-col z-0" style={{ ...bgStyle, backgroundSize: 'cover', backgroundPosition: 'center' }}>
                 <div className="absolute inset-0 bg-black/20 backdrop-blur-[2px]"></div>
                 
                 <div className="h-8 flex justify-between px-5 items-center text-white/80 text-[10px] font-bold z-20 relative">
@@ -566,7 +601,7 @@ Format:
                     </div>
                 </div>
 
-                <div className="flex-1 p-5 z-10 overflow-y-auto no-scrollbar">
+                <div className="flex-1 p-5 z-10 overflow-y-auto no-scrollbar overscroll-none">
                     <div className="grid grid-cols-4 gap-y-6 gap-x-2 place-items-center content-start">
                         <AppIcon icon="💬" color="linear-gradient(135deg, #10b981, #059669)" label="Message" onClick={() => setActiveAppId('chat')} />
                         <AppIcon icon="🛍️" color="linear-gradient(135deg, #f97316, #ea580c)" label="Taobao" onClick={() => setActiveAppId('taobao')} />
@@ -598,6 +633,14 @@ Format:
                             <span className="text-[10px] font-medium text-white/90 drop-shadow-md">断开连接</span>
                         </button>
 
+                        {/* Debug Toggle */}
+                        <button onClick={() => setShowDebug(!showDebug)} className="flex flex-col items-center gap-1.5 group opacity-50 hover:opacity-100 transition-opacity">
+                            <div className="w-[3.8rem] h-[3.8rem] rounded-[1.2rem] bg-black/20 backdrop-blur-md border border-white/10 flex items-center justify-center shadow-lg active:scale-95 transition-transform">
+                                <span className="text-xl">🛠️</span>
+                            </div>
+                            <span className="text-[10px] font-medium text-white/90 drop-shadow-md">Debug UI</span>
+                        </button>
+
                     </div>
                 </div>
 
@@ -615,7 +658,7 @@ Format:
 
     if (view === 'select') {
         return (
-            <div className="h-full w-full bg-slate-900 flex flex-col font-light">
+            <div className="absolute inset-0 flex flex-col bg-slate-900 font-light overflow-hidden">
                 <div className="h-16 flex items-center justify-between px-4 border-b border-slate-800 bg-slate-900/80 sticky top-0 z-10">
                     <button onClick={closeApp} className="p-2 -ml-2 rounded-full hover:bg-white/10 text-white">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
@@ -623,7 +666,7 @@ Format:
                     <span className="font-bold text-white tracking-widest uppercase text-sm">Target Device</span>
                     <div className="w-8"></div>
                 </div>
-                <div className="p-6 grid grid-cols-2 gap-5 overflow-y-auto pb-20 no-scrollbar">
+                <div className="p-6 grid grid-cols-2 gap-5 overflow-y-auto pb-20 no-scrollbar overscroll-contain">
                     {characters.map(c => (
                         <div key={c.id} onClick={() => handleSelectChar(c)} className="aspect-[3/4] bg-slate-800 rounded-xl border border-slate-700 p-4 flex flex-col items-center justify-center gap-4 cursor-pointer active:scale-95 transition-all group hover:border-green-500 hover:shadow-[0_0_15px_rgba(34,197,94,0.3)]">
                             <div className="w-20 h-20 rounded-full p-[2px] border-2 border-slate-600 group-hover:border-green-500 transition-colors">
@@ -643,8 +686,10 @@ Format:
     }
 
     // Phone View Container
+    // FIXED: Use absolute inset-0 to force fill parent container properly
     return (
-        <div className="h-full w-full bg-slate-900 relative overflow-hidden font-sans">
+        <div className="absolute inset-0 w-full h-full bg-slate-900 overflow-hidden font-sans overscroll-none">
+            {showDebug && <LayoutInspector />}
             {activeAppId === 'home' ? renderDesktop() : (
                 <>
                     {activeAppId === 'chat' && renderChatList()}
