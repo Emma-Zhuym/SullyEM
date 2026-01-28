@@ -1,6 +1,4 @@
 
-
-
 import { CharacterProfile, UserProfile } from '../types';
 
 /**
@@ -92,7 +90,26 @@ export const ContextBuilder = {
             let details = "";
             char.activeMemoryMonths.forEach(monthKey => {
                 // monthKey format: YYYY-MM
-                const logs = char.memories.filter(m => m.date.startsWith(monthKey) || m.date.startsWith(monthKey.replace('-', '年')));
+                // Robust Date Matching: Normalize memory date separators to '-' and compare prefix
+                // This ensures compatibility with 'YYYY/MM/DD', 'YYYY年MM月DD日', and 'YYYY-MM-DD'
+                const logs = char.memories.filter(m => {
+                    // 1. Replace separators / or 年 or 月 with -
+                    // 2. Remove '日'
+                    // 3. Ensure single digit months/days are padded (e.g. 2024-1-1 -> 2024-01-01) for strict matching, 
+                    //    but simplest is to just check startsWith after rough normalization.
+                    let normDate = m.date.replace(/[\/年月]/g, '-').replace('日', '');
+                    
+                    // Basic fix for "2024-1-1" vs "2024-01" matching issues
+                    const parts = normDate.split('-');
+                    if (parts.length >= 2) {
+                        const y = parts[0];
+                        const mo = parts[1].padStart(2, '0');
+                        normDate = `${y}-${mo}`;
+                    }
+                    
+                    return normDate.startsWith(monthKey);
+                });
+                
                 if (logs.length > 0) {
                     details += `\n> 详细回忆 [${monthKey}]:\n`;
                     logs.forEach(m => {

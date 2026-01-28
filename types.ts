@@ -1,4 +1,6 @@
 
+
+
 export enum AppID {
   Launcher = 'launcher',
   Settings = 'settings',
@@ -47,6 +49,7 @@ export interface OSTheme {
   darkMode: boolean;
   contentColor?: string;
   launcherWidgetImage?: string; // New: Custom sticker/image for Launcher Page 2
+  customFont?: string; // New: Custom global font (Base64)
 }
 
 export interface VirtualTime {

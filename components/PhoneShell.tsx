@@ -1,5 +1,5 @@
 
-import React, { useEffect } from 'react';
+import React, { useEffect, Component, ErrorInfo } from 'react';
 import { useOS } from '../context/OSContext';
 import StatusBar from './os/StatusBar';
 import Launcher from '../apps/Launcher';
@@ -26,6 +26,50 @@ import { App as CapApp } from '@capacitor/app';
 import { StatusBar as CapStatusBar, Style as StatusBarStyle } from '@capacitor/status-bar';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
+
+// Internal Error Boundary Component
+class AppErrorBoundary extends Component<{ children: React.ReactNode, onCloseApp: () => void }, { hasError: boolean, error: Error | null }> {
+    constructor(props: any) {
+        super(props);
+        this.state = { hasError: false, error: null };
+    }
+
+    static getDerivedStateFromError(error: Error) {
+        return { hasError: true, error };
+    }
+
+    componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+        console.error("App Crash:", error, errorInfo);
+    }
+
+    // Reset error state when children change (e.g. app switch)
+    componentDidUpdate(prevProps: any) {
+        if (prevProps.children !== this.props.children) {
+            this.setState({ hasError: false, error: null });
+        }
+    }
+
+    render() {
+        if (this.state.hasError) {
+            return (
+                <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 text-white p-6 text-center space-y-4">
+                    <div className="text-4xl">😵</div>
+                    <h2 className="text-lg font-bold">应用运行错误</h2>
+                    <p className="text-xs text-slate-400 font-mono bg-black/30 p-2 rounded max-w-full overflow-hidden text-ellipsis">
+                        {this.state.error?.message || 'Unknown Error'}
+                    </p>
+                    <button 
+                        onClick={() => { this.setState({ hasError: false }); this.props.onCloseApp(); }}
+                        className="px-6 py-3 bg-red-600 rounded-full font-bold text-sm shadow-lg active:scale-95 transition-transform"
+                    >
+                        返回桌面
+                    </button>
+                </div>
+            );
+        }
+        return this.props.children;
+    }
+}
 
 const PhoneShell: React.FC = () => {
   const { theme, isLocked, unlock, activeApp, closeApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters } = useOS();
@@ -75,6 +119,11 @@ const PhoneShell: React.FC = () => {
     };
   }, [activeApp, isLocked, closeApp]);
 
+  // Force scroll to top when app changes to prevent "push up" glitches on iOS
+  useEffect(() => {
+      window.scrollTo(0, 0);
+  }, [activeApp]);
+
   if (!isDataLoaded) {
     return <div className="w-full h-full bg-black flex items-center justify-center"><div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin"></div></div>;
   }
@@ -100,7 +149,7 @@ const PhoneShell: React.FC = () => {
             }
             unlock();
         }}
-        className="relative w-full h-full bg-cover bg-center cursor-pointer overflow-hidden group font-light select-none"
+        className="relative w-full h-full bg-cover bg-center cursor-pointer overflow-hidden group font-light select-none overscroll-none"
         style={{ backgroundImage: bgImageValue, color: contentColor }}
       >
         <div className="absolute inset-0 bg-black/5 backdrop-blur-sm transition-all group-hover:backdrop-blur-none group-hover:bg-transparent duration-700" />
@@ -165,7 +214,7 @@ const PhoneShell: React.FC = () => {
   };
 
   return (
-    <div className="relative w-full h-full overflow-hidden bg-gradient-to-br from-pink-200 via-purple-200 to-indigo-200 text-slate-900 font-sans select-none">
+    <div className="relative w-full h-full overflow-hidden bg-gradient-to-br from-pink-200 via-purple-200 to-indigo-200 text-slate-900 font-sans select-none overscroll-none">
        {/* Optimized Background Layer */}
        <div 
          className="absolute inset-0 bg-cover bg-center transition-all duration-700 ease-[cubic-bezier(0.25,0.1,0.25,1)]"
@@ -183,28 +232,33 @@ const PhoneShell: React.FC = () => {
        <div className={`absolute inset-0 transition-all duration-500 ${activeApp === AppID.Launcher ? 'bg-transparent' : 'bg-white/50 backdrop-blur-3xl'}`} />
        
        {/* 
-          FIX: Removed 'pt-[env(safe-area-inset-top)]' from main container.
-          Apps must handle their own top/bottom spacing to allow full-screen immersive backgrounds (like Game/Date modes) 
-          to reach the edges without gaps revealing the underlying desktop wallpaper.
+          CRITICAL FIX: 
+          Added 'overscroll-none' to prevent scroll chaining to the underlying desktop layer.
+          This ensures swipes at the bottom of apps don't pull up the whole shell.
        */}
-       <div className="relative z-10 w-full h-full flex flex-col">
-          <StatusBar />
-          <div className="flex-1 relative w-full overflow-hidden flex flex-col">{renderApp()}</div>
+       <div className="absolute inset-0 z-10 w-full h-full overflow-hidden">
           
-          <div className="absolute bottom-0 left-0 w-full h-6 flex justify-center items-end pb-2 mb-[env(safe-area-inset-bottom)] z-50 pointer-events-none">
-             <div className="w-32 h-1 bg-slate-900/10 rounded-full backdrop-blur-md"></div>
+          {/* App Container: Forced Full Screen */}
+          <div className="absolute inset-0 w-full h-full overflow-hidden flex flex-col bg-transparent overscroll-none">
+              <AppErrorBoundary onCloseApp={closeApp}>
+                  {renderApp()}
+              </AppErrorBoundary>
           </div>
-       </div>
 
-       <div className="absolute top-12 left-0 w-full flex flex-col items-center gap-2 pointer-events-none z-[60]">
-          {toasts.map(toast => (
-             <div key={toast.id} className="animate-fade-in bg-white/95 backdrop-blur-xl px-4 py-3 rounded-2xl shadow-xl border border-black/5 flex items-center gap-3 max-w-[85%] ring-1 ring-white/20">
-                 {toast.type === 'success' && <div className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0"></div>}
-                 {toast.type === 'error' && <div className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0"></div>}
-                 {toast.type === 'info' && <div className="w-2.5 h-2.5 rounded-full bg-primary shrink-0"></div>}
-                 <span className="text-xs font-bold text-slate-800 truncate leading-none">{toast.message}</span>
-             </div>
-          ))}
+          {/* Overlays: Status Bar (Top) */}
+          <StatusBar />
+          
+          {/* Overlays: Toasts (Top) */}
+          <div className="absolute top-12 left-0 w-full flex flex-col items-center gap-2 pointer-events-none z-[60]">
+              {toasts.map(toast => (
+                 <div key={toast.id} className="animate-fade-in bg-white/95 backdrop-blur-xl px-4 py-3 rounded-2xl shadow-xl border border-black/5 flex items-center gap-3 max-w-[85%] ring-1 ring-white/20">
+                     {toast.type === 'success' && <div className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0"></div>}
+                     {toast.type === 'error' && <div className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0"></div>}
+                     {toast.type === 'info' && <div className="w-2.5 h-2.5 rounded-full bg-primary shrink-0"></div>}
+                     <span className="text-xs font-bold text-slate-800 truncate leading-none">{toast.message}</span>
+                 </div>
+              ))}
+           </div>
        </div>
     </div>
   );

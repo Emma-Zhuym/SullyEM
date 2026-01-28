@@ -1,7 +1,7 @@
 
 
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useOS } from '../context/OSContext';
 import { ChatTheme, BubbleStyle } from '../types';
 import { processImage } from '../utils/file';
@@ -72,17 +72,91 @@ const CSS_EXAMPLES = [
     }
 ];
 
+// --- Helpers for Color & CSS ---
+
+// Parse Hex/RGBA to { hex: "#RRGGBB", alpha: 0-1 }
+const parseColorValue = (color: string) => {
+    // Default
+    let hex = '#ffffff';
+    let alpha = 1;
+
+    if (!color) return { hex, alpha };
+
+    if (color.startsWith('#')) {
+        hex = color.substring(0, 7);
+        // Handle #RRGGBBAA? Assuming standard 6 char for now or simple
+        return { hex, alpha: 1 };
+    }
+
+    if (color.startsWith('rgba')) {
+        const match = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+        if (match) {
+            const r = parseInt(match[1]);
+            const g = parseInt(match[2]);
+            const b = parseInt(match[3]);
+            const a = match[4] ? parseFloat(match[4]) : 1;
+            const toHex = (n: number) => n.toString(16).padStart(2, '0');
+            hex = `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+            alpha = a;
+        }
+    }
+    return { hex, alpha };
+};
+
+const toRgbaString = (hex: string, alpha: number) => {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
+// Padding CSS Injection Helper
+const PADDING_MARKER_START = '/* PADDING_AUTO_START */';
+const PADDING_MARKER_END = '/* PADDING_AUTO_END */';
+
+const injectPaddingCss = (css: string, verticalPadding: number) => {
+    const horizontalPadding = Math.round(verticalPadding * 1.6); // Aspect ratio for bubble
+    const rule = `
+${PADDING_MARKER_START}
+.sully-bubble-user, .sully-bubble-ai {
+  padding: ${verticalPadding}px ${horizontalPadding}px !important;
+}
+${PADDING_MARKER_END}`;
+
+    const regex = new RegExp(`${PADDING_MARKER_START.replace(/\*/g, '\\*')}[\\s\\S]*?${PADDING_MARKER_END.replace(/\*/g, '\\*')}`);
+    
+    if (css && css.match(regex)) {
+        return css.replace(regex, rule);
+    }
+    return (css || '') + rule;
+};
+
+const extractPaddingFromCss = (css: string) => {
+    const match = css?.match(/padding:\s*(\d+)px/);
+    return match ? parseInt(match[1]) : 12; // Default 12px (py-3)
+};
+
 const ThemeMaker: React.FC = () => {
     const { closeApp, addCustomTheme, addToast } = useOS();
     const [editingTheme, setEditingTheme] = useState<ChatTheme>({ ...DEFAULT_THEME, id: `theme-${Date.now()}` });
     const [activeTab, setActiveTab] = useState<'user' | 'ai' | 'css'>('user');
-    const [toolSection, setToolSection] = useState<'base' | 'sticker' | 'avatar'>('base'); // New Sub-tabs
+    const [toolSection, setToolSection] = useState<'base' | 'sticker' | 'avatar'>('base'); 
     
+    // Local state for sliders
+    const [paddingVal, setPaddingVal] = useState(12);
+
     const fileInputRef = useRef<HTMLInputElement>(null);
     const decorationInputRef = useRef<HTMLInputElement>(null);
     const avatarDecoInputRef = useRef<HTMLInputElement>(null);
 
     const activeStyle = editingTheme[activeTab === 'css' ? 'user' : activeTab];
+
+    // Initialize padding state from CSS on load
+    useEffect(() => {
+        if (editingTheme.customCss) {
+            setPaddingVal(extractPaddingFromCss(editingTheme.customCss));
+        }
+    }, []);
 
     const updateStyle = (key: keyof BubbleStyle, value: any) => {
         if (activeTab === 'css') return;
@@ -93,6 +167,17 @@ const ThemeMaker: React.FC = () => {
                 [key]: value
             }
         }));
+    };
+
+    const updateColorWithAlpha = (newHex: string, newAlpha: number) => {
+        const val = newAlpha === 1 ? newHex : toRgbaString(newHex, newAlpha);
+        updateStyle('backgroundColor', val);
+    };
+
+    const updatePadding = (val: number) => {
+        setPaddingVal(val);
+        const newCss = injectPaddingCss(editingTheme.customCss || '', val);
+        setEditingTheme(prev => ({ ...prev, customCss: newCss }));
     };
 
     const handleImageUpload = async (file: File, type: 'bg' | 'deco' | 'avatarDeco') => {
@@ -123,7 +208,6 @@ const ThemeMaker: React.FC = () => {
             backgroundColor: style.backgroundColor,
             borderRadius: `${style.borderRadius}px`,
             opacity: style.opacity,
-            // Simulate "FirstInGroup" border radius logic for a nicer preview look
             borderBottomLeftRadius: isUser ? `${style.borderRadius}px` : '4px',
             borderBottomRightRadius: isUser ? '4px' : `${style.borderRadius}px`,
             borderTopLeftRadius: `${style.borderRadius}px`,
@@ -150,7 +234,7 @@ const ThemeMaker: React.FC = () => {
                             style={{
                                 left: `${style.avatarDecorationX ?? 50}%`,
                                 top: `${style.avatarDecorationY ?? 50}%`,
-                                width: `${40 * (style.avatarDecorationScale ?? 1)}px`, // Match container size 40px
+                                width: `${40 * (style.avatarDecorationScale ?? 1)}px`, 
                                 height: 'auto',
                                 transform: `translate(-50%, -50%) rotate(${style.avatarDecorationRotate ?? 0}deg)`,
                             }}
@@ -173,7 +257,9 @@ const ThemeMaker: React.FC = () => {
                     )}
 
                     <div 
-                        className={`relative px-4 py-3 shadow-sm text-sm overflow-hidden ${isUser ? 'sully-bubble-user' : 'sully-bubble-ai'}`} 
+                        // Note: Default classes match Chat.tsx base padding (px-5 py-3 = 20px 12px)
+                        // Custom CSS generated by padding slider will override this via !important
+                        className={`relative px-5 py-3 shadow-sm text-sm overflow-hidden ${isUser ? 'sully-bubble-user' : 'sully-bubble-ai'}`} 
                         style={containerStyle}
                     >
                         {style.backgroundImage && (
@@ -193,6 +279,8 @@ const ThemeMaker: React.FC = () => {
             </div>
         );
     };
+
+    const parsedBgColor = parseColorValue(activeStyle.backgroundColor);
 
     return (
         <div className="h-full w-full bg-slate-50 flex flex-col font-light relative">
@@ -292,16 +380,61 @@ const ThemeMaker: React.FC = () => {
                                 <input value={editingTheme.name} onChange={(e) => setEditingTheme(prev => ({...prev, name: e.target.value}))} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:border-primary/50 transition-all outline-none" placeholder="我的个性主题" />
                             </div>
 
-                            {/* Colors */}
+                            {/* Colors & Opacity */}
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">文字颜色</label>
                                     <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-xl border border-slate-100"><input type="color" value={activeStyle.textColor} onChange={(e) => updateStyle('textColor', e.target.value)} className="w-8 h-8 rounded-lg border-none cursor-pointer bg-transparent" /></div>
                                 </div>
                                 <div>
-                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">气泡颜色</label>
-                                    <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-xl border border-slate-100"><input type="color" value={activeStyle.backgroundColor} onChange={(e) => updateStyle('backgroundColor', e.target.value)} className="w-8 h-8 rounded-lg border-none cursor-pointer bg-transparent" /></div>
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-2">气泡颜色 (Base)</label>
+                                    <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-xl border border-slate-100">
+                                        <input 
+                                            type="color" 
+                                            value={parsedBgColor.hex} 
+                                            onChange={(e) => updateColorWithAlpha(e.target.value, parsedBgColor.alpha)} 
+                                            className="w-8 h-8 rounded-lg border-none cursor-pointer bg-transparent" 
+                                        />
+                                    </div>
                                 </div>
+                            </div>
+
+                            {/* Background Alpha (Transparency) */}
+                            <div>
+                                <div className="flex justify-between mb-2">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase">背景透明度 (Background Alpha)</label>
+                                    <span className="text-[10px] text-slate-500 font-mono">{Math.round(parsedBgColor.alpha * 100)}%</span>
+                                </div>
+                                <input 
+                                    type="range" min="0" max="1" step="0.05" 
+                                    value={parsedBgColor.alpha} 
+                                    onChange={(e) => updateColorWithAlpha(parsedBgColor.hex, parseFloat(e.target.value))} 
+                                    className="w-full h-1.5 bg-slate-200 rounded-full appearance-none cursor-pointer accent-primary" 
+                                />
+                            </div>
+
+                            {/* Padding (Compactness) */}
+                            <div>
+                                <div className="flex justify-between mb-2">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase">气泡大小/紧凑度 (Size/Padding)</label>
+                                    <span className="text-[10px] text-slate-500 font-mono">{paddingVal <= 6 ? 'Compact' : (paddingVal >= 16 ? 'Loose' : 'Normal')}</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-[10px] text-slate-400">紧凑</span>
+                                    <input 
+                                        type="range" min="4" max="24" step="1" 
+                                        value={paddingVal} 
+                                        onChange={(e) => updatePadding(parseInt(e.target.value))} 
+                                        className="flex-1 h-1.5 bg-slate-200 rounded-full appearance-none cursor-pointer accent-primary" 
+                                    />
+                                    <span className="text-[10px] text-slate-400">宽敞</span>
+                                </div>
+                            </div>
+
+                            {/* Border Radius */}
+                            <div>
+                                <div className="flex justify-between mb-2"><label className="text-[10px] font-bold text-slate-400 uppercase">圆角大小</label><span className="text-[10px] text-slate-500 font-mono">{activeStyle.borderRadius}px</span></div>
+                                <input type="range" min="0" max="30" value={activeStyle.borderRadius} onChange={(e) => updateStyle('borderRadius', parseInt(e.target.value))} className="w-full h-1.5 bg-slate-200 rounded-full appearance-none cursor-pointer accent-primary" />
                             </div>
 
                             {/* Background Image Logic */}
@@ -316,17 +449,13 @@ const ThemeMaker: React.FC = () => {
                                 {activeStyle.backgroundImage && <button onClick={(e) => { e.stopPropagation(); updateStyle('backgroundImage', undefined); }} className="absolute top-2 right-2 text-[10px] bg-red-100 text-red-500 px-2 py-0.5 rounded-full z-20">移除</button>}
                             </div>
 
-                            {/* Sliders */}
+                            {/* Background Image Opacity */}
                             {activeStyle.backgroundImage && (
                                 <div>
-                                    <div className="flex justify-between mb-2"><label className="text-[10px] font-bold text-slate-400 uppercase">背景透明度</label><span className="text-[10px] text-slate-500 font-mono">{Math.round((activeStyle.backgroundImageOpacity ?? 0.5) * 100)}%</span></div>
+                                    <div className="flex justify-between mb-2"><label className="text-[10px] font-bold text-slate-400 uppercase">底纹透明度</label><span className="text-[10px] text-slate-500 font-mono">{Math.round((activeStyle.backgroundImageOpacity ?? 0.5) * 100)}%</span></div>
                                     <input type="range" min="0" max="1" step="0.05" value={activeStyle.backgroundImageOpacity ?? 0.5} onChange={(e) => updateStyle('backgroundImageOpacity', parseFloat(e.target.value))} className="w-full h-1.5 bg-slate-200 rounded-full appearance-none cursor-pointer accent-primary" />
                                 </div>
                             )}
-                            <div>
-                                <div className="flex justify-between mb-2"><label className="text-[10px] font-bold text-slate-400 uppercase">圆角大小</label><span className="text-[10px] text-slate-500 font-mono">{activeStyle.borderRadius}px</span></div>
-                                <input type="range" min="0" max="30" value={activeStyle.borderRadius} onChange={(e) => updateStyle('borderRadius', parseInt(e.target.value))} className="w-full h-1.5 bg-slate-200 rounded-full appearance-none cursor-pointer accent-primary" />
-                            </div>
                         </div>
                     )}
 

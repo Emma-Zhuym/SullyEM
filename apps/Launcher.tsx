@@ -1,4 +1,6 @@
 
+
+
 import React, { useMemo, useEffect, useState, useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { INSTALLED_APPS, DOCK_APPS } from '../constants';
@@ -130,7 +132,7 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, characte
     const paddingDays = Array.from({ length: startOffset }, () => null);
 
     return (
-        <div className="w-full flex-shrink-0 snap-center flex flex-col px-6 pt-24 pb-8 space-y-6 h-full overflow-y-auto no-scrollbar">
+        <div className="w-full flex-shrink-0 snap-center snap-always flex flex-col px-6 pt-24 pb-8 space-y-6 h-full overflow-y-auto no-scrollbar">
               <div className="bg-white/10 backdrop-blur-2xl rounded-3xl p-6 border border-white/20 shadow-2xl">
                   <div className="flex justify-between items-center mb-4" style={{ color: contentColor }}>
                       <h3 className="text-xl font-bold tracking-widest">{monthName} {currentYear}</h3>
@@ -178,7 +180,7 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, characte
                               </div>
                               <div className="flex-1">
                                   <div className="text-sm font-bold" style={{ color: contentColor }}>{anni.title}</div>
-                                  <div className="text-[10px] opacity-50" style={{ color: contentColor }}>{characters.find((c: any) => c.id === anni.charId)?.name}</div>
+                                  <div className="text-[10px] opacity-50" style={{ color: contentColor }}>{characters.find((c: any) => c.id === anni.charId)?.name || 'Unknown'}</div>
                               </div>
                           </div>
                       )) : (
@@ -202,6 +204,12 @@ const Launcher: React.FC = () => {
   
   const [activePageIndex, setActivePageIndex] = useState(0);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Mouse Drag Logic refs
+  const isDragging = useRef(false);
+  const startX = useRef(0);
+  const scrollLeftRef = useRef(0);
+  const dragMoved = useRef(0);
 
   // Pagination Logic
   const gridApps = useMemo(() => 
@@ -230,7 +238,14 @@ const Launcher: React.FC = () => {
 
   useEffect(() => {
       const loadData = async () => {
-          if (characters.length === 0) return;
+          // SAFEGUARD: If characters array is empty, reset widget char
+          if (!characters || characters.length === 0) {
+              setWidgetChar(null);
+              setLastMessage('No Character Connected');
+              setAnniversaries([]);
+              return;
+          }
+
           const targetChar = characters.find(c => c.id === activeCharacterId) || characters[0];
           setWidgetChar(targetChar);
 
@@ -261,7 +276,7 @@ const Launcher: React.FC = () => {
       if (isDataLoaded) {
           loadData();
       }
-  }, [activeCharacterId, lastMsgTimestamp, isDataLoaded]); // Trigger only on specific changes
+  }, [activeCharacterId, lastMsgTimestamp, isDataLoaded, characters]); // Trigger on characters change
 
   const handleScroll = () => {
       if (scrollContainerRef.current) {
@@ -269,6 +284,51 @@ const Launcher: React.FC = () => {
           const scrollLeft = scrollContainerRef.current.scrollLeft;
           const index = Math.round(scrollLeft / width);
           setActivePageIndex(index);
+      }
+  };
+
+  // --- Mouse Drag Handlers ---
+  const handleMouseDown = (e: React.MouseEvent) => {
+      if (!scrollContainerRef.current) return;
+      isDragging.current = true;
+      dragMoved.current = 0;
+      startX.current = e.pageX - scrollContainerRef.current.offsetLeft;
+      scrollLeftRef.current = scrollContainerRef.current.scrollLeft;
+      
+      // Disable snap and smooth scroll for direct control
+      scrollContainerRef.current.style.scrollBehavior = 'auto';
+      scrollContainerRef.current.style.scrollSnapType = 'none';
+      scrollContainerRef.current.style.cursor = 'grabbing';
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+      if (!isDragging.current || !scrollContainerRef.current) return;
+      e.preventDefault();
+      const x = e.pageX - scrollContainerRef.current.offsetLeft;
+      const walk = (x - startX.current);
+      scrollContainerRef.current.scrollLeft = scrollLeftRef.current - walk;
+      
+      dragMoved.current = Math.abs(x - (startX.current + scrollContainerRef.current.offsetLeft)); 
+  };
+
+  const handleMouseUp = () => {
+      if (!isDragging.current || !scrollContainerRef.current) return;
+      isDragging.current = false;
+      
+      // Restore styles
+      scrollContainerRef.current.style.scrollBehavior = 'smooth';
+      scrollContainerRef.current.style.scrollSnapType = 'x mandatory';
+      scrollContainerRef.current.style.cursor = 'grab';
+  };
+
+  const handleMouseLeave = () => {
+      if (isDragging.current) handleMouseUp();
+  };
+
+  const handleClickCapture = (e: React.MouseEvent) => {
+      if (dragMoved.current > 5) {
+          e.stopPropagation();
+          e.preventDefault();
       }
   };
 
@@ -287,16 +347,22 @@ const Launcher: React.FC = () => {
       </div>
 
       {/* Scrollable Content Layer */}
+      {/* UPDATE: Added snap-always to children to ensure one-page-at-a-time scrolling on mobile swipe */}
       <div 
         ref={scrollContainerRef}
         onScroll={handleScroll}
-        className="flex-1 flex overflow-x-auto snap-x snap-mandatory no-scrollbar"
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseLeave}
+        onClickCapture={handleClickCapture}
+        className="flex-1 flex overflow-x-auto snap-x snap-mandatory no-scrollbar cursor-grab active:cursor-grabbing"
         // Ensure horizontal swipe logic is contained and doesn't trigger browser navigation
         style={{ scrollBehavior: 'smooth', overscrollBehaviorX: 'contain' }}
       >
           {/* Render App Pages */}
           {appPages.map((pageApps, idx) => (
-              <div key={idx} className="w-full flex-shrink-0 snap-center flex flex-col px-6 pt-12 pb-8 h-full">
+              <div key={idx} className="w-full flex-shrink-0 snap-center snap-always flex flex-col px-6 pt-12 pb-8 h-full">
                   {idx === 0 ? (
                       // Page 1: Clock + Widget + Apps
                       <>

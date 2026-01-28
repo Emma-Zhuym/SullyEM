@@ -622,9 +622,14 @@ ${identityMap}
     const renderDetail = () => {
         if (!selectedPost) return null;
         return (
-            <div className="absolute inset-0 z-50 bg-white/90 backdrop-blur-xl flex flex-col animate-slide-up">
-                {/* Sticky Header */}
-                <div className="h-14 flex items-center justify-between px-4 bg-white/60 backdrop-blur-xl sticky top-0 z-20 border-b border-white/20">
+            <div 
+                className="fixed inset-0 z-[60] bg-white/90 backdrop-blur-xl flex flex-col animate-slide-up overscroll-none touch-none"
+            >
+                {/* Sticky Header - Block Touches */}
+                <div 
+                    className="h-14 flex items-center justify-between px-4 bg-white/60 backdrop-blur-xl sticky top-0 z-20 border-b border-white/20 shrink-0 touch-none"
+                    onTouchMove={(e) => e.preventDefault()}
+                >
                     <Icons.Back onClick={() => setSelectedPost(null)} />
                     <div className="flex items-center gap-2">
                         <img src={selectedPost.authorAvatar} className="w-8 h-8 rounded-full object-cover border border-white/50" />
@@ -633,7 +638,11 @@ ${identityMap}
                     <Icons.Share onClick={() => setShowShareModal(true)} className="w-6 h-6 text-slate-800 cursor-pointer hover:text-[#ff2442]" />
                 </div>
 
-                <div className="flex-1 overflow-y-auto no-scrollbar pb-24">
+                <div 
+                    className="flex-1 overflow-y-auto no-scrollbar pb-24 overscroll-none touch-pan-y"
+                    // Stop propagation to prevent parent (root) from catching the scroll touch move
+                    onTouchMove={(e) => e.stopPropagation()} 
+                >
                     {/* Main Visual */}
                     <div className="w-full aspect-square flex items-center justify-center text-[8rem] relative overflow-hidden" style={{ background: selectedPost.bgStyle }}>
                         <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/10"></div>
@@ -679,8 +688,11 @@ ${identityMap}
                     </div>
                 </div>
 
-                {/* Bottom Input Bar - Glass */}
-                <div className="h-16 bg-white/80 backdrop-blur-xl border-t border-white/40 px-4 flex items-center justify-between z-30 shrink-0 gap-4 shadow-[0_-4px_20px_rgba(0,0,0,0.03)] absolute bottom-0 w-full pb-safe">
+                {/* Bottom Input Bar - Glass - Block Touches */}
+                <div 
+                    className="h-16 bg-white/80 backdrop-blur-xl border-t border-white/40 px-4 flex items-center justify-between z-30 shrink-0 gap-4 shadow-[0_-4px_20px_rgba(0,0,0,0.03)] absolute bottom-0 w-full pb-safe touch-none"
+                    onTouchMove={(e) => e.preventDefault()}
+                >
                     <div className="flex-1 bg-slate-100/50 rounded-full px-5 py-2.5 flex items-center gap-2 focus-within:bg-white focus-within:ring-1 focus-within:ring-slate-200 transition-all border border-transparent focus-within:border-slate-200">
                         <input 
                             value={commentInput}

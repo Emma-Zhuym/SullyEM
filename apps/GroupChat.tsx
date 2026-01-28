@@ -1,6 +1,4 @@
 
-
-
 import React, { useState, useEffect, useRef, useLayoutEffect, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
@@ -41,11 +39,18 @@ const GroupMessageItem = React.memo(({
     const avatar = isUser ? userAvatar : char?.avatar;
     const name = isUser ? '我' : char?.name || '未知成员';
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const startPos = useRef({ x: 0, y: 0 });
     
     // Time formatting
     const timeStr = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    const handleTouchStart = () => {
+    const handleTouchStart = (e: React.TouchEvent | React.MouseEvent) => {
+        if ('touches' in e) {
+            startPos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        } else {
+            startPos.current = { x: e.clientX, y: e.clientY };
+        }
+
         longPressTimer.current = setTimeout(() => {
             if (!selectionMode) onLongPress(msg.id);
         }, 500);
@@ -53,6 +58,27 @@ const GroupMessageItem = React.memo(({
 
     const handleTouchEnd = () => {
         if (longPressTimer.current) {
+            clearTimeout(longPressTimer.current);
+            longPressTimer.current = null;
+        }
+    };
+
+    const handleMove = (e: React.TouchEvent | React.MouseEvent) => {
+        if (!longPressTimer.current) return;
+
+        let clientX, clientY;
+        if ('touches' in e) {
+            clientX = e.touches[0].clientX;
+            clientY = e.touches[0].clientY;
+        } else {
+            clientX = e.clientX;
+            clientY = e.clientY;
+        }
+
+        const diffX = Math.abs(clientX - startPos.current.x);
+        const diffY = Math.abs(clientY - startPos.current.y);
+
+        if (diffX > 10 || diffY > 10) {
             clearTimeout(longPressTimer.current);
             longPressTimer.current = null;
         }
@@ -104,8 +130,10 @@ const GroupMessageItem = React.memo(({
             className={`flex gap-3 mb-4 w-full animate-fade-in relative ${isUser ? 'justify-end' : 'justify-start'} ${selectionMode ? 'pl-8' : ''}`}
             onTouchStart={handleTouchStart}
             onTouchEnd={handleTouchEnd}
+            onTouchMove={handleMove}
             onMouseDown={handleTouchStart}
             onMouseUp={handleTouchEnd}
+            onMouseMove={handleMove}
             onClick={handleClick}
         >
             {selectionMode && (

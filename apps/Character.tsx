@@ -1,6 +1,10 @@
 
 
 
+
+
+
+
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
 import { AppID, CharacterProfile, MemoryFragment, Message, UserImpression, CharacterExportData } from '../types';
@@ -275,9 +279,11 @@ interface MemoryArchivistProps {
     onDeleteMemories: (ids: string[]) => void;
     onUpdateMemory: (id: string, newSummary: string) => void;
     onToggleActiveMonth: (year: string, month: string) => void;
+    onUpdateRefinedMemory: (year: string, month: string, newContent: string) => void; // New prop
+    onDeleteRefinedMemory: (year: string, month: string) => void; // New prop
 }
 
-const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemories, activeMemoryMonths, onRefine, onDeleteMemories, onUpdateMemory, onToggleActiveMonth }) => {
+const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemories, activeMemoryMonths, onRefine, onDeleteMemories, onUpdateMemory, onToggleActiveMonth, onUpdateRefinedMemory, onDeleteRefinedMemory }) => {
     const [viewState, setViewState] = useState<{
         level: 'root' | 'year' | 'month';
         selectedYear: string | null;
@@ -288,6 +294,11 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [editMemory, setEditMemory] = useState<MemoryFragment | null>(null);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    
+    // Core Memory Edit State
+    const [editingCore, setEditingCore] = useState<{year: string, month: string, content: string} | null>(null);
+    const [showCoreDeleteConfirm, setShowCoreDeleteConfirm] = useState(false);
+    const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const { tree, stats } = useMemo(() => {
         const tree: Record<string, Record<string, MemoryFragment[]>> = {};
@@ -338,6 +349,38 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
 
     const requestDelete = () => { if (selectedIds.size > 0) setShowDeleteConfirm(true); };
     const performDelete = () => { onDeleteMemories(Array.from(selectedIds)); setSelectedIds(new Set()); setIsManageMode(false); setShowDeleteConfirm(false); };
+
+    // Core Memory Interaction
+    const handleCoreTouchStart = (content: string) => {
+        if (!viewState.selectedYear || !viewState.selectedMonth) return;
+        const y = viewState.selectedYear;
+        const m = viewState.selectedMonth;
+        longPressTimer.current = setTimeout(() => {
+            setEditingCore({ year: y, month: m, content });
+        }, 600);
+    };
+
+    const handleCoreTouchEnd = () => {
+        if (longPressTimer.current) {
+            clearTimeout(longPressTimer.current);
+            longPressTimer.current = null;
+        }
+    };
+
+    const saveCoreEdit = () => {
+        if (editingCore) {
+            onUpdateRefinedMemory(editingCore.year, editingCore.month, editingCore.content);
+            setEditingCore(null);
+        }
+    };
+
+    const confirmCoreDelete = () => {
+        if (editingCore) {
+            onDeleteRefinedMemory(editingCore.year, editingCore.month);
+            setEditingCore(null);
+            setShowCoreDeleteConfirm(false);
+        }
+    };
 
     if (!memories || memories.length === 0) return <div className="flex flex-col items-center justify-center h-48 text-slate-400"><p className="text-xs">暂无记忆档案</p></div>;
 
@@ -399,7 +442,21 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                              <button onClick={triggerRefine} disabled={isRefining} className="text-[10px] bg-white text-indigo-600 px-3 py-1 rounded-full border border-indigo-200 shadow-sm hover:bg-indigo-500 hover:text-white transition-colors flex items-center gap-1">{isRefining ? '...' : (refinedContent ? '重新精炼' : '生成')}</button>
                         </div>
                     </div>
-                    {refinedContent ? <p className="text-xs text-indigo-900/80 leading-relaxed whitespace-pre-wrap">{refinedContent}</p> : <p className="text-xs text-indigo-300 italic">点击右上角生成本月记忆摘要。</p>}
+                    {/* Display Refined Memory Content if exists */}
+                    {refinedContent && (
+                        <div 
+                            className="text-sm text-indigo-900 leading-relaxed bg-white/60 p-3 rounded-xl border border-indigo-50 cursor-pointer active:scale-[0.99] transition-transform select-none"
+                            onTouchStart={() => handleCoreTouchStart(refinedContent)}
+                            onTouchEnd={handleCoreTouchEnd}
+                            onMouseDown={() => handleCoreTouchStart(refinedContent)}
+                            onMouseUp={handleCoreTouchEnd}
+                            onMouseLeave={handleCoreTouchEnd}
+                            onContextMenu={(e) => { e.preventDefault(); setEditingCore({year: viewState.selectedYear!, month: viewState.selectedMonth!, content: refinedContent}); }}
+                            title="长按编辑/删除"
+                        >
+                            {refinedContent}
+                        </div>
+                    )}
                 </div>
                 
                 <div className="flex items-center justify-between px-1">
@@ -461,6 +518,35 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
             <Modal isOpen={showDeleteConfirm} title="确认删除" onClose={() => setShowDeleteConfirm(false)} footer={<div className="flex gap-2 w-full"><button onClick={() => setShowDeleteConfirm(false)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl">取消</button><button onClick={performDelete} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl shadow-lg shadow-red-200">确认删除</button></div>}>
                 <p className="text-sm text-slate-600 text-center py-4">确定删除选中的 {selectedIds.size} 条记忆吗？<br/><span className="text-xs text-red-400 mt-1 block">此操作不可恢复。</span></p>
             </Modal>
+
+            {/* Core Memory Edit Modal */}
+            <Modal 
+                isOpen={!!editingCore} 
+                title="编辑核心记忆" 
+                onClose={() => setEditingCore(null)}
+                footer={
+                    <div className="flex gap-2 w-full">
+                        <button onClick={() => setShowCoreDeleteConfirm(true)} className="flex-1 py-3 bg-red-50 text-red-500 font-bold rounded-2xl">删除</button>
+                        <button onClick={saveCoreEdit} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl shadow-lg">保存</button>
+                    </div>
+                }
+            >
+                {editingCore && (
+                    <div className="space-y-2">
+                        <div className="text-xs text-slate-400">{editingCore.year}年{editingCore.month}月</div>
+                        <textarea 
+                            value={editingCore.content} 
+                            onChange={e => setEditingCore({...editingCore, content: e.target.value})} 
+                            className="w-full h-48 bg-slate-100 rounded-xl p-3 text-sm resize-none focus:outline-primary leading-relaxed"
+                        />
+                    </div>
+                )}
+            </Modal>
+
+            {/* Core Memory Delete Confirm */}
+            <Modal isOpen={showCoreDeleteConfirm} title="删除确认" onClose={() => setShowCoreDeleteConfirm(false)} footer={<div className="flex gap-2 w-full"><button onClick={() => setShowCoreDeleteConfirm(false)} className="flex-1 py-3 bg-slate-100 font-bold rounded-2xl">取消</button><button onClick={confirmCoreDelete} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl">确认删除</button></div>}>
+                <p className="text-center text-sm text-slate-600 py-4">确定要删除该月的核心记忆吗？<br/><span className="text-xs text-red-400">删除后将丢失该月的 AI 上下文摘要。</span></p>
+            </Modal>
         </div>
     );
 };
@@ -497,14 +583,22 @@ const Character: React.FC = () => {
   // Impression State
   const [isGeneratingImpression, setIsGeneratingImpression] = useState(false);
 
+  // CRITICAL FIX: Breaking the render loop.
+  // We only sync from global 'characters' to local 'formData' when:
+  // 1. We enter edit mode (view becomes detail)
+  // 2. We switch character IDs
   useEffect(() => {
     if (editingId && view === 'detail') {
+        // Only if formData is not set OR the ID doesn't match
         if (!formData || formData.id !== editingId) {
             const target = characters.find(c => c.id === editingId);
             if (target) setFormData(target);
         }
     }
-  }, [editingId, view, characters]); // Reload when characters update (e.g. from Worldbook sync)
+  }, [editingId, view]); 
+  // REMOVED 'characters' dependency to prevent infinite loop.
+  // The local 'formData' drives the UI. 'updateCharacter' pushes changes to global context.
+  // We don't need to re-pull from global context while editing unless we force a reload.
 
   useEffect(() => {
     if (formData && editingId) {
@@ -630,6 +724,24 @@ const Character: React.FC = () => {
   };
   const handleDeleteMemories = (ids: string[]) => { if (!formData) return; handleChange('memories', (formData.memories || []).filter(m => !ids.includes(m.id))); addToast(`已删除 ${ids.length} 条记忆`, 'success'); };
   const handleUpdateMemory = (id: string, newSummary: string) => { if (!formData) return; handleChange('memories', (formData.memories || []).map(m => m.id === id ? { ...m, summary: newSummary } : m)); addToast('记忆已更新', 'success'); };
+  
+  // NEW: Core Memory Handlers
+  const handleUpdateRefinedMemory = (year: string, month: string, newContent: string) => {
+      if (!formData) return;
+      const key = `${year}-${month}`;
+      handleChange('refinedMemories', { ...(formData.refinedMemories || {}), [key]: newContent });
+      addToast('核心记忆已更新', 'success');
+  };
+
+  const handleDeleteRefinedMemory = (year: string, month: string) => {
+      if (!formData || !formData.refinedMemories) return;
+      const key = `${year}-${month}`;
+      const newRefined = { ...formData.refinedMemories };
+      delete newRefined[key];
+      handleChange('refinedMemories', newRefined);
+      addToast('核心记忆已删除', 'success');
+  };
+
   const handleExportPreview = () => { if (!formData) return; const mems = formData.memories as any[]; if (!mems || mems.length === 0) { addToast('暂无记忆数据可导出', 'info'); return; } const sortedMemories = [...mems].sort((a, b) => a.date.localeCompare(b.date)); let text = `【角色档案】\nName: ${formData.name}\nExported: ${new Date().toLocaleString()}\n\n`; if (formData.refinedMemories) { text += `=== 核心记忆 ===\n`; Object.entries(formData.refinedMemories).sort().forEach(([k, v]) => { text += `[${k}]: ${v}\n`; }); text += `\n=== 详细日志 ===\n`; } let currentYear = '', currentMonth = ''; sortedMemories.forEach(mem => { const match = mem.date.match(/(\d{4})[-/年](\d{1,2})/); if (match) { const y = match[1], m = match[2]; if (y !== currentYear) { text += `\n[ ${y}年 ]\n`; currentYear = y; currentMonth = ''; } if (m !== currentMonth) { text += `\n-- ${parseInt(m)}月 --\n\n`; currentMonth = m; } } text += `📅 ${mem.date} ${mem.mood ? `(#${mem.mood})` : ''}\n${mem.summary}\n\n--------------------------\n\n`; }); setExportText(text); setShowExportModal(true); navigator.clipboard.writeText(text).then(() => addToast('内容已自动复制到剪贴板', 'info')).catch(() => {}); };
   const handleNativeShare = async () => { if(!exportText) return; if (Capacitor.isNativePlatform()) { try { const fileName = `${formData?.name || 'character'}_memories.txt`; await Filesystem.writeFile({ path: fileName, data: exportText, directory: Directory.Cache, encoding: Encoding.UTF8 }); const uri = await Filesystem.getUri({ directory: Directory.Cache, path: fileName }); await Share.share({ title: '记忆档案', files: [uri.uri] }); } catch(e: any) { console.error("Native share failed", e); addToast('分享组件调起失败，请直接复制文本', 'error'); } } };
   const handleWebFileDownload = () => { const fileName = `${formData?.name || 'character'}_memories.txt`; const blob = new Blob([exportText], { type: 'text/plain' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = fileName; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); addToast('已触发浏览器下载', 'success'); };
@@ -996,7 +1108,8 @@ ${messagesToAnalyze}
     <div className="h-full w-full bg-slate-50/30 font-light relative">
        {view === 'list' ? (
            <div className="flex flex-col h-full animate-fade-in">
-               <div className="px-6 pt-12 pb-4 shrink-0 flex items-center justify-between">
+               {/* INCREASED PADDING TOP HERE */}
+               <div className="px-6 pt-16 pb-4 shrink-0 flex items-center justify-between">
                    <div><h1 className="text-2xl font-light text-slate-800 tracking-tight">神经链接</h1><p className="text-xs text-slate-400 mt-1">已建立 {characters.length} 个角色连接</p></div>
                    <div className="flex gap-2">
                         <button onClick={() => cardImportRef.current?.click()} className="p-2 rounded-full bg-white/40 hover:bg-white/80 transition-colors text-slate-600" title="导入角色卡">
@@ -1028,7 +1141,8 @@ ${messagesToAnalyze}
            </div>
        ) : formData && (
            <div className="flex flex-col h-full animate-fade-in bg-slate-50/50 relative">
-               <div className="h-28 bg-gradient-to-b from-white/90 to-transparent backdrop-blur-sm flex flex-col justify-end px-5 pb-2 shrink-0 z-40 sticky top-0">
+               {/* INCREASED HEIGHT HERE */}
+               <div className="h-32 bg-gradient-to-b from-white/90 to-transparent backdrop-blur-sm flex flex-col justify-end px-5 pb-2 shrink-0 z-40 sticky top-0">
                    <div className="flex justify-between items-center mb-3">
                        <button onClick={handleBack} className="p-2 -ml-2 rounded-full hover:bg-white/60 flex items-center gap-1 text-slate-600"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg><span className="text-sm font-medium">列表</span></button>
                        <button onClick={() => { setActiveCharacterId(formData.id); openApp(AppID.Chat); }} className="text-xs px-3 py-1.5 bg-primary text-white rounded-full font-bold shadow-sm shadow-primary/30 flex items-center gap-1 active:scale-95 transition-transform"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M3.105 2.288a.75.75 0 0 0-.826.95l1.414 4.926H16.5a.75.75 0 0 1 0 1.5H3.693l-1.414 4.926a.75.75 0 0 0 .826.95 28.897 28.897 0 0 0 15.293-7.155.75.75 0 0 0 0-1.114A28.897 28.897 0 0 0 3.105 2.288Z" /></svg>发消息</button>
@@ -1127,6 +1241,8 @@ ${messagesToAnalyze}
                                onDeleteMemories={handleDeleteMemories}
                                onUpdateMemory={handleUpdateMemory}
                                onToggleActiveMonth={handleToggleActiveMonth}
+                               onUpdateRefinedMemory={handleUpdateRefinedMemory}
+                               onDeleteRefinedMemory={handleDeleteRefinedMemory}
                            />
                        </div>
                    )}

@@ -27,6 +27,68 @@ const PRESET_THEMES: Record<string, ChatTheme> = {
     },
 };
 
+// Default Archive Prompts
+const DEFAULT_ARCHIVE_PROMPTS = [
+    {
+        id: 'preset_rational',
+        name: '理性精炼 (Rational)',
+        content: `### [System Instruction: Memory Archival]
+当前日期: \${dateStr}
+任务: 请回顾今天的聊天记录，生成一份【高精度的事件日志】。
+
+### 核心撰写规则 (Strict Protocols)
+1.  **覆盖率 (Coverage)**:
+    - 必须包含今天聊过的**每一个**独立话题。
+    - **严禁**为了精简而合并不同的话题。哪怕只是聊了一句“天气不好”，如果这是一个独立的话题，也要单独列出。
+    - 不要忽略闲聊，那是生活的一部分。
+
+2.  **视角 (Perspective)**:
+    - 你【就是】"\${char.name}"。这是【你】的私密日记。
+    - 必须用“我”来称呼自己，用“\${userProfile.name}”称呼对方。
+    - 每一条都必须是“我”的视角。
+
+3.  **格式 (Format)**:
+    - 不要写成一整段。
+    - **必须**使用 Markdown 无序列表 ( - ... )。
+    - 每一行对应一个具体的事件或话题。
+
+4.  **去水 (Conciseness)**:
+    - 不要写“今天我和xx聊了...”，直接写发生了什么。
+    - 示例: "- 早上和\${userProfile.name}讨论早餐，我想吃小笼包。"
+
+### 待处理的聊天日志 (Chat Logs)
+\${rawLog}`
+    },
+    {
+        id: 'preset_diary',
+        name: '日记风格 (Diary)',
+        content: `当前日期: \${dateStr}
+任务: 请回顾今天的聊天记录，将其转化为一条**属于你自己的**“核心记忆”。
+
+### 核心撰写规则 (Review Protocols)
+1.  **绝对第一人称**: 
+    - 你【就是】"\${char.name}"。这是【你】的私密日记。
+    - 必须用“我”来称呼自己，用“\${userProfile.name}”称呼对方。
+    - **严禁**使用第三人称（如“\${char.name}做了什么”）。
+    - **严禁**使用死板的AI总结语气或第三方旁白语气。
+
+2.  **保持人设语气**: 
+    - 你的语气、口癖、态度必须与平时聊天完全一致（例如：如果是傲娇人设，日记里也要表现出傲娇；如果是高冷，就要简练）。
+    - 包含当时的情绪波动。
+
+3.  **逻辑清洗与去重**:
+    - **关键**: 仔细分辨是谁做了什么。不要把“用户说去吃饭”记成“我去吃饭”。
+    - 剔除无关紧要的寒暄（如“你好”、“在吗”），只保留【关键事件】、【情感转折】和【重要信息】，内容的逻辑要连贯且符合原意。
+
+4.  **输出要求**:
+    - 输出一段精简的文本（yaml格式也可以，不需要 JSON）。
+    - 就像你在写日记一样，直接写内容。
+
+### 待处理的聊天日志 (Chat Logs)
+\${rawLog}`
+    }
+];
+
 interface MessageItemProps {
     msg: Message;
     isFirstInGroup: boolean;
@@ -437,7 +499,7 @@ const Chat: React.FC = () => {
     // Stats
     const [lastTokenUsage, setLastTokenUsage] = useState<number | null>(null);
 
-    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'history-manager'>('none');
+    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'history-manager' | 'archive-settings' | 'prompt-editor'>('none');
     const [transferAmt, setTransferAmt] = useState('');
     const [emojiImportText, setEmojiImportText] = useState('');
     const [settingsContextLimit, setSettingsContextLimit] = useState(500);
@@ -448,6 +510,11 @@ const Chat: React.FC = () => {
     const [editContent, setEditContent] = useState('');
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [isSummarizing, setIsSummarizing] = useState(false);
+
+    // Archive Prompts State
+    const [archivePrompts, setArchivePrompts] = useState<{id: string, name: string, content: string}[]>(DEFAULT_ARCHIVE_PROMPTS);
+    const [selectedPromptId, setSelectedPromptId] = useState<string>('preset_rational');
+    const [editingPrompt, setEditingPrompt] = useState<{id: string, name: string, content: string} | null>(null);
 
     // --- Multi-Select State ---
     const [selectionMode, setSelectionMode] = useState(false);
@@ -480,6 +547,21 @@ const Chat: React.FC = () => {
             setSelectedMsgIds(new Set());
         }
     }, [activeCharacterId]);
+
+    // Load Prompt Settings from LocalStorage
+    useEffect(() => {
+        const savedPrompts = localStorage.getItem('chat_archive_prompts');
+        if (savedPrompts) {
+            try {
+                const parsed = JSON.parse(savedPrompts);
+                // Ensure defaults are present in case they updated app
+                const merged = [...DEFAULT_ARCHIVE_PROMPTS, ...parsed.filter((p: any) => !p.id.startsWith('preset_'))];
+                setArchivePrompts(merged);
+            } catch(e) {}
+        }
+        const savedId = localStorage.getItem('chat_active_archive_prompt_id');
+        if (savedId && archivePrompts.some(p => p.id === savedId)) setSelectedPromptId(savedId);
+    }, []);
 
     // New: Listen for global scheduled message signals
     useEffect(() => {
@@ -546,6 +628,68 @@ const Chat: React.FC = () => {
         if (diffHours < 24) return `[系统提示: 距离上一条消息: ${diffHours} 小时。很长的间隔。]`;
         const days = Math.floor(diffHours / 24);
         return `[系统提示: 距离上一条消息: ${days} 天。用户消失了很久。请根据你们的关系做出反应（想念、生气、担心或冷漠）。]`;
+    };
+
+    // --- Archive Prompt Management ---
+    const handleSavePrompt = () => {
+        if (!editingPrompt || !editingPrompt.name.trim() || !editingPrompt.content.trim()) {
+            addToast('请填写完整', 'error');
+            return;
+        }
+        
+        setArchivePrompts(prev => {
+            let next;
+            if (prev.some(p => p.id === editingPrompt.id)) {
+                next = prev.map(p => p.id === editingPrompt.id ? editingPrompt : p);
+            } else {
+                next = [...prev, editingPrompt];
+            }
+            // Filter out default presets for storage
+            const customOnly = next.filter(p => !p.id.startsWith('preset_'));
+            localStorage.setItem('chat_archive_prompts', JSON.stringify(customOnly));
+            return next;
+        });
+        
+        setSelectedPromptId(editingPrompt.id);
+        setModalType('archive-settings');
+        setEditingPrompt(null);
+    };
+
+    const handleDeletePrompt = (id: string) => {
+        if (id.startsWith('preset_')) {
+            addToast('默认预设不可删除', 'error');
+            return;
+        }
+        setArchivePrompts(prev => {
+            const next = prev.filter(p => p.id !== id);
+            const customOnly = next.filter(p => !p.id.startsWith('preset_'));
+            localStorage.setItem('chat_archive_prompts', JSON.stringify(customOnly));
+            return next;
+        });
+        if (selectedPromptId === id) setSelectedPromptId('preset_rational');
+        addToast('预设已删除', 'success');
+    };
+
+    const createNewPrompt = () => {
+        setEditingPrompt({ id: `custom_${Date.now()}`, name: '新预设', content: DEFAULT_ARCHIVE_PROMPTS[0].content });
+        setModalType('prompt-editor');
+    };
+
+    const editSelectedPrompt = () => {
+        const p = archivePrompts.find(a => a.id === selectedPromptId);
+        if (!p) return;
+        // If it's a preset, clone it to a new custom one
+        if (p.id.startsWith('preset_')) {
+            setEditingPrompt({ id: `custom_${Date.now()}`, name: `${p.name} (Copy)`, content: p.content });
+        } else {
+            setEditingPrompt({ ...p });
+        }
+        setModalType('prompt-editor');
+    };
+
+    const handlePromptSelect = (id: string) => {
+        setSelectedPromptId(id);
+        localStorage.setItem('chat_active_archive_prompt_id', id);
     };
 
     // --- AI Logic ---
@@ -1062,46 +1206,27 @@ ${groupLogStr}
 
         setIsSummarizing(true);
         setShowPanel('none');
+        setModalType('none'); // Close settings modal
         
         try {
             let processedCount = 0;
             const newMemories: MemoryFragment[] = [];
 
+            // Get selected template
+            const templateObj = archivePrompts.find(p => p.id === selectedPromptId) || DEFAULT_ARCHIVE_PROMPTS[0];
+            const template = templateObj.content;
+
             for (const dateStr of datesToProcess) {
                 const dayMsgs = msgsByDate[dateStr];
                 const rawLog = dayMsgs.map(m => `[${formatTime(m.timestamp)}] ${m.role === 'user' ? userProfile.name : char.name}: ${m.type === 'image' ? '[Image]' : m.content}`).join('\n');
                 
-                const baseContext = ContextBuilder.buildCoreContext(char, userProfile);
-
-               const prompt = `${baseContext}
-
-### [System Instruction: Memory Archival]
-当前日期: ${dateStr}
-任务: 请回顾今天的聊天记录，生成一份【高精度的事件日志】。
-
-### 核心撰写规则 (Strict Protocols)
-1.  **覆盖率 (Coverage)**:
-    - 必须包含今天聊过的**每一个**独立话题。
-    - **严禁**为了精简而合并不同的话题。哪怕只是聊了一句“天气不好”，如果这是一个独立的话题，也要单独列出。
-    - 不要忽略闲聊，那是生活的一部分。
-
-2.  **视角 (Perspective)**:
-    - 你【就是】"${char.name}"。这是【你】的私密日记。
-    - 必须用“我”来称呼自己，用“${userProfile.name}”称呼对方。
-    - 每一条都必须是“我”的视角。
-
-3.  **格式 (Format)**:
-    - 不要写成一整段。
-    - **必须**使用 Markdown 无序列表 ( - ... )。
-    - 每一行对应一个具体的事件或话题。
-
-4.  **去水 (Conciseness)**:
-    - 不要写“今天我和xx聊了...”，直接写发生了什么。
-    - 示例: "- 早上和${userProfile.name}讨论早餐，我想吃小笼包。"
-
-### 待处理的聊天日志 (Chat Logs)
-${rawLog.substring(0, 200000)}
-`;
+                // Construct dynamic Prompt
+                // Use a simple replacement function to support placeholders
+                let prompt = template;
+                prompt = prompt.replace(/\$\{dateStr\}/g, dateStr);
+                prompt = prompt.replace(/\$\{char\.name\}/g, char.name);
+                prompt = prompt.replace(/\$\{userProfile\.name\}/g, userProfile.name);
+                prompt = prompt.replace(/\$\{rawLog.*?\}/g, rawLog.substring(0, 200000)); // Handle plain rawLog or rawLog.substring
 
                 const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
                     method: 'POST',
@@ -1342,6 +1467,52 @@ ${rawLog.substring(0, 200000)}
                 </div>
             </Modal>
 
+            {/* Archive Settings Modal */}
+            <Modal isOpen={modalType === 'archive-settings'} title="记忆归档设置" onClose={() => setModalType('none')} footer={<button onClick={handleFullArchive} disabled={isSummarizing} className="w-full py-3 bg-indigo-500 text-white font-bold rounded-2xl shadow-lg shadow-indigo-200">开始归档</button>}>
+                <div className="space-y-4">
+                    <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100">
+                        <label className="text-[10px] font-bold text-indigo-400 uppercase mb-2 block">选择提示词模板</label>
+                        <div className="flex flex-col gap-2">
+                            {archivePrompts.map(p => (
+                                <div key={p.id} onClick={() => handlePromptSelect(p.id)} className={`p-3 rounded-lg border cursor-pointer flex items-center justify-between ${selectedPromptId === p.id ? 'bg-white border-indigo-500 shadow-sm ring-1 ring-indigo-500' : 'bg-white/50 border-indigo-200 hover:bg-white'}`}>
+                                    <span className={`text-xs font-bold ${selectedPromptId === p.id ? 'text-indigo-700' : 'text-slate-600'}`}>{p.name}</span>
+                                    <div className="flex gap-2">
+                                        <button onClick={(e) => { e.stopPropagation(); setSelectedPromptId(p.id); editSelectedPrompt(); }} className="text-[10px] text-slate-400 hover:text-indigo-500 px-2 py-1 rounded bg-slate-100 hover:bg-indigo-50">编辑/查看</button>
+                                        {!p.id.startsWith('preset_') && (
+                                            <button onClick={(e) => { e.stopPropagation(); handleDeletePrompt(p.id); }} className="text-[10px] text-red-300 hover:text-red-500 px-2 py-1 rounded hover:bg-red-50">×</button>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        <button onClick={createNewPrompt} className="mt-3 w-full py-2 text-xs font-bold text-indigo-500 border border-dashed border-indigo-300 rounded-lg hover:bg-indigo-100">+ 新建自定义提示词</button>
+                    </div>
+                    <div className="text-[10px] text-slate-400 bg-slate-50 p-3 rounded-xl leading-relaxed">
+                        • <b>理性精炼</b>: 适合生成条理清晰的事件日志，便于 AI 长期记忆检索。<br/>
+                        • <b>日记风格</b>: 适合生成第一人称的角色日记，更有代入感和情感色彩。<br/>
+                        • 支持变量: <code>{'${dateStr}'}</code>, <code>{'${char.name}'}</code>, <code>{'${userProfile.name}'}</code>, <code>{'${rawLog}'}</code>
+                    </div>
+                </div>
+            </Modal>
+
+            {/* Prompt Editor Modal */}
+            <Modal isOpen={modalType === 'prompt-editor'} title="编辑提示词" onClose={() => setModalType('archive-settings')} footer={<button onClick={handleSavePrompt} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">保存预设</button>}>
+                <div className="space-y-3">
+                    <input 
+                        value={editingPrompt?.name || ''} 
+                        onChange={e => setEditingPrompt(prev => prev ? {...prev, name: e.target.value} : null)}
+                        placeholder="预设名称"
+                        className="w-full px-4 py-2 bg-slate-100 rounded-xl text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                    <textarea 
+                        value={editingPrompt?.content || ''} 
+                        onChange={e => setEditingPrompt(prev => prev ? {...prev, content: e.target.value} : null)}
+                        className="w-full h-64 bg-slate-100 rounded-xl p-3 text-xs font-mono resize-none focus:outline-none focus:ring-2 focus:ring-primary/20 leading-relaxed"
+                        placeholder="输入提示词内容..."
+                    />
+                </div>
+            </Modal>
+
             {/* History Manager Modal */}
             <Modal
                 isOpen={modalType === 'history-manager'} title="历史记录断点" onClose={() => setModalType('none')}
@@ -1540,7 +1711,7 @@ ${rawLog.substring(0, 200000)}
                              <div className="p-6 grid grid-cols-4 gap-8">
                                 <button onClick={() => setModalType('transfer')} className="flex flex-col items-center gap-2 text-slate-600 active:scale-95 transition-transform"><div className="w-14 h-14 bg-orange-50 rounded-2xl flex items-center justify-center shadow-sm text-orange-400 border border-orange-100"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6"><path d="M12 7.5a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Z" /><path fillRule="evenodd" d="M1.5 4.875C1.5 3.839 2.34 3 3.375 3h17.25c1.035 0 1.875.84 1.875 1.875v9.75c0 1.036-.84 1.875-1.875 1.875H3.375A1.875 1.875 0 0 1 1.5 14.625v-9.75ZM8.25 9.75a3.75 3.75 0 1 1 7.5 0 3.75 3.75 0 0 1-7.5 0ZM18.75 9a.75.75 0 0 0-.75.75v.008c0 .414.336.75.75.75h.008a.75.75 0 0 0 .75-.75V9.75a.75.75 0 0 0-.75-.75h-.008ZM4.5 9.75A.75.75 0 0 1 5.25 9h.008a.75.75 0 0 1 .75.75v.008a.75.75 0 0 1-.75-.75H5.25a.75.75 0 0 1-.75-.75V9.75Z" clipRule="evenodd" /><path d="M2.25 18a.75.75 0 0 0 0 1.5c5.4 0 10.63.722 15.6 2.075 1.19.324 2.4-.558 2.4-1.82V18.75a.75.75 0 0 0-.75-.75H2.25Z" /></svg></div><span className="text-xs font-bold">转账</span></button>
                                 <button onClick={() => handleSendText('[戳一戳]', 'interaction')} className="flex flex-col items-center gap-2 text-slate-600 active:scale-95 transition-transform"><div className="w-14 h-14 bg-sky-50 rounded-2xl flex items-center justify-center shadow-sm text-2xl border border-sky-100">👉</div><span className="text-xs font-bold">戳一戳</span></button>
-                                <button onClick={handleFullArchive} className="flex flex-col items-center gap-2 text-slate-600 active:scale-95 transition-transform"><div className="w-14 h-14 bg-indigo-50 rounded-2xl flex items-center justify-center shadow-sm text-indigo-400 border border-indigo-100"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" /></svg></div><span className="text-xs font-bold">{isSummarizing ? '归档中...' : '记忆归档'}</span></button>
+                                <button onClick={() => setModalType('archive-settings')} className="flex flex-col items-center gap-2 text-slate-600 active:scale-95 transition-transform"><div className="w-14 h-14 bg-indigo-50 rounded-2xl flex items-center justify-center shadow-sm text-indigo-400 border border-indigo-100"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" /></svg></div><span className="text-xs font-bold">{isSummarizing ? '归档中...' : '记忆归档'}</span></button>
                                 <button onClick={() => setModalType('chat-settings')} className="flex flex-col items-center gap-2 text-slate-600 active:scale-95 transition-transform"><div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center shadow-sm text-slate-500 border border-slate-100"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 1 0 2.555c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.212 1.281c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-2.555c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg></div><span className="text-xs font-bold">设置</span></button>
                                 
                                 <button onClick={() => chatImageInputRef.current?.click()} className="flex flex-col items-center gap-2 text-slate-600 active:scale-95 transition-transform">

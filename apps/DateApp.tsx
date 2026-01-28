@@ -1,4 +1,6 @@
 
+
+
 import React, { useState, useEffect, useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
@@ -645,7 +647,7 @@ ${recentMsgs}
                 charId: char.id, 
                 role: 'assistant', 
                 type: 'text', 
-                content: content,
+                content: content, 
                 metadata: { source: 'date' }
             });
 
@@ -1086,7 +1088,7 @@ ${recentMsgs}
             {isNovelMode && (
                 <div 
                     ref={novelScrollRef}
-                    className="absolute inset-0 z-20 overflow-y-auto no-scrollbar pt-24 pb-32 px-8 mask-image-gradient bg-black/90 backdrop-blur-sm"
+                    className="absolute inset-0 z-20 overflow-y-auto no-scrollbar pt-24 pb-32 px-8 mask-image-gradient bg-black/90 backdrop-blur-sm overscroll-contain"
                     onClick={(e) => { e.stopPropagation(); setShowInputBox(true); }}
                 >
                     <div className="min-h-full flex flex-col justify-end">

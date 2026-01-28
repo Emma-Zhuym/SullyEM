@@ -1,4 +1,6 @@
 
+
+
 import React, { useState, useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { OSTheme } from '../types';
@@ -11,6 +13,7 @@ const Appearance: React.FC = () => {
   const wallpaperInputRef = useRef<HTMLInputElement>(null);
   const widgetImageInputRef = useRef<HTMLInputElement>(null);
   const iconInputRef = useRef<HTMLInputElement>(null);
+  const fontInputRef = useRef<HTMLInputElement>(null);
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
 
   const THEME_PRESETS: { name: string, config: Partial<OSTheme>, color: string }[] = [
@@ -41,6 +44,37 @@ const Appearance: React.FC = () => {
       } catch (e: any) {
           addToast(e.message, 'error');
       }
+  };
+
+  const handleFontUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      
+      const allowedExts = ['.ttf', '.otf', '.woff', '.woff2'];
+      const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+      
+      if (!allowedExts.includes(ext)) {
+          addToast('仅支持 ttf/otf/woff/woff2 格式', 'error');
+          return;
+      }
+
+      addToast('正在处理字体文件...', 'info');
+      
+      const reader = new FileReader();
+      reader.onload = async (ev) => {
+          try {
+              const dataUrl = ev.target?.result as string;
+              updateTheme({ customFont: dataUrl });
+              addToast('系统字体已更新', 'success');
+          } catch(err) {
+              addToast('字体加载失败', 'error');
+          }
+      };
+      reader.onerror = () => addToast('读取失败', 'error');
+      reader.readAsDataURL(file);
+      
+      // Clear input
+      if (fontInputRef.current) fontInputRef.current.value = '';
   };
 
   const handleIconUpload = async (file: File) => {
@@ -130,6 +164,34 @@ const Appearance: React.FC = () => {
                             </div>
                         </div>
                     </div>
+                </section>
+
+                {/* Global Font Section */}
+                <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+                    <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">全局字体 (Global Font)</h2>
+                    <div 
+                        className="w-full h-24 bg-slate-100 rounded-2xl overflow-hidden relative shadow-inner mb-2 group cursor-pointer border-2 border-dashed border-slate-200 hover:border-primary/50 flex items-center justify-center flex-col gap-2" 
+                        onClick={() => fontInputRef.current?.click()}
+                    >
+                         {theme.customFont ? (
+                             <>
+                                <span className="text-lg font-bold text-slate-700">Abc 字体预览</span>
+                                <span className="text-[10px] text-slate-400">已应用自定义字体</span>
+                             </>
+                         ) : (
+                             <>
+                                 <span className="text-2xl text-slate-400">Aa</span>
+                                 <span className="text-xs text-slate-400">上传字体文件 (.ttf / .otf)</span>
+                             </>
+                         )}
+                         <div className="absolute inset-0 bg-black/5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                             <span className="text-white text-xs font-bold bg-black/40 px-3 py-1 rounded-full backdrop-blur-md">更换字体</span>
+                         </div>
+                    </div>
+                    <input type="file" ref={fontInputRef} className="hidden" accept=".ttf,.otf,.woff,.woff2" onChange={handleFontUpload} />
+                    {theme.customFont && (
+                        <button onClick={() => updateTheme({ customFont: undefined })} className="w-full py-2 text-xs font-bold text-red-400 bg-red-50 rounded-lg hover:bg-red-100">恢复默认字体</button>
+                    )}
                 </section>
 
                 {/* Wallpaper Section */}

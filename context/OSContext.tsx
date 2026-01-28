@@ -1,4 +1,6 @@
 
+
+
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import JSZip from 'jszip';
 import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook } from '../types';
@@ -299,6 +301,35 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const schedulerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const interceptorsInitialized = useRef(false);
 
+  // --- Helper to inject custom font ---
+  const applyCustomFont = (fontData: string | undefined) => {
+      let style = document.getElementById('custom-font-style');
+      if (!style) {
+          style = document.createElement('style');
+          style.id = 'custom-font-style';
+          document.head.appendChild(style);
+      }
+      
+      if (fontData) {
+          style.textContent = `
+              @font-face {
+                  font-family: 'CustomUserFont';
+                  src: url('${fontData}');
+                  font-display: swap;
+              }
+              :root {
+                  --app-font: 'CustomUserFont', 'Quicksand', sans-serif;
+              }
+          `;
+      } else {
+          style.textContent = `
+              :root {
+                  --app-font: 'Quicksand', sans-serif;
+              }
+          `;
+      }
+  };
+
   // --- Global Error Interception ---
   useEffect(() => {
       if (interceptorsInitialized.current) return;
@@ -415,6 +446,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                  if (loadedTheme.launcherWidgetImage && loadedTheme.launcherWidgetImage.startsWith('data:')) {
                      loadedTheme.launcherWidgetImage = undefined;
                  }
+                 // Reset font too
+                 if (loadedTheme.customFont && loadedTheme.customFont.startsWith('data:')) {
+                     loadedTheme.customFont = undefined;
+                 }
              } catch(e) { console.error('Theme load error', e); }
         }
         
@@ -435,6 +470,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                 if (assetMap['launcherWidgetImage']) {
                     loadedTheme.launcherWidgetImage = assetMap['launcherWidgetImage'];
                 }
+
+                if (assetMap['custom_font_data']) {
+                    loadedTheme.customFont = assetMap['custom_font_data'];
+                }
                 
                 const loadedIcons: Record<string, string> = {};
                 Object.keys(assetMap).forEach(key => {
@@ -450,6 +489,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         }
 
         setTheme(loadedTheme);
+        // Apply font
+        applyCustomFont(loadedTheme.customFont);
     };
 
     const initData = async () => {
@@ -609,7 +650,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   };
 
   const updateTheme = async (updates: Partial<OSTheme>) => {
-    const { wallpaper, launcherWidgetImage, ...styleUpdates } = updates;
+    const { wallpaper, launcherWidgetImage, customFont, ...styleUpdates } = updates;
     const newTheme = { ...theme, ...updates };
     setTheme(newTheme);
 
@@ -630,10 +671,21 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         }
     }
 
+    if (customFont !== undefined) {
+        if (customFont && customFont.startsWith('data:')) {
+            await DB.saveAsset('custom_font_data', customFont);
+            applyCustomFont(customFont);
+        } else {
+            await DB.deleteAsset('custom_font_data');
+            applyCustomFont(undefined);
+        }
+    }
+
     // Save lightweight settings to LocalStorage
     const lsTheme = { ...newTheme };
     if (lsTheme.wallpaper && lsTheme.wallpaper.startsWith('data:')) lsTheme.wallpaper = ''; 
     if (lsTheme.launcherWidgetImage && lsTheme.launcherWidgetImage.startsWith('data:')) lsTheme.launcherWidgetImage = ''; 
+    if (lsTheme.customFont && lsTheme.customFont.startsWith('data:')) lsTheme.customFont = ''; 
     localStorage.setItem('os_theme', JSON.stringify(lsTheme));
   };
   const updateApiConfig = (updates: Partial<APIConfig>) => { const newConfig = { ...apiConfig, ...updates }; setApiConfig(newConfig); localStorage.setItem('os_api_config', JSON.stringify(newConfig)); };
@@ -972,6 +1024,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               const cleanTheme = { ...data.theme };
               if (cleanTheme.wallpaper && cleanTheme.wallpaper.startsWith('data:')) { cleanTheme.wallpaper = ''; }
               if (cleanTheme.launcherWidgetImage && cleanTheme.launcherWidgetImage.startsWith('data:')) { cleanTheme.launcherWidgetImage = ''; }
+              if (cleanTheme.customFont && cleanTheme.customFont.startsWith('data:')) { cleanTheme.customFont = ''; }
               updateTheme(cleanTheme);
           }
           if (data.apiConfig) updateApiConfig(data.apiConfig);

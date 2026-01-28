@@ -164,6 +164,40 @@ const GameApp: React.FC = () => {
         setGames(list.sort((a,b) => b.lastPlayedAt - a.lastPlayedAt));
     };
 
+    // --- Helper: Robust API Call ---
+    // Handles non-standard responses like SSE data prefixes in non-stream mode
+    const fetchGameAPI = async (prompt: string, maxTokens: number = 8000) => {
+        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+            body: JSON.stringify({
+                model: apiConfig.model,
+                messages: [{ role: "user", content: prompt }],
+                temperature: 0.9, 
+                max_tokens: maxTokens,
+                stream: false
+            })
+        });
+
+        if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
+
+        const text = await response.text();
+        try {
+            // 1. Try standard JSON parse
+            return JSON.parse(text);
+        } catch (e) {
+            // 2. If failed, try stripping "data: " prefix (common in proxy misconfigurations)
+            // Some proxies return `data: { ... }` even for non-stream requests
+            const cleaned = text.replace(/^data: /, '').trim();
+            try {
+                return JSON.parse(cleaned);
+            } catch (e2) {
+                console.error("Failed to parse API response", text);
+                throw new Error("Invalid API Response Format (Not JSON)");
+            }
+        }
+    };
+
     // --- Creation Logic ---
     const handleCreateGame = async () => {
         if (!newTitle.trim() || !newWorld.trim() || selectedPlayers.size === 0) {
@@ -215,19 +249,7 @@ const GameApp: React.FC = () => {
   ]
 }`;
 
-            const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-                body: JSON.stringify({
-                    model: apiConfig.model,
-                    messages: [{ role: "user", content: prompt }],
-                    temperature: 0.9, 
-                    max_tokens: 8000
-                })
-            });
-
-            if (!response.ok) throw new Error('API Error');
-            const data = await response.json();
+            const data = await fetchGameAPI(prompt);
             let content = data.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim();
             const res = JSON.parse(content);
 
@@ -418,74 +440,61 @@ ${contextLogs.slice(-15).map(l => `[${l.role === 'gm' ? 'GM' : (l.speakerName ||
   ]
 }`;
 
-            const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-                body: JSON.stringify({
-                    model: apiConfig.model,
-                    messages: [{ role: "user", content: prompt }],
-                    temperature: 0.85, 
-                    max_tokens: 8000
-                })
-            });
+            const data = await fetchGameAPI(prompt);
+            let content = data.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim();
+            const res = JSON.parse(content);
 
-            if (response.ok) {
-                const data = await response.json();
-                let content = data.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim();
-                const res = JSON.parse(content);
+            const newLogs: GameLog[] = [];
+            
+            // 1. GM Narrative Log
+            if (res.gm_narrative) {
+                newLogs.push({
+                    id: `gm-${Date.now()}`,
+                    role: 'gm',
+                    content: res.gm_narrative,
+                    timestamp: Date.now()
+                });
+            }
 
-                const newLogs: GameLog[] = [];
-                
-                // 1. GM Narrative Log
-                if (res.gm_narrative) {
-                    newLogs.push({
-                        id: `gm-${Date.now()}`,
-                        role: 'gm',
-                        content: res.gm_narrative,
-                        timestamp: Date.now()
-                    });
-                }
-
-                // 2. Character Reaction Logs
-                if (res.characters && Array.isArray(res.characters)) {
-                    for (const charAct of res.characters) {
-                        const char = players.find(p => p.id === charAct.charId);
-                        if (char) {
-                            // Format: "*Action* \n“Dialogue”"
-                            const combinedContent = `*${charAct.action}* \n“${charAct.dialogue}”`;
-                            
-                            newLogs.push({
-                                id: `char-${Date.now()}-${Math.random()}`,
-                                role: 'character',
-                                speakerName: char.name, // Link name for UI lookup
-                                content: combinedContent,
-                                timestamp: Date.now()
-                            });
-                        }
+            // 2. Character Reaction Logs
+            if (res.characters && Array.isArray(res.characters)) {
+                for (const charAct of res.characters) {
+                    const char = players.find(p => p.id === charAct.charId);
+                    if (char) {
+                        // Format: "*Action* \n“Dialogue”"
+                        const combinedContent = `*${charAct.action}* \n“${charAct.dialogue}”`;
+                        
+                        newLogs.push({
+                            id: `char-${Date.now()}-${Math.random()}`,
+                            role: 'character',
+                            speakerName: char.name, // Link name for UI lookup
+                            content: combinedContent,
+                            timestamp: Date.now()
+                        });
                     }
                 }
-
-                // Update State (Stats)
-                const newStatus = { ...updatedGame.status };
-                if (res.newLocation) newStatus.location = res.newLocation;
-                
-                // Stat Updates
-                if (res.hpChange) newStatus.health = Math.max(0, Math.min(100, (newStatus.health || 100) + res.hpChange));
-                if (res.sanityChange) newStatus.sanity = Math.max(0, Math.min(100, (newStatus.sanity || 100) + res.sanityChange));
-                if (res.goldChange) newStatus.gold = Math.max(0, (newStatus.gold || 0) + res.goldChange);
-                
-                if (res.newItem) newStatus.inventory = [...newStatus.inventory, res.newItem];
-
-                const finalGame = {
-                    ...updatedGame,
-                    logs: [...contextLogs, ...newLogs], // Append to correct context
-                    status: newStatus,
-                    suggestedActions: res.suggested_actions || []
-                };
-                
-                setActiveGame(finalGame);
-                await DB.saveGame(finalGame);
             }
+
+            // Update State (Stats)
+            const newStatus = { ...updatedGame.status };
+            if (res.newLocation) newStatus.location = res.newLocation;
+            
+            // Stat Updates
+            if (res.hpChange) newStatus.health = Math.max(0, Math.min(100, (newStatus.health || 100) + res.hpChange));
+            if (res.sanityChange) newStatus.sanity = Math.max(0, Math.min(100, (newStatus.sanity || 100) + res.sanityChange));
+            if (res.goldChange) newStatus.gold = Math.max(0, (newStatus.gold || 0) + res.goldChange);
+            
+            if (res.newItem) newStatus.inventory = [...newStatus.inventory, res.newItem];
+
+            const finalGame = {
+                ...updatedGame,
+                logs: [...contextLogs, ...newLogs], // Append to correct context
+                status: newStatus,
+                suggestedActions: res.suggested_actions || []
+            };
+            
+            setActiveGame(finalGame);
+            await DB.saveGame(finalGame);
 
         } catch (e: any) {
             addToast(`GM 掉线了: ${e.message}`, 'error');
@@ -578,35 +587,27 @@ Logs:
 ${logText}
 Output: A concise summary in Chinese (e.g. "探索了地牢并击败了史莱姆"). No preamble.`;
 
-            const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-                body: JSON.stringify({
-                    model: apiConfig.model,
-                    messages: [{ role: "user", content: prompt }],
-                    temperature: 0.5 // Lower temp for stability
-                })
-            });
+            const data = await fetchGameAPI(prompt);
+            let summary = data.choices[0].message.content.trim();
+            summary = summary.replace(/[。\.]$/, ''); // Remove trailing dot
 
-            if (response.ok) {
-                const data = await response.json();
-                let summary = data.choices[0].message.content.trim();
-                summary = summary.replace(/[。\.]$/, ''); // Remove trailing dot
+            // Format: 【角色名们】和【用户名】一起玩了xxx，发生了xxxx
+            const memoryContent = `【${playerNames}】和【${userProfile.name}】一起玩了《${activeGame.title}》，发生了${summary}`;
+            
+            // Format: YYYY-MM-DD
+            const now = new Date();
+            const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
-                // Format: 【角色名们】和【用户名】一起玩了xxx，发生了xxxx
-                const memoryContent = `【${playerNames}】和【${userProfile.name}】一起玩了《${activeGame.title}》，发生了${summary}`;
-                
-                for (const p of players) {
-                    const mem = {
-                        id: `mem-${Date.now()}-${Math.random()}`,
-                        date: new Date().toLocaleDateString(),
-                        summary: memoryContent,
-                        mood: 'fun'
-                    };
-                    updateCharacter(p.id, { memories: [...(p.memories || []), mem] });
-                }
-                addToast('记忆传递完成', 'success');
+            for (const p of players) {
+                const mem = {
+                    id: `mem-${Date.now()}-${Math.random()}`,
+                    date: dateStr,
+                    summary: memoryContent,
+                    mood: 'fun'
+                };
+                updateCharacter(p.id, { memories: [...(p.memories || []), mem] });
             }
+            addToast('记忆传递完成', 'success');
         } catch (e) {
             console.error(e);
             addToast('归档失败', 'error');

@@ -1,5 +1,6 @@
 
 
+
 import React, { useState, useEffect, useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
@@ -405,7 +406,7 @@ Format:
             <div className="h-full flex flex-col bg-[#f2f2f2]">
                 {renderHeader(selectedChatRecord.title, () => setActiveAppId('chat'))}
                 
-                <div className="flex-1 overflow-y-auto p-4 space-y-3 no-scrollbar pb-24">
+                <div className="flex-1 overflow-y-auto p-4 space-y-3 no-scrollbar pb-24 overscroll-contain">
                     {parsedLines.map((msg, idx) => (
                         <div key={idx} className={`flex ${msg.isMe ? 'justify-end' : 'justify-start'}`}>
                             {!msg.isMe && (

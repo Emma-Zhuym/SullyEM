@@ -1,4 +1,6 @@
 
+
+
 <!DOCTYPE html>
 <html lang="en">
   <head>
@@ -27,7 +29,7 @@
         theme: {
           extend: {
             fontFamily: {
-              sans: ['Quicksand', 'sans-serif'],
+              sans: ['var(--app-font)', 'sans-serif'],
             },
             colors: {
               primary: 'hsl(var(--primary-hue), var(--primary-sat), var(--primary-lightness))', 
@@ -38,10 +40,25 @@
             },
             animation: {
               'fade-in': 'fadeIn 0.3s ease-in-out',
+              'slide-up': 'slideUp 0.3s cubic-bezier(0.25, 1, 0.5, 1)',
+              'slide-down': 'slideDown 0.3s cubic-bezier(0.25, 1, 0.5, 1)',
+              'pop-in': 'popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)'
             },
             keyframes: {
               fadeIn: {
                 '0%': { opacity: '0', transform: 'scale(0.98)' },
+                '100%': { opacity: '1', transform: 'scale(1)' },
+              },
+              slideUp: {
+                '0%': { transform: 'translateY(100%)' },
+                '100%': { transform: 'translateY(0)' },
+              },
+              slideDown: {
+                '0%': { transform: 'translateY(-100%)' },
+                '100%': { transform: 'translateY(0)' },
+              },
+              popIn: {
+                '0%': { opacity: '0', transform: 'scale(0.5)' },
                 '100%': { opacity: '1', transform: 'scale(1)' },
               }
             }
@@ -56,6 +73,7 @@
         --primary-lightness: 65%;
         --safe-area-bottom: env(safe-area-inset-bottom);
         --app-height: 100%; /* Default fallback */
+        --app-font: 'Quicksand', sans-serif;
       }
       body {
         background-color: #0f1115;
@@ -67,7 +85,16 @@
         user-select: none;
         -webkit-user-select: none;
         height: 100vh;
+        height: 100dvh; /* iOS Fix */
         width: 100vw;
+        font-family: var(--app-font);
+      }
+      /* Global scroll behavior fix */
+      .no-overscroll {
+        overscroll-behavior: none;
+      }
+      .overscroll-contain {
+        overscroll-behavior: contain;
       }
       /* Re-enable selection for inputs */
       input, textarea {
@@ -83,6 +110,10 @@
       }
       input:focus, textarea:focus, select:focus {
         outline: none;
+      }
+      /* Utility for Safe Area */
+      .pb-safe {
+        padding-bottom: env(safe-area-inset-bottom);
       }
     </style>
   <script type="importmap">
