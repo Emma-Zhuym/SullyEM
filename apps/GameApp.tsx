@@ -7,7 +7,7 @@ import { ContextBuilder } from '../utils/context';
 import Modal from '../components/os/Modal';
 
 // --- Themes Configuration (Enhanced) ---
-const GAME_THEMES: Record<GameTheme, { bg: string, text: string, accent: string, font: string, border: string, cardBg: string, gradient: string }> = {
+const GAME_THEMES: Record<GameTheme, { bg: string, text: string, accent: string, font: string, border: string, cardBg: string, gradient: string, optionNormal: string, optionChaotic: string, optionEvil: string }> = {
     fantasy: {
         bg: 'bg-[#1a120b]',
         text: 'text-[#e5e5e5]',
@@ -15,7 +15,10 @@ const GAME_THEMES: Record<GameTheme, { bg: string, text: string, accent: string,
         font: 'font-serif',
         border: 'border-[#78350f]',
         cardBg: 'bg-[#2a2018]',
-        gradient: 'from-[#451a03] to-[#1a120b]'
+        gradient: 'from-[#451a03] to-[#1a120b]',
+        optionNormal: 'bg-[#451a03] border-[#78350f] text-[#fbbf24]',
+        optionChaotic: 'bg-[#78350f] border-[#b45309] text-[#fcd34d]',
+        optionEvil: 'bg-[#3f0f0f] border-[#7f1d1d] text-[#fca5a5]'
     },
     cyber: {
         bg: 'bg-[#020617]',
@@ -24,7 +27,10 @@ const GAME_THEMES: Record<GameTheme, { bg: string, text: string, accent: string,
         font: 'font-mono',
         border: 'border-[#1e293b]',
         cardBg: 'bg-[#0f172a]/80',
-        gradient: 'from-[#0f172a] to-[#020617]'
+        gradient: 'from-[#0f172a] to-[#020617]',
+        optionNormal: 'bg-[#0f172a] border-[#1e293b] text-[#22d3ee]',
+        optionChaotic: 'bg-[#1e1b4b] border-[#4338ca] text-[#a78bfa]',
+        optionEvil: 'bg-[#450a0a] border-[#7f1d1d] text-[#fca5a5]'
     },
     horror: {
         bg: 'bg-[#0f0000]',
@@ -33,7 +39,10 @@ const GAME_THEMES: Record<GameTheme, { bg: string, text: string, accent: string,
         font: 'font-serif',
         border: 'border-[#450a0a]',
         cardBg: 'bg-[#2b0e0e]',
-        gradient: 'from-[#450a0a] to-[#000000]'
+        gradient: 'from-[#450a0a] to-[#000000]',
+        optionNormal: 'bg-[#2b0e0e] border-[#450a0a] text-[#d4d4d8]',
+        optionChaotic: 'bg-[#3f1d1d] border-[#7f1d1d] text-[#fda4af]',
+        optionEvil: 'bg-[#450a0a] border-[#991b1b] text-[#ef4444]'
     },
     modern: {
         bg: 'bg-slate-50',
@@ -42,7 +51,10 @@ const GAME_THEMES: Record<GameTheme, { bg: string, text: string, accent: string,
         font: 'font-sans',
         border: 'border-slate-200',
         cardBg: 'bg-white',
-        gradient: 'from-slate-100 to-white'
+        gradient: 'from-slate-100 to-white',
+        optionNormal: 'bg-white border-slate-200 text-slate-600',
+        optionChaotic: 'bg-yellow-50 border-yellow-200 text-yellow-700',
+        optionEvil: 'bg-red-50 border-red-200 text-red-700'
     }
 };
 
@@ -129,6 +141,7 @@ const GameApp: React.FC = () => {
     const [isTyping, setIsTyping] = useState(false);
     const [diceResult, setDiceResult] = useState<number | null>(null);
     const [isRolling, setIsRolling] = useState(false);
+    const [lastTokenUsage, setLastTokenUsage] = useState<number | null>(null);
     
     // [FIX] Use Container Ref instead of Element Ref for safer scrolling
     const logsContainerRef = useRef<HTMLDivElement>(null);
@@ -165,7 +178,6 @@ const GameApp: React.FC = () => {
     };
 
     // --- Helper: Robust API Call ---
-    // Handles non-standard responses like SSE data prefixes in non-stream mode
     const fetchGameAPI = async (prompt: string, maxTokens: number = 8000) => {
         const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
             method: 'POST',
@@ -182,20 +194,89 @@ const GameApp: React.FC = () => {
         if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
 
         const text = await response.text();
-        try {
-            // 1. Try standard JSON parse
-            return JSON.parse(text);
-        } catch (e) {
-            // 2. If failed, try stripping "data: " prefix (common in proxy misconfigurations)
-            // Some proxies return `data: { ... }` even for non-stream requests
-            const cleaned = text.replace(/^data: /, '').trim();
+        const json = await (async () => {
             try {
-                return JSON.parse(cleaned);
-            } catch (e2) {
-                console.error("Failed to parse API response", text);
-                throw new Error("Invalid API Response Format (Not JSON)");
+                // 1. Try standard JSON parse
+                return JSON.parse(text);
+            } catch (e) {
+                // 2. If failed, try stripping "data: " prefix (common in proxy misconfigurations)
+                const cleaned = text.replace(/^data: /, '').trim();
+                try {
+                    return JSON.parse(cleaned);
+                } catch (e2) {
+                    console.error("Failed to parse API response", text);
+                    throw new Error("Invalid API Response Format (Not JSON)");
+                }
             }
+        })();
+        
+        if (json.usage?.total_tokens) {
+            setLastTokenUsage(json.usage.total_tokens);
         }
+        
+        return json;
+    };
+
+    // --- Helper: Build Synchronized Context (Neural Link) ---
+    const buildSyncContext = async (players: CharacterProfile[]) => {
+        let fullContext = "";
+        
+        for (const p of players) {
+            // 1. Base Context (Identity & Worldview)
+            fullContext += `\n<<< 角色档案: ${p.name} (ID: ${p.id}) >>>\n${ContextBuilder.buildCoreContext(p, userProfile, true)}\n`;
+            
+            // 2. Neural Link: Private Chat Sync
+            try {
+                const msgs = await DB.getMessagesByCharId(p.id);
+                const privateMsgs = msgs.filter(m => !m.groupId); // Only private chats
+                
+                const lastMsg = privateMsgs[privateMsgs.length - 1];
+                const now = Date.now();
+                let status = "普通";
+                let gapDesc = "未知";
+                
+                if (lastMsg) {
+                    const diffMins = (now - lastMsg.timestamp) / 1000 / 60;
+                    if (diffMins < 60) {
+                        gapDesc = `刚刚 (${Math.floor(diffMins)}分钟前)`;
+                        status = "热恋/熟络 (Hot)";
+                    } else if (diffMins < 24 * 60) {
+                        gapDesc = `今天 (${Math.floor(diffMins/60)}小时前)`;
+                        status = "正常 (Normal)";
+                    } else {
+                        const days = Math.floor(diffMins / (24 * 60));
+                        gapDesc = `${days}天前`;
+                        status = "疏远 (Cold)";
+                    }
+                    
+                    // Get last 8 messages for context
+                    const recentLog = privateMsgs.slice(-8).map(m => 
+                        `[${m.role === 'user' ? 'Me' : p.name}]: ${m.content.substring(0, 40).replace(/\n/g, ' ')}`
+                    ).join('\n');
+                    
+                    fullContext += `
+=== ⚡ 神经链接 (Neural Link): 私聊记忆同步 ===
+该角色与玩家的【私聊状态】：${gapDesc}
+关系温度: ${status}
+最近私聊话题 (作为后台记忆，不要直接复述，但要影响你的态度):
+${recentLog}
+
+【GM强制指令 (Meta Instruction)】: 
+1. **打破第四面墙**: 允许角色表现出“正在和用户一起玩游戏”的意识。
+2. **关系继承**: 
+   - 如果状态是"Hot"，跑团时要更有默契，可以吐槽“刚才私聊时你不是这么说的”。
+   - 如果状态是"Cold"，跑团时可以表现得生疏、傲娇或抱怨“好久不见怎么突然拉我来冒险”。
+   - **绝对禁止**像陌生人一样对待玩家。你们是老相识。
+=====================================\n`;
+                } else {
+                    fullContext += `[⚡ 神经链接: 无私聊记录] (视为初次见面)\n`;
+                }
+            } catch (e) {
+                console.error("Sync failed for", p.name, e);
+            }
+            fullContext += `<<< 档案结束 >>>\n`;
+        }
+        return fullContext;
     };
 
     // --- Creation Logic ---
@@ -213,14 +294,11 @@ const GameApp: React.FC = () => {
         setIsCreating(true);
 
         try {
-            // Create initial game object
             const tempId = `game-${Date.now()}`;
             const players = characters.filter(c => selectedPlayers.has(c.id));
             
-            let playerContext = "";
-            for (const p of players) {
-                playerContext += `\n<<< 角色档案: ${p.name} (ID: ${p.id}) >>>\n${ContextBuilder.buildCoreContext(p, userProfile, true)}\n`;
-            }
+            // Build Context with Sync
+            const playerContext = await buildSyncContext(players);
 
             // Generate Prologue Prompt
             const prompt = `### 🎲 TRPG 序章生成 (Game Start)
@@ -229,10 +307,13 @@ const GameApp: React.FC = () => {
 **玩家**: ${userProfile.name}
 **队友**: ${players.map(p => p.name).join(', ')}
 
+### 角色数据 (包含私聊记忆)
+${playerContext}
+
 ### 任务
 你现在是 **Game Master (GM)**。请为这个冒险故事生成一个**精彩的开场 (Prologue)**。
-1. **剧情描述**: 描述玩家和队友们现在的处境。是在酒馆里接任务？还是在飞船上醒来？或者被怪物包围？（必须基于世界观设定）
-2. **角色反应**: 简要描述队友们的初始状态或第一句话。
+1. **剧情描述**: 描述玩家和队友们现在的处境。
+2. **角色反应**: 简要描述队友们的初始状态或第一句话。请**务必**参考【神经链接】中的私聊状态来决定他们的态度。
 3. **初始选项**: 给出三个玩家可以采取的行动选项。
 
 ### 输出格式 (Strict JSON)
@@ -359,21 +440,27 @@ const GameApp: React.FC = () => {
             setActiveGame(updatedGame);
             await DB.saveGame(updatedGame);
             contextLogs = updatedLogs;
-        } else {
-            // Reroll: Context logs are already prepared by handleReroll
-            // Basically contextLogs = logs up to last user message
         }
         
         setUserInput('');
         setDiceResult(null);
         setIsTyping(true);
+        setLastTokenUsage(null);
+        addToast('GM 正在推演...', 'info'); // Feedback for Sync
 
         try {
-            // 2. Build Context WITH MEMORY
+            // 2. Build Context WITH RELATIONSHIP SYNC
             const players = characters.filter(c => activeGame.playerCharIds.includes(c.id));
-            let playerContext = "";
-            for (const p of players) {
-                playerContext += `\n<<< 角色档案: ${p.name} (ID: ${p.id}) >>>\n${ContextBuilder.buildCoreContext(p, userProfile, true)}\n`;
+            const playerContext = await buildSyncContext(players);
+
+            // 3. Build Status Warning
+            let statusWarning = "";
+            if (activeGame.status.health <= 30) statusWarning += "\n[WARNING: LOW HP] 玩家濒临死亡，请描述极度的虚弱、伤痛、视野模糊或濒死体验。\n";
+            if (activeGame.status.sanity <= 30) statusWarning += "\n[WARNING: LOW SAN] 玩家理智崩溃中，请描述疯狂、幻听、幻视或不可名状的恐惧。\n";
+            
+            let gameOverTrigger = "";
+            if (activeGame.status.health <= 0 || activeGame.status.sanity <= 0) {
+                gameOverTrigger = "\n[GAME OVER TRIGGER] 玩家的生命值或理智值已归零。请生成一个悲惨或疯狂的结局 (Bad Ending)，结束本次冒险。\n";
             }
 
             const prompt = `### 🎲 TRPG 跑团模式: ${activeGame.title}
@@ -385,37 +472,37 @@ const GameApp: React.FC = () => {
 - 💰 GOLD: ${activeGame.status.gold || 0}
 - 🎒 物品: ${activeGame.status.inventory.join(', ') || '空'}
 
+${statusWarning}
+${gameOverTrigger}
+
 ### 👥 冒险小队 (The Party)
 1. **${userProfile.name}** (玩家/User)
 ${players.map(p => `2. **${p.name}** (ID: ${p.id}) - 你的队友`).join('\n')}
 
-### 📜 角色档案 (Character Sheets)
+### 📜 角色档案 & 神经链接 (Character Sheets & Neural Links)
 ${playerContext}
 
 ### 📝 冒险记录 (Log)
-${contextLogs.slice(-15).map(l => `[${l.role === 'gm' ? 'GM' : (l.speakerName || 'System')}]: ${l.content}`).join('\n')}
+${contextLogs.slice(-50).map(l => `[${l.role === 'gm' ? 'GM' : (l.speakerName || 'System')}]: ${l.content}`).join('\n')}
 
 ### 🎲 GM 指令 (Game Master Instructions)
 你现在是这场跑团游戏的 **主持人 (GM)**。
-**现在的状态**：这不是一个"AI服务玩家"的场景，而是一群性格各异的伙伴（${players.map(p => p.name).join(', ')}）正和玩家(${userProfile.name})一起在这个疯狂的世界里冒险。
+**现在的状态**：这是一群真实的朋友（基于神经链接中的私聊关系）在一起玩跑团游戏。
 
 **请遵循以下法则**：
 1. **全员「入戏」 (Roleplay First)**: 
-   - 队友们是活生生的冒险者，不是客服。
-   - **拒绝机械感**: 他们应该主动观察环境、吐槽现状、互相开玩笑、或者在危机时大喊大叫。
-   - **性格驱动**: 如果角色设定是胆小的，遇到怪物就要想逃跑；如果是贪财的，看到宝箱就要眼红。请让他们的反应**极其真实**。
-   - **队内互动**: 队友之间也可以有互动（比如A吐槽B的计划），不仅仅是和玩家说话。
+   - 队友们是活生生的冒险者，但同时也带着私聊时的记忆和情感。
+   - **拒绝机械感**: 他们应该主动观察环境、吐槽现状、互相开玩笑。
+   - **私聊影响 (关键)**: 请根据【神经链接】中的“关系温度”和“最近话题”来调整每个角色的反应。
+   - **队内互动**: 队友之间也可以有互动（比如A吐槽B的计划）。
 
 2. **硬核 GM 风格**: 
    - **制造冲突**: 不要让旅途一帆风顺。安排陷阱、突发战斗、尴尬的社交场面、或者道德困境。
    - **环境描写**: 描述光影、气味、声音，营造沉浸感。
-   - **Markdown 排版**: 请在 \`gm_narrative\` 和 \`dialogue\` 中**积极使用 Markdown**。例如：使用 **加粗** 强调重点，使用 *斜体* 描述动作，使用列表描述环境物品。
+   - **Markdown 排版**: 请在 \`gm_narrative\` 和 \`dialogue\` 中**积极使用 Markdown**。例如：使用 **加粗** 强调重点，使用 *斜体* 描述动作。
 
 3. **生成选项 (Action Options)**:
    - 请根据当前局势，为玩家提供 3 个可选的行动建议。
-   - 选项 1 (neutral): 中立、正直、常规推进剧情。
-   - 选项 2 (chaotic): 乐子人、搞怪、出其不意、脱线。
-   - 选项 3 (evil): 邪恶、激进、贪婪、暴力。
 
 ### 📤 输出格式 (Strict JSON)
 请仅输出 JSON，不要包含 Markdown 代码块。
@@ -532,6 +619,17 @@ ${contextLogs.slice(-15).map(l => `[${l.role === 'gm' ? 'GM' : (l.speakerName ||
         addToast('正在重新推演命运...', 'info');
     };
 
+    const handleRollbackLog = async (index: number) => {
+        if (!activeGame) return;
+        if (!confirm("回退到此条记录？\n(注意：此操作将删除该条记录之后的所有内容，但不会自动重置HP/物品状态，请手动调整)")) return;
+        
+        const newLogs = activeGame.logs.slice(0, index + 1);
+        const updated = { ...activeGame, logs: newLogs };
+        await DB.saveGame(updated);
+        setActiveGame(updated);
+        addToast('时间回溯成功', 'success');
+    };
+
     const handleRestart = async () => {
         if (!activeGame) return;
         if (!confirm('确定要重置当前游戏吗？所有进度将丢失。')) return;
@@ -599,6 +697,7 @@ Output: A concise summary in Chinese (e.g. "探索了地牢并击败了史莱姆
             const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
             for (const p of players) {
+                // 1. Inject into Memory
                 const mem = {
                     id: `mem-${Date.now()}-${Math.random()}`,
                     date: dateStr,
@@ -606,8 +705,16 @@ Output: A concise summary in Chinese (e.g. "探索了地牢并击败了史莱姆
                     mood: 'fun'
                 };
                 updateCharacter(p.id, { memories: [...(p.memories || []), mem] });
+
+                // 2. Inject into Context via System Message
+                await DB.saveMessage({
+                    charId: p.id,
+                    role: 'system',
+                    type: 'text',
+                    content: `[TRPG 归档提醒: 刚刚你们一起玩了《${activeGame.title}》。${summary}。]`
+                });
             }
-            addToast('记忆传递完成', 'success');
+            addToast('记忆传递完成 (Chat & Memory)', 'success');
         } catch (e) {
             console.error(e);
             addToast('归档失败', 'error');
@@ -769,10 +876,13 @@ Output: A concise summary in Chinese (e.g. "探索了地牢并击败了史莱姆
                     </button>
                     <div className="flex flex-col mb-0.5">
                         <span className="font-bold text-sm tracking-wide line-clamp-1 max-w-[150px]">{activeGame.title}</span>
-                        <span className="text-[9px] opacity-60 flex items-center gap-1">
-                            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
-                            {activeGame.status.location}
-                        </span>
+                        <div className="flex items-center gap-2">
+                            <span className="text-[9px] opacity-60 flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                                {activeGame.status.location}
+                            </span>
+                            {lastTokenUsage && <span className="text-[8px] opacity-40 font-mono">⚡{lastTokenUsage}</span>}
+                        </div>
                     </div>
                 </div>
                 
@@ -836,19 +946,21 @@ Output: A concise summary in Chinese (e.g. "探索了地牢并击败了史莱姆
 
                     if (isSystem) {
                         return (
-                            <div key={log.id || i} className="flex justify-center my-4 animate-fade-in">
+                            <div key={log.id || i} className="flex flex-col items-center my-4 animate-fade-in gap-1 group">
                                 <span className="text-[10px] opacity-50 border-b border-dashed border-current pb-0.5 font-mono">{log.content}</span>
+                                <button onClick={() => handleRollbackLog(i)} className="text-[9px] text-red-400 opacity-0 group-hover:opacity-100 transition-opacity hover:underline">回退到此处</button>
                             </div>
                         );
                     }
 
                     if (isGM) {
                         return (
-                            <div key={log.id || i} className="animate-fade-in my-4">
+                            <div key={log.id || i} className="animate-fade-in my-4 group relative">
                                 <div className={`p-5 rounded-lg border-2 ${theme.border} ${theme.cardBg} shadow-sm relative mx-auto w-full text-sm`}>
                                     <div className="absolute -top-3 left-4 bg-inherit px-2 text-[10px] font-bold uppercase tracking-widest opacity-80 border border-inherit rounded">Game Master</div>
                                     <GameMarkdown content={log.content} theme={theme} customStyle={uiSettings} />
                                 </div>
+                                <button onClick={() => handleRollbackLog(i)} className="absolute top-2 right-2 text-[9px] bg-red-900/50 text-red-200 px-2 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-800">Rollback</button>
                             </div>
                         );
                     }
@@ -856,13 +968,14 @@ Output: A concise summary in Chinese (e.g. "探索了地牢并击败了史莱姆
                     // Character Log
                     if (isCharacter && charInfo) {
                         return (
-                            <div key={log.id || i} className="flex gap-3 animate-slide-up">
+                            <div key={log.id || i} className="flex gap-3 animate-slide-up group relative">
                                 <img src={charInfo.avatar} className={`w-10 h-10 rounded-full object-cover border ${theme.border} shrink-0 mt-1`} />
                                 <div className="flex flex-col max-w-[85%]">
                                     <span className="text-[10px] font-bold opacity-60 mb-1 ml-1">{charInfo.name}</span>
-                                    <div className={`px-4 py-2 rounded-2xl rounded-tl-none text-sm ${theme.cardBg} border ${theme.border} shadow-sm`}>
+                                    <div className={`px-4 py-2 rounded-2xl rounded-tl-none text-sm ${theme.cardBg} border ${theme.border} shadow-sm relative`}>
                                         <GameMarkdown content={log.content} theme={theme} customStyle={uiSettings} />
                                     </div>
+                                    <button onClick={() => handleRollbackLog(i)} className="self-start mt-1 text-[9px] text-red-400 opacity-0 group-hover:opacity-100 transition-opacity hover:underline">回退</button>
                                 </div>
                             </div>
                         );
@@ -870,7 +983,7 @@ Output: A concise summary in Chinese (e.g. "探索了地牢并击败了史莱姆
 
                     // Player (User) Log
                     return (
-                        <div key={log.id || i} className="flex flex-col items-end animate-slide-up">
+                        <div key={log.id || i} className="flex flex-col items-end animate-slide-up group relative">
                             <div className="flex items-center gap-2 mb-1">
                                 <span className={`text-[10px] font-bold opacity-60`}>{log.speakerName}</span>
                                 {log.diceRoll && (
@@ -882,6 +995,7 @@ Output: A concise summary in Chinese (e.g. "探索了地牢并击败了史莱姆
                             <div className={`px-4 py-2 rounded-2xl rounded-tr-none text-sm bg-orange-600 text-white shadow-md max-w-[85%]`}>
                                 {log.content}
                             </div>
+                            <button onClick={() => handleRollbackLog(i)} className="mt-1 text-[9px] text-red-400 opacity-0 group-hover:opacity-100 transition-opacity hover:underline">回退</button>
                         </div>
                     );
                 })}
@@ -898,16 +1012,15 @@ Output: A concise summary in Chinese (e.g. "探索了地牢并击败了史莱姆
                 {activeGame.suggestedActions && activeGame.suggestedActions.length > 0 && !isTyping && (
                     <div className="flex gap-2 mb-3 overflow-x-auto no-scrollbar pb-1">
                         {activeGame.suggestedActions.map((opt, idx) => {
-                            let styleClass = "bg-white/10 border-white/20 text-slate-200";
-                            if (opt.type === 'neutral') styleClass = "bg-slate-200/20 border-slate-400/30 text-slate-300";
-                            if (opt.type === 'chaotic') styleClass = "bg-yellow-500/20 border-yellow-500/30 text-yellow-200";
-                            if (opt.type === 'evil') styleClass = "bg-red-500/20 border-red-500/30 text-red-200";
+                            let styleClass = theme.optionNormal;
+                            if (opt.type === 'chaotic') styleClass = theme.optionChaotic;
+                            if (opt.type === 'evil') styleClass = theme.optionEvil;
                             
                             return (
                                 <button 
                                     key={idx} 
                                     onClick={() => handleAction(opt.label)}
-                                    className={`flex-1 min-w-[100px] text-[10px] p-2 rounded-lg border ${styleClass} hover:bg-white/20 active:scale-95 transition-all text-left leading-tight shadow-sm`}
+                                    className={`flex-1 min-w-[100px] text-[10px] p-2 rounded-lg border ${styleClass} hover:opacity-80 active:scale-95 transition-all text-left leading-tight shadow-sm`}
                                 >
                                     <span className="block font-bold opacity-70 uppercase text-[8px] mb-0.5 tracking-wider">{opt.type}</span>
                                     {opt.label}

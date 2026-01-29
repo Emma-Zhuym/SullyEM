@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect, useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
@@ -285,14 +284,25 @@ const RoomApp: React.FC = () => {
 
     const char = characters.find(c => c.id === activeCharacterId);
 
-    // Load custom assets on mount
+    // Load custom assets on mount (Migrate from LocalStorage if needed)
     useEffect(() => {
-        const saved = localStorage.getItem('room_custom_assets');
-        if (saved) {
-            try {
-                setCustomAssets(JSON.parse(saved));
-            } catch (e) { console.error("Failed to load custom assets", e); }
-        }
+        const loadAssets = async () => {
+            const dbData = await DB.getAsset('room_custom_assets_list');
+            const lsData = localStorage.getItem('room_custom_assets');
+            
+            if (dbData) {
+                try { setCustomAssets(JSON.parse(dbData)); } catch(e) {}
+            } else if (lsData) {
+                // Legacy Migration
+                try {
+                    const parsed = JSON.parse(lsData);
+                    setCustomAssets(parsed);
+                    await DB.saveAsset('room_custom_assets_list', lsData);
+                    localStorage.removeItem('room_custom_assets');
+                } catch(e) {}
+            }
+        };
+        loadAssets();
     }, []);
 
     // Helper: Get Virtual "Day" (Reset at 6 AM)
@@ -769,7 +779,7 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
     };
     
     // Custom Item Save
-    const saveCustomItem = () => { 
+    const saveCustomItem = async () => { 
         const imageToUse = customItemUrl || customItemImage;
         if(!customItemName.trim() || !imageToUse) { addToast('请填写完整信息', 'error'); return; } 
         
@@ -790,7 +800,8 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
         };
         const updatedLibrary = [...customAssets, newAsset];
         setCustomAssets(updatedLibrary);
-        localStorage.setItem('room_custom_assets', JSON.stringify(updatedLibrary));
+        // Persist to DB Assets (Migration)
+        await DB.saveAsset('room_custom_assets_list', JSON.stringify(updatedLibrary));
         
         setShowCustomModal(false); 
         setCustomItemName(''); 
@@ -813,11 +824,13 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
         }
     };
 
-    const confirmDeleteAsset = () => {
+    const confirmDeleteAsset = async () => {
         if (!deletingAsset) return;
         const newAssets = customAssets.filter(a => a.name !== deletingAsset.name || a.image !== deletingAsset.image);
         setCustomAssets(newAssets);
-        localStorage.setItem('room_custom_assets', JSON.stringify(newAssets));
+        // Update DB
+        await DB.saveAsset('room_custom_assets_list', JSON.stringify(newAssets));
+        
         setDeletingAsset(null);
         addToast('素材已删除', 'success');
     };
@@ -904,9 +917,9 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                     <span className="font-bold text-slate-700 text-lg tracking-wide">拜访谁的房间?</span>
                     <div className="w-8"></div>
                 </div>
-                <div className="p-6 grid grid-cols-2 gap-5 overflow-y-auto pb-20 no-scrollbar">
-                    {characters.map(c => (
-                        <div key={c.id} onClick={() => handleEnterRoom(c)} className="aspect-[3/4] bg-white rounded-2xl shadow-sm border border-slate-100 p-4 flex flex-col items-center justify-center gap-4 cursor-pointer active:scale-95 transition-all relative overflow-hidden group hover:shadow-md">
+               <div className="p-6 grid grid-cols-2 gap-4 overflow-y-auto pb-20 no-scrollbar auto-rows-fr">
+    {characters.map(c => (
+        <div key={c.id} onClick={() => handleEnterRoom(c)} className="min-h-[180px] bg-white rounded-2xl shadow-sm border border-slate-100 p-4 flex flex-col items-center justify-center gap-3 cursor-pointer active:scale-95 transition-all relative overflow-hidden group hover:shadow-md">
                             <div className="w-20 h-20 rounded-full p-1 border-2 border-slate-100 relative">
                                 <img src={c.avatar} className="w-full h-full rounded-full object-cover" />
                                 <div className="absolute bottom-0 right-0 w-6 h-6 bg-green-400 rounded-full border-2 border-white flex items-center justify-center text-[10px] text-white">🏠</div>

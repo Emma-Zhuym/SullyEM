@@ -1,5 +1,6 @@
 
 
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
@@ -328,8 +329,7 @@ const ScheduleApp: React.FC = () => {
         setNewAnniTitle('');
         setNewAnniDate('');
         
-        // Trigger initial thought
-        setTimeout(() => generateAnniversaryThought(anni), 500);
+        // Remove immediate trigger to avoid double calls (useEffect will handle if it's upcoming)
     };
 
     const handleDeleteAnni = async (id: string) => {

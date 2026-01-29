@@ -1,6 +1,4 @@
 
-
-
 import React, { useState, useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { OSTheme } from '../types';
@@ -15,6 +13,10 @@ const Appearance: React.FC = () => {
   const iconInputRef = useRef<HTMLInputElement>(null);
   const fontInputRef = useRef<HTMLInputElement>(null);
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
+  
+  // Font State
+  const [fontMode, setFontMode] = useState<'local' | 'web'>('local');
+  const [webFontUrl, setWebFontUrl] = useState('');
 
   const THEME_PRESETS: { name: string, config: Partial<OSTheme>, color: string }[] = [
       { name: 'Indigo', config: { hue: 245, saturation: 25, lightness: 65, contentColor: '#ffffff' }, color: 'hsl(245, 25%, 65%)' },
@@ -75,6 +77,13 @@ const Appearance: React.FC = () => {
       
       // Clear input
       if (fontInputRef.current) fontInputRef.current.value = '';
+  };
+
+  const applyWebFont = () => {
+      if (!webFontUrl.trim()) return;
+      updateTheme({ customFont: webFontUrl.trim() });
+      setWebFontUrl('');
+      addToast('网络字体已应用', 'success');
   };
 
   const handleIconUpload = async (file: File) => {
@@ -169,28 +178,56 @@ const Appearance: React.FC = () => {
                 {/* Global Font Section */}
                 <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
                     <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">全局字体 (Global Font)</h2>
-                    <div 
-                        className="w-full h-24 bg-slate-100 rounded-2xl overflow-hidden relative shadow-inner mb-2 group cursor-pointer border-2 border-dashed border-slate-200 hover:border-primary/50 flex items-center justify-center flex-col gap-2" 
-                        onClick={() => fontInputRef.current?.click()}
-                    >
-                         {theme.customFont ? (
-                             <>
-                                <span className="text-lg font-bold text-slate-700">Abc 字体预览</span>
-                                <span className="text-[10px] text-slate-400">已应用自定义字体</span>
-                             </>
-                         ) : (
-                             <>
-                                 <span className="text-2xl text-slate-400">Aa</span>
-                                 <span className="text-xs text-slate-400">上传字体文件 (.ttf / .otf)</span>
-                             </>
-                         )}
-                         <div className="absolute inset-0 bg-black/5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                             <span className="text-white text-xs font-bold bg-black/40 px-3 py-1 rounded-full backdrop-blur-md">更换字体</span>
-                         </div>
+                    
+                    <div className="flex bg-slate-100 p-1 rounded-xl mb-4">
+                        <button onClick={() => setFontMode('local')} className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${fontMode === 'local' ? 'bg-white text-primary shadow-sm' : 'text-slate-400'}`}>本地文件</button>
+                        <button onClick={() => setFontMode('web')} className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${fontMode === 'web' ? 'bg-white text-primary shadow-sm' : 'text-slate-400'}`}>网络 URL</button>
                     </div>
-                    <input type="file" ref={fontInputRef} className="hidden" accept=".ttf,.otf,.woff,.woff2" onChange={handleFontUpload} />
+
+                    {fontMode === 'local' ? (
+                        <>
+                            <div 
+                                className="w-full h-24 bg-slate-100 rounded-2xl overflow-hidden relative shadow-inner mb-2 group cursor-pointer border-2 border-dashed border-slate-200 hover:border-primary/50 flex items-center justify-center flex-col gap-2" 
+                                onClick={() => fontInputRef.current?.click()}
+                            >
+                                {theme.customFont && theme.customFont.startsWith('data:') ? (
+                                    <>
+                                        <span className="text-lg font-bold text-slate-700">Abc 字体预览</span>
+                                        <span className="text-[10px] text-slate-400">已应用本地字体</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <span className="text-2xl text-slate-400">Aa</span>
+                                        <span className="text-xs text-slate-400">上传字体文件 (.ttf / .otf)</span>
+                                    </>
+                                )}
+                                <div className="absolute inset-0 bg-black/5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <span className="text-white text-xs font-bold bg-black/40 px-3 py-1 rounded-full backdrop-blur-md">更换字体</span>
+                                </div>
+                            </div>
+                            <input type="file" ref={fontInputRef} className="hidden" accept=".ttf,.otf,.woff,.woff2" onChange={handleFontUpload} />
+                        </>
+                    ) : (
+                        <div className="space-y-2">
+                            <input 
+                                value={webFontUrl} 
+                                onChange={e => setWebFontUrl(e.target.value)} 
+                                placeholder="输入字体文件 URL (https://...)" 
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs outline-none focus:border-primary transition-all"
+                            />
+                            <button onClick={applyWebFont} className="w-full py-2 bg-primary text-white font-bold text-xs rounded-xl shadow-md active:scale-95 transition-transform">
+                                应用网络字体
+                            </button>
+                            <div className="text-[10px] text-slate-400 px-1">
+                                {theme.customFont && theme.customFont.startsWith('http') ? (
+                                    <span className="text-green-500">当前使用: {theme.customFont}</span>
+                                ) : '提示: 请确保链接直通字体文件 (.ttf/.woff)'}
+                            </div>
+                        </div>
+                    )}
+
                     {theme.customFont && (
-                        <button onClick={() => updateTheme({ customFont: undefined })} className="w-full py-2 text-xs font-bold text-red-400 bg-red-50 rounded-lg hover:bg-red-100">恢复默认字体</button>
+                        <button onClick={() => updateTheme({ customFont: undefined })} className="w-full py-2 text-xs font-bold text-red-400 bg-red-50 rounded-lg hover:bg-red-100 mt-2">恢复默认字体</button>
                     )}
                 </section>
 

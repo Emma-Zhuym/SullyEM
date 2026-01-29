@@ -940,17 +940,7 @@ ${groupLogStr}
                 aiContent = aiContent.replace(eventMatch[0], '').trim();
             }
 
-            while (true) {
-                const match = aiContent.match(/\[\[SEND_EMOJI:\s*(.*?)\]\]/);
-                if (!match) break;
-                
-                const emojiName = match[1].trim();
-                const foundEmoji = emojis.find(e => e.name === emojiName);
-                if (foundEmoji) {
-                    await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url });
-                }
-                aiContent = aiContent.replace(match[0], '').trim();
-            }
+           
 
             const scheduleRegex = /\[schedule_message \| (.*?) \| fixed \| (.*?)\]/g;
             let match;
@@ -989,55 +979,125 @@ ${groupLogStr}
             aiContent = aiContent.replace(scheduleRegex, '').trim();
 
             // Extract Quote if AI used it
-            let aiReplyTarget: { id: number, content: string, name: string } | undefined;
-            const quoteMatch = aiContent.match(/\[\[QUOTE:\s*(.*?)\]\]/);
-            if (quoteMatch) {
-                const quotedText = quoteMatch[1];
-                // Find matching user message in recent history (approximate)
-                const targetMsg = historySlice.reverse().find(m => m.role === 'user' && m.content.includes(quotedText));
-                if (targetMsg) {
-                    aiReplyTarget = {
-                        id: targetMsg.id,
-                        content: targetMsg.content,
-                        name: userProfile.name
-                    };
-                }
-                aiContent = aiContent.replace(quoteMatch[0], '').trim();
-            }
+          // Extract first Quote for fallback (used if first chunk doesn't have its own quote)
+let aiReplyTarget: { id: number, content: string, name: string } | undefined;
+const firstQuoteMatch = aiContent.match(/\[\[QUOTE:\s*(.*?)\]\]/);
+if (firstQuoteMatch) {
+    const quotedText = firstQuoteMatch[1];
+    const targetMsg = historySlice.slice().reverse().find(m => m.role === 'user' && m.content.includes(quotedText));
+    if (targetMsg) {
+        aiReplyTarget = {
+            id: targetMsg.id,
+            content: targetMsg.content,
+            name: userProfile.name
+        };
+    }
+    // 不在这里移除，让后面的逻辑处理
+}
 
             aiContent = aiContent.replace(/\[\[RECALL:.*?\]\]/g, '').trim();
             
-            if (aiContent) {
-                let tempContent = aiContent
-                    .replace(/\.\.\./g, '{{ELLIPSIS_ENG}}')
-                    .replace(/……/g, '{{ELLIPSIS_CN}}')
-                    .replace(/([。])(?![）\)\]】"”'])/g, '{{SPLIT}}')
-                    .replace(/\.($|\s+)/g, '{{SPLIT}}')
-                    .replace(/([！!？?~]+)(?![）\)\]】"”'])/g, '$1{{SPLIT}}')
-                    .replace(/\n+/g, '{{SPLIT}}')
-                    .replace(/([\u4e00-\u9fa5])[ ]+([\u4e00-\u9fa5])/g, '$1{{SPLIT}}$2');
+           if (aiContent) {
+    // 新逻辑：先按表情包位置拆分，保持顺序
+    const emojiPattern = /\[\[SEND_EMOJI:\s*(.*?)\]\]/g;
+    const parts: {type: 'text' | 'emoji', content: string}[] = [];
+    
+    let lastIndex = 0;
+    let emojiMatch;
+    
+    while ((emojiMatch = emojiPattern.exec(aiContent)) !== null) {
+        // 添加表情包之前的文字
+        if (emojiMatch.index > lastIndex) {
+            const textBefore = aiContent.slice(lastIndex, emojiMatch.index).trim();
+            if (textBefore) {
+                parts.push({ type: 'text', content: textBefore });
+            }
+        }
+        // 添加表情包
+        parts.push({ type: 'emoji', content: emojiMatch[1].trim() });
+        lastIndex = emojiMatch.index + emojiMatch[0].length;
+    }
+    
+    // 添加最后剩余的文字
+    if (lastIndex < aiContent.length) {
+        const remaining = aiContent.slice(lastIndex).trim();
+        if (remaining) {
+            parts.push({ type: 'text', content: remaining });
+        }
+    }
+    
+    // 如果没有任何表情包，整个内容作为文字
+    if (parts.length === 0 && aiContent.trim()) {
+        parts.push({ type: 'text', content: aiContent.trim() });
+    }
+    
+    // 按顺序发送每个部分
+    for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+        const part = parts[partIndex];
+        
+        if (part.type === 'emoji') {
+            // 发送表情包
+            const foundEmoji = emojis.find(e => e.name === part.content);
+            if (foundEmoji) {
+                const delay = Math.random() * 500 + 300;
+                await new Promise(r => setTimeout(r, delay));
+                await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url });
+                setMessages(await DB.getMessagesByCharId(char.id));
+            }
+        } else {
+            // 处理文字部分，拆分成多个气泡
+            let tempContent = part.content
+                .replace(/\.\.\./g, '{{ELLIPSIS_ENG}}')
+                .replace(/……/g, '{{ELLIPSIS_CN}}')
+                .replace(/([。])(?![）\)\]】""'])/g, '{{SPLIT}}')
+                .replace(/\.($|\s+)/g, '{{SPLIT}}')
+                .replace(/([！!？?~]+)(?![）\)\]】""'])/g, '$1{{SPLIT}}')
+                .replace(/\n+/g, '{{SPLIT}}')
+                .replace(/([\u4e00-\u9fa5])[ ]+([\u4e00-\u9fa5])/g, '$1{{SPLIT}}$2');
 
-                const finalChunks = tempContent
-                    .split('{{SPLIT}}')
-                    .map(c => c.trim())
-                    .filter(c => c.length > 0)
-                    .map(c => c.replace(/{{ELLIPSIS_ENG}}/g, '...').replace(/{{ELLIPSIS_CN}}/g, '……'));
+            const finalChunks = tempContent
+                .split('{{SPLIT}}')
+                .map(c => c.trim())
+                .filter(c => c.length > 0)
+                .map(c => c.replace(/{{ELLIPSIS_ENG}}/g, '...').replace(/{{ELLIPSIS_CN}}/g, '……'));
 
-                if (finalChunks.length === 0 && aiContent.trim()) finalChunks.push(aiContent.trim());
+            if (finalChunks.length === 0 && part.content.trim()) {
+                finalChunks.push(part.content.trim());
+            }
 
-                for (let i = 0; i < finalChunks.length; i++) {
-                    const chunk = finalChunks[i];
-                    const delay = Math.min(Math.max(chunk.length * 50, 500), 2000);
-                    await new Promise(r => setTimeout(r, delay));
-                    
-                    // Only attach reply to first chunk if multiple
-                    const replyData = i === 0 ? aiReplyTarget : undefined;
-                    
+            for (let i = 0; i < finalChunks.length; i++) {
+                let chunk = finalChunks[i];
+                const delay = Math.min(Math.max(chunk.length * 50, 500), 2000);
+                await new Promise(r => setTimeout(r, delay));
+                
+                // 检查这个 chunk 是否有引用标记
+                let chunkReplyTarget: { id: number, content: string, name: string } | undefined;
+                const chunkQuoteMatch = chunk.match(/\[\[QUOTE:\s*(.*?)\]\]/);
+                if (chunkQuoteMatch) {
+                    const quotedText = chunkQuoteMatch[1];
+                    const targetMsg = historySlice.slice().reverse().find(m => m.role === 'user' && m.content.includes(quotedText));
+                    if (targetMsg) {
+                        chunkReplyTarget = {
+                            id: targetMsg.id,
+                            content: targetMsg.content,
+                            name: userProfile.name
+                        };
+                    }
+                    chunk = chunk.replace(chunkQuoteMatch[0], '').trim();
+                }
+                
+                // 如果这个 chunk 没有自己的引用，且是整个回复的第一条消息，使用之前提取的 aiReplyTarget
+                const replyData = chunkReplyTarget || (partIndex === 0 && i === 0 ? aiReplyTarget : undefined);
+                
+                if (chunk) {
                     await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: chunk, replyTo: replyData });
                     setMessages(await DB.getMessagesByCharId(char.id));
                 }
-            } else {
-                setMessages(await DB.getMessagesByCharId(char.id));
+            }
+        }
+    }
+} else {
+    setMessages(await DB.getMessagesByCharId(char.id));
             }
 
         } catch (e: any) {

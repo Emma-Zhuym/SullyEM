@@ -2,11 +2,11 @@
 import { 
     CharacterProfile, ChatTheme, Message, UserProfile, 
     Task, Anniversary, DiaryEntry, RoomTodo, RoomNote, 
-    GalleryImage, FullBackupData, GroupProfile, SocialPost, StudyCourse, GameSession, Worldbook 
+    GalleryImage, FullBackupData, GroupProfile, SocialPost, StudyCourse, GameSession, Worldbook, NovelBook 
 } from '../types';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 29; // Bumped Version to force update
+const DB_VERSION = 31; // Bumped Version for Schema Consistency
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -27,6 +27,7 @@ const STORE_SOCIAL_POSTS = 'social_posts';
 const STORE_COURSES = 'courses';
 const STORE_GAMES = 'games';
 const STORE_WORLDBOOKS = 'worldbooks'; 
+const STORE_NOVELS = 'novels'; 
 
 export interface ScheduledMessage {
     id: string;
@@ -109,6 +110,7 @@ const openDB = (): Promise<IDBDatabase> => {
       createStore(STORE_COURSES, { keyPath: 'id' });
       createStore(STORE_GAMES, { keyPath: 'id' }); 
       createStore(STORE_WORLDBOOKS, { keyPath: 'id' }); 
+      createStore(STORE_NOVELS, { keyPath: 'id' });
     };
   });
 };
@@ -348,6 +350,18 @@ export const DB = {
       request.onsuccess = () => resolve(request.result || []);
       request.onerror = () => reject(request.error);
     });
+  },
+
+  // NEW: Get Single Asset
+  getAsset: async (id: string): Promise<string | null> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_ASSETS, 'readonly');
+          const store = transaction.objectStore(STORE_ASSETS);
+          const request = store.get(id);
+          request.onsuccess = () => resolve(request.result?.data || null);
+          request.onerror = () => reject(request.error);
+      });
   },
 
   saveAsset: async (id: string, data: string): Promise<void> => {
@@ -647,7 +661,6 @@ export const DB = {
       transaction.objectStore(STORE_GAMES).delete(id);
   },
 
-  // --- WORLDBOOKS (NEW) ---
   getAllWorldbooks: async (): Promise<Worldbook[]> => {
       const db = await openDB();
       if (!db.objectStoreNames.contains(STORE_WORLDBOOKS)) return [];
@@ -670,6 +683,31 @@ export const DB = {
       const db = await openDB();
       const transaction = db.transaction(STORE_WORLDBOOKS, 'readwrite');
       transaction.objectStore(STORE_WORLDBOOKS).delete(id);
+  },
+
+  // --- NOVELS (NEW) ---
+  getAllNovels: async (): Promise<NovelBook[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_NOVELS)) return [];
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_NOVELS, 'readonly');
+          const store = transaction.objectStore(STORE_NOVELS);
+          const request = store.getAll();
+          request.onsuccess = () => resolve(request.result || []);
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  saveNovel: async (novel: NovelBook): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_NOVELS, 'readwrite');
+      transaction.objectStore(STORE_NOVELS).put(novel);
+  },
+
+  deleteNovel: async (id: string): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_NOVELS, 'readwrite');
+      transaction.objectStore(STORE_NOVELS).delete(id);
   },
 
   // --- Helper for Sequential Export ---
@@ -703,7 +741,7 @@ export const DB = {
           });
       };
 
-      const [characters, messages, themes, emojis, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks] = await Promise.all([
+      const [characters, messages, themes, emojis, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels] = await Promise.all([
           getAllFromStore(STORE_CHARACTERS),
           getAllFromStore(STORE_MESSAGES),
           getAllFromStore(STORE_THEMES),
@@ -721,7 +759,8 @@ export const DB = {
           getAllFromStore(STORE_SOCIAL_POSTS),
           getAllFromStore(STORE_COURSES),
           getAllFromStore(STORE_GAMES),
-          getAllFromStore(STORE_WORLDBOOKS), // Include Worldbooks
+          getAllFromStore(STORE_WORLDBOOKS),
+          getAllFromStore(STORE_NOVELS), 
       ]);
 
       const userProfile = userProfiles.length > 0 ? {
@@ -731,7 +770,7 @@ export const DB = {
       } : undefined;
 
       return {
-          characters, messages, customThemes: themes, savedEmojis: emojis, assets, galleryImages, userProfile, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, savedJournalStickers: journalStickers, socialPosts, courses, games, worldbooks
+          characters, messages, customThemes: themes, savedEmojis: emojis, assets, galleryImages, userProfile, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, savedJournalStickers: journalStickers, socialPosts, courses, games, worldbooks, novels
       };
   },
 
@@ -742,13 +781,16 @@ export const DB = {
           STORE_CHARACTERS, STORE_MESSAGES, STORE_THEMES, STORE_EMOJIS, 
           STORE_ASSETS, STORE_GALLERY, STORE_USER, STORE_DIARIES, 
           STORE_TASKS, STORE_ANNIVERSARIES, STORE_ROOM_TODOS, STORE_ROOM_NOTES,
-          STORE_GROUPS, STORE_JOURNAL_STICKERS, STORE_SOCIAL_POSTS, STORE_COURSES, STORE_GAMES, STORE_WORLDBOOKS
+          STORE_GROUPS, STORE_JOURNAL_STICKERS, STORE_SOCIAL_POSTS, STORE_COURSES, STORE_GAMES, STORE_WORLDBOOKS, STORE_NOVELS
       ].filter(name => db.objectStoreNames.contains(name));
 
       const tx = db.transaction(availableStores, 'readwrite');
 
+      // MODIFIED: Only clear if items exist in backup
       const clearAndAdd = (storeName: string, items: any[]) => {
           if (!availableStores.includes(storeName)) return;
+          if (!items || items.length === 0) return; // SKIP if no data in backup (Preserve existing)
+          
           const store = tx.objectStore(storeName);
           store.clear();
           items.forEach(item => store.put(item));
@@ -761,18 +803,19 @@ export const DB = {
                   if (media) {
                       return {
                           ...c,
+                          avatar: media.avatar || c.avatar, // Updated to merge avatar
                           sprites: media.sprites || c.sprites,
                           chatBackground: media.backgrounds?.chat || c.chatBackground,
                           dateBackground: media.backgrounds?.date || c.dateBackground,
-                          roomConfig: {
+                          roomConfig: c.roomConfig ? {
                               ...c.roomConfig,
-                              wallImage: media.backgrounds?.roomWall || c.roomConfig?.wallImage,
-                              floorImage: media.backgrounds?.roomFloor || c.roomConfig?.floorImage,
-                              items: c.roomConfig?.items.map(item => {
+                              wallImage: media.backgrounds?.roomWall || c.roomConfig.wallImage,
+                              floorImage: media.backgrounds?.roomFloor || c.roomConfig.floorImage,
+                              items: c.roomConfig.items.map(item => {
                                   const img = media.roomItems?.[item.id];
                                   return img ? { ...item, image: img } : item;
-                              }) || []
-                          }
+                              })
+                          } : c.roomConfig
                       } as CharacterProfile;
                   }
                   return c;
@@ -790,6 +833,7 @@ export const DB = {
                       if (media) {
                           return {
                               ...c,
+                              avatar: media.avatar || c.avatar, // Updated to merge avatar
                               sprites: media.sprites || c.sprites, 
                               chatBackground: media.backgrounds?.chat || c.chatBackground,
                               dateBackground: media.backgrounds?.date || c.dateBackground,
@@ -812,7 +856,8 @@ export const DB = {
       }
 
       if (data.messages) {
-           if (availableStores.includes(STORE_MESSAGES)) {
+           // SPECIAL Handling for Messages: Clear and Add only if messages exist
+           if (availableStores.includes(STORE_MESSAGES) && data.messages.length > 0) {
                const store = tx.objectStore(STORE_MESSAGES);
                store.clear();
                data.messages.forEach(m => store.add(m)); 
@@ -832,7 +877,8 @@ export const DB = {
       if (data.socialPosts) clearAndAdd(STORE_SOCIAL_POSTS, data.socialPosts);
       if (data.courses) clearAndAdd(STORE_COURSES, data.courses);
       if (data.games) clearAndAdd(STORE_GAMES, data.games);
-      if (data.worldbooks) clearAndAdd(STORE_WORLDBOOKS, data.worldbooks); // Import Worldbooks
+      if (data.worldbooks) clearAndAdd(STORE_WORLDBOOKS, data.worldbooks);
+      if (data.novels) clearAndAdd(STORE_NOVELS, data.novels);
       
       if (data.userProfile) {
           if (availableStores.includes(STORE_USER)) {

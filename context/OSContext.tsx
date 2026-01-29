@@ -1,9 +1,7 @@
 
-
-
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import JSZip from 'jszip';
-import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook } from '../types';
+import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook } from '../types';
 import { DB } from '../utils/db';
 
 interface OSContextType {
@@ -31,6 +29,12 @@ interface OSContextType {
   addWorldbook: (wb: Worldbook) => void;
   updateWorldbook: (id: string, updates: Partial<Worldbook>) => Promise<void>;
   deleteWorldbook: (id: string) => void;
+
+  // Novels (NEW)
+  novels: NovelBook[];
+  addNovel: (novel: NovelBook) => void;
+  updateNovel: (id: string, updates: Partial<NovelBook>) => Promise<void>;
+  deleteNovel: (id: string) => void;
 
   // Groups
   groups: GroupProfile[];
@@ -76,7 +80,6 @@ interface OSContextType {
   clearLogs: () => void;
 }
 
-// ... (defaultTheme, defaultApiConfig, generateAvatar, defaultUserProfile, sullyV2 definitions remain same) ...
 const defaultTheme: OSTheme = {
   hue: 265, // Soft Lavender/Lilac
   saturation: 70,
@@ -278,7 +281,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [activeCharacterId, setActiveCharacterId] = useState<string>('');
   
   const [groups, setGroups] = useState<GroupProfile[]>([]); 
-  const [worldbooks, setWorldbooks] = useState<Worldbook[]>([]); // New Worldbook State
+  const [worldbooks, setWorldbooks] = useState<Worldbook[]>([]); 
+  const [novels, setNovels] = useState<NovelBook[]>([]); // New
 
   const [userProfile, setUserProfile] = useState<UserProfile>(defaultUserProfile);
   
@@ -446,7 +450,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                  if (loadedTheme.launcherWidgetImage && loadedTheme.launcherWidgetImage.startsWith('data:')) {
                      loadedTheme.launcherWidgetImage = undefined;
                  }
-                 // Reset font too
+                 // Reset font too if it's data URI
                  if (loadedTheme.customFont && loadedTheme.customFont.startsWith('data:')) {
                      loadedTheme.customFont = undefined;
                  }
@@ -471,6 +475,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                     loadedTheme.launcherWidgetImage = assetMap['launcherWidgetImage'];
                 }
 
+                // If asset exists, it overrides LS (which is empty or old)
                 if (assetMap['custom_font_data']) {
                     loadedTheme.customFont = assetMap['custom_font_data'];
                 }
@@ -497,12 +502,13 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       try {
         await loadSettings();
 
-        const [dbChars, dbThemes, dbUser, dbGroups, dbWorldbooks] = await Promise.all([
+        const [dbChars, dbThemes, dbUser, dbGroups, dbWorldbooks, dbNovels] = await Promise.all([
             DB.getAllCharacters(),
             DB.getThemes(),
             DB.getUserProfile(),
             DB.getGroups(),
-            DB.getAllWorldbooks()
+            DB.getAllWorldbooks(),
+            DB.getAllNovels()
         ]);
 
         let finalChars = dbChars;
@@ -565,6 +571,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
         setGroups(dbGroups);
         setWorldbooks(dbWorldbooks);
+        setNovels(dbNovels);
         setCustomThemes(dbThemes);
         if (dbUser) setUserProfile(dbUser);
 
@@ -671,11 +678,18 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         }
     }
 
+    // Logic for Font: Differentiate between Data URI (Blob) and URL (Web Font)
     if (customFont !== undefined) {
         if (customFont && customFont.startsWith('data:')) {
+            // Blob: Save to DB, Apply
             await DB.saveAsset('custom_font_data', customFont);
             applyCustomFont(customFont);
+        } else if (customFont && (customFont.startsWith('http') || customFont.startsWith('https'))) {
+            // Web URL: Clear Blob from DB, Apply, Save to LS (via cleanTheme below)
+            await DB.deleteAsset('custom_font_data');
+            applyCustomFont(customFont);
         } else {
+            // Reset
             await DB.deleteAsset('custom_font_data');
             applyCustomFont(undefined);
         }
@@ -685,7 +699,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     const lsTheme = { ...newTheme };
     if (lsTheme.wallpaper && lsTheme.wallpaper.startsWith('data:')) lsTheme.wallpaper = ''; 
     if (lsTheme.launcherWidgetImage && lsTheme.launcherWidgetImage.startsWith('data:')) lsTheme.launcherWidgetImage = ''; 
+    
+    // Clear data URI font from LS, keep URL font
     if (lsTheme.customFont && lsTheme.customFont.startsWith('data:')) lsTheme.customFont = ''; 
+    
     localStorage.setItem('os_theme', JSON.stringify(lsTheme));
   };
   const updateApiConfig = (updates: Partial<APIConfig>) => { const newConfig = { ...apiConfig, ...updates }; setApiConfig(newConfig); localStorage.setItem('os_api_config', JSON.stringify(newConfig)); };
@@ -788,6 +805,26 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       addToast('世界书已删除 (同步移除角色挂载)', 'success');
   };
 
+  // Novel Methods (New)
+  const addNovel = async (novel: NovelBook) => {
+      setNovels(prev => [novel, ...prev]);
+      await DB.saveNovel(novel);
+  };
+
+  const updateNovel = async (id: string, updates: Partial<NovelBook>) => {
+      setNovels(prev => {
+          const next = prev.map(n => n.id === id ? { ...n, ...updates, lastActiveAt: Date.now() } : n);
+          const target = next.find(n => n.id === id);
+          if (target) DB.saveNovel(target);
+          return next;
+      });
+  };
+
+  const deleteNovel = async (id: string) => {
+      setNovels(prev => prev.filter(n => n.id !== id));
+      await DB.deleteNovel(id);
+  };
+
   const updateUserProfile = async (updates: Partial<UserProfile>) => { setUserProfile(prev => { const next = { ...prev, ...updates }; DB.saveUserProfile(next); return next; }); };
   const addCustomTheme = async (theme: ChatTheme) => { setCustomThemes(prev => { const exists = prev.find(t => t.id === theme.id); if (exists) return prev.map(t => t.id === theme.id ? theme : t); return [...prev, theme]; }); await DB.saveTheme(theme); };
   const removeCustomTheme = async (id: string) => { setCustomThemes(prev => prev.filter(t => t.id !== id)); await DB.deleteTheme(id); };
@@ -804,6 +841,28 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const assetsFolder = zip.folder("assets");
           let assetCount = 0;
 
+          // Strip Base64 Images (For 'data' mode: Text Only)
+          const stripBase64 = (obj: any): any => {
+              if (typeof obj === 'string') {
+                  if (obj.startsWith('data:image')) return '';
+                  return obj;
+              }
+              if (Array.isArray(obj)) {
+                  return obj.map(item => stripBase64(item));
+              }
+              if (obj !== null && typeof obj === 'object') {
+                  const newObj: any = {};
+                  for (const key in obj) {
+                      if (Object.prototype.hasOwnProperty.call(obj, key)) {
+                          newObj[key] = stripBase64(obj[key]);
+                      }
+                  }
+                  return newObj;
+              }
+              return obj;
+          };
+
+          // Extract Images to ZIP (For 'media' mode)
           const processObject = (obj: any): any => {
               if (obj === null || typeof obj !== 'object') return obj;
               
@@ -840,8 +899,16 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const storesToProcess = [
               'characters', 'messages', 'themes', 'emojis', 'assets', 'gallery', 
               'user_profile', 'diaries', 'tasks', 'anniversaries', 'room_todos', 
-              'room_notes', 'groups', 'journal_stickers', 'social_posts', 'courses', 'games', 'worldbooks'
+              'room_notes', 'groups', 'journal_stickers', 'social_posts', 'courses', 'games', 'worldbooks', 'novels'
           ];
+
+          // Text-heavy stores that should be excluded in 'media' mode
+          const textHeavyStores = ['messages', 'diaries', 'tasks', 'anniversaries', 'room_todos', 'room_notes', 'groups', 'social_posts', 'courses', 'games', 'worldbooks', 'novels'];
+
+          // Fetch Social App & Room Assets from DB for Backup
+          const sparkUserBg = await DB.getAsset('spark_user_bg');
+          const sparkSocialProfile = await DB.getAsset('spark_social_profile');
+          const roomCustomAssets = await DB.getAsset('room_custom_assets_list');
 
           const backupData: Partial<FullBackupData> = {
               timestamp: Date.now(),
@@ -849,39 +916,50 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               apiConfig: mode === 'data' ? apiConfig : undefined,
               apiPresets: mode === 'data' ? apiPresets : undefined,
               availableModels: availableModels,
+              theme: theme, // Ensure theme (including web font URL) is exported
               
               socialAppData: {
                   charHandles: JSON.parse(localStorage.getItem('spark_char_handles') || '{}'),
-                  userProfile: JSON.parse(localStorage.getItem('spark_social_profile') || 'null') || undefined,
+                  userProfile: sparkSocialProfile ? JSON.parse(sparkSocialProfile) : undefined,
                   userId: localStorage.getItem('spark_user_id') || undefined,
-                  userBg: localStorage.getItem('spark_user_bg') || undefined
+                  userBg: sparkUserBg || undefined
               },
               
-              // Added room custom assets export
-              roomCustomAssets: JSON.parse(localStorage.getItem('room_custom_assets') || '[]'),
+              roomCustomAssets: roomCustomAssets ? JSON.parse(roomCustomAssets) : [],
+              mediaAssets: [], // Initialize mediaAssets array
           };
 
           const totalSteps = storesToProcess.length + 3; // Added step for room assets
           let currentStep = 0;
 
-          if (backupData.socialAppData?.userProfile?.avatar) {
-              backupData.socialAppData.userProfile = processObject(backupData.socialAppData.userProfile);
-          }
-          if (backupData.socialAppData?.userBg) {
-               if (backupData.socialAppData.userBg.startsWith('data:')) {
-                   const val = backupData.socialAppData.userBg;
-                   const extMatch = val.match(/data:image\/([a-zA-Z0-9]+);base64,/);
-                   if (extMatch) {
-                       const filename = `asset_social_bg_${Date.now()}.${extMatch[1] === 'jpeg' ? 'jpg' : extMatch[1]}`;
-                       assetsFolder?.file(filename, val.split(',')[1], { base64: true });
-                       backupData.socialAppData.userBg = `assets/${filename}`;
-                   }
-               }
-          }
-          
-          // Process Room Custom Assets (Extract images)
-          if (backupData.roomCustomAssets) {
-              backupData.roomCustomAssets = processObject(backupData.roomCustomAssets);
+          // Pre-process specialized image fields based on mode
+          if (mode === 'media') {
+              if (backupData.socialAppData?.userProfile) {
+                  backupData.socialAppData.userProfile = processObject(backupData.socialAppData.userProfile);
+              }
+              if (backupData.socialAppData?.userBg) {
+                   backupData.socialAppData.userBg = processObject(backupData.socialAppData.userBg);
+              }
+              if (backupData.roomCustomAssets) {
+                  backupData.roomCustomAssets = processObject(backupData.roomCustomAssets);
+              }
+              // ADDED: Process theme to extract wallpaper/widget images to ZIP
+              if (backupData.theme) {
+                  backupData.theme = processObject(backupData.theme);
+              }
+          } else {
+              // DATA MODE: Strip images
+              if (backupData.socialAppData) {
+                  backupData.socialAppData.userProfile = stripBase64(backupData.socialAppData.userProfile);
+                  backupData.socialAppData.userBg = stripBase64(backupData.socialAppData.userBg);
+              }
+              if (backupData.roomCustomAssets) {
+                  backupData.roomCustomAssets = stripBase64(backupData.roomCustomAssets);
+              }
+              // ADDED: Strip theme images
+              if (backupData.theme) {
+                  backupData.theme = stripBase64(backupData.theme);
+              }
           }
 
           for (const storeName of storesToProcess) {
@@ -892,17 +970,58 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   progress: (currentStep / totalSteps) * 100 
               });
 
-              let rawData = await DB.getRawStoreData(storeName); 
+              // SKIP Logic based on Mode
+              if (mode === 'media') {
+                  if (textHeavyStores.includes(storeName)) continue;
+              }
               
               if (mode === 'data') {
-                  if (storeName === 'gallery') rawData = []; 
-                  if (storeName === 'assets') rawData = [];
+                  if (['assets', 'gallery'].includes(storeName)) continue;
               }
 
-              const processedData = processObject(rawData);
+              let rawData = await DB.getRawStoreData(storeName); 
+              
+              let processedData: any;
+
+              if (mode === 'media') {
+                  // Special Handling for Characters in Media Mode: Extract to mediaAssets
+                  if (storeName === 'characters') {
+                      // We don't export the full character text data in media mode.
+                      // Instead, we extract images into mediaAssets.
+                      const mediaList = rawData.map((c: CharacterProfile) => {
+                          const extracted = {
+                              charId: c.id,
+                              avatar: c.avatar, // Extract avatar
+                              sprites: c.sprites,
+                              roomItems: c.roomConfig?.items?.reduce((acc: any, item: any) => {
+                                  if (item.image && item.image.startsWith('data:')) {
+                                      acc[item.id] = item.image;
+                                  }
+                                  return acc;
+                              }, {}),
+                              backgrounds: {
+                                  chat: c.chatBackground,
+                                  date: c.dateBackground,
+                                  roomWall: c.roomConfig?.wallImage,
+                                  roomFloor: c.roomConfig?.floorImage
+                              }
+                          };
+                          // Process extracted images to move to ZIP
+                          return processObject(extracted);
+                      });
+                      backupData.mediaAssets = mediaList;
+                      continue; // Don't export 'characters' array itself
+                  }
+                  
+                  // For assets/gallery/themes in Media Mode, export fully (process images to ZIP)
+                  processedData = processObject(rawData);
+              } else {
+                  // DATA Mode: Strip images
+                  processedData = stripBase64(rawData);
+              }
 
               switch(storeName) {
-                  case 'characters': backupData.characters = processedData; break;
+                  case 'characters': if(mode === 'data') backupData.characters = processedData; break;
                   case 'messages': backupData.messages = processedData; break;
                   case 'themes': backupData.customThemes = processedData; break;
                   case 'emojis': backupData.savedEmojis = processedData; break;
@@ -920,6 +1039,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   case 'courses': backupData.courses = processedData; break;
                   case 'games': backupData.games = processedData; break;
                   case 'worldbooks': backupData.worldbooks = processedData; break;
+                  case 'novels': backupData.novels = processedData; break; 
               }
 
               await new Promise(resolve => setTimeout(resolve, 10));
@@ -1022,9 +1142,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           
           if (data.theme) {
               const cleanTheme = { ...data.theme };
-              if (cleanTheme.wallpaper && cleanTheme.wallpaper.startsWith('data:')) { cleanTheme.wallpaper = ''; }
-              if (cleanTheme.launcherWidgetImage && cleanTheme.launcherWidgetImage.startsWith('data:')) { cleanTheme.launcherWidgetImage = ''; }
-              if (cleanTheme.customFont && cleanTheme.customFont.startsWith('data:')) { cleanTheme.customFont = ''; }
+              // Modified: Delete key instead of setting to empty string if it's a data URI
+              // This prevents updateTheme from triggering DB deletion for these assets if they were just restored to DB.
+              if (cleanTheme.wallpaper && cleanTheme.wallpaper.startsWith('data:')) { delete cleanTheme.wallpaper; }
+              if (cleanTheme.launcherWidgetImage && cleanTheme.launcherWidgetImage.startsWith('data:')) { delete cleanTheme.launcherWidgetImage; }
+              if (cleanTheme.customFont && cleanTheme.customFont.startsWith('data:')) { delete cleanTheme.customFont; }
               updateTheme(cleanTheme);
           }
           if (data.apiConfig) updateApiConfig(data.apiConfig);
@@ -1033,14 +1155,16 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           
           if (data.socialAppData) {
               if (data.socialAppData.charHandles) localStorage.setItem('spark_char_handles', JSON.stringify(data.socialAppData.charHandles));
-              if (data.socialAppData.userProfile) localStorage.setItem('spark_social_profile', JSON.stringify(data.socialAppData.userProfile));
               if (data.socialAppData.userId) localStorage.setItem('spark_user_id', data.socialAppData.userId);
-              if (data.socialAppData.userBg) localStorage.setItem('spark_user_bg', data.socialAppData.userBg);
+              
+              // Restore heavy assets to DB
+              if (data.socialAppData.userProfile) await DB.saveAsset('spark_social_profile', JSON.stringify(data.socialAppData.userProfile));
+              if (data.socialAppData.userBg) await DB.saveAsset('spark_user_bg', data.socialAppData.userBg);
           }
           
-          // Restore Room Custom Assets
+          // Restore Room Custom Assets to DB
           if (data.roomCustomAssets) {
-              localStorage.setItem('room_custom_assets', JSON.stringify(data.roomCustomAssets));
+              await DB.saveAsset('room_custom_assets_list', JSON.stringify(data.roomCustomAssets));
           }
 
           const chars = await DB.getAllCharacters();
@@ -1048,6 +1172,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const themes = await DB.getThemes();
           const user = await DB.getUserProfile();
           const books = await DB.getAllWorldbooks();
+          const novelList = await DB.getAllNovels();
           
           if (data.assets) {
               const assets = await DB.getAllAssets();
@@ -1063,6 +1188,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (themes.length > 0) setCustomThemes(themes);
           if (user) setUserProfile(user);
           if (books.length > 0) setWorldbooks(books);
+          if (novelList.length > 0) setNovels(novelList);
           
           setSysOperation({ status: 'idle', message: '', progress: 100 });
           addToast('恢复成功，系统即将重启...', 'success');
@@ -1080,26 +1206,72 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const openApp = (appId: AppID) => setActiveApp(appId);
   const closeApp = () => setActiveApp(AppID.Launcher);
   const unlock = () => setIsLocked(false);
-  useEffect(() => { const root = document.documentElement; root.style.setProperty('--primary-hue', theme.hue.toString()); root.style.setProperty('--primary-sat', `${theme.saturation}%`); root.style.setProperty('--primary-lightness', `${theme.lightness}%`); }, [theme]);
-  useEffect(() => { const timer = setInterval(() => { setVirtualTime(getRealTime()); }, 1000); return () => clearInterval(timer); }, []);
+
+  const value: OSContextType = {
+    activeApp,
+    openApp,
+    closeApp,
+    theme,
+    updateTheme,
+    virtualTime,
+    apiConfig,
+    updateApiConfig,
+    isLocked,
+    unlock,
+    isDataLoaded,
+    characters,
+    activeCharacterId,
+    addCharacter,
+    updateCharacter,
+    deleteCharacter,
+    setActiveCharacterId,
+    worldbooks,
+    addWorldbook,
+    updateWorldbook,
+    deleteWorldbook,
+    novels,
+    addNovel,
+    updateNovel,
+    deleteNovel,
+    groups,
+    createGroup,
+    deleteGroup,
+    userProfile,
+    updateUserProfile,
+    availableModels,
+    setAvailableModels,
+    apiPresets,
+    addApiPreset,
+    removeApiPreset,
+    customThemes,
+    addCustomTheme,
+    removeCustomTheme,
+    toasts,
+    addToast,
+    customIcons,
+    setCustomIcon,
+    lastMsgTimestamp,
+    unreadMessages,
+    clearUnread,
+    exportSystem,
+    importSystem,
+    resetSystem,
+    sysOperation,
+    systemLogs,
+    clearLogs
+  };
 
   return (
-    <OSContext.Provider
-      value={{
-        activeApp, openApp, closeApp, theme, updateTheme, virtualTime, apiConfig, updateApiConfig, isLocked, unlock, isDataLoaded,
-        characters, activeCharacterId, addCharacter, updateCharacter, deleteCharacter, setActiveCharacterId: handleSetActiveCharacter,
-        groups, createGroup, deleteGroup,
-        worldbooks, addWorldbook, updateWorldbook, deleteWorldbook, // Export Worldbook Methods
-        userProfile, updateUserProfile, availableModels, setAvailableModels: saveModels,
-        apiPresets, addApiPreset, removeApiPreset, customThemes, addCustomTheme, removeCustomTheme, toasts, addToast, customIcons, setCustomIcon,
-        lastMsgTimestamp, unreadMessages, clearUnread, exportSystem, importSystem, resetSystem,
-        systemLogs, clearLogs, 
-        sysOperation 
-      }}
-    >
+    <OSContext.Provider value={value}>
       {children}
     </OSContext.Provider>
   );
 };
 
-export const useOS = () => { const context = useContext(OSContext); if (!context) throw new Error('useOS must be used within an OSProvider'); return context; };
+export const useOS = () => {
+  const context = useContext(OSContext);
+  if (context === undefined) {
+    throw new Error('useOS must be used within an OSProvider');
+  }
+  return context;
+};

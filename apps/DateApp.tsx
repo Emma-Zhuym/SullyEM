@@ -1,11 +1,13 @@
 
 
 
+
+
 import React, { useState, useEffect, useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { processImage } from '../utils/file';
-import { CharacterProfile, SpriteConfig, Message } from '../types';
+import { CharacterProfile, SpriteConfig, Message, DateState, DialogueItem } from '../types';
 import { ContextBuilder } from '../utils/context';
 import Modal from '../components/os/Modal';
 
@@ -13,11 +15,6 @@ import Modal from '../components/os/Modal';
 const REQUIRED_EMOTIONS = ['normal', 'happy', 'angry', 'sad', 'shy'];
 
 const DEFAULT_SPRITE_CONFIG: SpriteConfig = { scale: 1, x: 0, y: 0 };
-
-interface DialogueItem {
-    text: string;
-    emotion?: string;
-}
 
 const DateApp: React.FC = () => {
     const { closeApp, characters, activeCharacterId, setActiveCharacterId, apiConfig, addToast, updateCharacter, virtualTime, userProfile } = useOS();
@@ -49,6 +46,9 @@ const DateApp: React.FC = () => {
     
     // Exit Confirmation State
     const [showExitModal, setShowExitModal] = useState(false);
+
+    // Resume Logic State
+    const [pendingSessionChar, setPendingSessionChar] = useState<CharacterProfile | null>(null);
 
     // Logic State
     const [hasSavedOpening, setHasSavedOpening] = useState(false); // Track if opening is saved
@@ -134,8 +134,26 @@ const DateApp: React.FC = () => {
         else closeApp();
     };
 
-    const confirmExit = () => {
+    // Modified Exit Logic: Save State instead of Clearing
+    const handleSaveAndExit = () => {
         setShowExitModal(false);
+        if (char) {
+            // Persist current state to character profile
+            const currentState: DateState = {
+                dialogueQueue,
+                dialogueBatch,
+                currentText,
+                bgImage,
+                currentSprite,
+                isNovelMode,
+                timestamp: Date.now(),
+                peekStatus: peekStatus // Save the peek text context
+            };
+            updateCharacter(char.id, { savedDateState: currentState });
+            addToast('进度已保存，下次可继续', 'success');
+        }
+        
+        // Reset local state for safety (though component might unmount)
         setMode('select');
         setDialogueQueue([]);
         setDialogueBatch([]);
@@ -143,6 +161,7 @@ const DateApp: React.FC = () => {
         setInput('');
         setIsNovelMode(false);
         setHasSavedOpening(false);
+        setPeekStatus('');
     };
 
     const openSettings = (from: 'peek' | 'vn') => {
@@ -283,6 +302,47 @@ const DateApp: React.FC = () => {
         }
 
         return results;
+    };
+
+    // --- Select Logic (New: Resume Check) ---
+    const handleCharClick = (c: CharacterProfile) => {
+        if (c.savedDateState) {
+            setPendingSessionChar(c); // Show resume modal
+        } else {
+            startPeek(c); // Normal start
+        }
+    };
+
+    const handleResumeSession = () => {
+        if (!pendingSessionChar || !pendingSessionChar.savedDateState) return;
+        
+        const s = pendingSessionChar.savedDateState;
+        setActiveCharacterId(pendingSessionChar.id);
+        
+        // Restore State
+        setBgImage(s.bgImage);
+        setCurrentSprite(s.currentSprite);
+        setCurrentText(s.currentText);
+        setDisplayedText(s.currentText); // Show text immediately, no type animation
+        setDialogueQueue(s.dialogueQueue);
+        setDialogueBatch(s.dialogueBatch);
+        setIsNovelMode(s.isNovelMode);
+        setPeekStatus(s.peekStatus || '');
+        
+        setMode('vn');
+        setPendingSessionChar(null);
+        addToast('已恢复上次进度', 'success');
+    };
+
+    const handleStartNewSession = () => {
+        if (!pendingSessionChar) return;
+        
+        // Clear saved state
+        updateCharacter(pendingSessionChar.id, { savedDateState: undefined });
+        
+        // Start fresh
+        startPeek(pendingSessionChar);
+        setPendingSessionChar(null);
     };
 
     // --- Logic: Peek (Sense Presence) ---
@@ -569,7 +629,7 @@ ${recentMsgs}
                 charId: char.id, 
                 role: 'assistant', 
                 type: 'text', 
-                content: content,
+                content: content, 
                 metadata: { source: 'date' }
             });
             
@@ -782,7 +842,7 @@ ${recentMsgs}
                 </div>
                 <div className="p-4 grid grid-cols-2 gap-4 overflow-y-auto">
                     {characters.map(c => (
-                        <div key={c.id} onClick={() => startPeek(c)} className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 active:scale-95 transition-transform flex flex-col items-center gap-3 relative group">
+                        <div key={c.id} onClick={() => handleCharClick(c)} className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 active:scale-95 transition-transform flex flex-col items-center gap-3 relative group">
                             {/* History Icon in Top Right - Clickable independently */}
                             <button 
                                 onClick={(e) => { e.stopPropagation(); openHistory(c); }}
@@ -795,9 +855,31 @@ ${recentMsgs}
                             </button>
                             <img src={c.avatar} className="w-16 h-16 rounded-full object-cover" />
                             <span className="font-bold text-slate-700">{c.name}</span>
+                            {c.savedDateState && <div className="absolute top-2 left-2 w-2 h-2 bg-green-500 rounded-full animate-pulse" title="有存档"></div>}
                         </div>
                     ))}
                 </div>
+
+                {/* Resume Modal */}
+                <Modal 
+                    isOpen={!!pendingSessionChar} 
+                    title="发现进度" 
+                    onClose={() => setPendingSessionChar(null)}
+                    footer={
+                        <div className="flex gap-3 w-full">
+                            <button onClick={handleStartNewSession} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">新的见面</button>
+                            <button onClick={handleResumeSession} className="flex-1 py-3 bg-green-500 text-white rounded-2xl font-bold shadow-lg shadow-green-200">继续上次</button>
+                        </div>
+                    }
+                >
+                    <div className="text-center text-slate-500 text-sm py-4">
+                        检测到 {pendingSessionChar?.name} 有未结束的见面。
+                        <br/>
+                        <span className="text-xs text-slate-400 mt-2 block">
+                            (存档时间: {pendingSessionChar?.savedDateState?.timestamp ? new Date(pendingSessionChar.savedDateState.timestamp).toLocaleString() : 'Unknown'})
+                        </span>
+                    </div>
+                </Modal>
             </div>
         );
     }
@@ -1223,17 +1305,17 @@ ${recentMsgs}
             {/* 5. Custom Modal for Exit Confirmation */}
             <Modal
                 isOpen={showExitModal}
-                title="结束见面?"
+                title="暂时离开?"
                 onClose={() => setShowExitModal(false)}
                 footer={
                     <div className="flex gap-3 w-full">
-                        <button onClick={() => setShowExitModal(false)} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">继续互动</button>
-                        <button onClick={confirmExit} className="flex-1 py-3 bg-red-500 text-white rounded-2xl font-bold">确定离开</button>
+                        <button onClick={() => setShowExitModal(false)} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">留在这里</button>
+                        <button onClick={handleSaveAndExit} className="flex-1 py-3 bg-slate-800 text-white rounded-2xl font-bold">保存并退出</button>
                     </div>
                 }
             >
-                <div className="text-center text-slate-500 text-sm py-2">
-                    离开后对话进度将不被保存，但记忆会留存。
+                <div className="text-center text-slate-500 text-sm py-2 leading-relaxed">
+                    选择“保存并退出”将保留当前对话进度。<br/>下次见面时，你可以选择继续话题。
                 </div>
             </Modal>
 

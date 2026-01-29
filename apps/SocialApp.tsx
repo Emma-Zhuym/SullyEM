@@ -66,7 +66,7 @@ const Icons = {
     ),
     Star: ({ filled, onClick, className }: { filled?: boolean, onClick?: (e: any) => void, className?: string }) => (
         <svg onClick={onClick} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill={filled ? "#fbbf24" : "none"} stroke={filled ? "#fbbf24" : "currentColor"} strokeWidth={2} className={`transition-transform active:scale-75 cursor-pointer ${className || "w-6 h-6"}`}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.563.563 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.563.563 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.563.563 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.563.563 0 0 0-.182-.557l-4.204-3.602a.563.563 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z" />
         </svg>
     ),
     Share: ({ className, onClick }: { className?: string, onClick?: () => void }) => (
@@ -153,28 +153,52 @@ const SocialApp: React.FC = () => {
             }
         });
         
-        // Load User Config & Social Profile from LocalStorage
-        const savedUserId = localStorage.getItem('spark_user_id');
-        const savedUserBg = localStorage.getItem('spark_user_bg');
-        const savedSocialProfile = localStorage.getItem('spark_social_profile');
+        // Load User Config & Social Profile from DB assets and LocalStorage (hybrid migration)
+        const loadAssets = async () => {
+            const savedUserId = localStorage.getItem('spark_user_id');
+            // Try load from DB first
+            const dbBg = await DB.getAsset('spark_user_bg');
+            const dbProfileStr = await DB.getAsset('spark_social_profile');
+            
+            // Fallback to localStorage if DB missing (Legacy migration)
+            const lsBg = localStorage.getItem('spark_user_bg');
+            const lsProfileStr = localStorage.getItem('spark_social_profile');
 
-        if (savedUserId) setUserSparkId(savedUserId);
-        if (savedUserBg) setUserBgImage(savedUserBg);
-        
-        if (savedSocialProfile) {
-            try {
-                setSocialProfile(JSON.parse(savedSocialProfile));
-            } catch (e) {
-                console.error("Failed to load social profile", e);
+            if (savedUserId) setUserSparkId(savedUserId);
+            
+            if (dbBg) {
+                setUserBgImage(dbBg);
+            } else if (lsBg) {
+                // Migrate to DB
+                setUserBgImage(lsBg);
+                await DB.saveAsset('spark_user_bg', lsBg);
+                localStorage.removeItem('spark_user_bg');
             }
-        } else {
-            // Initial fallback to global user profile only once
-            setSocialProfile({
-                name: userProfile.name,
-                avatar: userProfile.avatar,
-                bio: userProfile.bio || '这个人很懒，什么都没写。'
-            });
-        }
+            
+            let loadedProfile = null;
+            if (dbProfileStr) {
+                try { loadedProfile = JSON.parse(dbProfileStr); } catch(e) {}
+            } else if (lsProfileStr) {
+                try { loadedProfile = JSON.parse(lsProfileStr); } catch(e) {}
+                // Migrate to DB
+                if (loadedProfile) {
+                    await DB.saveAsset('spark_social_profile', lsProfileStr!);
+                    localStorage.removeItem('spark_social_profile');
+                }
+            }
+
+            if (loadedProfile) {
+                setSocialProfile(loadedProfile);
+            } else {
+                // Initial fallback to global user profile only once
+                setSocialProfile({
+                    name: userProfile.name,
+                    avatar: userProfile.avatar,
+                    bio: userProfile.bio || '这个人很懒，什么都没写。'
+                });
+            }
+        };
+        loadAssets();
 
         // Load Handles
         const savedHandles = localStorage.getItem('spark_char_handles');
@@ -253,7 +277,8 @@ const SocialApp: React.FC = () => {
             try {
                 const base64 = await processImage(file, { skipCompression: true });
                 setUserBgImage(base64);
-                localStorage.setItem('spark_user_bg', base64);
+                // Save to DB Assets
+                await DB.saveAsset('spark_user_bg', base64);
                 addToast('背景图已更新', 'success');
             } catch (err) {
                 addToast('图片处理失败', 'error');
@@ -273,9 +298,10 @@ const SocialApp: React.FC = () => {
         }
     };
 
-    const saveUserProfileChanges = () => {
+    const saveUserProfileChanges = async () => {
         localStorage.setItem('spark_user_id', userSparkId);
-        localStorage.setItem('spark_social_profile', JSON.stringify(socialProfile));
+        // Save Profile to DB Assets (contains base64 avatar)
+        await DB.saveAsset('spark_social_profile', JSON.stringify(socialProfile));
         setIsEditingId(false);
         addToast('主页资料已保存 (仅在 Spark 生效)', 'success');
     };

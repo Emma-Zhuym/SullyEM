@@ -21,6 +21,7 @@ import StudyApp from '../apps/StudyApp';
 import FAQApp from '../apps/FAQApp'; 
 import GameApp from '../apps/GameApp'; 
 import WorldbookApp from '../apps/WorldbookApp';
+import NovelApp from '../apps/NovelApp'; // Added
 import { AppID } from '../types';
 import { App as CapApp } from '@capacitor/app';
 import { StatusBar as CapStatusBar, Style as StatusBarStyle } from '@capacitor/status-bar';
@@ -208,6 +209,7 @@ const PhoneShell: React.FC = () => {
       case AppID.FAQ: return <FAQApp />; 
       case AppID.Game: return <GameApp />; 
       case AppID.Worldbook: return <WorldbookApp />;
+      case AppID.Novel: return <NovelApp />; // Added
       case AppID.Launcher:
       default: return <Launcher />;
     }
@@ -237,7 +239,12 @@ const PhoneShell: React.FC = () => {
           REMOVED 'flex flex-col' to fix layout issues in CheckPhone (gap) and SocialApp (jumping).
           Now it acts as a pure container for full-screen apps.
        */}
-       <div className="absolute inset-0 z-10 w-full h-full overflow-hidden bg-transparent overscroll-none">
+       <div 
+         className="absolute inset-0 z-10 w-full h-full overflow-hidden bg-transparent overscroll-none"
+         style={{ 
+             paddingTop: activeApp !== AppID.Launcher ? 'env(safe-area-inset-top)' : 0 
+         }}
+       >
           
           {/* App Container */}
           <AppErrorBoundary onCloseApp={closeApp}>
