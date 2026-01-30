@@ -216,14 +216,14 @@ const ThemeMaker: React.FC = () => {
 
         return (
             <div 
-                className={`relative w-full flex items-end gap-3 transition-all duration-300 cursor-pointer ${
-                    isUser ? 'flex-row-reverse' : 'flex-row'
-                } ${isActive ? 'opacity-100 scale-100' : 'opacity-60 scale-95 grayscale-[0.5] hover:opacity-80'}`}
+                className={`relative w-full flex items-end transition-all duration-300 cursor-pointer ${
+                    isActive ? 'opacity-100 scale-100' : 'opacity-60 scale-95 grayscale-[0.5] hover:opacity-80'
+                } ${isUser ? 'justify-end' : 'justify-start'}`}
                 onClick={() => setActiveTab(role)}
                 title={`点击编辑${isUser ? '用户' : '角色'}气泡`}
             >
-                {/* Avatar */}
-                <div className="relative w-10 h-10 shrink-0 pb-1">
+                {/* Avatar - Absolute Positioned to prevent layout shifts */}
+                <div className={`absolute bottom-0 ${isUser ? 'right-0' : 'left-0'} w-10 h-10 pb-1 z-10`}>
                     <div className="w-full h-full rounded-full bg-slate-300 overflow-hidden relative z-0 shadow-sm border border-white/50">
                          <div className="absolute inset-0 flex items-center justify-center text-white/50 font-bold text-[10px]">{isUser ? 'ME' : 'AI'}</div>
                     </div>
@@ -242,8 +242,8 @@ const ThemeMaker: React.FC = () => {
                     )}
                 </div>
 
-                {/* Bubble */}
-                <div className="relative group max-w-[75%]">
+                {/* Bubble - With Margins to clear Absolute Avatar */}
+                <div className={`relative group max-w-[75%] ${isUser ? 'mr-14' : 'ml-14'}`}>
                     {style.decoration && (
                         <img 
                             src={style.decoration} 

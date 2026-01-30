@@ -1,7 +1,7 @@
 
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import JSZip from 'jszip';
-import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook } from '../types';
+import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, Message } from '../types';
 import { DB } from '../utils/db';
 
 interface OSContextType {
@@ -70,7 +70,7 @@ interface OSContextType {
   clearUnread: (charId: string) => void; // New: Method to clear unread
 
   // System
-  exportSystem: (mode: 'data' | 'media') => Promise<Blob>; // Changed return to Blob for ZIP
+  exportSystem: (mode: 'text_only' | 'media_only' | 'theme_only') => Promise<Blob>; 
   importSystem: (fileOrJson: File | string) => Promise<void>; // Accept File or String
   resetSystem: () => Promise<void>;
   sysOperation: { status: 'idle' | 'processing', message: string, progress: number }; // Progress state
@@ -81,9 +81,9 @@ interface OSContextType {
 }
 
 const defaultTheme: OSTheme = {
-  hue: 265, // Soft Lavender/Lilac
-  saturation: 70,
-  lightness: 90, 
+  hue: 245, // Default Indigo-ish
+  saturation: 25,
+  lightness: 65, 
   wallpaper: 'linear-gradient(135deg, #FFDEE9 0%, #B5FFFC 100%)', 
   darkMode: false,
   contentColor: '#ffffff', // Default white text
@@ -277,6 +277,14 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   const [virtualTime, setVirtualTime] = useState<VirtualTime>(getRealTime());
   
+  // Real-time Clock Sync
+  useEffect(() => {
+      const timer = setInterval(() => {
+          setVirtualTime(getRealTime());
+      }, 1000);
+      return () => clearInterval(timer);
+  }, []);
+
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
   const [activeCharacterId, setActiveCharacterId] = useState<string>('');
   
@@ -585,6 +593,19 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     initData();
   }, []);
 
+  // --- NEW: Apply Theme CSS Variables ---
+  useEffect(() => {
+      const root = document.documentElement;
+      // Default fallback values match index.html
+      const h = theme.hue ?? 245;
+      const s = theme.saturation ?? 25;
+      const l = theme.lightness ?? 65;
+      
+      root.style.setProperty('--primary-hue', String(h));
+      root.style.setProperty('--primary-sat', `${s}%`);
+      root.style.setProperty('--primary-lightness', `${l}%`);
+  }, [theme]);
+
   // --- Update: Handle Scheduled Messages with Unread Flags & Web Notifications ---
   useEffect(() => {
       if (!isDataLoaded || characters.length === 0) return;
@@ -833,7 +854,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const addToast = (message: string, type: Toast['type'] = 'info') => { const id = Date.now().toString(); setToasts(prev => [...prev, { id, message, type }]); setTimeout(() => { setToasts(prev => prev.filter(t => t.id !== id)); }, 3000); };
 
   // --- MODIFIED EXPORT SYSTEM WITH SEPARATED ASSETS ZIP ---
-  const exportSystem = async (mode: 'data' | 'media'): Promise<Blob> => {
+  const exportSystem = async (mode: 'text_only' | 'media_only' | 'theme_only'): Promise<Blob> => {
       try {
           setSysOperation({ status: 'processing', message: '正在初始化打包引擎...', progress: 0 });
           
@@ -841,7 +862,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const assetsFolder = zip.folder("assets");
           let assetCount = 0;
 
-          // Strip Base64 Images (For 'data' mode: Text Only)
+          // Strip Base64 Images (Recursive) - Used for Text Only Mode
           const stripBase64 = (obj: any): any => {
               if (typeof obj === 'string') {
                   if (obj.startsWith('data:image')) return '';
@@ -862,7 +883,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               return obj;
           };
 
-          // Extract Images to ZIP (For 'media' mode)
+          // Extract Images to ZIP (Recursive) - Used for Media/Theme Mode
           const processObject = (obj: any): any => {
               if (obj === null || typeof obj !== 'object') return obj;
               
@@ -896,16 +917,23 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               return newObj;
           };
 
-          const storesToProcess = [
+          // 1. Define Stores to Process based on Mode
+          let storesToProcess: string[] = [];
+          const allStores = [
               'characters', 'messages', 'themes', 'emojis', 'assets', 'gallery', 
               'user_profile', 'diaries', 'tasks', 'anniversaries', 'room_todos', 
               'room_notes', 'groups', 'journal_stickers', 'social_posts', 'courses', 'games', 'worldbooks', 'novels'
           ];
 
-          // Text-heavy stores that should be excluded in 'media' mode
-          const textHeavyStores = ['messages', 'diaries', 'tasks', 'anniversaries', 'room_todos', 'room_notes', 'groups', 'social_posts', 'courses', 'games', 'worldbooks', 'novels'];
+          if (mode === 'text_only') {
+              storesToProcess = allStores.filter(s => s !== 'assets'); // Exclude raw assets store
+          } else if (mode === 'media_only') {
+              storesToProcess = ['gallery', 'emojis', 'journal_stickers', 'user_profile', 'characters', 'messages'];
+          } else if (mode === 'theme_only') {
+              storesToProcess = ['themes', 'assets']; // assets includes wallpapers and icons
+          }
 
-          // Fetch Social App & Room Assets from DB for Backup
+          // Fetch Social App & Room Assets (Optional, depends on mode)
           const sparkUserBg = await DB.getAsset('spark_user_bg');
           const sparkSocialProfile = await DB.getAsset('spark_social_profile');
           const roomCustomAssets = await DB.getAsset('room_custom_assets_list');
@@ -913,53 +941,37 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const backupData: Partial<FullBackupData> = {
               timestamp: Date.now(),
               version: 2, 
-              apiConfig: mode === 'data' ? apiConfig : undefined,
-              apiPresets: mode === 'data' ? apiPresets : undefined,
-              availableModels: availableModels,
-              theme: theme, // Ensure theme (including web font URL) is exported
+              apiConfig: mode === 'text_only' ? apiConfig : undefined, // Only export API config in full text backup
+              apiPresets: mode === 'text_only' ? apiPresets : undefined,
+              availableModels: mode === 'text_only' ? availableModels : undefined,
+              theme: (mode === 'text_only' || mode === 'theme_only') ? theme : undefined,
               
-              socialAppData: {
+              socialAppData: (mode === 'text_only' || mode === 'media_only') ? {
                   charHandles: JSON.parse(localStorage.getItem('spark_char_handles') || '{}'),
                   userProfile: sparkSocialProfile ? JSON.parse(sparkSocialProfile) : undefined,
                   userId: localStorage.getItem('spark_user_id') || undefined,
                   userBg: sparkUserBg || undefined
-              },
+              } : undefined,
               
-              roomCustomAssets: roomCustomAssets ? JSON.parse(roomCustomAssets) : [],
+              roomCustomAssets: (mode === 'text_only' || mode === 'media_only') ? (roomCustomAssets ? JSON.parse(roomCustomAssets) : []) : undefined,
               mediaAssets: [], // Initialize mediaAssets array
           };
 
-          const totalSteps = storesToProcess.length + 3; // Added step for room assets
+          const totalSteps = storesToProcess.length + 3;
           let currentStep = 0;
 
-          // Pre-process specialized image fields based on mode
-          if (mode === 'media') {
-              if (backupData.socialAppData?.userProfile) {
-                  backupData.socialAppData.userProfile = processObject(backupData.socialAppData.userProfile);
-              }
-              if (backupData.socialAppData?.userBg) {
-                   backupData.socialAppData.userBg = processObject(backupData.socialAppData.userBg);
-              }
-              if (backupData.roomCustomAssets) {
-                  backupData.roomCustomAssets = processObject(backupData.roomCustomAssets);
-              }
-              // ADDED: Process theme to extract wallpaper/widget images to ZIP
-              if (backupData.theme) {
-                  backupData.theme = processObject(backupData.theme);
-              }
+          // Pre-process specialized image fields (Social App, Theme)
+          if (mode !== 'text_only') {
+              if (backupData.socialAppData?.userProfile) backupData.socialAppData.userProfile = processObject(backupData.socialAppData.userProfile);
+              if (backupData.socialAppData?.userBg) backupData.socialAppData.userBg = processObject(backupData.socialAppData.userBg);
+              if (backupData.roomCustomAssets) backupData.roomCustomAssets = processObject(backupData.roomCustomAssets);
+              if (backupData.theme) backupData.theme = processObject(backupData.theme);
           } else {
-              // DATA MODE: Strip images
-              if (backupData.socialAppData) {
-                  backupData.socialAppData.userProfile = stripBase64(backupData.socialAppData.userProfile);
-                  backupData.socialAppData.userBg = stripBase64(backupData.socialAppData.userBg);
-              }
-              if (backupData.roomCustomAssets) {
-                  backupData.roomCustomAssets = stripBase64(backupData.roomCustomAssets);
-              }
-              // ADDED: Strip theme images
-              if (backupData.theme) {
-                  backupData.theme = stripBase64(backupData.theme);
-              }
+              // Strip images for text only
+              if (backupData.socialAppData?.userProfile) backupData.socialAppData.userProfile = stripBase64(backupData.socialAppData.userProfile);
+              if (backupData.socialAppData?.userBg) backupData.socialAppData.userBg = stripBase64(backupData.socialAppData.userBg);
+              if (backupData.roomCustomAssets) backupData.roomCustomAssets = stripBase64(backupData.roomCustomAssets);
+              if (backupData.theme) backupData.theme = stripBase64(backupData.theme);
           }
 
           for (const storeName of storesToProcess) {
@@ -970,28 +982,28 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   progress: (currentStep / totalSteps) * 100 
               });
 
-              // SKIP Logic based on Mode
-              if (mode === 'media') {
-                  if (textHeavyStores.includes(storeName)) continue;
-              }
-              
-              if (mode === 'data') {
-                  if (['assets', 'gallery'].includes(storeName)) continue;
-              }
-
               let rawData = await DB.getRawStoreData(storeName); 
-              
               let processedData: any;
 
-              if (mode === 'media') {
-                  // Special Handling for Characters in Media Mode: Extract to mediaAssets
-                  if (storeName === 'characters') {
-                      // We don't export the full character text data in media mode.
-                      // Instead, we extract images into mediaAssets.
+              // --- MODE SPECIFIC FILTERING ---
+
+              if (mode === 'text_only') {
+                  processedData = stripBase64(rawData);
+              } else {
+                  // Media & Theme Mode: Extract Images
+                  
+                  if (storeName === 'messages' && mode === 'media_only') {
+                      // Filter messages: Only keep image/emoji types
+                      rawData = rawData.filter((m: Message) => m.type === 'image' || m.type === 'emoji');
+                  }
+
+                  if (storeName === 'characters' && mode === 'media_only') {
+                      // Character Logic: Export ONLY visual assets to mediaAssets array
+                      // Do not export the full character array to avoid overwriting text data on import
                       const mediaList = rawData.map((c: CharacterProfile) => {
                           const extracted = {
                               charId: c.id,
-                              avatar: c.avatar, // Extract avatar
+                              avatar: c.avatar, 
                               sprites: c.sprites,
                               roomItems: c.roomConfig?.items?.reduce((acc: any, item: any) => {
                                   if (item.image && item.image.startsWith('data:')) {
@@ -1006,22 +1018,23 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                                   roomFloor: c.roomConfig?.floorImage
                               }
                           };
-                          // Process extracted images to move to ZIP
                           return processObject(extracted);
                       });
                       backupData.mediaAssets = mediaList;
-                      continue; // Don't export 'characters' array itself
+                      continue; // Skip standard assignment
                   }
-                  
-                  // For assets/gallery/themes in Media Mode, export fully (process images to ZIP)
+
+                  if (storeName === 'assets' && mode === 'theme_only') {
+                      // Filter assets: Keep wallpapers, icons. Exclude large binary blobs if not relevant?
+                      // Actually just export all assets for simplicity in theme mode
+                  }
+
                   processedData = processObject(rawData);
-              } else {
-                  // DATA Mode: Strip images
-                  processedData = stripBase64(rawData);
               }
 
+              // Assign to Backup Data
               switch(storeName) {
-                  case 'characters': if(mode === 'data') backupData.characters = processedData; break;
+                  case 'characters': if(mode !== 'media_only') backupData.characters = processedData; break;
                   case 'messages': backupData.messages = processedData; break;
                   case 'themes': backupData.customThemes = processedData; break;
                   case 'emojis': backupData.savedEmojis = processedData; break;

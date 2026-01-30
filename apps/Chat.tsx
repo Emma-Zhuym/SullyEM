@@ -1,489 +1,17 @@
 
 import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
-import { DB, ScheduledMessage } from '../utils/db';
-import { Message, MessageType, ChatTheme, BubbleStyle, MemoryFragment } from '../types';
-import Modal from '../components/os/Modal';
+import { DB } from '../utils/db';
+import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory } from '../types';
 import { processImage } from '../utils/file';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { ContextBuilder } from '../utils/context';
-
-// Built-in presets map to the new data structure for consistency
-const PRESET_THEMES: Record<string, ChatTheme> = {
-    default: {
-        id: 'default', name: 'Indigo', type: 'preset',
-        user: { textColor: '#ffffff', backgroundColor: '#6366f1', borderRadius: 20, opacity: 1, backgroundImageOpacity: 0.5 }, 
-        ai: { textColor: '#1e293b', backgroundColor: '#ffffff', borderRadius: 20, opacity: 1, backgroundImageOpacity: 0.5 }
-    },
-    dream: {
-        id: 'dream', name: 'Dream', type: 'preset',
-        user: { textColor: '#ffffff', backgroundColor: '#f472b6', borderRadius: 20, opacity: 1, backgroundImageOpacity: 0.5 },
-        ai: { textColor: '#1e293b', backgroundColor: '#ffffff', borderRadius: 20, opacity: 1, backgroundImageOpacity: 0.5 }
-    },
-    forest: {
-        id: 'forest', name: 'Forest', type: 'preset',
-        user: { textColor: '#ffffff', backgroundColor: '#10b981', borderRadius: 20, opacity: 1, backgroundImageOpacity: 0.5 },
-        ai: { textColor: '#1e293b', backgroundColor: '#ffffff', borderRadius: 20, opacity: 1, backgroundImageOpacity: 0.5 }
-    },
-};
-
-// Default Archive Prompts
-const DEFAULT_ARCHIVE_PROMPTS = [
-    {
-        id: 'preset_rational',
-        name: '理性精炼 (Rational)',
-        content: `### [System Instruction: Memory Archival]
-当前日期: \${dateStr}
-任务: 请回顾今天的聊天记录，生成一份【高精度的事件日志】。
-
-### 核心撰写规则 (Strict Protocols)
-1.  **覆盖率 (Coverage)**:
-    - 必须包含今天聊过的**每一个**独立话题。
-    - **严禁**为了精简而合并不同的话题。哪怕只是聊了一句“天气不好”，如果这是一个独立的话题，也要单独列出。
-    - 不要忽略闲聊，那是生活的一部分。
-
-2.  **视角 (Perspective)**:
-    - 你【就是】"\${char.name}"。这是【你】的私密日记。
-    - 必须用“我”来称呼自己，用“\${userProfile.name}”称呼对方。
-    - 每一条都必须是“我”的视角。
-
-3.  **格式 (Format)**:
-    - 不要写成一整段。
-    - **必须**使用 Markdown 无序列表 ( - ... )。
-    - 每一行对应一个具体的事件或话题。
-
-4.  **去水 (Conciseness)**:
-    - 不要写“今天我和xx聊了...”，直接写发生了什么。
-    - 示例: "- 早上和\${userProfile.name}讨论早餐，我想吃小笼包。"
-
-### 待处理的聊天日志 (Chat Logs)
-\${rawLog}`
-    },
-    {
-        id: 'preset_diary',
-        name: '日记风格 (Diary)',
-        content: `当前日期: \${dateStr}
-任务: 请回顾今天的聊天记录，将其转化为一条**属于你自己的**“核心记忆”。
-
-### 核心撰写规则 (Review Protocols)
-1.  **绝对第一人称**: 
-    - 你【就是】"\${char.name}"。这是【你】的私密日记。
-    - 必须用“我”来称呼自己，用“\${userProfile.name}”称呼对方。
-    - **严禁**使用第三人称（如“\${char.name}做了什么”）。
-    - **严禁**使用死板的AI总结语气或第三方旁白语气。
-
-2.  **保持人设语气**: 
-    - 你的语气、口癖、态度必须与平时聊天完全一致（例如：如果是傲娇人设，日记里也要表现出傲娇；如果是高冷，就要简练）。
-    - 包含当时的情绪波动。
-
-3.  **逻辑清洗与去重**:
-    - **关键**: 仔细分辨是谁做了什么。不要把“用户说去吃饭”记成“我去吃饭”。
-    - 剔除无关紧要的寒暄（如“你好”、“在吗”），只保留【关键事件】、【情感转折】和【重要信息】，内容的逻辑要连贯且符合原意。
-
-4.  **输出要求**:
-    - 输出一段精简的文本（yaml格式也可以，不需要 JSON）。
-    - 就像你在写日记一样，直接写内容。
-
-### 待处理的聊天日志 (Chat Logs)
-\${rawLog}`
-    }
-];
-
-interface MessageItemProps {
-    msg: Message;
-    isFirstInGroup: boolean;
-    isLastInGroup: boolean;
-    activeTheme: ChatTheme;
-    charAvatar: string;
-    charName: string;
-    userAvatar: string; 
-    onLongPress: (m: Message) => void;
-    selectionMode: boolean;
-    isSelected: boolean;
-    onToggleSelect: (id: number) => void;
-}
-
-const MessageItem = React.memo(({ 
-    msg: m, 
-    isFirstInGroup, 
-    isLastInGroup, 
-    activeTheme, 
-    charAvatar, 
-    charName, 
-    userAvatar, 
-    onLongPress,
-    selectionMode,
-    isSelected,
-    onToggleSelect
-}: MessageItemProps) => {
-    const isUser = m.role === 'user';
-    const isSystem = m.role === 'system';
-    const marginBottom = isLastInGroup ? 'mb-6' : 'mb-1.5';
-    const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const startPos = useRef({ x: 0, y: 0 }); // Track touch start position
-
-    const styleConfig = isUser ? activeTheme.user : activeTheme.ai;
-
-    const handleTouchStart = (e: React.TouchEvent | React.MouseEvent) => {
-        // Record initial position
-        if ('touches' in e) {
-            startPos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-        } else {
-            startPos.current = { x: e.clientX, y: e.clientY };
-        }
-        
-        longPressTimer.current = setTimeout(() => {
-            if (!selectionMode) {
-                onLongPress(m);
-            }
-        }, 600);
-    };
-
-    const handleTouchEnd = () => {
-        if (longPressTimer.current) {
-            clearTimeout(longPressTimer.current);
-            longPressTimer.current = null;
-        }
-    };
-
-    // New handler to cancel long press if user drags/scrolls
-    const handleMove = (e: React.TouchEvent | React.MouseEvent) => {
-        if (!longPressTimer.current) return;
-
-        let clientX, clientY;
-        if ('touches' in e) {
-            clientX = e.touches[0].clientX;
-            clientY = e.touches[0].clientY;
-        } else {
-            clientX = e.clientX;
-            clientY = e.clientY;
-        }
-
-        const diffX = Math.abs(clientX - startPos.current.x);
-        const diffY = Math.abs(clientY - startPos.current.y);
-
-        // If moved more than 10px, assume scrolling and cancel long press
-        if (diffX > 10 || diffY > 10) {
-            clearTimeout(longPressTimer.current);
-            longPressTimer.current = null;
-        }
-    };
-
-    const handleClick = (e: React.MouseEvent) => {
-        if (selectionMode) {
-            e.stopPropagation();
-            e.preventDefault();
-            onToggleSelect(m.id);
-        }
-    };
-
-    const interactionProps = {
-        onMouseDown: handleTouchStart,
-        onMouseUp: handleTouchEnd,
-        onMouseLeave: handleTouchEnd,
-        onMouseMove: handleMove,
-        onTouchStart: handleTouchStart,
-        onTouchEnd: handleTouchEnd,
-        onTouchMove: handleMove,
-        onTouchCancel: handleTouchEnd, // Handle system interruptions
-        onContextMenu: (e: React.MouseEvent) => {
-            e.preventDefault();
-            if (!selectionMode) onLongPress(m);
-        },
-        onClick: handleClick
-    };
-
-    const formatTime = (ts: number) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-
-    // Render Avatar with potential decoration/frame
-    const renderAvatar = (src: string) => (
-        <div className="relative w-9 h-9 shrink-0 self-end mb-5 z-0">
-            {isLastInGroup && (
-                <>
-                    <img 
-                        src={src} 
-                        className="w-full h-full rounded-full object-cover shadow-sm ring-1 ring-black/5 relative z-0" 
-                        alt="avatar" 
-                        loading="lazy" 
-                        decoding="async" 
-                    />
-                    {styleConfig.avatarDecoration && (
-                        <img 
-                            src={styleConfig.avatarDecoration}
-                            className="absolute pointer-events-none z-10 max-w-none"
-                            style={{
-                                left: `${styleConfig.avatarDecorationX ?? 50}%`,
-                                top: `${styleConfig.avatarDecorationY ?? 50}%`,
-                                width: `${36 * (styleConfig.avatarDecorationScale ?? 1)}px`, // Base size 36px (w-9)
-                                height: 'auto',
-                                transform: `translate(-50%, -50%) rotate(${styleConfig.avatarDecorationRotate ?? 0}deg)`,
-                            }}
-                        />
-                    )}
-                </>
-            )}
-        </div>
-    );
-
-    // --- SYSTEM MESSAGE RENDERING ---
-    if (isSystem) {
-        // Clean up text: remove [System:] or [系统:] prefix for display
-        const displayText = m.content.replace(/^\[(System|系统|System Log|系统记录)\s*[:：]?\s*/i, '').replace(/\]$/, '').trim();
-        
-        return (
-            <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-all duration-300`}>
-                {selectionMode && (
-                    <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
-                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
-                            {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
-                        </div>
-                    </div>
-                )}
-                <div className="flex justify-center my-6 px-10 w-full" {...interactionProps}>
-                    <div className="flex items-center gap-1.5 bg-slate-200/40 backdrop-blur-md text-slate-500 px-3 py-1 rounded-full shadow-sm border border-white/20 select-none cursor-pointer active:scale-95 transition-transform">
-                        {/* Optional Icon based on content */}
-                        {displayText.includes('任务') ? '✨' : 
-                        displayText.includes('纪念日') || displayText.includes('Event') ? '📅' :
-                        displayText.includes('转账') ? '💰' : '🔔'}
-                        <span className="text-[10px] font-medium tracking-wide">{displayText}</span>
-                    </div>
-                </div>
-            </div>
-        );
-    }
-
-    if (m.type === 'interaction') {
-        return (
-            <div className={`flex flex-col items-center ${marginBottom} w-full animate-fade-in relative transition-all duration-300 ${selectionMode ? 'pl-8' : ''}`}>
-                {selectionMode && (
-                    <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
-                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
-                            {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
-                        </div>
-                    </div>
-                )}
-                <div className="text-[10px] text-slate-400 mb-1 opacity-70">{formatTime(m.timestamp)}</div>
-                <div className="group relative cursor-pointer active:scale-95 transition-transform" {...interactionProps}>
-                        <div className="text-[11px] text-slate-500 bg-slate-200/50 backdrop-blur-sm px-4 py-1.5 rounded-full flex items-center gap-1.5 border border-white/40 shadow-sm select-none">
-                        <span className="group-hover:animate-bounce">👉</span>
-                        <span className="font-medium opacity-80">{isUser ? '你' : charName}</span>
-                        <span className="opacity-60">戳了戳</span>
-                        <span className="font-medium opacity-80">{isUser ? charName : '你'}</span>
-                    </div>
-                </div>
-            </div>
-        );
-    }
-
-    const commonLayout = (content: React.ReactNode) => (
-            <div className={`flex items-end ${isUser ? 'justify-end' : 'justify-start'} ${marginBottom} px-3 group select-none relative transition-all duration-300 ${selectionMode ? 'pl-12' : ''}`}>
-                {selectionMode && (
-                    <div className="absolute left-3 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
-                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
-                            {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
-                        </div>
-                    </div>
-                )}
-
-                {!isUser && <div className="mr-3">{renderAvatar(charAvatar)}</div>}
-                
-                {/* 
-                    UPDATED: Limit bubble max-width to 72% for better spacing. 
-                    Added min-w-0 to prevent flexbox overflow issues.
-                */}
-                <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} max-w-[72%] min-w-0`} {...interactionProps}>
-                    <div className={selectionMode ? 'pointer-events-none' : ''}>
-                        {content}
-                    </div>
-                    {isLastInGroup && <div className="text-[9px] text-slate-400/80 px-1 mt-1 font-medium">{formatTime(m.timestamp)}</div>}
-                </div>
-
-                {isUser && <div className="ml-3">{renderAvatar(userAvatar)}</div>}
-            </div>
-    );
-
-    // [New] Social Card Rendering
-    if (m.type === 'social_card' && m.metadata?.post) {
-        const post = m.metadata.post;
-        return commonLayout(
-            <div className="w-64 bg-white rounded-xl overflow-hidden shadow-sm border border-slate-100 cursor-pointer active:opacity-90 transition-opacity">
-                <div className="h-32 w-full flex items-center justify-center text-6xl relative overflow-hidden" style={{ background: post.bgStyle || '#fce7f3' }}>
-                    {post.images?.[0] || '📄'}
-                    <div className="absolute bottom-0 left-0 w-full p-2 bg-gradient-to-t from-black/30 to-transparent">
-                        <div className="text-white text-xs font-bold line-clamp-1">{post.title}</div>
-                    </div>
-                </div>
-                <div className="p-3">
-                    <div className="flex items-center gap-2 mb-2">
-                        <img src={post.authorAvatar} className="w-4 h-4 rounded-full" />
-                        <span className="text-[10px] text-slate-500">{post.authorName}</span>
-                    </div>
-                    <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">{post.content}</p>
-                    <div className="mt-2 pt-2 border-t border-slate-50 flex items-center gap-1 text-[10px] text-slate-400">
-                        <span className="text-red-400">Spark</span> • 笔记分享
-                    </div>
-                </div>
-            </div>
-        );
-    }
-
-    if (m.type === 'transfer') {
-        return commonLayout(
-            <div className="w-64 bg-gradient-to-br from-amber-400 to-orange-500 rounded-2xl p-4 text-white shadow-lg relative overflow-hidden group active:scale-[0.98] transition-transform">
-                    <div className="absolute top-0 right-0 p-4 opacity-20"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-12 h-12"><path d="M10.464 8.746c.227-.18.497-.311.786-.394v2.795a2.252 2.252 0 0 1-.786-.393c-.394-.313-.546-.681-.546-1.004 0-.324.152-.691.546-1.004ZM12.75 15.662v-2.824c.347.085.664.228.921.421.427.32.579.686.579.991 0 .305-.152.671-.579.991a2.534 2.534 0 0 1-.921.42Z" /><path fillRule="evenodd" d="M12 2.25c-5.385 0-9.75 4.365-9.75 9.75s4.365 9.75 9.75 9.75 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25ZM12.75 6a.75.75 0 0 0-1.5 0v.816a3.836 3.836 0 0 0-1.72.756c-.712.566-1.112 1.35-1.112 2.178 0 .829.4 1.612 1.113 2.178.502.4 1.102.647 1.719.756v2.978a2.536 2.536 0 0 1-.921-.421l-.879-.66a.75.75 0 0 0-.9 1.2l.879.66c.533.4 1.169.645 1.821.75V18a.75.75 0 0 0 1.5 0v-.81a4.124 4.124 0 0 0 1.821-.749c.745-.559 1.179-1.344 1.179-2.191 0-.847-.434-1.632-1.179-2.191a4.122 4.122 0 0 0-1.821-.75V8.354c.29.082.559.213.786.393l.415.33a.75.75 0 0 0 .933-1.175l-.415-.33a3.836 3.836 0 0 0-1.719-.755V6Z" clipRule="evenodd" /><path d="M2.25 18a.75.75 0 0 0 0 1.5c5.4 0 10.63.722 15.6 2.075 1.19.324 2.4-.558 2.4-1.82V18.75a.75.75 0 0 0-.75-.75H2.25Z" /></svg></div>
-                    <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 bg-white/20 rounded-full"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path d="M12 7.5a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Z" /><path fillRule="evenodd" d="M1.5 4.875C1.5 3.839 2.34 3 3.375 3h17.25c1.035 0 1.875.84 1.875 1.875v9.75c0 1.036-.84 1.875-1.875 1.875H3.375A1.875 1.875 0 0 1 1.5 14.625v-9.75ZM8.25 9.75a3.75 3.75 0 1 1 7.5 0 3.75 3.75 0 0 1-7.5 0ZM18.75 9a.75.75 0 0 0-.75.75v.008c0 .414.336.75.75.75h.008a.75.75 0 0 0 .75-.75V9.75a.75.75 0 0 0-.75-.75h-.008ZM4.5 9.75A.75.75 0 0 1 5.25 9h.008a.75.75 0 0 1 .75.75v.008a.75.75 0 0 1-.75-.75H5.25a.75.75 0 0 1-.75-.75V9.75Z" clipRule="evenodd" /><path d="M2.25 18a.75.75 0 0 0 0 1.5c5.4 0 10.63.722 15.6 2.075 1.19.324 2.4-.558 2.4-1.82V18.75a.75.75 0 0 0-.75-.75H2.25Z" /></svg></div>
-                        <span className="font-medium text-white/90">Sully Pay</span>
-                    </div>
-                    <div className="text-2xl font-bold tracking-tight mb-1">₩ {m.metadata?.amount}</div>
-                    <div className="text-[10px] text-white/70">转账给{isUser ? charName : '你'}</div>
-            </div>
-        );
-    }
-
-    if (m.type === 'emoji') {
-        return commonLayout(
-            <img src={m.content} className="max-w-[160px] max-h-[160px] rounded-2xl hover:scale-105 transition-transform shadow-md active:scale-95" loading="lazy" decoding="async" />
-        );
-    }
-
-    if (m.type === 'image') {
-        return commonLayout(
-            <div className="relative group">
-                <img src={m.content} className="max-w-[200px] max-h-[300px] rounded-2xl shadow-sm border border-black/5" alt="Uploaded" loading="lazy" decoding="async" />
-            </div>
-        );
-    }
-
-    // --- Dynamic Style Generation for Bubble ---
-    const radius = styleConfig.borderRadius;
-    let borderObj: React.CSSProperties = {};
-    
-    // Border Radius Logic
-    if (!isFirstInGroup && !isLastInGroup) {
-        borderObj = isUser 
-            ? { borderRadius: `${radius}px`, borderTopRightRadius: '4px', borderBottomRightRadius: '4px' }
-            : { borderRadius: `${radius}px`, borderTopLeftRadius: '4px', borderBottomLeftRadius: '4px' };
-    } else if (isFirstInGroup && !isLastInGroup) {
-        borderObj = isUser
-            ? { borderRadius: `${radius}px`, borderBottomRightRadius: '4px' }
-            : { borderRadius: `${radius}px`, borderBottomLeftRadius: '4px' };
-    } else if (!isFirstInGroup && isLastInGroup) {
-        borderObj = isUser
-            ? { borderRadius: `${radius}px`, borderTopRightRadius: '4px' }
-            : { borderRadius: `${radius}px`, borderTopLeftRadius: '4px' };
-    } else {
-            borderObj = isUser
-            ? { borderRadius: `${radius}px`, borderBottomRightRadius: '2px' }
-            : { borderRadius: `${radius}px`, borderBottomLeftRadius: '2px' };
-    }
-
-    // Container style (BackgroundColor + Opacity)
-    const containerStyle: React.CSSProperties = {
-        backgroundColor: styleConfig.backgroundColor,
-        opacity: styleConfig.opacity, // Overall container opacity
-        ...borderObj,
-    };
-
-    // --- Enhanced Text Rendering (Markdown Lite) ---
-    const renderContent = (text: string) => {
-        // 1. Split by Code Blocks
-        const parts = text.split(/(```[\s\S]*?```)/g);
-        return parts.map((part, index) => {
-            // Render Code Block
-            if (part.startsWith('```') && part.endsWith('```')) {
-                const codeContent = part.replace(/^```\w*\n?/, '').replace(/```$/, '');
-                return (
-                    <pre key={index} className="bg-black/80 text-gray-100 p-3 rounded-lg text-xs font-mono overflow-x-auto my-2 whitespace-pre shadow-inner border border-white/10">
-                        {codeContent}
-                    </pre>
-                );
-            }
-            
-            // Render Regular Text (split by newlines for paragraph spacing)
-            return part.split('\n').map((line, lineIdx) => {
-                const key = `${index}-${lineIdx}`;
-                
-                // Quote Format "> text"
-                if (line.trim().startsWith('>')) {
-                    const quoteText = line.trim().substring(1).trim();
-                    if (!quoteText) return null;
-                    return (
-                        <div key={key} className="my-1 pl-2.5 border-l-[3px] border-current opacity-70 italic text-[13px]">
-                            {quoteText}
-                        </div>
-                    );
-                }
-                
-                // Inline Bold Parsing (**text**)
-                // A simple split by ** works for basic cases
-                const boldSegments = line.split(/(\*\*.*?\*\*)/g);
-                const renderedLine = boldSegments.map((seg, i) => {
-                    if (seg.startsWith('**') && seg.endsWith('**')) {
-                        return <strong key={i} className="font-bold">{seg.slice(2, -2)}</strong>;
-                    }
-                    return seg;
-                });
-
-                return <div key={key} className="min-h-[1.2em]">{renderedLine}</div>;
-            });
-        });
-    };
-
-    // Added stable class names "sully-bubble-user" and "sully-bubble-ai" for Custom CSS targeting
-    // UPDATED: Added whitespace-pre-wrap and break-all to ensure long non-breaking strings wrap correctly
-    return commonLayout(
-        <div className={`relative shadow-sm px-5 py-3 animate-fade-in border border-black/5 active:scale-[0.98] transition-transform overflow-hidden ${isUser ? 'sully-bubble-user' : 'sully-bubble-ai'}`} style={containerStyle}>
-            
-            {/* Layer 1: Background Image with Independent Opacity */}
-            {styleConfig.backgroundImage && (
-                <div 
-                    className="absolute inset-0 bg-cover bg-center pointer-events-none z-0"
-                    style={{ 
-                        backgroundImage: `url(${styleConfig.backgroundImage})`,
-                        opacity: styleConfig.backgroundImageOpacity ?? 0.5 
-                    }}
-                />
-            )}
-
-            {/* Layer 2: Decoration Sticker (Custom Position) */}
-            {styleConfig.decoration && (
-                <img 
-                    src={styleConfig.decoration} 
-                    className="absolute z-10 w-8 h-8 object-contain drop-shadow-sm pointer-events-none" 
-                    style={{ 
-                        left: `${styleConfig.decorationX ?? (isUser ? 90 : 10)}%`,
-                        top: `${styleConfig.decorationY ?? -10}%`,
-                        transform: `translate(-50%, -50%) scale(${styleConfig.decorationScale ?? 1}) rotate(${styleConfig.decorationRotate ?? 0}deg)`
-                    }}
-                    alt=""
-                />
-            )}
-
-            {/* Layer 3: Reply/Quote Block - UPDATED LAYOUT */}
-            {m.replyTo && (
-                <div className="relative z-10 mb-1 text-[10px] bg-black/5 p-1.5 rounded-md border-l-2 border-current opacity-60 flex flex-col gap-0.5 max-w-full overflow-hidden">
-                    <span className="font-bold opacity-90 truncate">{m.replyTo.name}</span>
-                    <span className="truncate italic">"{m.replyTo.content}"</span>
-                </div>
-            )}
-
-            {/* Layer 4: Text Content */}
-            <div className="relative z-10 text-[15px] leading-relaxed whitespace-pre-wrap break-all" style={{ color: styleConfig.textColor }}>
-                {renderContent(m.content)}
-            </div>
-        </div>
-    );
-}, (prev, next) => {
-    return prev.msg.id === next.msg.id && 
-           prev.msg.content === next.msg.content &&
-           prev.isFirstInGroup === next.isFirstInGroup &&
-           prev.isLastInGroup === next.isLastInGroup &&
-           prev.activeTheme === next.activeTheme &&
-           prev.selectionMode === next.selectionMode && 
-           prev.isSelected === next.isSelected;
-});
-
+import MessageItem from '../components/chat/MessageItem';
+import { PRESET_THEMES, DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
+import ChatHeader from '../components/chat/ChatHeader';
+import ChatInputArea from '../components/chat/ChatInputArea';
+import ChatModals from '../components/chat/ChatModals';
+import Modal from '../components/os/Modal';
 
 const Chat: React.FC = () => {
     const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread } = useOS();
@@ -493,10 +21,14 @@ const Chat: React.FC = () => {
     const [isTyping, setIsTyping] = useState(false);
     const [recallStatus, setRecallStatus] = useState<string>('');
     const [showPanel, setShowPanel] = useState<'none' | 'actions' | 'emojis' | 'chars'>('none');
-    const [emojis, setEmojis] = useState<{name: string, url: string}[]>([]);
+    
+    // Emoji State
+    const [emojis, setEmojis] = useState<Emoji[]>([]);
+    const [categories, setCategories] = useState<EmojiCategory[]>([]);
+    const [activeCategory, setActiveCategory] = useState<string>('default');
+    const [newCategoryName, setNewCategoryName] = useState('');
+
     const scrollRef = useRef<HTMLDivElement>(null);
-    const bgInputRef = useRef<HTMLInputElement>(null);
-    const chatImageInputRef = useRef<HTMLInputElement>(null);
 
     // Reply Logic
     const [replyTarget, setReplyTarget] = useState<Message | null>(null);
@@ -504,16 +36,16 @@ const Chat: React.FC = () => {
     // Stats
     const [lastTokenUsage, setLastTokenUsage] = useState<number | null>(null);
 
-    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'history-manager' | 'archive-settings' | 'prompt-editor'>('none');
+    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor'>('none');
     const [transferAmt, setTransferAmt] = useState('');
     const [emojiImportText, setEmojiImportText] = useState('');
     const [settingsContextLimit, setSettingsContextLimit] = useState(500);
-    const [settingsHideSysLogs, setSettingsHideSysLogs] = useState(false); // New: Settings State
+    const [settingsHideSysLogs, setSettingsHideSysLogs] = useState(false);
     const [preserveContext, setPreserveContext] = useState(true); 
     const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
-    const [selectedEmoji, setSelectedEmoji] = useState<{name: string, url: string} | null>(null);
+    const [selectedEmoji, setSelectedEmoji] = useState<Emoji | null>(null);
+    const [selectedCategory, setSelectedCategory] = useState<EmojiCategory | null>(null); // For deletion modal
     const [editContent, setEditContent] = useState('');
-    const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [isSummarizing, setIsSummarizing] = useState(false);
 
     // Archive Prompts State
@@ -530,36 +62,44 @@ const Chat: React.FC = () => {
     const activeTheme = useMemo(() => customThemes.find(t => t.id === currentThemeId) || PRESET_THEMES[currentThemeId] || PRESET_THEMES.default, [currentThemeId, customThemes]);
     const draftKey = `chat_draft_${activeCharacterId}`;
 
-    // Reroll Logic Helpers
     const canReroll = !isTyping && messages.length > 0 && messages[messages.length - 1].role === 'assistant';
+
+    const loadEmojiData = async () => {
+        // Ensure default data exists
+        await DB.initializeEmojiData();
+        const [es, cats] = await Promise.all([DB.getEmojis(), DB.getEmojiCategories()]);
+        setEmojis(es);
+        setCategories(cats);
+        // Ensure active category is valid
+        if (activeCategory !== 'default' && !cats.some(c => c.id === activeCategory)) {
+            setActiveCategory('default');
+        }
+    };
 
     useEffect(() => {
         if (activeCharacterId) {
             DB.getMessagesByCharId(activeCharacterId).then(setMessages);
-            DB.getEmojis().then(setEmojis);
+            loadEmojiData();
             const savedDraft = localStorage.getItem(draftKey);
             setInput(savedDraft || '');
             if (char) {
                 setSettingsContextLimit(char.contextLimit || 500);
-                setSettingsHideSysLogs(char.hideSystemLogs || false); // Load preference
-                // Clear unread when entering chat
+                setSettingsHideSysLogs(char.hideSystemLogs || false);
                 clearUnread(char.id);
             }
             setVisibleCount(30);
             setLastTokenUsage(null);
-            setReplyTarget(null); // Reset reply on char switch
+            setReplyTarget(null);
             setSelectionMode(false);
             setSelectedMsgIds(new Set());
         }
     }, [activeCharacterId]);
 
-    // Load Prompt Settings from LocalStorage
     useEffect(() => {
         const savedPrompts = localStorage.getItem('chat_archive_prompts');
         if (savedPrompts) {
             try {
                 const parsed = JSON.parse(savedPrompts);
-                // Ensure defaults are present in case they updated app
                 const merged = [...DEFAULT_ARCHIVE_PROMPTS, ...parsed.filter((p: any) => !p.id.startsWith('preset_'))];
                 setArchivePrompts(merged);
             } catch(e) {}
@@ -568,20 +108,15 @@ const Chat: React.FC = () => {
         if (savedId && archivePrompts.some(p => p.id === savedId)) setSelectedPromptId(savedId);
     }, []);
 
-    // New: Listen for global scheduled message signals
     useEffect(() => {
         if (activeCharacterId && lastMsgTimestamp > 0) {
             DB.getMessagesByCharId(activeCharacterId).then(setMessages);
-            // Clear unread immediately if we are looking at this char
             clearUnread(activeCharacterId);
         }
     }, [lastMsgTimestamp]);
 
-    const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-        const val = e.target.value;
+    const handleInputChange = (val: string) => {
         setInput(val);
-        e.target.style.height = 'auto';
-        e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px';
         if (val.trim()) localStorage.setItem(draftKey, val);
         else localStorage.removeItem(draftKey);
     };
@@ -635,13 +170,144 @@ const Chat: React.FC = () => {
         return `[系统提示: 距离上一条消息: ${days} 天。用户消失了很久。请根据你们的关系做出反应（想念、生气、担心或冷漠）。]`;
     };
 
-    // --- Archive Prompt Management ---
+    // --- Actions ---
+
+    const handleSendText = async (customContent?: string, customType?: MessageType, metadata?: any) => {
+        if (!char || (!input.trim() && !customContent)) return;
+        const text = customContent || input.trim();
+        const type = customType || 'text';
+
+        if (!customContent) { setInput(''); localStorage.removeItem(draftKey); }
+        
+        if (type === 'image') {
+            await DB.saveGalleryImage({
+                id: `img-${Date.now()}-${Math.random()}`,
+                charId: char.id,
+                url: text,
+                timestamp: Date.now()
+            });
+            addToast('图片已保存至相册', 'info');
+        }
+
+        const msgPayload: any = { charId: char.id, role: 'user', type, content: text, metadata };
+        
+        if (replyTarget) {
+            msgPayload.replyTo = {
+                id: replyTarget.id,
+                content: replyTarget.content,
+                name: replyTarget.role === 'user' ? '我' : char.name
+            };
+            setReplyTarget(null);
+        }
+
+        await DB.saveMessage(msgPayload);
+        const updatedMsgs = await DB.getMessagesByCharId(char.id);
+        setMessages(updatedMsgs);
+        setShowPanel('none');
+    };
+
+    const handleReroll = async () => {
+        if (isTyping || messages.length === 0) return;
+        
+        const lastMsg = messages[messages.length - 1];
+        if (lastMsg.role !== 'assistant') return;
+
+        // Find all contiguous assistant messages at the end
+        const toDeleteIds: number[] = [];
+        let index = messages.length - 1;
+        while (index >= 0 && messages[index].role === 'assistant') {
+            toDeleteIds.push(messages[index].id);
+            index--;
+        }
+
+        if (toDeleteIds.length === 0) return;
+
+        await DB.deleteMessages(toDeleteIds);
+        const newHistory = messages.slice(0, index + 1);
+        setMessages(newHistory);
+        addToast('回溯对话中...', 'info');
+
+        triggerAI(newHistory);
+    };
+
+    const handleImageSelect = async (file: File) => {
+        try {
+            const base64 = await processImage(file, { maxWidth: 600, quality: 0.6, forceJpeg: true });
+            setShowPanel('none');
+            await handleSendText(base64, 'image');
+        } catch (err: any) {
+            addToast(err.message || '图片处理失败', 'error');
+        }
+    };
+
+    const handlePanelAction = (type: string, payload?: any) => {
+        switch (type) {
+            case 'transfer': setModalType('transfer'); break;
+            case 'poke': handleSendText('[戳一戳]', 'interaction'); break;
+            case 'archive': setModalType('archive-settings'); break;
+            case 'settings': setModalType('chat-settings'); break;
+            case 'emoji-import': setModalType('emoji-import'); break;
+            case 'send-emoji': if (payload) handleSendText(payload.url, 'emoji'); break;
+            case 'delete-emoji-req': setSelectedEmoji(payload); setModalType('delete-emoji'); break;
+            case 'add-category': setModalType('add-category'); break;
+            case 'select-category': setActiveCategory(payload); break;
+            case 'delete-category-req': setSelectedCategory(payload); setModalType('delete-category'); break;
+        }
+    };
+
+    // --- Modal Handlers ---
+
+    const handleAddCategory = async () => {
+        if (!newCategoryName.trim()) {
+             addToast('请输入分类名称', 'error');
+             return;
+        }
+        const newCat = { id: `cat-${Date.now()}`, name: newCategoryName.trim() };
+        await DB.saveEmojiCategory(newCat);
+        await loadEmojiData();
+        setActiveCategory(newCat.id);
+        setModalType('none');
+        setNewCategoryName('');
+        addToast('分类创建成功', 'success');
+    };
+
+    // Import Emoji Logic Update: Support Category
+    const handleImportEmoji = async () => {
+        if (!emojiImportText.trim()) return;
+        const lines = emojiImportText.split('\n');
+        const targetCatId = activeCategory === 'default' ? undefined : activeCategory;
+
+        for (const line of lines) {
+            const parts = line.split('--');
+            if (parts.length >= 2) {
+                const name = parts[0].trim();
+                const url = parts.slice(1).join('--').trim();
+                if (name && url) {
+                    await DB.saveEmoji(name, url, targetCatId);
+                }
+            }
+        }
+        await loadEmojiData();
+        setModalType('none');
+        setEmojiImportText('');
+        addToast('表情包导入成功', 'success');
+    };
+
+    const handleDeleteCategory = async () => {
+        if (!selectedCategory) return;
+        await DB.deleteEmojiCategory(selectedCategory.id);
+        await loadEmojiData();
+        setActiveCategory('default');
+        setModalType('none');
+        setSelectedCategory(null);
+        addToast('分类及包含表情已删除', 'success');
+    };
+
     const handleSavePrompt = () => {
         if (!editingPrompt || !editingPrompt.name.trim() || !editingPrompt.content.trim()) {
             addToast('请填写完整', 'error');
             return;
         }
-        
         setArchivePrompts(prev => {
             let next;
             if (prev.some(p => p.id === editingPrompt.id)) {
@@ -649,12 +315,10 @@ const Chat: React.FC = () => {
             } else {
                 next = [...prev, editingPrompt];
             }
-            // Filter out default presets for storage
             const customOnly = next.filter(p => !p.id.startsWith('preset_'));
             localStorage.setItem('chat_archive_prompts', JSON.stringify(customOnly));
             return next;
         });
-        
         setSelectedPromptId(editingPrompt.id);
         setModalType('archive-settings');
         setEditingPrompt(null);
@@ -683,7 +347,6 @@ const Chat: React.FC = () => {
     const editSelectedPrompt = () => {
         const p = archivePrompts.find(a => a.id === selectedPromptId);
         if (!p) return;
-        // If it's a preset, clone it to a new custom one
         if (p.id.startsWith('preset_')) {
             setEditingPrompt({ id: `custom_${Date.now()}`, name: `${p.name} (Copy)`, content: p.content });
         } else {
@@ -692,13 +355,191 @@ const Chat: React.FC = () => {
         setModalType('prompt-editor');
     };
 
-    const handlePromptSelect = (id: string) => {
-        setSelectedPromptId(id);
-        localStorage.setItem('chat_active_archive_prompt_id', id);
+    const handleBgUpload = async (file: File) => {
+        try {
+            const dataUrl = await processImage(file, { skipCompression: true });
+            updateCharacter(char.id, { chatBackground: dataUrl });
+            addToast('聊天背景已更新', 'success');
+        } catch(err: any) {
+            addToast(err.message, 'error');
+        }
     };
 
-    // --- AI Logic ---
+    const saveSettings = () => {
+        updateCharacter(char.id, { 
+            contextLimit: settingsContextLimit,
+            hideSystemLogs: settingsHideSysLogs
+        });
+        setModalType('none');
+        addToast('设置已保存', 'success');
+    };
 
+    const handleClearHistory = async () => {
+        if (!char) return;
+        if (preserveContext) {
+            const toDelete = messages.slice(0, -10);
+            if (toDelete.length === 0) {
+                addToast('消息太少，无需清理', 'info');
+                return;
+            }
+            await DB.deleteMessages(toDelete.map(m => m.id));
+            setMessages(messages.slice(-10));
+            addToast(`已清理 ${toDelete.length} 条历史，保留最近10条`, 'success');
+        } else {
+            await DB.clearMessages(char.id);
+            setMessages([]);
+            addToast('已清空', 'success');
+        }
+        setModalType('none');
+    };
+
+    const handleSetHistoryStart = (messageId: number | undefined) => {
+        updateCharacter(char.id, { hideBeforeMessageId: messageId });
+        setModalType('none');
+        addToast(messageId ? '已隐藏历史消息' : '已恢复全部历史记录', 'success');
+    };
+
+    const handleFullArchive = async () => {
+        if (!apiConfig.apiKey || !char) {
+            addToast('请先配置 API Key', 'error');
+            return;
+        }
+        const msgsByDate: Record<string, Message[]> = {};
+        messages
+        .filter(m => !char.hideBeforeMessageId || m.id >= char.hideBeforeMessageId)
+        .forEach(m => {
+            const d = new Date(m.timestamp);
+            const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            if (!msgsByDate[dateStr]) msgsByDate[dateStr] = [];
+            msgsByDate[dateStr].push(m);
+        });
+
+        const datesToProcess = Object.keys(msgsByDate).sort();
+        if (datesToProcess.length === 0) {
+            addToast('聊天记录为空，无法归档', 'info');
+            return;
+        }
+
+        setIsSummarizing(true);
+        setShowPanel('none');
+        setModalType('none');
+        
+        try {
+            let processedCount = 0;
+            const newMemories: MemoryFragment[] = [];
+            const templateObj = archivePrompts.find(p => p.id === selectedPromptId) || DEFAULT_ARCHIVE_PROMPTS[0];
+            const template = templateObj.content;
+
+            for (const dateStr of datesToProcess) {
+                const dayMsgs = msgsByDate[dateStr];
+                const rawLog = dayMsgs.map(m => `[${formatTime(m.timestamp)}] ${m.role === 'user' ? userProfile.name : char.name}: ${m.type === 'image' ? '[Image]' : m.content}`).join('\n');
+                
+                let prompt = template;
+                prompt = prompt.replace(/\$\{dateStr\}/g, dateStr);
+                prompt = prompt.replace(/\$\{char\.name\}/g, char.name);
+                prompt = prompt.replace(/\$\{userProfile\.name\}/g, userProfile.name);
+                prompt = prompt.replace(/\$\{rawLog.*?\}/g, rawLog.substring(0, 200000));
+
+                const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+                    body: JSON.stringify({
+                        model: apiConfig.model,
+                        messages: [{ role: "user", content: prompt }],
+                        temperature: 0.5,
+                        max_tokens: 8000 
+                    })
+                });
+
+                if (!response.ok) throw new Error(`API Error on ${dateStr}`);
+                const data = await response.json();
+                let summary = data.choices?.[0]?.message?.content || '';
+                summary = summary.trim().replace(/^["']|["']$/g, ''); 
+
+                if (summary) {
+                    newMemories.push({ id: `mem-${Date.now()}`, date: dateStr, summary: summary, mood: 'archive' });
+                    processedCount++;
+                }
+                await new Promise(r => setTimeout(r, 500));
+            }
+
+            const finalMemories = [...(char.memories || []), ...newMemories];
+            updateCharacter(char.id, { memories: finalMemories });
+            addToast(`成功归档 ${processedCount} 天`, 'success');
+
+        } catch (e: any) {
+            addToast(`归档中断: ${e.message}`, 'error');
+        } finally {
+            setIsSummarizing(false);
+        }
+    };
+
+    // --- Message Management ---
+    const handleDeleteMessage = async () => {
+        if (!selectedMessage) return;
+        await DB.deleteMessage(selectedMessage.id);
+        setMessages(prev => prev.filter(m => m.id !== selectedMessage.id));
+        setModalType('none');
+        setSelectedMessage(null);
+        addToast('消息已删除', 'success');
+    };
+
+    const confirmEditMessage = async () => {
+        if (!selectedMessage) return;
+        await DB.updateMessage(selectedMessage.id, editContent);
+        setMessages(prev => prev.map(m => m.id === selectedMessage.id ? { ...m, content: editContent } : m));
+        setModalType('none');
+        setSelectedMessage(null);
+        addToast('消息已修改', 'success');
+    };
+
+    const handleReplyMessage = () => {
+        if (!selectedMessage) return;
+        setReplyTarget({
+            ...selectedMessage,
+            metadata: { ...selectedMessage.metadata, senderName: selectedMessage.role === 'user' ? '我' : char.name }
+        });
+        setModalType('none');
+    };
+
+    const handleDeleteEmoji = async () => {
+        if (!selectedEmoji) return;
+        await DB.deleteEmoji(selectedEmoji.name);
+        await loadEmojiData();
+        setModalType('none');
+        setSelectedEmoji(null);
+        addToast('表情包已删除', 'success');
+    };
+
+    // --- Batch Selection ---
+    const handleEnterSelectionMode = () => {
+        if (selectedMessage) {
+            setSelectedMsgIds(new Set([selectedMessage.id]));
+            setSelectionMode(true);
+            setModalType('none');
+            setSelectedMessage(null);
+        }
+    };
+
+    const toggleMessageSelection = useCallback((id: number) => {
+        setSelectedMsgIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    }, []);
+
+    const handleBatchDelete = async () => {
+        if (selectedMsgIds.size === 0) return;
+        await DB.deleteMessages(Array.from(selectedMsgIds));
+        setMessages(prev => prev.filter(m => !selectedMsgIds.has(m.id)));
+        addToast(`已删除 ${selectedMsgIds.size} 条消息`, 'success');
+        setSelectionMode(false);
+        setSelectedMsgIds(new Set());
+    };
+
+    // --- AI Trigger Logic ---
     const triggerAI = async (currentMsgs: Message[]) => {
         if (isTyping || !char) return;
         if (!apiConfig.baseUrl) { alert("请先在设置中配置 API URL"); return; }
@@ -712,6 +553,7 @@ const Chat: React.FC = () => {
 
             let baseSystemPrompt = ContextBuilder.buildCoreContext(char, userProfile);
 
+            // Group Context Injection
             try {
                 const memberGroups = groups.filter(g => g.members.includes(char.id));
                 if (memberGroups.length > 0) {
@@ -727,23 +569,34 @@ const Chat: React.FC = () => {
                     if (recentGroupMsgs.length > 0) {
                         const groupLogStr = recentGroupMsgs.map(m => {
                             const dateStr = new Date(m.timestamp).toLocaleString([], {month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'});
-                            const senderName = m.role === 'user' 
-                                ? userProfile.name 
-                                : (characters.find(c => c.id === m.charId)?.name || 'Unknown');
+                            const senderName = m.role === 'user' ? userProfile.name : (characters.find(c => c.id === m.charId)?.name || 'Unknown');
                             return `[${dateStr}] [Group: ${m.groupName}] ${senderName}: ${m.content}`;
                         }).join('\n');
-
-                        baseSystemPrompt += `\n### [Background Context: Recent Group Activities]
-(注意：你是以下群聊的成员。虽然现在是私聊，但你可以根据群里发生的事情来展开话题、吐槽或表现出知情。请不要在回复中直接引用这些记录的格式。)
-${groupLogStr}
-\n`;
+                        baseSystemPrompt += `\n### [Background Context: Recent Group Activities]\n(注意：你是以下群聊的成员...)\n${groupLogStr}\n`;
                     }
                 }
-            } catch (e) {
-                console.error("Failed to load group context", e);
-            }
+            } catch (e) { console.error("Failed to load group context", e); }
 
-            const emojiNames = emojis.map(e => e.name).join(', ');
+            // NEW: Build Categorized Emoji Context
+            const emojiContextStr = (() => {
+                if (emojis.length === 0) return '无';
+                
+                const grouped: Record<string, string[]> = {};
+                const catMap: Record<string, string> = { 'default': '通用' };
+                categories.forEach(c => catMap[c.id] = c.name);
+                
+                emojis.forEach(e => {
+                    const cid = e.categoryId || 'default';
+                    if (!grouped[cid]) grouped[cid] = [];
+                    grouped[cid].push(e.name);
+                });
+                
+                return Object.entries(grouped).map(([cid, names]) => {
+                    const cName = catMap[cid] || '其他';
+                    return `${cName}: [${names.join(', ')}]`;
+                }).join('; ');
+            })();
+
             baseSystemPrompt += `### 聊天 App 行为规范 (Chat App Rules)
             **严格注意，你正在手机聊天，无论之前是什么模式，哪怕上一句话你们还面对面在一起，当前，你都是已经处于线上聊天状态了，请不要输出你的行为**
 1. **沉浸感**: 保持角色扮演。使用适合即时通讯(IM)的口语化短句。
@@ -752,7 +605,9 @@ ${groupLogStr}
    - 将回复拆分成简短的气泡（句子）。内部使用句号"。"作为气泡分隔符。
    - 【严禁】在输出中包含时间戳、名字前缀或"[角色名]:"。
    - **【严禁】模仿历史记录中的系统日志格式（如"[你 发送了...]"）。**
-   - **发送表情包**: 必须且只能使用命令: \`[[SEND_EMOJI: 表情名称]]\`。可用表情: [${emojiNames || '无'}]。
+   - **发送表情包**: 必须且只能使用命令: \`[[SEND_EMOJI: 表情名称]]\`。
+   - **可用表情库 (按分类)**: 
+     ${emojiContextStr}
 4. **引用功能 (Quote/Reply)**:
    - 如果你想专门回复用户某句具体的话，可以在回复开头使用: \`[[QUOTE: 引用内容]]\`。这会在UI上显示为对该消息的引用。
 5. **环境感知**:
@@ -795,8 +650,6 @@ ${groupLogStr}
             }
 
             const limit = char.contextLimit || 500;
-            
-            // HISTORY FILTERING: Only include messages AFTER the hideBeforeMessageId
             const effectiveHistory = currentMsgs.filter(m => !char.hideBeforeMessageId || m.id >= char.hideBeforeMessageId);
             const historySlice = effectiveHistory.slice(-limit);
             
@@ -810,31 +663,15 @@ ${groupLogStr}
             const buildHistory = (msgs: Message[]) => msgs.map((m, index) => {
                 let content: any = m.content;
                 const timeStr = `[${formatDate(m.timestamp)}]`;
-                
-                // Inject Reply Context
-                if (m.replyTo) {
-                    content = `[回复 "${m.replyTo.content.substring(0, 50)}..."]: ${content}`;
-                }
-
+                if (m.replyTo) content = `[回复 "${m.replyTo.content.substring(0, 50)}..."]: ${content}`;
                 if (m.type === 'image') {
                      let textPart = `${timeStr} [User sent an image]`;
-                     if (index === msgs.length - 1 && timeGapHint && m.role === 'user') {
-                         textPart += `\n\n${timeGapHint}`;
-                     }
-                     return {
-                         role: m.role,
-                         content: [
-                             { type: "text", text: textPart },
-                             { type: "image_url", image_url: { url: m.content } }
-                         ]
-                     };
+                     if (index === msgs.length - 1 && timeGapHint && m.role === 'user') textPart += `\n\n${timeGapHint}`;
+                     return { role: m.role, content: [{ type: "text", text: textPart }, { type: "image_url", image_url: { url: m.content } }] };
                 }
-
                 if (index === msgs.length - 1 && timeGapHint && m.role === 'user') content = `${content}\n\n${timeGapHint}`; 
-
                 if (m.type === 'interaction') content = `${timeStr} [系统: 用户戳了你一下]`; 
                 else if (m.type === 'transfer') content = `${timeStr} [系统: 用户转账 ${m.metadata?.amount}]`;
-                // [NEW] Social Card Interpretation
                 else if (m.type === 'social_card') {
                     const post = m.metadata?.post || {};
                     const commentsSample = (post.comments || []).map((c: any) => `${c.authorName}: ${c.content}`).join(' | ');
@@ -845,51 +682,36 @@ ${groupLogStr}
                      content = `${timeStr} [${m.role === 'user' ? '用户' : '你'} 发送了表情包: ${stickerName}]`;
                 }
                 else content = `${timeStr} ${content}`;
-
                 return { role: m.role, content };
             });
 
-            let apiMessages = [
-                { role: 'system', content: baseSystemPrompt },
-                ...buildHistory(historySlice)
-            ];
+            let apiMessages = [{ role: 'system', content: baseSystemPrompt }, ...buildHistory(historySlice)];
 
             let response = await fetch(`${baseUrl}/chat/completions`, {
-                method: 'POST',
-                headers,
+                method: 'POST', headers,
                 body: JSON.stringify({ model: apiConfig.model, messages: apiMessages, temperature: 0.85, stream: false })
             });
 
             if (!response.ok) throw new Error(`API Error ${response.status}`);
             let data = await response.json();
-            
-            if (data.usage && data.usage.total_tokens) {
-                setLastTokenUsage(data.usage.total_tokens);
-            }
+            if (data.usage?.total_tokens) setLastTokenUsage(data.usage.total_tokens);
 
             let aiContent = data.choices?.[0]?.message?.content || '';
-
             aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
             aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, ''); 
-
             aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
 
+            // Recall Logic
             const recallMatch = aiContent.match(/\[\[RECALL:\s*(\d{4})[-/年](\d{1,2})\]\]/);
             if (recallMatch) {
                 const year = recallMatch[1];
                 const month = recallMatch[2];
                 setRecallStatus(`正在调阅 ${year}年${month}月 的详细档案...`);
                 const detailedLogs = getDetailedLogsForMonth(year, month);
-                
                 if (detailedLogs) {
-                    const injectionMessage = {
-                        role: 'system', 
-                        content: `[系统: 已成功调取 ${year}-${month} 的详细日志]\n${detailedLogs}\n[系统: 现在请结合这些细节回答用户。保持对话自然。]`
-                    };
-                    apiMessages = [...apiMessages, injectionMessage];
+                    apiMessages = [...apiMessages, { role: 'system', content: `[系统: 已成功调取 ${year}-${month} 的详细日志]\n${detailedLogs}\n[系统: 现在请结合这些细节回答用户。保持对话自然。]` }];
                     response = await fetch(`${baseUrl}/chat/completions`, {
-                        method: 'POST',
-                        headers,
+                        method: 'POST', headers,
                         body: JSON.stringify({ model: apiConfig.model, messages: apiMessages, temperature: 0.8, stream: false })
                     });
                     if (response.ok) {
@@ -919,185 +741,114 @@ ${groupLogStr}
             if (eventMatch) {
                 const title = eventMatch[1].trim();
                 const date = eventMatch[2].trim();
-                
                 if (title && date) {
-                    const anni: any = {
-                        id: `anni-${Date.now()}`,
-                        title: title,
-                        date: date,
-                        charId: char.id
-                    };
+                    const anni: any = { id: `anni-${Date.now()}`, title: title, date: date, charId: char.id };
                     await DB.saveAnniversary(anni);
                     addToast(`${char.name} 添加了新日程: ${title}`, 'success');
-                    
-                    await DB.saveMessage({
-                        charId: char.id,
-                        role: 'system',
-                        type: 'text',
-                        content: `[系统: ${char.name} 新增了日程 "${title}" (${date})]`
-                    });
+                    await DB.saveMessage({ charId: char.id, role: 'system', type: 'text', content: `[系统: ${char.name} 新增了日程 "${title}" (${date})]` });
                 }
                 aiContent = aiContent.replace(eventMatch[0], '').trim();
             }
-
-           
 
             const scheduleRegex = /\[schedule_message \| (.*?) \| fixed \| (.*?)\]/g;
             let match;
             while ((match = scheduleRegex.exec(aiContent)) !== null) {
                 const timeStr = match[1].trim();
                 const content = match[2].trim();
-                
                 const dueTime = new Date(timeStr).getTime();
                 if (!isNaN(dueTime) && dueTime > Date.now()) {
-                    await DB.saveScheduledMessage({
-                        id: `sched-${Date.now()}-${Math.random()}`,
-                        charId: char.id,
-                        content: content,
-                        dueAt: dueTime,
-                        createdAt: Date.now()
-                    });
-                    
+                    await DB.saveScheduledMessage({ id: `sched-${Date.now()}-${Math.random()}`, charId: char.id, content: content, dueAt: dueTime, createdAt: Date.now() });
                     try {
                         const hasPerm = await LocalNotifications.checkPermissions();
                         if (hasPerm.display === 'granted') {
-                            await LocalNotifications.schedule({
-                                notifications: [{
-                                    title: char.name,
-                                    body: content, 
-                                    id: Math.floor(Math.random() * 100000),
-                                    schedule: { at: new Date(dueTime) },
-                                    smallIcon: 'ic_stat_icon_config_sample' 
-                                }]
-                            });
+                            await LocalNotifications.schedule({ notifications: [{ title: char.name, body: content, id: Math.floor(Math.random() * 100000), schedule: { at: new Date(dueTime) }, smallIcon: 'ic_stat_icon_config_sample' }] });
                         }
                     } catch (e) { console.log("Notification schedule skipped (web mode)"); }
-                    
                     addToast(`${char.name} 似乎打算一会儿找你...`, 'info');
                 }
             }
             aiContent = aiContent.replace(scheduleRegex, '').trim();
 
-            // Extract Quote if AI used it
-          // Extract first Quote for fallback (used if first chunk doesn't have its own quote)
-let aiReplyTarget: { id: number, content: string, name: string } | undefined;
-const firstQuoteMatch = aiContent.match(/\[\[QUOTE:\s*(.*?)\]\]/);
-if (firstQuoteMatch) {
-    const quotedText = firstQuoteMatch[1];
-    const targetMsg = historySlice.slice().reverse().find(m => m.role === 'user' && m.content.includes(quotedText));
-    if (targetMsg) {
-        aiReplyTarget = {
-            id: targetMsg.id,
-            content: targetMsg.content,
-            name: userProfile.name
-        };
-    }
-    // 不在这里移除，让后面的逻辑处理
-}
-
-            aiContent = aiContent.replace(/\[\[RECALL:.*?\]\]/g, '').trim();
+            // Quote Logic
+            let aiReplyTarget: { id: number, content: string, name: string } | undefined;
+            const firstQuoteMatch = aiContent.match(/\[\[QUOTE:\s*(.*?)\]\]/);
+            if (firstQuoteMatch) {
+                const quotedText = firstQuoteMatch[1];
+                const targetMsg = historySlice.slice().reverse().find(m => m.role === 'user' && m.content.includes(quotedText));
+                if (targetMsg) aiReplyTarget = { id: targetMsg.id, content: targetMsg.content, name: userProfile.name };
+            }
             
-           if (aiContent) {
-    // 新逻辑：先按表情包位置拆分，保持顺序
-    const emojiPattern = /\[\[SEND_EMOJI:\s*(.*?)\]\]/g;
-    const parts: {type: 'text' | 'emoji', content: string}[] = [];
-    
-    let lastIndex = 0;
-    let emojiMatch;
-    
-    while ((emojiMatch = emojiPattern.exec(aiContent)) !== null) {
-        // 添加表情包之前的文字
-        if (emojiMatch.index > lastIndex) {
-            const textBefore = aiContent.slice(lastIndex, emojiMatch.index).trim();
-            if (textBefore) {
-                parts.push({ type: 'text', content: textBefore });
-            }
-        }
-        // 添加表情包
-        parts.push({ type: 'emoji', content: emojiMatch[1].trim() });
-        lastIndex = emojiMatch.index + emojiMatch[0].length;
-    }
-    
-    // 添加最后剩余的文字
-    if (lastIndex < aiContent.length) {
-        const remaining = aiContent.slice(lastIndex).trim();
-        if (remaining) {
-            parts.push({ type: 'text', content: remaining });
-        }
-    }
-    
-    // 如果没有任何表情包，整个内容作为文字
-    if (parts.length === 0 && aiContent.trim()) {
-        parts.push({ type: 'text', content: aiContent.trim() });
-    }
-    
-    // 按顺序发送每个部分
-    for (let partIndex = 0; partIndex < parts.length; partIndex++) {
-        const part = parts[partIndex];
-        
-        if (part.type === 'emoji') {
-            // 发送表情包
-            const foundEmoji = emojis.find(e => e.name === part.content);
-            if (foundEmoji) {
-                const delay = Math.random() * 500 + 300;
-                await new Promise(r => setTimeout(r, delay));
-                await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url });
-                setMessages(await DB.getMessagesByCharId(char.id));
-            }
-        } else {
-            // 处理文字部分，拆分成多个气泡
-            let tempContent = part.content
-                .replace(/\.\.\./g, '{{ELLIPSIS_ENG}}')
-                .replace(/……/g, '{{ELLIPSIS_CN}}')
-                .replace(/([。])(?![）\)\]】""'])/g, '{{SPLIT}}')
-                .replace(/\.($|\s+)/g, '{{SPLIT}}')
-                .replace(/([！!？?~]+)(?![）\)\]】""'])/g, '$1{{SPLIT}}')
-                .replace(/\n+/g, '{{SPLIT}}')
-                .replace(/([\u4e00-\u9fa5])[ ]+([\u4e00-\u9fa5])/g, '$1{{SPLIT}}$2');
+            aiContent = aiContent.replace(/\[\[RECALL:.*?\]\]/g, '').trim();
 
-            const finalChunks = tempContent
-                .split('{{SPLIT}}')
-                .map(c => c.trim())
-                .filter(c => c.length > 0)
-                .map(c => c.replace(/{{ELLIPSIS_ENG}}/g, '...').replace(/{{ELLIPSIS_CN}}/g, '……'));
-
-            if (finalChunks.length === 0 && part.content.trim()) {
-                finalChunks.push(part.content.trim());
-            }
-
-            for (let i = 0; i < finalChunks.length; i++) {
-                let chunk = finalChunks[i];
-                const delay = Math.min(Math.max(chunk.length * 50, 500), 2000);
-                await new Promise(r => setTimeout(r, delay));
-                
-                // 检查这个 chunk 是否有引用标记
-                let chunkReplyTarget: { id: number, content: string, name: string } | undefined;
-                const chunkQuoteMatch = chunk.match(/\[\[QUOTE:\s*(.*?)\]\]/);
-                if (chunkQuoteMatch) {
-                    const quotedText = chunkQuoteMatch[1];
-                    const targetMsg = historySlice.slice().reverse().find(m => m.role === 'user' && m.content.includes(quotedText));
-                    if (targetMsg) {
-                        chunkReplyTarget = {
-                            id: targetMsg.id,
-                            content: targetMsg.content,
-                            name: userProfile.name
-                        };
+            if (aiContent) {
+                const emojiPattern = /\[\[SEND_EMOJI:\s*(.*?)\]\]/g;
+                const parts: {type: 'text' | 'emoji', content: string}[] = [];
+                let lastIndex = 0;
+                let emojiMatch;
+                while ((emojiMatch = emojiPattern.exec(aiContent)) !== null) {
+                    if (emojiMatch.index > lastIndex) {
+                        const textBefore = aiContent.slice(lastIndex, emojiMatch.index).trim();
+                        if (textBefore) parts.push({ type: 'text', content: textBefore });
                     }
-                    chunk = chunk.replace(chunkQuoteMatch[0], '').trim();
+                    parts.push({ type: 'emoji', content: emojiMatch[1].trim() });
+                    lastIndex = emojiMatch.index + emojiMatch[0].length;
                 }
-                
-                // 如果这个 chunk 没有自己的引用，且是整个回复的第一条消息，使用之前提取的 aiReplyTarget
-                const replyData = chunkReplyTarget || (partIndex === 0 && i === 0 ? aiReplyTarget : undefined);
-                
-                if (chunk) {
-                    await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: chunk, replyTo: replyData });
-                    setMessages(await DB.getMessagesByCharId(char.id));
+                if (lastIndex < aiContent.length) {
+                    const remaining = aiContent.slice(lastIndex).trim();
+                    if (remaining) parts.push({ type: 'text', content: remaining });
                 }
-            }
-        }
-    }
-} else {
-    setMessages(await DB.getMessagesByCharId(char.id));
+                if (parts.length === 0 && aiContent.trim()) parts.push({ type: 'text', content: aiContent.trim() });
+
+                for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+                    const part = parts[partIndex];
+                    if (part.type === 'emoji') {
+                        const foundEmoji = emojis.find(e => e.name === part.content);
+                        if (foundEmoji) {
+                            const delay = Math.random() * 500 + 300;
+                            await new Promise(r => setTimeout(r, delay));
+                            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url });
+                            setMessages(await DB.getMessagesByCharId(char.id));
+                        }
+                    } else {
+                        let tempContent = part.content
+                            .replace(/\.\.\./g, '{{ELLIPSIS_ENG}}')
+                            .replace(/……/g, '{{ELLIPSIS_CN}}')
+                            .replace(/([。])(?![）\)\]】"”'])/g, '{{SPLIT}}') 
+                            .replace(/\.($|\s+)/g, '{{SPLIT}}')
+                            .replace(/([！!？?~]+)(?![）\)\]】"”'])/g, '$1{{SPLIT}}') 
+                            .replace(/\n+/g, '{{SPLIT}}')
+                            .replace(/([\u4e00-\u9fa5])[ ]+([\u4e00-\u9fa5])/g, '$1{{SPLIT}}$2');
+
+                        const chunks = tempContent.split('{{SPLIT}}').map(c => c.trim()).filter(c => c.length > 0)
+                            .map(c => c.replace(/{{ELLIPSIS_ENG}}/g, '...').replace(/{{ELLIPSIS_CN}}/g, '……'));
+
+                        if (chunks.length === 0 && part.content.trim()) chunks.push(part.content.trim());
+
+                        for (let i = 0; i < chunks.length; i++) {
+                            let chunk = chunks[i];
+                            const delay = Math.min(Math.max(chunk.length * 50, 500), 2000);
+                            await new Promise(r => setTimeout(r, delay));
+                            
+                            let chunkReplyTarget: { id: number, content: string, name: string } | undefined;
+                            const chunkQuoteMatch = chunk.match(/\[\[QUOTE:\s*(.*?)\]\]/);
+                            if (chunkQuoteMatch) {
+                                const quotedText = chunkQuoteMatch[1];
+                                const targetMsg = historySlice.slice().reverse().find(m => m.role === 'user' && m.content.includes(quotedText));
+                                if (targetMsg) chunkReplyTarget = { id: targetMsg.id, content: targetMsg.content, name: userProfile.name };
+                                chunk = chunk.replace(chunkQuoteMatch[0], '').trim();
+                            }
+                            
+                            const replyData = chunkReplyTarget || (partIndex === 0 && i === 0 ? aiReplyTarget : undefined);
+                            
+                            if (chunk) {
+                                await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: chunk, replyTo: replyData });
+                                setMessages(await DB.getMessagesByCharId(char.id));
+                            }
+                        }
+                    }
+                }
+            } else {
+                setMessages(await DB.getMessagesByCharId(char.id));
             }
 
         } catch (e: any) {
@@ -1109,348 +860,10 @@ if (firstQuoteMatch) {
         }
     };
 
-    const handleChatImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-        try {
-            // Send low quality for chat preview, gallery will store separately if needed or link to this
-            const base64 = await processImage(file, { maxWidth: 600, quality: 0.6, forceJpeg: true });
-            setShowPanel('none');
-            await handleSendText(base64, 'image');
-        } catch (err: any) {
-            addToast(err.message || '图片处理失败', 'error');
-        } finally {
-            if (chatImageInputRef.current) chatImageInputRef.current.value = '';
-        }
-    };
-
-    const handleTouchStart = (item: Message | {name: string, url: string}, type: 'message' | 'emoji') => {
-        longPressTimer.current = setTimeout(() => {
-            if (type === 'message') {
-                if (!selectionMode) {
-                    setSelectedMessage(item as Message);
-                    setModalType('message-options');
-                }
-            } else {
-                setSelectedEmoji(item as any);
-                setModalType('delete-emoji');
-            }
-        }, 600);
-    };
-
-    const handleTouchEnd = () => {
-        if (longPressTimer.current) {
-            clearTimeout(longPressTimer.current);
-            longPressTimer.current = null;
-        }
-    };
-
-    const handleDeleteMessage = async () => {
-        if (!selectedMessage) return;
-        await DB.deleteMessage(selectedMessage.id);
-        setMessages(prev => prev.filter(m => m.id !== selectedMessage.id));
-        setModalType('none');
-        setSelectedMessage(null);
-        addToast('消息已删除', 'success');
-    };
-    
-    const handleDeleteEmoji = async () => {
-        if (!selectedEmoji) return;
-        await DB.deleteEmoji(selectedEmoji.name);
-        setEmojis(prev => prev.filter(e => e.name !== selectedEmoji.name));
-        setModalType('none');
-        setSelectedEmoji(null);
-        addToast('表情包已删除', 'success');
-    };
-
-    const handleEditMessage = () => {
-        if (!selectedMessage) return;
-        setEditContent(selectedMessage.content);
-        setModalType('edit-message');
-    };
-
-    const confirmEditMessage = async () => {
-        if (!selectedMessage) return;
-        await DB.updateMessage(selectedMessage.id, editContent);
-        setMessages(prev => prev.map(m => m.id === selectedMessage.id ? { ...m, content: editContent } : m));
-        setModalType('none');
-        setSelectedMessage(null);
-        addToast('消息已修改', 'success');
-    };
-
-    const handleReplyMessage = () => {
-        if (!selectedMessage) return;
-        setReplyTarget({
-            ...selectedMessage,
-            // Assuming current view is for char chat, name depends on role
-            metadata: { ...selectedMessage.metadata, senderName: selectedMessage.role === 'user' ? '我' : char.name }
-        });
-        setModalType('none');
-    };
-
-    const handleClearHistory = async () => {
-        if (!char) return;
-        if (preserveContext) {
-            const toDelete = messages.slice(0, -10);
-            if (toDelete.length === 0) {
-                addToast('消息太少，无需清理', 'info');
-                return;
-            }
-            await DB.deleteMessages(toDelete.map(m => m.id));
-            setMessages(messages.slice(-10));
-            addToast(`已清理 ${toDelete.length} 条历史，保留最近10条`, 'success');
-        } else {
-            await DB.clearMessages(char.id);
-            setMessages([]);
-            addToast('已清空 (包含见面记录)', 'success');
-        }
-        setModalType('none');
-    };
-
-    // HISTORY MANAGEMENT
-    const handleSetHistoryStart = (messageId: number | undefined) => {
-        updateCharacter(char.id, { hideBeforeMessageId: messageId });
-        setModalType('none');
-        if (messageId) {
-            addToast('已隐藏历史消息 (仅显示此条及之后)', 'success');
-        } else {
-            addToast('已恢复全部历史记录', 'success');
-        }
-    };
-
-    const handleReroll = async () => {
-        if (isTyping || messages.length === 0) return;
-        
-        const lastMsg = messages[messages.length - 1];
-        if (lastMsg.role !== 'assistant') return;
-
-        const toDeleteIds: number[] = [];
-        let index = messages.length - 1;
-        while (index >= 0 && messages[index].role === 'assistant') {
-            toDeleteIds.push(messages[index].id);
-            index--;
-        }
-
-        if (toDeleteIds.length === 0) return;
-
-        await DB.deleteMessages(toDeleteIds);
-        const newHistory = messages.slice(0, index + 1);
-        setMessages(newHistory);
-        addToast('回溯对话中...', 'info');
-
-        triggerAI(newHistory);
-    };
-
-    const handleFullArchive = async () => {
-        if (!apiConfig.apiKey || !char) {
-            addToast('请先配置 API Key', 'error');
-            return;
-        }
-        
-        const msgsByDate: Record<string, Message[]> = {};
-        messages
-        .filter(m => !char.hideBeforeMessageId || m.id >= char.hideBeforeMessageId) // <--- 新增这行
-        .forEach(m => {
-            const d = new Date(m.timestamp);
-            const year = d.getFullYear();
-            const month = String(d.getMonth() + 1).padStart(2, '0');
-            const day = String(d.getDate()).padStart(2, '0');
-            const dateStr = `${year}-${month}-${day}`;
-            
-            if (!msgsByDate[dateStr]) msgsByDate[dateStr] = [];
-            msgsByDate[dateStr].push(m);
-        });
-
-        const dates = Object.keys(msgsByDate).sort();
-        const datesToProcess = dates;
-
-        if (datesToProcess.length === 0) {
-            addToast('聊天记录为空，无法归档', 'info');
-            return;
-        }
-
-        setIsSummarizing(true);
-        setShowPanel('none');
-        setModalType('none'); // Close settings modal
-        
-        try {
-            let processedCount = 0;
-            const newMemories: MemoryFragment[] = [];
-
-            // Get selected template
-            const templateObj = archivePrompts.find(p => p.id === selectedPromptId) || DEFAULT_ARCHIVE_PROMPTS[0];
-            const template = templateObj.content;
-
-            for (const dateStr of datesToProcess) {
-                const dayMsgs = msgsByDate[dateStr];
-                const rawLog = dayMsgs.map(m => `[${formatTime(m.timestamp)}] ${m.role === 'user' ? userProfile.name : char.name}: ${m.type === 'image' ? '[Image]' : m.content}`).join('\n');
-                
-                // Construct dynamic Prompt
-                // Use a simple replacement function to support placeholders
-                let prompt = template;
-                prompt = prompt.replace(/\$\{dateStr\}/g, dateStr);
-                prompt = prompt.replace(/\$\{char\.name\}/g, char.name);
-                prompt = prompt.replace(/\$\{userProfile\.name\}/g, userProfile.name);
-                prompt = prompt.replace(/\$\{rawLog.*?\}/g, rawLog.substring(0, 200000)); // Handle plain rawLog or rawLog.substring
-
-                const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-                    body: JSON.stringify({
-                        model: apiConfig.model,
-                        messages: [{ role: "user", content: prompt }],
-                        temperature: 0.5,
-                        max_tokens: 8000 
-                    })
-                });
-
-                if (!response.ok) throw new Error(`API Error on ${dateStr}`);
-                
-                const data = await response.json();
-                
-                let summary = data.choices?.[0]?.message?.content || '';
-                
-                if (!summary && data.choices?.[0]?.message?.reasoning_content) {
-                     console.warn("Content empty, checking reasoning...");
-                }
-
-                summary = summary.trim();
-                summary = summary.replace(/^["']|["']$/g, ''); 
-
-                if (summary) {
-                    newMemories.push({
-                        id: `mem-${Date.now()}`,
-                        date: dateStr,
-                        summary: summary,
-                        mood: 'archive'
-                    });
-                    processedCount++;
-                } else {
-                    console.error(`Empty summary for ${dateStr}`);
-                }
-
-                await new Promise(r => setTimeout(r, 500));
-            }
-
-            const finalMemories = [...(char.memories || []), ...newMemories];
-            updateCharacter(char.id, { memories: finalMemories });
-            
-            if (processedCount > 0) {
-                addToast(`成功归档 ${processedCount} 天的记忆`, 'success');
-            } else {
-                addToast('归档完成，但没有生成有效内容', 'info');
-            }
-
-        } catch (e: any) {
-            addToast(`归档中断: ${e.message}`, 'error');
-        } finally {
-            setIsSummarizing(false);
-        }
-    };
-
-    const handleSendText = async (customContent?: string, customType?: MessageType, metadata?: any) => {
-        if (!char || (!input.trim() && !customContent)) return;
-        const text = customContent || input.trim();
-        const type = customType || 'text';
-
-        if (!customContent) { setInput(''); localStorage.removeItem(draftKey); }
-        
-        if (type === 'image') {
-            await DB.saveGalleryImage({
-                id: `img-${Date.now()}-${Math.random()}`,
-                charId: char.id,
-                url: text,
-                timestamp: Date.now()
-            });
-            addToast('图片已保存至相册', 'info');
-        }
-
-        const msgPayload: any = { charId: char.id, role: 'user', type, content: text, metadata };
-        
-        // Attach reply context
-        if (replyTarget) {
-            msgPayload.replyTo = {
-                id: replyTarget.id,
-                content: replyTarget.content,
-                name: replyTarget.role === 'user' ? '我' : char.name
-            };
-            setReplyTarget(null); // Clear reply target after sending
-        }
-
-        await DB.saveMessage(msgPayload);
-        const updatedMsgs = await DB.getMessagesByCharId(char.id);
-        setMessages(updatedMsgs);
-        setShowPanel('none');
-    };
-
-    const handleBgUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if(!file) return;
-        try {
-            // Use skipCompression to keep high quality background
-            const dataUrl = await processImage(file, { skipCompression: true });
-            updateCharacter(char.id, { chatBackground: dataUrl });
-            addToast('聊天背景已更新', 'success');
-        } catch(err: any) {
-            addToast(err.message, 'error');
-        }
-    };
-
-    const saveSettings = () => {
-        updateCharacter(char.id, { 
-            contextLimit: settingsContextLimit,
-            hideSystemLogs: settingsHideSysLogs // Save preference
-        });
-        setModalType('none');
-        addToast('设置已保存', 'success');
-    };
-
-    const handleMessageLongPress = useCallback((m: Message) => {
-        setSelectedMessage(m);
-        setModalType('message-options');
-    }, []);
-
-    // --- Batch Selection Logic ---
-    const handleEnterSelectionMode = () => {
-        if (selectedMessage) {
-            setSelectedMsgIds(new Set([selectedMessage.id]));
-            setSelectionMode(true);
-            setModalType('none');
-            setSelectedMessage(null);
-        }
-    };
-
-    const toggleMessageSelection = useCallback((id: number) => {
-        setSelectedMsgIds(prev => {
-            const next = new Set(prev);
-            if (next.has(id)) next.delete(id);
-            else next.add(id);
-            return next;
-        });
-    }, []);
-
-    const handleBatchDelete = async () => {
-        if (selectedMsgIds.size === 0) return;
-        
-        await DB.deleteMessages(Array.from(selectedMsgIds));
-        setMessages(prev => prev.filter(m => !selectedMsgIds.has(m.id)));
-        
-        addToast(`已删除 ${selectedMsgIds.size} 条消息`, 'success');
-        
-        // Exit selection mode
-        setSelectionMode(false);
-        setSelectedMsgIds(new Set());
-    };
-
     const displayMessages = messages
         .filter(m => m.metadata?.source !== 'date')
-        // Hide messages before the cut-off ID if set
         .filter(m => !char.hideBeforeMessageId || m.id >= char.hideBeforeMessageId)
-        .filter(m => {
-            // Apply Hide System Logs Filter
-            if (char.hideSystemLogs && m.role === 'system') return false;
-            return true;
-        })
+        .filter(m => { if (char.hideSystemLogs && m.role === 'system') return false; return true; })
         .slice(-visibleCount);
 
     return (
@@ -1464,234 +877,57 @@ if (firstQuoteMatch) {
         >
              {activeTheme.customCss && <style>{activeTheme.customCss}</style>}
 
-             <Modal 
-                isOpen={modalType === 'transfer'} title="Credits 转账" onClose={() => setModalType('none')}
-                footer={<><button onClick={() => setModalType('none')} className="flex-1 py-3 bg-slate-100 rounded-2xl">取消</button><button onClick={() => { if(transferAmt) handleSendText(`[转账]`, 'transfer', { amount: transferAmt }); setModalType('none'); }} className="flex-1 py-3 bg-orange-500 text-white rounded-2xl">确认</button></>}
-            ><input type="number" value={transferAmt} onChange={e => setTransferAmt(e.target.value)} className="w-full bg-slate-100 rounded-2xl px-5 py-4 text-lg font-bold" autoFocus /></Modal>
-
-            <Modal 
-                isOpen={modalType === 'emoji-import'} title="表情注入" onClose={() => setModalType('none')}
-                footer={<button onClick={async () => { const lines = emojiImportText.split('\n'); for (const line of lines) { const [n, u] = line.split('--'); if (n && u) await DB.saveEmoji(n.trim(), u.trim()); } setEmojis(await DB.getEmojis()); setModalType('none'); }} className="w-full py-4 bg-primary text-white font-bold rounded-2xl">注入</button>}
-            ><textarea value={emojiImportText} onChange={e => setEmojiImportText(e.target.value)} placeholder="Name--URL" className="w-full h-40 bg-slate-100 rounded-2xl p-4 resize-none" /></Modal>
-
-            <Modal 
-                isOpen={modalType === 'chat-settings'} title="聊天设置" onClose={() => setModalType('none')}
-                footer={<button onClick={saveSettings} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">保存设置</button>}
-            >
-                <div className="space-y-6">
-                     <div>
-                         <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">聊天背景</label>
-                         <div onClick={() => bgInputRef.current?.click()} className="h-24 bg-slate-100 rounded-xl border-2 border-dashed border-slate-200 flex items-center justify-center cursor-pointer hover:border-primary/50 overflow-hidden relative">
-                             {char.chatBackground ? <img src={char.chatBackground} className="w-full h-full object-cover opacity-60" /> : <span className="text-xs text-slate-400">点击上传图片 (原画质)</span>}
-                             {char.chatBackground && <span className="absolute z-10 text-xs bg-white/80 px-2 py-1 rounded">更换</span>}
-                         </div>
-                         <input type="file" ref={bgInputRef} className="hidden" accept="image/*" onChange={handleBgUpload} />
-                         {char.chatBackground && <button onClick={() => updateCharacter(char.id, { chatBackground: undefined })} className="text-[10px] text-red-400 mt-1">移除背景</button>}
-                     </div>
-                     <div>
-                         <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">上下文条数 ({settingsContextLimit})</label>
-                         <input type="range" min="20" max="5000" step="10" value={settingsContextLimit} onChange={e => setSettingsContextLimit(parseInt(e.target.value))} className="w-full h-2 bg-slate-200 rounded-full appearance-none accent-primary" />
-                         <div className="flex justify-between text-[10px] text-slate-400 mt-1"><span>20 (省流)</span><span>5000 (超长记忆)</span></div>
-                     </div>
-
-                     {/* New: Hide System Logs Toggle */}
-                     <div className="pt-2 border-t border-slate-100">
-                         <div className="flex justify-between items-center cursor-pointer" onClick={() => setSettingsHideSysLogs(!settingsHideSysLogs)}>
-                             <label className="text-xs font-bold text-slate-400 uppercase pointer-events-none">隐藏系统日志</label>
-                             <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${settingsHideSysLogs ? 'bg-primary' : 'bg-slate-200'}`}>
-                                 <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${settingsHideSysLogs ? 'translate-x-4' : ''}`}></div>
-                             </div>
-                         </div>
-                         <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
-                             开启后，将不再显示 Date/App 产生的上下文提示文本（转账、戳一戳、图片发送提示除外）。
-                         </p>
-                     </div>
-
-                     {/* History Manager Button */}
-                     <div className="pt-2 border-t border-slate-100">
-                         <button onClick={() => setModalType('history-manager')} className="w-full py-3 bg-slate-50 text-slate-600 font-bold rounded-2xl border border-slate-200 active:scale-95 transition-transform flex items-center justify-center gap-2">
-                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M3 4.5h14.25M3 9h9.75M3 13.5h5.25m5.25-.9v5.25c0 .414.336.75.75.75h6.75a.75.75 0 0 0 .75-.75v-9.21a.75.75 0 0 0-.213-.53l-2.25-2.25a.75.75 0 0 0-.53-.22h-3.75a.75.75 0 0 0-.75.75v5.25Z" /></svg>
-                             管理上下文 / 隐藏历史
-                         </button>
-                         <p className="text-[10px] text-slate-400 mt-2 text-center">可选择从某条消息开始显示，隐藏之前的记录（不被 AI 读取）。</p>
-                     </div>
-                     
-                     <div className="pt-2 border-t border-slate-100">
-                         <label className="text-xs font-bold text-red-400 uppercase mb-3 block">危险区域 (Danger Zone)</label>
-                         <div className="flex items-center gap-2 mb-3 cursor-pointer" onClick={() => setPreserveContext(!preserveContext)}>
-                             <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-colors ${preserveContext ? 'bg-primary border-primary' : 'bg-slate-100 border-slate-300'}`}>
-                                 {preserveContext && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
-                             </div>
-                             <span className="text-sm text-slate-600">清空时保留最后10条记录 (维持语境)</span>
-                         </div>
-                         <button onClick={handleClearHistory} className="w-full py-3 bg-red-50 text-red-500 font-bold rounded-2xl border border-red-100 active:scale-95 transition-transform flex items-center justify-center gap-2">
-                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
-                             执行清空
-                         </button>
-                     </div>
-                </div>
-            </Modal>
-
-            {/* Archive Settings Modal */}
-            <Modal isOpen={modalType === 'archive-settings'} title="记忆归档设置" onClose={() => setModalType('none')} footer={<button onClick={handleFullArchive} disabled={isSummarizing} className="w-full py-3 bg-indigo-500 text-white font-bold rounded-2xl shadow-lg shadow-indigo-200">开始归档</button>}>
-                <div className="space-y-4">
-                    <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100">
-                        <label className="text-[10px] font-bold text-indigo-400 uppercase mb-2 block">选择提示词模板</label>
-                        <div className="flex flex-col gap-2">
-                            {archivePrompts.map(p => (
-                                <div key={p.id} onClick={() => handlePromptSelect(p.id)} className={`p-3 rounded-lg border cursor-pointer flex items-center justify-between ${selectedPromptId === p.id ? 'bg-white border-indigo-500 shadow-sm ring-1 ring-indigo-500' : 'bg-white/50 border-indigo-200 hover:bg-white'}`}>
-                                    <span className={`text-xs font-bold ${selectedPromptId === p.id ? 'text-indigo-700' : 'text-slate-600'}`}>{p.name}</span>
-                                    <div className="flex gap-2">
-                                        <button onClick={(e) => { e.stopPropagation(); setSelectedPromptId(p.id); editSelectedPrompt(); }} className="text-[10px] text-slate-400 hover:text-indigo-500 px-2 py-1 rounded bg-slate-100 hover:bg-indigo-50">编辑/查看</button>
-                                        {!p.id.startsWith('preset_') && (
-                                            <button onClick={(e) => { e.stopPropagation(); handleDeletePrompt(p.id); }} className="text-[10px] text-red-300 hover:text-red-500 px-2 py-1 rounded hover:bg-red-50">×</button>
-                                        )}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                        <button onClick={createNewPrompt} className="mt-3 w-full py-2 text-xs font-bold text-indigo-500 border border-dashed border-indigo-300 rounded-lg hover:bg-indigo-100">+ 新建自定义提示词</button>
-                    </div>
-                    <div className="text-[10px] text-slate-400 bg-slate-50 p-3 rounded-xl leading-relaxed">
-                        • <b>理性精炼</b>: 适合生成条理清晰的事件日志，便于 AI 长期记忆检索。<br/>
-                        • <b>日记风格</b>: 适合生成第一人称的角色日记，更有代入感和情感色彩。<br/>
-                        • 支持变量: <code>{'${dateStr}'}</code>, <code>{'${char.name}'}</code>, <code>{'${userProfile.name}'}</code>, <code>{'${rawLog}'}</code>
-                    </div>
-                </div>
-            </Modal>
-
-            {/* Prompt Editor Modal */}
-            <Modal isOpen={modalType === 'prompt-editor'} title="编辑提示词" onClose={() => setModalType('archive-settings')} footer={<button onClick={handleSavePrompt} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">保存预设</button>}>
-                <div className="space-y-3">
-                    <input 
-                        value={editingPrompt?.name || ''} 
-                        onChange={e => setEditingPrompt(prev => prev ? {...prev, name: e.target.value} : null)}
-                        placeholder="预设名称"
-                        className="w-full px-4 py-2 bg-slate-100 rounded-xl text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-primary/20"
-                    />
-                    <textarea 
-                        value={editingPrompt?.content || ''} 
-                        onChange={e => setEditingPrompt(prev => prev ? {...prev, content: e.target.value} : null)}
-                        className="w-full h-64 bg-slate-100 rounded-xl p-3 text-xs font-mono resize-none focus:outline-none focus:ring-2 focus:ring-primary/20 leading-relaxed"
-                        placeholder="输入提示词内容..."
-                    />
-                </div>
-            </Modal>
-
-            {/* History Manager Modal */}
-            <Modal
-                isOpen={modalType === 'history-manager'} title="历史记录断点" onClose={() => setModalType('none')}
-                footer={<><button onClick={() => handleSetHistoryStart(undefined)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl">恢复全部</button><button onClick={() => setModalType('none')} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl">完成</button></>}
-            >
-                <div className="space-y-2 max-h-[50vh] overflow-y-auto no-scrollbar p-1">
-                    <p className="text-xs text-slate-400 text-center mb-2">点击某条消息，将其设为“新的起点”。此条之前的消息将被隐藏且不发送给 AI。</p>
-                    {messages.slice().reverse().map(m => (
-                        <div key={m.id} onClick={() => handleSetHistoryStart(m.id)} className={`p-3 rounded-xl border cursor-pointer text-xs flex gap-2 items-start ${char.hideBeforeMessageId === m.id ? 'bg-primary/10 border-primary ring-1 ring-primary' : 'bg-white border-slate-100 hover:bg-slate-50'}`}>
-                            <span className="text-slate-400 font-mono whitespace-nowrap pt-0.5">[{new Date(m.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}]</span>
-                            <div className="flex-1 min-w-0">
-                                <div className="font-bold text-slate-600 mb-0.5">{m.role === 'user' ? '我' : char.name}</div>
-                                <div className="text-slate-500 truncate">{m.content}</div>
-                            </div>
-                            {char.hideBeforeMessageId === m.id && <span className="text-primary font-bold text-[10px] bg-white px-2 rounded-full border border-primary/20">起点</span>}
-                        </div>
-                    ))}
-                </div>
-            </Modal>
-            
-            <Modal
-                isOpen={modalType === 'message-options'} title="消息操作" onClose={() => setModalType('none')}
-            >
-                <div className="space-y-3">
-                    <button onClick={handleEnterSelectionMode} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                        多选 / 批量删除
-                    </button>
-                    <button onClick={handleReplyMessage} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" /></svg>
-                        引用 / 回复
-                    </button>
-                    {selectedMessage?.type === 'text' && (
-                        <button onClick={handleEditMessage} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" /></svg>
-                            编辑内容
-                        </button>
-                    )}
-                    <button onClick={handleDeleteMessage} className="w-full py-3 bg-red-50 text-red-500 font-medium rounded-2xl active:bg-red-100 transition-colors flex items-center justify-center gap-2">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
-                        删除消息
-                    </button>
-                </div>
-            </Modal>
-            
-             <Modal
-                isOpen={modalType === 'delete-emoji'} title="删除表情包" onClose={() => setModalType('none')}
-                footer={<><button onClick={() => setModalType('none')} className="flex-1 py-3 bg-slate-100 rounded-2xl">取消</button><button onClick={handleDeleteEmoji} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl">删除</button></>}
-            >
-                <div className="flex flex-col items-center gap-4 py-2">
-                    {selectedEmoji && <img src={selectedEmoji.url} className="w-24 h-24 object-contain rounded-xl border" />}
-                    <p className="text-center text-sm text-slate-500">确定要删除这个表情包吗？</p>
-                </div>
-            </Modal>
-
-            <Modal
-                isOpen={modalType === 'edit-message'} title="编辑内容" onClose={() => setModalType('none')}
-                footer={<><button onClick={() => setModalType('none')} className="flex-1 py-3 bg-slate-100 rounded-2xl">取消</button><button onClick={confirmEditMessage} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl">保存</button></>}
-            >
-                <textarea 
-                    value={editContent} 
-                    onChange={e => setEditContent(e.target.value)} 
-                    className="w-full h-32 bg-slate-100 rounded-2xl p-4 resize-none focus:ring-1 focus:ring-primary/20 transition-all text-sm leading-relaxed" 
-                />
-            </Modal>
-
-            {/* Header */}
-            <div className="h-24 bg-white/80 backdrop-blur-xl px-5 flex items-end pb-4 border-b border-slate-200/60 shrink-0 z-30 sticky top-0 shadow-sm relative">
-                {selectionMode ? (
-                    <div className="flex items-center justify-between w-full">
-                        <button onClick={() => { setSelectionMode(false); setSelectedMsgIds(new Set()); }} className="text-sm font-bold text-slate-500 px-2 py-1">取消</button>
-                        <span className="text-sm font-bold text-slate-800">已选 {selectedMsgIds.size} 项</span>
-                        <div className="w-10"></div>
-                    </div>
-                ) : (
-                    <div className="flex items-center gap-3 w-full">
-                        <button onClick={closeApp} className="p-2 -ml-2 text-slate-500 hover:bg-slate-100 rounded-full"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
-    </svg></button>
-                        <div onClick={() => setShowPanel('chars')} className="flex-1 min-w-0 flex items-center gap-3 cursor-pointer">
-                            <img src={char.avatar} className="w-10 h-10 rounded-xl object-cover shadow-sm" alt="a" />
-                            <div>
-                                <div className="font-bold text-slate-800">{char.name}</div>
-                                <div className="flex items-center gap-2">
-                                    <div className="text-[10px] text-slate-400 uppercase">Online</div>
-                                    {lastTokenUsage && (
-                                        <div className="text-[9px] px-1.5 py-0.5 bg-slate-100 text-slate-400 rounded-md font-mono border border-slate-200">
-                                            ⚡ {lastTokenUsage}
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-                        <button onClick={() => triggerAI(messages)} disabled={isTyping} className={`p-2 rounded-full ${isTyping ? 'bg-slate-100' : 'bg-primary/10 text-primary'}`}><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" /></svg></button>
-                    </div>
-                )}
-                {isSummarizing && (
-                    <div className="absolute top-full left-0 w-full bg-indigo-50 border-b border-indigo-100 p-2 flex items-center justify-center gap-2">
-                        <div className="w-3 h-3 border-2 border-indigo-200 border-t-indigo-500 rounded-full animate-spin"></div>
-                        <span className="text-xs text-indigo-600 font-medium">正在整理记忆档案，请稍候...</span>
-                    </div>
-                )}
-            </div>
-
-            {/* Messages */}
-            <div ref={scrollRef} className="flex-1 overflow-y-auto pt-6 pb-6 no-scrollbar" style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}>
+             <ChatModals 
+                modalType={modalType} setModalType={setModalType}
+                transferAmt={transferAmt} setTransferAmt={setTransferAmt}
+                emojiImportText={emojiImportText} setEmojiImportText={setEmojiImportText}
+                settingsContextLimit={settingsContextLimit} setSettingsContextLimit={setSettingsContextLimit}
+                settingsHideSysLogs={settingsHideSysLogs} setSettingsHideSysLogs={setSettingsHideSysLogs}
+                preserveContext={preserveContext} setPreserveContext={setPreserveContext}
+                editContent={editContent} setEditContent={setEditContent}
+                archivePrompts={archivePrompts} selectedPromptId={selectedPromptId} setSelectedPromptId={setSelectedPromptId}
+                editingPrompt={editingPrompt} setEditingPrompt={setEditingPrompt} isSummarizing={isSummarizing}
+                selectedMessage={selectedMessage} selectedEmoji={selectedEmoji} activeCharacter={char} messages={messages}
                 
+                newCategoryName={newCategoryName} setNewCategoryName={setNewCategoryName} onAddCategory={handleAddCategory}
+
+                onTransfer={() => { if(transferAmt) handleSendText(`[转账]`, 'transfer', { amount: transferAmt }); setModalType('none'); }}
+                onImportEmoji={handleImportEmoji} 
+                onSaveSettings={saveSettings} onBgUpload={handleBgUpload} onRemoveBg={() => updateCharacter(char.id, { chatBackground: undefined })}
+                onClearHistory={handleClearHistory} onArchive={handleFullArchive}
+                onCreatePrompt={createNewPrompt} onEditPrompt={editSelectedPrompt} onSavePrompt={handleSavePrompt} onDeletePrompt={handleDeletePrompt}
+                onSetHistoryStart={handleSetHistoryStart} onEnterSelectionMode={handleEnterSelectionMode}
+                onReplyMessage={handleReplyMessage} onEditMessageStart={() => { if (selectedMessage) { setEditContent(selectedMessage.content); setModalType('edit-message'); } }}
+                onConfirmEditMessage={confirmEditMessage} onDeleteMessage={handleDeleteMessage} onDeleteEmoji={handleDeleteEmoji}
+             />
+             
+             <Modal
+                isOpen={modalType === 'delete-category'} title="删除分类" onClose={() => setModalType('none')}
+                footer={<><button onClick={() => setModalType('none')} className="flex-1 py-3 bg-slate-100 rounded-2xl">取消</button><button onClick={handleDeleteCategory} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl">删除</button></>}
+            >
+                <div className="py-4 text-center">
+                    <p className="text-sm text-slate-600">确定要删除分类 <br/><span className="font-bold">"{selectedCategory?.name}"</span> 吗？</p>
+                    <p className="text-[10px] text-red-400 mt-2">注意：分类下的所有表情也将被删除！</p>
+                </div>
+            </Modal>
+
+             <ChatHeader 
+                selectionMode={selectionMode}
+                selectedCount={selectedMsgIds.size}
+                onCancelSelection={() => { setSelectionMode(false); setSelectedMsgIds(new Set()); }}
+                activeCharacter={char}
+                isTyping={isTyping}
+                isSummarizing={isSummarizing}
+                lastTokenUsage={lastTokenUsage}
+                onClose={closeApp}
+                onTriggerAI={() => triggerAI(messages)}
+                onShowCharsPanel={() => setShowPanel('chars')}
+             />
+
+            <div ref={scrollRef} className="flex-1 overflow-y-auto pt-6 pb-6 no-scrollbar" style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}>
                 {messages.length > visibleCount && (
                     <div className="flex justify-center mb-6">
-                        <button 
-                            onClick={() => setVisibleCount(prev => prev + 30)}
-                            className="px-4 py-2 bg-white/50 backdrop-blur-sm rounded-full text-xs text-slate-500 shadow-sm border border-white hover:bg-white transition-colors"
-                        >
-                            加载历史消息 ({messages.length - visibleCount})
-                        </button>
+                        <button onClick={() => setVisibleCount(prev => prev + 30)} className="px-4 py-2 bg-white/50 backdrop-blur-sm rounded-full text-xs text-slate-500 shadow-sm border border-white hover:bg-white transition-colors">加载历史消息 ({messages.length - visibleCount})</button>
                     </div>
                 )}
 
@@ -1707,8 +943,8 @@ if (firstQuoteMatch) {
                             activeTheme={activeTheme}
                             charAvatar={char.avatar}
                             charName={char.name}
-                            userAvatar={userProfile.avatar} // Pass User Avatar
-                            onLongPress={handleMessageLongPress}
+                            userAvatar={userProfile.avatar}
+                            onLongPress={(msg) => { setSelectedMessage(msg); setModalType('message-options'); }}
                             selectionMode={selectionMode}
                             isSelected={selectedMsgIds.has(m.id)}
                             onToggleSelect={toggleMessageSelection}
@@ -1733,127 +969,37 @@ if (firstQuoteMatch) {
                 )}
             </div>
 
-            <div className="bg-white/90 backdrop-blur-2xl border-t border-slate-200/50 pb-safe shrink-0 z-40 shadow-[0_-5px_15px_rgba(0,0,0,0.02)] relative">
-                
-                {/* Reply Banner */}
+            <div className="relative z-40">
                 {replyTarget && (
                     <div className="flex items-center justify-between px-4 py-2 bg-slate-50 border-b border-slate-200 text-xs text-slate-500">
-                        <div className="flex items-center gap-2 truncate">
-                            <span className="font-bold text-slate-700">正在回复:</span>
-                            <span className="truncate max-w-[200px]">{replyTarget.content}</span>
-                        </div>
-                        <button onClick={() => setReplyTarget(null)} className="p-1 text-slate-400 hover:text-slate-600">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" /></svg>
-                        </button>
-                    </div>
-                )}
-
-                {selectionMode ? (
-                    <div className="p-3 flex justify-center bg-white/50 backdrop-blur-md">
-                        <button 
-                            onClick={handleBatchDelete} 
-                            className="w-full py-3 bg-red-500 text-white font-bold rounded-xl shadow-lg active:scale-95 transition-transform flex items-center justify-center gap-2"
-                        >
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
-                            删除选中 ({selectedMsgIds.size})
-                        </button>
-                    </div>
-                ) : (
-                    <div className="p-3 px-4 flex gap-3 items-end">
-                        <button onClick={() => setShowPanel(showPanel === 'actions' ? 'none' : 'actions')} className="w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-colors"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg></button>
-                        <div className="flex-1 bg-slate-100 rounded-[24px] flex items-center px-1 border border-transparent focus-within:bg-white focus-within:border-primary/30 transition-all">
-                            <textarea rows={1} value={input} onChange={handleInputChange} onKeyDown={e => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendText(); }}} className="flex-1 bg-transparent px-4 py-3 text-[15px] resize-none max-h-24" placeholder="Message..." style={{ height: 'auto' }} />
-                            <button onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className="p-2 text-slate-400 hover:text-primary"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.182 15.182a4.5 4.5 0 0 1-6.364 0M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM9.75 9.75c0 .414-.168.75-.375.75S9 10.164 9 9.75 9.168 9 9.375 9s.375.336.375.75Zm-.375 0h.008v.015h-.008V9.75Zm5.625 0c0 .414-.168.75-.375.75s-.375-.336-.375-.75.168-.75.375-.75.375.336.375.75Zm-.375 0h.008v.015h-.008V9.75Z" /></svg></button>
-                        </div>
-                        <button onClick={() => handleSendText()} disabled={!input.trim()} className={`w-11 h-11 rounded-full flex items-center justify-center transition-all ${input.trim() ? 'bg-primary text-white shadow-lg' : 'bg-slate-200 text-slate-400'}`}><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path d="M3.478 2.404a.75.75 0 0 0-.926.941l2.432 7.905H13.5a.75.75 0 0 1 0 1.5H4.984l-2.432 7.905a.75.75 0 0 0 .926.94 60.519 60.519 0 0 0 18.445-8.986.75.75 0 0 0 0-1.218A60.517 60.517 0 0 0 3.478 2.404Z" /></svg></button>
+                        <div className="flex items-center gap-2 truncate"><span className="font-bold text-slate-700">正在回复:</span><span className="truncate max-w-[200px]">{replyTarget.content}</span></div>
+                        <button onClick={() => setReplyTarget(null)} className="p-1 text-slate-400 hover:text-slate-600">×</button>
                     </div>
                 )}
                 
-                {/* ... Panel Content (Kept same) ... */}
-                {showPanel !== 'none' && !selectionMode && (
-                    <div className="bg-slate-50 h-72 border-t border-slate-200/60 overflow-y-auto no-scrollbar relative z-0">
-                         {showPanel === 'actions' && (
-                             <div className="p-6 grid grid-cols-4 gap-8">
-                                <button onClick={() => setModalType('transfer')} className="flex flex-col items-center gap-2 text-slate-600 active:scale-95 transition-transform"><div className="w-14 h-14 bg-orange-50 rounded-2xl flex items-center justify-center shadow-sm text-orange-400 border border-orange-100"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6"><path d="M12 7.5a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Z" /><path fillRule="evenodd" d="M1.5 4.875C1.5 3.839 2.34 3 3.375 3h17.25c1.035 0 1.875.84 1.875 1.875v9.75c0 1.036-.84 1.875-1.875 1.875H3.375A1.875 1.875 0 0 1 1.5 14.625v-9.75ZM8.25 9.75a3.75 3.75 0 1 1 7.5 0 3.75 3.75 0 0 1-7.5 0ZM18.75 9a.75.75 0 0 0-.75.75v.008c0 .414.336.75.75.75h.008a.75.75 0 0 0 .75-.75V9.75a.75.75 0 0 0-.75-.75h-.008ZM4.5 9.75A.75.75 0 0 1 5.25 9h.008a.75.75 0 0 1 .75.75v.008a.75.75 0 0 1-.75-.75H5.25a.75.75 0 0 1-.75-.75V9.75Z" clipRule="evenodd" /><path d="M2.25 18a.75.75 0 0 0 0 1.5c5.4 0 10.63.722 15.6 2.075 1.19.324 2.4-.558 2.4-1.82V18.75a.75.75 0 0 0-.75-.75H2.25Z" /></svg></div><span className="text-xs font-bold">转账</span></button>
-                                <button onClick={() => handleSendText('[戳一戳]', 'interaction')} className="flex flex-col items-center gap-2 text-slate-600 active:scale-95 transition-transform"><div className="w-14 h-14 bg-sky-50 rounded-2xl flex items-center justify-center shadow-sm text-2xl border border-sky-100">👉</div><span className="text-xs font-bold">戳一戳</span></button>
-                                <button onClick={() => setModalType('archive-settings')} className="flex flex-col items-center gap-2 text-slate-600 active:scale-95 transition-transform"><div className="w-14 h-14 bg-indigo-50 rounded-2xl flex items-center justify-center shadow-sm text-indigo-400 border border-indigo-100"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" /></svg></div><span className="text-xs font-bold">{isSummarizing ? '归档中...' : '记忆归档'}</span></button>
-                                <button onClick={() => setModalType('chat-settings')} className="flex flex-col items-center gap-2 text-slate-600 active:scale-95 transition-transform"><div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center shadow-sm text-slate-500 border border-slate-100"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 1 0 2.555c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.212 1.281c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-2.555c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg></div><span className="text-xs font-bold">设置</span></button>
-                                
-                                <button onClick={() => chatImageInputRef.current?.click()} className="flex flex-col items-center gap-2 text-slate-600 active:scale-95 transition-transform">
-                                    <div className="w-14 h-14 bg-pink-50 rounded-2xl flex items-center justify-center shadow-sm text-pink-400 border border-pink-100">
-                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
-                                            <path fillRule="evenodd" d="M1.5 6a2.25 2.25 0 0 1 2.25-2.25h16.5A2.25 2.25 0 0 1 22.5 6v12a2.25 2.25 0 0 1-2.25 2.25H3.75A2.25 2.25 0 0 1 1.5 18V6ZM3 16.06V18c0 .414.336.75.75.75h16.5A.75.75 0 0 0 21 18v-1.94l-2.69-2.689a1.5 1.5 0 0 0-2.12 0l-.88.879.97.97a.75.75 0 1 1-1.06 1.06l-5.16-5.159a1.5 1.5 0 0 0-2.12 0L3 16.061Zm10.125-7.81a1.125 1.125 0 1 1 2.25 0 1.125 1.125 0 0 1-2.25 0Z" clipRule="evenodd" />
-                                        </svg>
-                                    </div>
-                                    <span className="text-xs font-bold">相册</span>
-                                </button>
-                                <input type="file" ref={chatImageInputRef} className="hidden" accept="image/*" onChange={handleChatImageSelect} />
-
-                                {/* Moved Regenerate Button Here */}
-                                <button onClick={handleReroll} disabled={!canReroll} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${canReroll ? 'text-slate-600' : 'text-slate-300 opacity-50'}`}>
-                                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${canReroll ? 'bg-emerald-50 text-emerald-400 border-emerald-100' : 'bg-slate-50 text-slate-300 border-slate-100'}`}>
-                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-                                        </svg>
-                                    </div>
-                                    <span className="text-xs font-bold">重新生成</span>
-                                </button>
-
-                             </div>
-                         )}
-                         {showPanel === 'emojis' && (
-                            <div className="p-4 grid grid-cols-4 gap-3">
-                                <button onClick={() => setModalType('emoji-import')} className="aspect-square bg-slate-100 rounded-2xl border-2 border-dashed border-slate-300 flex items-center justify-center text-2xl text-slate-400">+</button>
-                                {emojis.map((e, i) => (
-                                    <button 
-                                        key={i} 
-                                        onClick={() => handleSendText(e.url, 'emoji')} 
-                                        onTouchStart={() => handleTouchStart(e, 'emoji')}
-                                        onTouchEnd={handleTouchEnd}
-                                        onMouseDown={() => handleTouchStart(e, 'emoji')}
-                                        onMouseUp={handleTouchEnd}
-                                        onMouseLeave={handleTouchEnd}
-                                        onContextMenu={(ev) => { ev.preventDefault(); setSelectedEmoji(e); setModalType('delete-emoji'); }}
-                                        className="aspect-square bg-white rounded-2xl p-2 shadow-sm relative active:scale-95 transition-transform"
-                                    >
-                                        <img src={e.url} className="w-full h-full object-contain pointer-events-none" />
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-                        {showPanel === 'chars' && (
-                            <div className="p-5 space-y-6">
-                                <div>
-                                    <h3 className="text-xs font-bold text-slate-400 px-1 tracking-wider uppercase mb-3">气泡样式</h3>
-                                    <div className="flex gap-3 px-1 overflow-x-auto no-scrollbar pb-2">
-                                        {Object.values(PRESET_THEMES).map(t => (
-                                            <button key={t.id} onClick={() => updateCharacter(char.id, { bubbleStyle: t.id })} className={`px-6 py-3 rounded-2xl text-xs font-bold border shrink-0 transition-all ${char.bubbleStyle === t.id ? 'bg-primary text-white border-primary' : 'bg-white border-slate-200 text-slate-600'}`}>{t.name}</button>
-                                        ))}
-                                        {customThemes.map(t => (
-                                            <div key={t.id} className="relative group shrink-0">
-                                                <button onClick={() => updateCharacter(char.id, { bubbleStyle: t.id })} className={`px-6 py-3 rounded-2xl text-xs font-bold border transition-all ${char.bubbleStyle === t.id ? 'bg-indigo-500 text-white border-indigo-500' : 'bg-indigo-50 border-indigo-100 text-indigo-600'}`}>
-                                                    {t.name} (DIY)
-                                                </button>
-                                                <button onClick={(e) => { e.stopPropagation(); removeCustomTheme(t.id); }} className="absolute -top-2 -right-2 bg-red-400 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs shadow-md opacity-0 group-hover:opacity-100 transition-opacity">×</button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                                <div>
-                                    <h3 className="text-xs font-bold text-slate-400 px-1 tracking-wider uppercase mb-3">切换会话</h3>
-                                    <div className="space-y-3">
-                                        {characters.map(c => (
-                                            <div key={c.id} onClick={() => { setActiveCharacterId(c.id); setShowPanel('none'); }} className={`flex items-center gap-4 p-3 rounded-[20px] border cursor-pointer ${c.id === activeCharacterId ? 'bg-white border-primary/30 shadow-md' : 'bg-white/50 border-transparent'}`}>
-                                                <img src={c.avatar} className="w-12 h-12 rounded-2xl object-cover" />
-                                                <div className="flex-1"><div className="font-bold text-sm text-slate-700">{c.name}</div><div className="text-xs text-slate-400 truncate">{c.description}</div></div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                )}
+                <ChatInputArea 
+                    input={input} setInput={handleInputChange}
+                    isTyping={isTyping} selectionMode={selectionMode}
+                    showPanel={showPanel} setShowPanel={setShowPanel}
+                    onSend={() => handleSendText()}
+                    onDeleteSelected={handleBatchDelete}
+                    selectedCount={selectedMsgIds.size}
+                    emojis={emojis.filter(e => {
+                        if (activeCategory === 'default') return !e.categoryId || e.categoryId === 'default';
+                        return e.categoryId === activeCategory;
+                    })}
+                    characters={characters} activeCharacterId={activeCharacterId}
+                    onCharSelect={(id) => { setActiveCharacterId(id); setShowPanel('none'); }}
+                    customThemes={customThemes} onUpdateTheme={(id) => updateCharacter(char.id, { bubbleStyle: id })}
+                    onRemoveTheme={removeCustomTheme} activeThemeId={currentThemeId}
+                    onPanelAction={handlePanelAction}
+                    onImageSelect={handleImageSelect}
+                    isSummarizing={isSummarizing}
+                    categories={categories}
+                    activeCategory={activeCategory}
+                    onReroll={handleReroll}
+                    canReroll={canReroll}
+                />
             </div>
         </div>
     );

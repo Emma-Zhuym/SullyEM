@@ -96,7 +96,7 @@ const Settings: React.FC = () => {
     }
   };
 
-  const handleExport = async (mode: 'data' | 'media') => {
+  const handleExport = async (mode: 'text_only' | 'media_only' | 'theme_only') => {
       try {
           // Trigger export (Context handles loading state UI)
           const blob = await exportSystem(mode);
@@ -207,14 +207,18 @@ const Settings: React.FC = () => {
             </div>
             
             <div className="grid grid-cols-2 gap-3 mb-3">
-                <button onClick={() => handleExport('data')} className="py-4 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2 relative overflow-hidden">
+                <button onClick={() => handleExport('text_only')} className="py-4 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2 relative overflow-hidden">
                     <div className="absolute top-0 right-0 px-1.5 py-0.5 bg-blue-100 text-[9px] text-blue-600 rounded-bl-lg font-bold">推荐</div>
-                    <div className="p-2 bg-blue-50 rounded-full text-blue-500"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" /></svg></div>
-                    <span>完整数据备份</span>
+                    <div className="p-2 bg-blue-50 rounded-full text-blue-500"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg></div>
+                    <span>纯文字备份</span>
                 </button>
-                 <button onClick={() => handleExport('media')} className="py-4 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2">
+                 <button onClick={() => handleExport('media_only')} className="py-4 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2">
                     <div className="p-2 bg-pink-50 rounded-full text-pink-500"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg></div>
                     <span>仅媒体素材</span>
+                </button>
+                <button onClick={() => handleExport('theme_only')} className="py-4 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-2 col-span-2">
+                    <div className="p-2 bg-purple-50 rounded-full text-purple-500"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M4.098 19.902a3.75 3.75 0 0 0 5.304 0l6.401-6.402M6.75 21A3.75 3.75 0 0 1 3 17.25V4.125C3 3.504 3.504 3 4.125 3h5.25c.621 0 1.125.504 1.125 1.125v4.072M6.75 21a3.75 3.75 0 0 0 3.75-3.75V8.197M6.75 21h13.125c.621 0 1.125-.504 1.125-1.125v-5.25c0-.621-.504-1.125-1.125-1.125h-4.072M10.5 8.197l2.88-2.88c.435-.435 1.133-.435 1.567 0l3.712 3.712c.435.435.435 1.133 0 1.567l-2.88 2.88M10.5 8.197V15.75" /></svg></div>
+                    <span>美化/主题素材</span>
                 </button>
             </div>
 
@@ -227,9 +231,10 @@ const Settings: React.FC = () => {
             </div>
             
             <p className="text-[10px] text-slate-400 px-1 mb-4 leading-relaxed">
-                • <b>新版备份</b>: 采用 ZIP 格式，将图片与数据分离，解决导出卡死问题，且文件体积更小。<br/>
-                • 兼容旧版 JSON 备份文件的导入。<br/>
-                • 包含 API 密钥的备份请妥善保管。
+                • <b>纯文字备份</b>: 包含所有聊天记录、角色设定、剧情数据。所有图片会被移除（减小体积）。<br/>
+                • <b>仅媒体素材</b>: 仅导出相册、表情包、聊天图片、头像等图片资源。<br/>
+                • <b>美化素材</b>: 仅导出主题气泡、壁纸、图标等外观配置。<br/>
+                • 兼容旧版 JSON 备份文件的导入。
             </p>
             
             <button onClick={() => setShowResetConfirm(true)} className="w-full py-3 bg-red-50 border border-red-100 text-red-500 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
@@ -303,7 +308,7 @@ const Settings: React.FC = () => {
         </section>
 
         <div className="text-center text-[10px] text-slate-300 pb-8 font-mono tracking-widest uppercase">
-            v2.0 (Zip Optimized)
+            v2.1 (Multi-Mode Backup)
         </div>
       </div>
 

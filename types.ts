@@ -1,5 +1,4 @@
 
-
 export enum AppID {
   Launcher = 'launcher',
   Settings = 'settings',
@@ -539,6 +538,19 @@ export interface Message {
     };
 }
 
+// Emoji types
+export interface EmojiCategory {
+    id: string;
+    name: string;
+    isSystem?: boolean; // Can't delete if true
+}
+
+export interface Emoji {
+    name: string;
+    url: string;
+    categoryId?: string; // Linked to EmojiCategory.id
+}
+
 export interface FullBackupData {
     timestamp: number;
     version: number;
@@ -551,7 +563,8 @@ export interface FullBackupData {
     groups?: GroupProfile[]; 
     messages?: Message[];
     customThemes?: ChatTheme[];
-    savedEmojis?: {name: string, url: string}[];
+    savedEmojis?: Emoji[]; // Updated Type
+    emojiCategories?: EmojiCategory[]; // New Backup Field
     savedJournalStickers?: {name: string, url: string}[]; 
     assets?: { id: string, data: string }[];
     galleryImages?: GalleryImage[];

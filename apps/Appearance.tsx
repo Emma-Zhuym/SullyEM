@@ -149,6 +149,12 @@ const Appearance: React.FC = () => {
                         </div>
                         <div>
                             <div className="flex justify-between text-xs text-slate-500 mb-2 font-medium">
+                                <span>Lightness</span><span>{theme.lightness}%</span>
+                            </div>
+                            <input type="range" min="10" max="95" value={theme.lightness} onChange={(e) => updateTheme({ lightness: parseInt(e.target.value) })} className="w-full h-1.5 bg-slate-200 rounded-full appearance-none cursor-pointer accent-primary" />
+                        </div>
+                        <div>
+                            <div className="flex justify-between text-xs text-slate-500 mb-2 font-medium">
                                 <span>Text/Widget Color</span>
                             </div>
                             <div className="flex gap-4 items-center bg-slate-50 p-2 rounded-xl border border-slate-100">

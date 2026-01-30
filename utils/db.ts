@@ -2,15 +2,16 @@
 import { 
     CharacterProfile, ChatTheme, Message, UserProfile, 
     Task, Anniversary, DiaryEntry, RoomTodo, RoomNote, 
-    GalleryImage, FullBackupData, GroupProfile, SocialPost, StudyCourse, GameSession, Worldbook, NovelBook 
+    GalleryImage, FullBackupData, GroupProfile, SocialPost, StudyCourse, GameSession, Worldbook, NovelBook, Emoji, EmojiCategory
 } from '../types';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 31; // Bumped Version for Schema Consistency
+const DB_VERSION = 32; // Bumped Version for Emoji Categories
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
 const STORE_EMOJIS = 'emojis';
+const STORE_EMOJI_CATEGORIES = 'emoji_categories'; // NEW
 const STORE_THEMES = 'themes';
 const STORE_ASSETS = 'assets'; 
 const STORE_SCHEDULED = 'scheduled_messages'; 
@@ -36,6 +37,19 @@ export interface ScheduledMessage {
     dueAt: number;
     createdAt: number;
 }
+
+// Built-in Presets
+const SULLY_CATEGORY_ID = 'cat_sully_exclusive';
+const SULLY_PRESET_EMOJIS = [
+    { name: 'Sully晚安', url: 'https://sharkpan.xyz/f/pWg6HQ/night.png', categoryId: SULLY_CATEGORY_ID },
+    { name: 'Sully无语', url: 'https://sharkpan.xyz/f/75wvuj/w.png', categoryId: SULLY_CATEGORY_ID },
+    { name: 'Sully偷看', url: 'https://sharkpan.xyz/f/MK77Ia/see.png', categoryId: SULLY_CATEGORY_ID },
+    { name: 'Sully打气', url: 'https://sharkpan.xyz/f/3WwMHe/fight.png', categoryId: SULLY_CATEGORY_ID },
+    { name: 'Sully生气', url: 'https://sharkpan.xyz/f/5nwxCj/an.png', categoryId: SULLY_CATEGORY_ID },
+    { name: 'Sully疑惑', url: 'https://sharkpan.xyz/f/ylWpfN/sDN.png', categoryId: SULLY_CATEGORY_ID },
+    { name: 'Sully道歉', url: 'https://sharkpan.xyz/f/QdnaU6/sorry.png', categoryId: SULLY_CATEGORY_ID },
+    { name: 'Sully等你消息', url: 'https://sharkpan.xyz/f/5nrJsj/wait.png', categoryId: SULLY_CATEGORY_ID },
+];
 
 const openDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
@@ -73,6 +87,8 @@ const openDB = (): Promise<IDBDatabase> => {
       }
       
       createStore(STORE_EMOJIS, { keyPath: 'name' });
+      createStore(STORE_EMOJI_CATEGORIES, { keyPath: 'id' }); // NEW
+
       createStore(STORE_THEMES, { keyPath: 'id' });
       createStore(STORE_ASSETS, { keyPath: 'id' });
       
@@ -295,7 +311,9 @@ export const DB = {
       transaction.objectStore(STORE_SOCIAL_POSTS).clear();
   },
 
-  getEmojis: async (): Promise<{name: string, url: string}[]> => {
+  // --- EMOJI & CATEGORY SECTION ---
+
+  getEmojis: async (): Promise<Emoji[]> => {
     const db = await openDB();
     return new Promise((resolve, reject) => {
       const transaction = db.transaction(STORE_EMOJIS, 'readonly');
@@ -306,10 +324,10 @@ export const DB = {
     });
   },
 
-  saveEmoji: async (name: string, url: string): Promise<void> => {
+  saveEmoji: async (name: string, url: string, categoryId?: string): Promise<void> => {
     const db = await openDB();
     const transaction = db.transaction(STORE_EMOJIS, 'readwrite');
-    transaction.objectStore(STORE_EMOJIS).put({ name, url });
+    transaction.objectStore(STORE_EMOJIS).put({ name, url, categoryId });
   },
 
   deleteEmoji: async (name: string): Promise<void> => {
@@ -317,6 +335,78 @@ export const DB = {
     const transaction = db.transaction(STORE_EMOJIS, 'readwrite');
     transaction.objectStore(STORE_EMOJIS).delete(name);
   },
+
+  // Category Logic
+  getEmojiCategories: async (): Promise<EmojiCategory[]> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          if (!db.objectStoreNames.contains(STORE_EMOJI_CATEGORIES)) {
+              resolve([]);
+              return;
+          }
+          const transaction = db.transaction(STORE_EMOJI_CATEGORIES, 'readonly');
+          const store = transaction.objectStore(STORE_EMOJI_CATEGORIES);
+          const request = store.getAll();
+          request.onsuccess = () => resolve(request.result || []);
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  saveEmojiCategory: async (category: EmojiCategory): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_EMOJI_CATEGORIES, 'readwrite');
+      transaction.objectStore(STORE_EMOJI_CATEGORIES).put(category);
+  },
+
+  deleteEmojiCategory: async (id: string): Promise<void> => {
+      const db = await openDB();
+      const tx = db.transaction([STORE_EMOJI_CATEGORIES, STORE_EMOJIS], 'readwrite');
+      
+      // 1. Delete Category
+      tx.objectStore(STORE_EMOJI_CATEGORIES).delete(id);
+      
+      // 2. Delete Emojis in Category
+      const emojiStore = tx.objectStore(STORE_EMOJIS);
+      const request = emojiStore.getAll();
+      request.onsuccess = () => {
+          const allEmojis = request.result as Emoji[];
+          allEmojis.forEach(e => {
+              if (e.categoryId === id) {
+                  emojiStore.delete(e.name);
+              }
+          });
+      };
+      
+      return new Promise((resolve, reject) => {
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+      });
+  },
+
+  // Helper to initialize default/sully emojis
+  initializeEmojiData: async (): Promise<void> => {
+      const cats = await DB.getEmojiCategories();
+      
+      // 1. Ensure Default Category
+      if (!cats.some(c => c.id === 'default')) {
+          await DB.saveEmojiCategory({ id: 'default', name: '默认', isSystem: true });
+      }
+
+      // 2. Ensure Sully Category
+      if (!cats.some(c => c.id === SULLY_CATEGORY_ID)) {
+          await DB.saveEmojiCategory({ id: SULLY_CATEGORY_ID, name: 'Sully 专属', isSystem: true });
+          
+          // Seed Sully Emojis
+          const db = await openDB();
+          const tx = db.transaction(STORE_EMOJIS, 'readwrite');
+          const store = tx.objectStore(STORE_EMOJIS);
+          SULLY_PRESET_EMOJIS.forEach(emoji => store.put(emoji));
+          
+          await new Promise(resolve => { tx.oncomplete = resolve; });
+      }
+  },
+
+  // --- THEMES & ASSETS ---
 
   getThemes: async (): Promise<ChatTheme[]> => {
     const db = await openDB();
@@ -741,11 +831,12 @@ export const DB = {
           });
       };
 
-      const [characters, messages, themes, emojis, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels] = await Promise.all([
+      const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels] = await Promise.all([
           getAllFromStore(STORE_CHARACTERS),
           getAllFromStore(STORE_MESSAGES),
           getAllFromStore(STORE_THEMES),
           getAllFromStore(STORE_EMOJIS),
+          getAllFromStore(STORE_EMOJI_CATEGORIES), // NEW
           getAllFromStore(STORE_ASSETS),
           getAllFromStore(STORE_GALLERY),
           getAllFromStore(STORE_USER),
@@ -770,7 +861,7 @@ export const DB = {
       } : undefined;
 
       return {
-          characters, messages, customThemes: themes, savedEmojis: emojis, assets, galleryImages, userProfile, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, savedJournalStickers: journalStickers, socialPosts, courses, games, worldbooks, novels
+          characters, messages, customThemes: themes, savedEmojis: emojis, emojiCategories, assets, galleryImages, userProfile, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, savedJournalStickers: journalStickers, socialPosts, courses, games, worldbooks, novels
       };
   },
 
@@ -778,7 +869,7 @@ export const DB = {
       const db = await openDB();
       
       const availableStores = [
-          STORE_CHARACTERS, STORE_MESSAGES, STORE_THEMES, STORE_EMOJIS, 
+          STORE_CHARACTERS, STORE_MESSAGES, STORE_THEMES, STORE_EMOJIS, STORE_EMOJI_CATEGORIES,
           STORE_ASSETS, STORE_GALLERY, STORE_USER, STORE_DIARIES, 
           STORE_TASKS, STORE_ANNIVERSARIES, STORE_ROOM_TODOS, STORE_ROOM_NOTES,
           STORE_GROUPS, STORE_JOURNAL_STICKERS, STORE_SOCIAL_POSTS, STORE_COURSES, STORE_GAMES, STORE_WORLDBOOKS, STORE_NOVELS
@@ -793,6 +884,15 @@ export const DB = {
           
           const store = tx.objectStore(storeName);
           store.clear();
+          items.forEach(item => store.put(item));
+      };
+
+      // NEW: Merge Store (Additive Restore)
+      const mergeStore = (storeName: string, items: any[]) => {
+          if (!availableStores.includes(storeName)) return;
+          if (!items || items.length === 0) return;
+          
+          const store = tx.objectStore(storeName);
           items.forEach(item => store.put(item));
       };
 
@@ -859,13 +959,30 @@ export const DB = {
            // SPECIAL Handling for Messages: Clear and Add only if messages exist
            if (availableStores.includes(STORE_MESSAGES) && data.messages.length > 0) {
                const store = tx.objectStore(STORE_MESSAGES);
-               store.clear();
-               data.messages.forEach(m => store.add(m)); 
+               
+               // Fix: If it's a "Media Only" patch (indicated by missing characters array but present mediaAssets), 
+               // we should MERGE (put) instead of CLEAR to preserve text messages from a previous "Text Only" import.
+               // Otherwise, for full backups/text backups, we clear to ensure clean state.
+               // "characters" key is present in full/text backup, but missing in media-only backup.
+               const isPatchMode = !data.characters;
+
+               if (!isPatchMode) {
+                   store.clear();
+               }
+               
+               // Use put() to support both adding and updating (for merging media back into text placeholders)
+               data.messages.forEach(m => store.put(m)); 
            }
       }
-      if (data.customThemes) clearAndAdd(STORE_THEMES, data.customThemes);
-      if (data.savedEmojis) clearAndAdd(STORE_EMOJIS, data.savedEmojis);
-      if (data.assets) clearAndAdd(STORE_ASSETS, data.assets);
+      
+      // MODIFIED: Use mergeStore for resources/assets/themes to allow additive imports
+      if (data.customThemes) mergeStore(STORE_THEMES, data.customThemes);
+      if (data.savedEmojis) mergeStore(STORE_EMOJIS, data.savedEmojis);
+      if (data.emojiCategories) mergeStore(STORE_EMOJI_CATEGORIES, data.emojiCategories); // NEW
+      if (data.assets) mergeStore(STORE_ASSETS, data.assets);
+      if (data.savedJournalStickers) mergeStore(STORE_JOURNAL_STICKERS, data.savedJournalStickers);
+
+      // Keep Clear & Add for stateful data
       if (data.galleryImages) clearAndAdd(STORE_GALLERY, data.galleryImages);
       if (data.diaries) clearAndAdd(STORE_DIARIES, data.diaries);
       if (data.tasks) clearAndAdd(STORE_TASKS, data.tasks);
@@ -873,7 +990,6 @@ export const DB = {
       if (data.roomTodos) clearAndAdd(STORE_ROOM_TODOS, data.roomTodos);
       if (data.roomNotes) clearAndAdd(STORE_ROOM_NOTES, data.roomNotes);
       if (data.groups) clearAndAdd(STORE_GROUPS, data.groups);
-      if (data.savedJournalStickers) clearAndAdd(STORE_JOURNAL_STICKERS, data.savedJournalStickers);
       if (data.socialPosts) clearAndAdd(STORE_SOCIAL_POSTS, data.socialPosts);
       if (data.courses) clearAndAdd(STORE_COURSES, data.courses);
       if (data.games) clearAndAdd(STORE_GAMES, data.games);

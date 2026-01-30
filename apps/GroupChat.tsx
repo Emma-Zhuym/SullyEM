@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useLayoutEffect, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { Message, GroupProfile, CharacterProfile, MessageType, ChatTheme, MemoryFragment } from '../types';
+import { Message, GroupProfile, CharacterProfile, MessageType, ChatTheme, MemoryFragment, EmojiCategory } from '../types';
 import Modal from '../components/os/Modal';
 import { ContextBuilder } from '../utils/context';
 import { processImage } from '../utils/file';
@@ -188,7 +188,8 @@ const GroupChat: React.FC = () => {
     const [selectedMsgIds, setSelectedMsgIds] = useState<Set<number>>(new Set());
 
     // Data State
-    const [emojis, setEmojis] = useState<{name: string, url: string}[]>([]);
+    const [emojis, setEmojis] = useState<{name: string, url: string, categoryId?: string}[]>([]);
+    const [categories, setCategories] = useState<EmojiCategory[]>([]); // New
     
     // Create/Edit Group State
     const [tempGroupName, setTempGroupName] = useState('');
@@ -206,7 +207,11 @@ const GroupChat: React.FC = () => {
             DB.getGroupMessages(activeGroup.id).then(msgs => {
                 setMessages(msgs.sort((a, b) => a.timestamp - b.timestamp));
             });
-            DB.getEmojis().then(setEmojis);
+            // Fetch emojis AND categories
+            Promise.all([DB.getEmojis(), DB.getEmojiCategories()]).then(([es, cats]) => {
+                setEmojis(es);
+                setCategories(cats);
+            });
         }
     }, [activeGroup]);
 
@@ -594,7 +599,25 @@ ${recentPrivate || '(暂无私聊)'}
                 return `${name}: ${content}`;
             }).join('\n');
 
-            const emojiNames = emojis.map(e => e.name).join(', ');
+            // NEW: Build Categorized Emoji Context
+            const emojiContextStr = (() => {
+                if (emojis.length === 0) return '无';
+                
+                const grouped: Record<string, string[]> = {};
+                const catMap: Record<string, string> = { 'default': '通用' };
+                categories.forEach(c => catMap[c.id] = c.name);
+                
+                emojis.forEach(e => {
+                    const cid = e.categoryId || 'default';
+                    if (!grouped[cid]) grouped[cid] = [];
+                    grouped[cid].push(e.name);
+                });
+                
+                return Object.entries(grouped).map(([cid, names]) => {
+                    const cName = catMap[cid] || '其他';
+                    return `${cName}: [${names.join(', ')}]`;
+                }).join('; ');
+            })();
 
             const prompt = `${context}
 
@@ -612,8 +635,7 @@ ${recentGroupMsgs}
 3. **表情包支持**:
    - 角色可以发送表情包。
    - 必须使用格式: \`[[SEND_EMOJI: 表情名称]]\`
-   - 可用表情: [${emojiNames}]
-   - 例如: \`[[SEND_EMOJI: happy]]\`
+   - **可用表情 (按分类)**: ${emojiContextStr}
 4. **气泡分段 (Bubble Splitting)**:
    - 就像真人聊天一样，如果一个角色要说长话，或者有停顿，请把内容分成多条消息。
    - 或者在一条内容中，使用句号 "。" 作为自然的分隔符（前端会自动拆分）。
