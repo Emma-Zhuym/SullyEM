@@ -1,7 +1,7 @@
 
 import React, { useRef } from 'react';
 import Modal from '../os/Modal';
-import { CharacterProfile, Message } from '../../types';
+import { CharacterProfile, Message, EmojiCategory } from '../../types';
 
 interface ChatModalsProps {
     modalType: string;
@@ -36,6 +36,7 @@ interface ChatModalsProps {
     // Selection Props
     selectedMessage: Message | null;
     selectedEmoji: {name: string, url: string} | null;
+    selectedCategory: EmojiCategory | null;
     activeCharacter: CharacterProfile;
     messages: Message[];
 
@@ -58,6 +59,7 @@ interface ChatModalsProps {
     onConfirmEditMessage: () => void;
     onDeleteMessage: () => void;
     onDeleteEmoji: () => void;
+    onDeleteCategory: () => void;
 }
 
 const ChatModals: React.FC<ChatModalsProps> = ({
@@ -71,11 +73,11 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     newCategoryName, setNewCategoryName, onAddCategory,
     archivePrompts, selectedPromptId, setSelectedPromptId,
     editingPrompt, setEditingPrompt, isSummarizing,
-    selectedMessage, selectedEmoji, activeCharacter, messages,
+    selectedMessage, selectedEmoji, selectedCategory, activeCharacter, messages,
     onTransfer, onImportEmoji, onSaveSettings,
     onBgUpload, onRemoveBg, onClearHistory,
     onArchive, onCreatePrompt, onEditPrompt, onSavePrompt, onDeletePrompt,
-    onSetHistoryStart, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onDeleteMessage, onDeleteEmoji
+    onSetHistoryStart, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onDeleteMessage, onDeleteEmoji, onDeleteCategory
 }) => {
     const bgInputRef = useRef<HTMLInputElement>(null);
 
@@ -256,6 +258,17 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                 <div className="flex flex-col items-center gap-4 py-2">
                     {selectedEmoji && <img src={selectedEmoji.url} className="w-24 h-24 object-contain rounded-xl border" />}
                     <p className="text-center text-sm text-slate-500">确定要删除这个表情包吗？</p>
+                </div>
+            </Modal>
+
+            {/* Delete Category Modal */}
+            <Modal
+                isOpen={modalType === 'delete-category'} title="删除分类" onClose={() => setModalType('none')}
+                footer={<><button onClick={() => setModalType('none')} className="flex-1 py-3 bg-slate-100 rounded-2xl">取消</button><button onClick={onDeleteCategory} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl">删除</button></>}
+            >
+                <div className="py-4 text-center">
+                    <p className="text-sm text-slate-600">确定要删除分类 <br/><span className="font-bold">"{selectedCategory?.name}"</span> 吗？</p>
+                    <p className="text-[10px] text-red-400 mt-2">注意：分类下的所有表情也将被删除！</p>
                 </div>
             </Modal>
 

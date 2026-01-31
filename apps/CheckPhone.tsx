@@ -1,8 +1,3 @@
-
-
-
-
-
 import React, { useState, useEffect, useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
@@ -391,7 +386,7 @@ Format:
     const renderChatList = () => {
         const list = records.filter(r => r.type === 'chat').sort((a,b) => b.timestamp - a.timestamp);
         return (
-            <div className="fixed inset-0 w-full h-full flex flex-col bg-slate-50 z-10">
+            <div className="absolute inset-0 w-full h-full flex flex-col bg-slate-50 z-10">
                 {renderHeader('Message', () => setActiveAppId('home'))}
                 <div className="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar pb-24 overscroll-contain">
                     {list.length === 0 && <div className="text-center text-slate-400 mt-20 text-xs">暂无聊天记录</div>}
@@ -440,8 +435,8 @@ Format:
         });
 
         return (
-            // FIX: Changed from 'absolute' to 'fixed inset-0 z-50 w-full h-full' to prevent layout gaps
-            <div className="fixed inset-0 w-full h-full flex flex-col bg-[#f2f2f2] z-50">
+            // FIX: Use absolute inset-0 to stay within the safe area padding provided by PhoneShell
+            <div className="absolute inset-0 w-full h-full flex flex-col bg-[#f2f2f2] z-50">
                 {renderHeader(selectedChatRecord.title, () => setActiveAppId('chat'))}
                 
                 <div className="flex-1 overflow-y-auto p-4 space-y-3 no-scrollbar overscroll-contain">
@@ -490,7 +485,7 @@ Format:
     const renderCallList = () => {
         const list = records.filter(r => r.type === 'call').sort((a,b) => b.timestamp - a.timestamp);
         return (
-            <div className="fixed inset-0 w-full h-full flex flex-col bg-white z-10">
+            <div className="absolute inset-0 w-full h-full flex flex-col bg-white z-10">
                 {renderHeader('Recents', () => setActiveAppId('home'))}
                 <div className="flex-1 overflow-y-auto no-scrollbar pb-24 overscroll-contain">
                     {list.length === 0 && <div className="text-center text-slate-400 mt-20 text-xs">暂无通话记录</div>}
@@ -529,7 +524,7 @@ Format:
         const list = records.filter(r => r.type === appId).sort((a,b) => b.timestamp - a.timestamp);
         
         return (
-            <div className="fixed inset-0 w-full h-full flex flex-col bg-slate-50 z-10">
+            <div className="absolute inset-0 w-full h-full flex flex-col bg-slate-50 z-10">
                 {renderHeader(appName, () => setActiveAppId('home'))}
                 
                 <div className="flex-1 overflow-y-auto p-4 space-y-3 no-scrollbar pb-24 overscroll-contain">
@@ -688,7 +683,7 @@ Format:
     // Phone View Container
     // FIXED: Use absolute inset-0 to force fill parent container properly
     return (
-        <div className="absolute inset-0 w-full h-full bg-slate-900 overflow-hidden font-sans overscroll-none">
+        <div className="relative w-full h-full bg-slate-900 overflow-hidden font-sans overscroll-none">
             {showDebug && <LayoutInspector />}
             {activeAppId === 'home' ? renderDesktop() : (
                 <>

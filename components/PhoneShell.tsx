@@ -73,7 +73,7 @@ class AppErrorBoundary extends Component<{ children: React.ReactNode, onCloseApp
 }
 
 const PhoneShell: React.FC = () => {
-  const { theme, isLocked, unlock, activeApp, closeApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters } = useOS();
+  const { theme, isLocked, unlock, activeApp, closeApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters, handleBack } = useOS();
 
   // Capacitor Native Handling
   useEffect(() => {
@@ -101,10 +101,10 @@ const PhoneShell: React.FC = () => {
             try {
                 await CapApp.removeAllListeners();
                 CapApp.addListener('backButton', ({ canGoBack }) => {
-                    if (activeApp !== AppID.Launcher) {
-                        closeApp();
-                    } else if (!isLocked) {
+                    if (isLocked) {
                         CapApp.exitApp();
+                    } else {
+                        handleBack(); // Delegate to OSContext logic
                     }
                 });
             } catch (e) { console.log('Back button listener setup failed'); }
@@ -118,7 +118,7 @@ const PhoneShell: React.FC = () => {
             CapApp.removeAllListeners().catch(() => {});
         }
     };
-  }, [activeApp, isLocked, closeApp]);
+  }, [activeApp, isLocked, closeApp, handleBack]);
 
   // Force scroll to top when app changes to prevent "push up" glitches on iOS
   useEffect(() => {

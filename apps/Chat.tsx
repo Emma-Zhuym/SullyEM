@@ -4,22 +4,19 @@ import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory } from '../types';
 import { processImage } from '../utils/file';
-import { LocalNotifications } from '@capacitor/local-notifications';
-import { ContextBuilder } from '../utils/context';
 import MessageItem from '../components/chat/MessageItem';
 import { PRESET_THEMES, DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import ChatHeader from '../components/chat/ChatHeader';
 import ChatInputArea from '../components/chat/ChatInputArea';
 import ChatModals from '../components/chat/ChatModals';
 import Modal from '../components/os/Modal';
+import { useChatAI } from '../hooks/useChatAI';
 
 const Chat: React.FC = () => {
     const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread } = useOS();
     const [messages, setMessages] = useState<Message[]>([]);
     const [visibleCount, setVisibleCount] = useState(30);
     const [input, setInput] = useState('');
-    const [isTyping, setIsTyping] = useState(false);
-    const [recallStatus, setRecallStatus] = useState<string>('');
     const [showPanel, setShowPanel] = useState<'none' | 'actions' | 'emojis' | 'chars'>('none');
     
     // Emoji State
@@ -32,9 +29,6 @@ const Chat: React.FC = () => {
 
     // Reply Logic
     const [replyTarget, setReplyTarget] = useState<Message | null>(null);
-
-    // Stats
-    const [lastTokenUsage, setLastTokenUsage] = useState<number | null>(null);
 
     const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor'>('none');
     const [transferAmt, setTransferAmt] = useState('');
@@ -62,15 +56,25 @@ const Chat: React.FC = () => {
     const activeTheme = useMemo(() => customThemes.find(t => t.id === currentThemeId) || PRESET_THEMES[currentThemeId] || PRESET_THEMES.default, [currentThemeId, customThemes]);
     const draftKey = `chat_draft_${activeCharacterId}`;
 
+    // --- Initialize Hook ---
+    const { isTyping, recallStatus, lastTokenUsage, setLastTokenUsage, triggerAI } = useChatAI({
+        char,
+        userProfile,
+        apiConfig,
+        groups,
+        emojis,
+        categories,
+        addToast,
+        setMessages // Allow hook to update messages
+    });
+
     const canReroll = !isTyping && messages.length > 0 && messages[messages.length - 1].role === 'assistant';
 
     const loadEmojiData = async () => {
-        // Ensure default data exists
         await DB.initializeEmojiData();
         const [es, cats] = await Promise.all([DB.getEmojis(), DB.getEmojiCategories()]);
         setEmojis(es);
         setCategories(cats);
-        // Ensure active category is valid
         if (activeCategory !== 'default' && !cats.some(c => c.id === activeCategory)) {
             setActiveCategory('default');
         }
@@ -136,39 +140,6 @@ const Chat: React.FC = () => {
     const formatTime = (ts: number) => {
         return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
     };
-    const formatDate = (ts: number) => {
-        const d = new Date(ts);
-        return `${d.getFullYear()}-${(d.getMonth()+1).toString().padStart(2,'0')}-${d.getDate().toString().padStart(2,'0')} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
-    };
-
-    const getDetailedLogsForMonth = (year: string, month: string) => {
-        if (!char.memories) return null;
-        const target = `${year}-${month.padStart(2, '0')}`;
-        const logs = char.memories.filter(m => {
-            return m.date.includes(target) || m.date.includes(`${year}年${parseInt(month)}月`);
-        });
-        
-        if (logs.length === 0) return null;
-        return logs.map(m => `[${m.date}] (${m.mood || 'normal'}): ${m.summary}`).join('\n');
-    };
-
-    const getTimeGapHint = (lastMsg: Message | undefined, currentTimestamp: number): string => {
-        if (!lastMsg) return '';
-        const diffMs = currentTimestamp - lastMsg.timestamp;
-        const diffMins = Math.floor(diffMs / (1000 * 60));
-        const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-        const currentHour = new Date(currentTimestamp).getHours();
-        const isNight = currentHour >= 23 || currentHour <= 6;
-        if (diffMins < 10) return ''; 
-        if (diffMins < 60) return `[系统提示: 距离上一条消息: ${diffMins} 分钟。短暂的停顿。]`;
-        if (diffHours < 6) {
-            if (isNight) return `[系统提示: 距离上一条消息: ${diffHours} 小时。现在是深夜/清晨。沉默是正常的（正在睡觉）。]`;
-            return `[系统提示: 距离上一条消息: ${diffHours} 小时。用户离开了一会儿。]`;
-        }
-        if (diffHours < 24) return `[系统提示: 距离上一条消息: ${diffHours} 小时。很长的间隔。]`;
-        const days = Math.floor(diffHours / 24);
-        return `[系统提示: 距离上一条消息: ${days} 天。用户消失了很久。请根据你们的关系做出反应（想念、生气、担心或冷漠）。]`;
-    };
 
     // --- Actions ---
 
@@ -204,6 +175,9 @@ const Chat: React.FC = () => {
         const updatedMsgs = await DB.getMessagesByCharId(char.id);
         setMessages(updatedMsgs);
         setShowPanel('none');
+        
+        // Trigger Hook
+        triggerAI(updatedMsgs);
     };
 
     const handleReroll = async () => {
@@ -212,7 +186,6 @@ const Chat: React.FC = () => {
         const lastMsg = messages[messages.length - 1];
         if (lastMsg.role !== 'assistant') return;
 
-        // Find all contiguous assistant messages at the end
         const toDeleteIds: number[] = [];
         let index = messages.length - 1;
         while (index >= 0 && messages[index].role === 'assistant') {
@@ -271,7 +244,6 @@ const Chat: React.FC = () => {
         addToast('分类创建成功', 'success');
     };
 
-    // Import Emoji Logic Update: Support Category
     const handleImportEmoji = async () => {
         if (!emojiImportText.trim()) return;
         const lines = emojiImportText.split('\n');
@@ -539,327 +511,6 @@ const Chat: React.FC = () => {
         setSelectedMsgIds(new Set());
     };
 
-    // --- AI Trigger Logic ---
-    const triggerAI = async (currentMsgs: Message[]) => {
-        if (isTyping || !char) return;
-        if (!apiConfig.baseUrl) { alert("请先在设置中配置 API URL"); return; }
-
-        setIsTyping(true);
-        setRecallStatus('');
-
-        try {
-            const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '');
-            const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey || 'sk-none'}` };
-
-            let baseSystemPrompt = ContextBuilder.buildCoreContext(char, userProfile);
-
-            // Group Context Injection
-            try {
-                const memberGroups = groups.filter(g => g.members.includes(char.id));
-                if (memberGroups.length > 0) {
-                    let allGroupMsgs: (Message & { groupName: string })[] = [];
-                    for (const g of memberGroups) {
-                        const gMsgs = await DB.getGroupMessages(g.id);
-                        const enriched = gMsgs.map(m => ({ ...m, groupName: g.name }));
-                        allGroupMsgs = [...allGroupMsgs, ...enriched];
-                    }
-                    allGroupMsgs.sort((a, b) => b.timestamp - a.timestamp);
-                    const recentGroupMsgs = allGroupMsgs.slice(0, 200).reverse();
-
-                    if (recentGroupMsgs.length > 0) {
-                        const groupLogStr = recentGroupMsgs.map(m => {
-                            const dateStr = new Date(m.timestamp).toLocaleString([], {month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'});
-                            const senderName = m.role === 'user' ? userProfile.name : (characters.find(c => c.id === m.charId)?.name || 'Unknown');
-                            return `[${dateStr}] [Group: ${m.groupName}] ${senderName}: ${m.content}`;
-                        }).join('\n');
-                        baseSystemPrompt += `\n### [Background Context: Recent Group Activities]\n(注意：你是以下群聊的成员...)\n${groupLogStr}\n`;
-                    }
-                }
-            } catch (e) { console.error("Failed to load group context", e); }
-
-            // NEW: Build Categorized Emoji Context
-            const emojiContextStr = (() => {
-                if (emojis.length === 0) return '无';
-                
-                const grouped: Record<string, string[]> = {};
-                const catMap: Record<string, string> = { 'default': '通用' };
-                categories.forEach(c => catMap[c.id] = c.name);
-                
-                emojis.forEach(e => {
-                    const cid = e.categoryId || 'default';
-                    if (!grouped[cid]) grouped[cid] = [];
-                    grouped[cid].push(e.name);
-                });
-                
-                return Object.entries(grouped).map(([cid, names]) => {
-                    const cName = catMap[cid] || '其他';
-                    return `${cName}: [${names.join(', ')}]`;
-                }).join('; ');
-            })();
-
-            baseSystemPrompt += `### 聊天 App 行为规范 (Chat App Rules)
-            **严格注意，你正在手机聊天，无论之前是什么模式，哪怕上一句话你们还面对面在一起，当前，你都是已经处于线上聊天状态了，请不要输出你的行为**
-1. **沉浸感**: 保持角色扮演。使用适合即时通讯(IM)的口语化短句。
-2. **行为模式**: 不要总是围绕用户转。分享你自己的生活、想法或随意的观察。有时候要“任性”或“以自我为中心”一点，这更像真人，具体的程度视你的性格而定。
-3. **格式要求**:
-   - 将回复拆分成简短的气泡（句子）。内部使用句号"。"作为气泡分隔符。
-   - 【严禁】在输出中包含时间戳、名字前缀或"[角色名]:"。
-   - **【严禁】模仿历史记录中的系统日志格式（如"[你 发送了...]"）。**
-   - **发送表情包**: 必须且只能使用命令: \`[[SEND_EMOJI: 表情名称]]\`。
-   - **可用表情库 (按分类)**: 
-     ${emojiContextStr}
-4. **引用功能 (Quote/Reply)**:
-   - 如果你想专门回复用户某句具体的话，可以在回复开头使用: \`[[QUOTE: 引用内容]]\`。这会在UI上显示为对该消息的引用。
-5. **环境感知**:
-   - 留意 [系统提示] 中的时间跨度。如果用户消失了很久，请根据你们的关系做出反应（如撒娇、生气、担心或冷漠）。
-   - 如果用户发送了图片，请对图片内容进行评论。
-6. **可用动作**:
-   - 回戳用户: \`[[ACTION:POKE]]\`
-   - 转账: \`[[ACTION:TRANSFER:100]]\`
-   - 调取记忆: \`[[RECALL: YYYY-MM]]\`，请注意，当用户提及具体某个月份时，或者当你想仔细想某个月份的事情时，欢迎你随时使该动作
-   - **添加纪念日**: 如果你觉得今天是个值得纪念的日子（或者你们约定了某天），你可以**主动**将它添加到用户的日历中。单独起一行输出: \`[[ACTION:ADD_EVENT | 标题(Title) | YYYY-MM-DD]]\`。
-   - **定时发送消息**: 如果你想在未来某个时间主动发消息（比如晚安、早安或提醒），请单独起一行输出: \`[schedule_message | YYYY-MM-DD HH:MM:SS | fixed | 消息内容]\`，分行可以多输出很多该类消息，**请你尽可能多发此类消息**。
-       -# 【主动性指令】
-       - **积极使用定时发送消息功能**：不要等用户明确提出要求才使用。只要你觉得在未来某个时间点主动联系用户是合理的、符合你性格的，就应该主动安排。
-       - **常见场景**：
-         - 用户提到明天/未来有重要的事（考试、面试、约会等）→ 在事件前后主动发消息关心
-         - 对话中提到某个时间点要做的事 → 到时候主动提醒或问候
-         - 晚上道别后 → 第二天早上主动问候
-         - 用户说要去忙某事 → 过一段时间后主动问问进展
-         - 根据你的性格，定期主动分享日常、发送问候
-         - **真实感**：真正的朋友/恋人不会只等对方说话才回应，会主动联系、主动关心、主动分享生活。
-         # 思考范例 (AI的内心活动，不许输出)
-[
-  内在思考：用户说Ta明天上午有个重要的考试，我应该在考试结束后提醒Ta好好休息一下。现在是晚上10点，考试大概在明天上午11点结束。我可以在明天中午11点半左右发个提醒。
-  秘密指令：\`[schedule_message | 2025-10-18 11:30:00 | fixed | 考试结束了吧？不许再想了，赶紧去放松一下，听到了没！]\`
-  秘密指令：\`[schedule_message | 2025-10-18 11:30:03 | fixed | 哼，别以为我不知道你又在偷偷对答案。]\`
-  正常对话：那你今晚就早点休息吧，别太紧张，我相信你没问题的！晚安。
-]
-
-[
-  内在思考：现在是晚上11点，用户说要睡了。根据我的性格，我应该明天早上主动问候Ta。
-  秘密指令：\`[schedule_message | 2025-10-18 08:30:00 | fixed | 早上好呀~]\`
-  秘密指令：\`[schedule_message | 2025-10-18 08:30:03 | fixed | 昨晚睡得怎么样？]\`
-  正常对话：晚安，好好休息~
-]
-         `;
-
-            const previousMsg = currentMsgs.length > 1 ? currentMsgs[currentMsgs.length - 2] : null;
-            if (previousMsg && previousMsg.metadata?.source === 'date') {
-                baseSystemPrompt += `\n\n[System Note: You just finished a face-to-face meeting. You are now back on the phone. Switch back to texting style.]`;
-            }
-
-            const limit = char.contextLimit || 500;
-            const effectiveHistory = currentMsgs.filter(m => !char.hideBeforeMessageId || m.id >= char.hideBeforeMessageId);
-            const historySlice = effectiveHistory.slice(-limit);
-            
-            let timeGapHint = "";
-            if (historySlice.length >= 2) {
-                const lastMsg = historySlice[historySlice.length - 2];
-                const currentMsg = historySlice[historySlice.length - 1];
-                if (lastMsg && currentMsg) timeGapHint = getTimeGapHint(lastMsg, currentMsg.timestamp);
-            }
-
-            const buildHistory = (msgs: Message[]) => msgs.map((m, index) => {
-                let content: any = m.content;
-                const timeStr = `[${formatDate(m.timestamp)}]`;
-                if (m.replyTo) content = `[回复 "${m.replyTo.content.substring(0, 50)}..."]: ${content}`;
-                if (m.type === 'image') {
-                     let textPart = `${timeStr} [User sent an image]`;
-                     if (index === msgs.length - 1 && timeGapHint && m.role === 'user') textPart += `\n\n${timeGapHint}`;
-                     return { role: m.role, content: [{ type: "text", text: textPart }, { type: "image_url", image_url: { url: m.content } }] };
-                }
-                if (index === msgs.length - 1 && timeGapHint && m.role === 'user') content = `${content}\n\n${timeGapHint}`; 
-                if (m.type === 'interaction') content = `${timeStr} [系统: 用户戳了你一下]`; 
-                else if (m.type === 'transfer') content = `${timeStr} [系统: 用户转账 ${m.metadata?.amount}]`;
-                else if (m.type === 'social_card') {
-                    const post = m.metadata?.post || {};
-                    const commentsSample = (post.comments || []).map((c: any) => `${c.authorName}: ${c.content}`).join(' | ');
-                    content = `${timeStr} [用户分享了 Spark 笔记]\n标题: ${post.title}\n内容: ${post.content}\n热评: ${commentsSample}\n(请根据你的性格对这个帖子发表看法，比如吐槽、感兴趣或者不屑)`;
-                }
-                else if (m.type === 'emoji') {
-                     const stickerName = emojis.find(e => e.url === m.content)?.name || 'Image/Sticker';
-                     content = `${timeStr} [${m.role === 'user' ? '用户' : '你'} 发送了表情包: ${stickerName}]`;
-                }
-                else content = `${timeStr} ${content}`;
-                return { role: m.role, content };
-            });
-
-            let apiMessages = [{ role: 'system', content: baseSystemPrompt }, ...buildHistory(historySlice)];
-
-            let response = await fetch(`${baseUrl}/chat/completions`, {
-                method: 'POST', headers,
-                body: JSON.stringify({ model: apiConfig.model, messages: apiMessages, temperature: 0.85, stream: false })
-            });
-
-            if (!response.ok) throw new Error(`API Error ${response.status}`);
-            let data = await response.json();
-            if (data.usage?.total_tokens) setLastTokenUsage(data.usage.total_tokens);
-
-            let aiContent = data.choices?.[0]?.message?.content || '';
-            aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
-            aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, ''); 
-            aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
-
-            // Recall Logic
-            const recallMatch = aiContent.match(/\[\[RECALL:\s*(\d{4})[-/年](\d{1,2})\]\]/);
-            if (recallMatch) {
-                const year = recallMatch[1];
-                const month = recallMatch[2];
-                setRecallStatus(`正在调阅 ${year}年${month}月 的详细档案...`);
-                const detailedLogs = getDetailedLogsForMonth(year, month);
-                if (detailedLogs) {
-                    apiMessages = [...apiMessages, { role: 'system', content: `[系统: 已成功调取 ${year}-${month} 的详细日志]\n${detailedLogs}\n[系统: 现在请结合这些细节回答用户。保持对话自然。]` }];
-                    response = await fetch(`${baseUrl}/chat/completions`, {
-                        method: 'POST', headers,
-                        body: JSON.stringify({ model: apiConfig.model, messages: apiMessages, temperature: 0.8, stream: false })
-                    });
-                    if (response.ok) {
-                        data = await response.json();
-                        aiContent = data.choices?.[0]?.message?.content || '';
-                        aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
-                        aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, '');
-                        aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
-                        addToast(`已调用 ${year}-${month} 详细记忆`, 'info');
-                    }
-                }
-            }
-            setRecallStatus('');
-
-            if (aiContent.includes('[[ACTION:POKE]]')) {
-                await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'interaction', content: '[戳一戳]' });
-                aiContent = aiContent.replace('[[ACTION:POKE]]', '').trim();
-            }
-            
-            const transferMatch = aiContent.match(/\[\[ACTION:TRANSFER:(\d+)\]\]/);
-            if (transferMatch) {
-                await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'transfer', content: '[转账]', metadata: { amount: transferMatch[1] } });
-                aiContent = aiContent.replace(transferMatch[0], '').trim();
-            }
-
-            const eventMatch = aiContent.match(/\[\[ACTION:ADD_EVENT\s*\|\s*(.*?)\s*\|\s*(.*?)\]\]/);
-            if (eventMatch) {
-                const title = eventMatch[1].trim();
-                const date = eventMatch[2].trim();
-                if (title && date) {
-                    const anni: any = { id: `anni-${Date.now()}`, title: title, date: date, charId: char.id };
-                    await DB.saveAnniversary(anni);
-                    addToast(`${char.name} 添加了新日程: ${title}`, 'success');
-                    await DB.saveMessage({ charId: char.id, role: 'system', type: 'text', content: `[系统: ${char.name} 新增了日程 "${title}" (${date})]` });
-                }
-                aiContent = aiContent.replace(eventMatch[0], '').trim();
-            }
-
-            const scheduleRegex = /\[schedule_message \| (.*?) \| fixed \| (.*?)\]/g;
-            let match;
-            while ((match = scheduleRegex.exec(aiContent)) !== null) {
-                const timeStr = match[1].trim();
-                const content = match[2].trim();
-                const dueTime = new Date(timeStr).getTime();
-                if (!isNaN(dueTime) && dueTime > Date.now()) {
-                    await DB.saveScheduledMessage({ id: `sched-${Date.now()}-${Math.random()}`, charId: char.id, content: content, dueAt: dueTime, createdAt: Date.now() });
-                    try {
-                        const hasPerm = await LocalNotifications.checkPermissions();
-                        if (hasPerm.display === 'granted') {
-                            await LocalNotifications.schedule({ notifications: [{ title: char.name, body: content, id: Math.floor(Math.random() * 100000), schedule: { at: new Date(dueTime) }, smallIcon: 'ic_stat_icon_config_sample' }] });
-                        }
-                    } catch (e) { console.log("Notification schedule skipped (web mode)"); }
-                    addToast(`${char.name} 似乎打算一会儿找你...`, 'info');
-                }
-            }
-            aiContent = aiContent.replace(scheduleRegex, '').trim();
-
-            // Quote Logic
-            let aiReplyTarget: { id: number, content: string, name: string } | undefined;
-            const firstQuoteMatch = aiContent.match(/\[\[QUOTE:\s*(.*?)\]\]/);
-            if (firstQuoteMatch) {
-                const quotedText = firstQuoteMatch[1];
-                const targetMsg = historySlice.slice().reverse().find(m => m.role === 'user' && m.content.includes(quotedText));
-                if (targetMsg) aiReplyTarget = { id: targetMsg.id, content: targetMsg.content, name: userProfile.name };
-            }
-            
-            aiContent = aiContent.replace(/\[\[RECALL:.*?\]\]/g, '').trim();
-
-            if (aiContent) {
-                const emojiPattern = /\[\[SEND_EMOJI:\s*(.*?)\]\]/g;
-                const parts: {type: 'text' | 'emoji', content: string}[] = [];
-                let lastIndex = 0;
-                let emojiMatch;
-                while ((emojiMatch = emojiPattern.exec(aiContent)) !== null) {
-                    if (emojiMatch.index > lastIndex) {
-                        const textBefore = aiContent.slice(lastIndex, emojiMatch.index).trim();
-                        if (textBefore) parts.push({ type: 'text', content: textBefore });
-                    }
-                    parts.push({ type: 'emoji', content: emojiMatch[1].trim() });
-                    lastIndex = emojiMatch.index + emojiMatch[0].length;
-                }
-                if (lastIndex < aiContent.length) {
-                    const remaining = aiContent.slice(lastIndex).trim();
-                    if (remaining) parts.push({ type: 'text', content: remaining });
-                }
-                if (parts.length === 0 && aiContent.trim()) parts.push({ type: 'text', content: aiContent.trim() });
-
-                for (let partIndex = 0; partIndex < parts.length; partIndex++) {
-                    const part = parts[partIndex];
-                    if (part.type === 'emoji') {
-                        const foundEmoji = emojis.find(e => e.name === part.content);
-                        if (foundEmoji) {
-                            const delay = Math.random() * 500 + 300;
-                            await new Promise(r => setTimeout(r, delay));
-                            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url });
-                            setMessages(await DB.getMessagesByCharId(char.id));
-                        }
-                    } else {
-                        let tempContent = part.content
-                            .replace(/\.\.\./g, '{{ELLIPSIS_ENG}}')
-                            .replace(/……/g, '{{ELLIPSIS_CN}}')
-                            .replace(/([。])(?![）\)\]】"”'])/g, '{{SPLIT}}') 
-                            .replace(/\.($|\s+)/g, '{{SPLIT}}')
-                            .replace(/([！!？?~]+)(?![）\)\]】"”'])/g, '$1{{SPLIT}}') 
-                            .replace(/\n+/g, '{{SPLIT}}')
-                            .replace(/([\u4e00-\u9fa5])[ ]+([\u4e00-\u9fa5])/g, '$1{{SPLIT}}$2');
-
-                        const chunks = tempContent.split('{{SPLIT}}').map(c => c.trim()).filter(c => c.length > 0)
-                            .map(c => c.replace(/{{ELLIPSIS_ENG}}/g, '...').replace(/{{ELLIPSIS_CN}}/g, '……'));
-
-                        if (chunks.length === 0 && part.content.trim()) chunks.push(part.content.trim());
-
-                        for (let i = 0; i < chunks.length; i++) {
-                            let chunk = chunks[i];
-                            const delay = Math.min(Math.max(chunk.length * 50, 500), 2000);
-                            await new Promise(r => setTimeout(r, delay));
-                            
-                            let chunkReplyTarget: { id: number, content: string, name: string } | undefined;
-                            const chunkQuoteMatch = chunk.match(/\[\[QUOTE:\s*(.*?)\]\]/);
-                            if (chunkQuoteMatch) {
-                                const quotedText = chunkQuoteMatch[1];
-                                const targetMsg = historySlice.slice().reverse().find(m => m.role === 'user' && m.content.includes(quotedText));
-                                if (targetMsg) chunkReplyTarget = { id: targetMsg.id, content: targetMsg.content, name: userProfile.name };
-                                chunk = chunk.replace(chunkQuoteMatch[0], '').trim();
-                            }
-                            
-                            const replyData = chunkReplyTarget || (partIndex === 0 && i === 0 ? aiReplyTarget : undefined);
-                            
-                            if (chunk) {
-                                await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: chunk, replyTo: replyData });
-                                setMessages(await DB.getMessagesByCharId(char.id));
-                            }
-                        }
-                    }
-                }
-            } else {
-                setMessages(await DB.getMessagesByCharId(char.id));
-            }
-
-        } catch (e: any) {
-            await DB.saveMessage({ charId: char.id, role: 'system', type: 'text', content: `[连接中断: ${e.message}]` });
-            setMessages(await DB.getMessagesByCharId(char.id));
-        } finally {
-            setIsTyping(false);
-            setRecallStatus('');
-        }
-    };
-
     const displayMessages = messages
         .filter(m => m.metadata?.source !== 'date')
         .filter(m => !char.hideBeforeMessageId || m.id >= char.hideBeforeMessageId)
@@ -890,6 +541,7 @@ const Chat: React.FC = () => {
                 selectedMessage={selectedMessage} selectedEmoji={selectedEmoji} activeCharacter={char} messages={messages}
                 
                 newCategoryName={newCategoryName} setNewCategoryName={setNewCategoryName} onAddCategory={handleAddCategory}
+                selectedCategory={selectedCategory}
 
                 onTransfer={() => { if(transferAmt) handleSendText(`[转账]`, 'transfer', { amount: transferAmt }); setModalType('none'); }}
                 onImportEmoji={handleImportEmoji} 
@@ -898,19 +550,9 @@ const Chat: React.FC = () => {
                 onCreatePrompt={createNewPrompt} onEditPrompt={editSelectedPrompt} onSavePrompt={handleSavePrompt} onDeletePrompt={handleDeletePrompt}
                 onSetHistoryStart={handleSetHistoryStart} onEnterSelectionMode={handleEnterSelectionMode}
                 onReplyMessage={handleReplyMessage} onEditMessageStart={() => { if (selectedMessage) { setEditContent(selectedMessage.content); setModalType('edit-message'); } }}
-                onConfirmEditMessage={confirmEditMessage} onDeleteMessage={handleDeleteMessage} onDeleteEmoji={handleDeleteEmoji}
+                onConfirmEditMessage={confirmEditMessage} onDeleteMessage={handleDeleteMessage} onDeleteEmoji={handleDeleteEmoji} onDeleteCategory={handleDeleteCategory}
              />
              
-             <Modal
-                isOpen={modalType === 'delete-category'} title="删除分类" onClose={() => setModalType('none')}
-                footer={<><button onClick={() => setModalType('none')} className="flex-1 py-3 bg-slate-100 rounded-2xl">取消</button><button onClick={handleDeleteCategory} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl">删除</button></>}
-            >
-                <div className="py-4 text-center">
-                    <p className="text-sm text-slate-600">确定要删除分类 <br/><span className="font-bold">"{selectedCategory?.name}"</span> 吗？</p>
-                    <p className="text-[10px] text-red-400 mt-2">注意：分类下的所有表情也将被删除！</p>
-                </div>
-            </Modal>
-
              <ChatHeader 
                 selectionMode={selectionMode}
                 selectedCount={selectedMsgIds.size}

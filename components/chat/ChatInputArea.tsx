@@ -43,6 +43,8 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
 }) => {
     const chatImageInputRef = useRef<HTMLInputElement>(null);
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const startPos = useRef({ x: 0, y: 0 }); 
+    const isLongPressTriggered = useRef(false); // Track if long press action fired
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -59,18 +61,83 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         if (e.target) e.target.value = ''; // Reset
     };
 
-    // Category Long Press (Delete)
-    const handleCategoryTouchStart = (cat: EmojiCategory) => {
-        if (cat.isSystem || cat.id === 'default') return;
-        longPressTimer.current = setTimeout(() => {
-            onPanelAction('delete-category-req', cat);
-        }, 600);
-    };
-
-    const handleCategoryTouchEnd = () => {
+    // --- Unified Touch/Long-Press Logic ---
+    
+    const clearTimer = () => {
         if (longPressTimer.current) {
             clearTimeout(longPressTimer.current);
             longPressTimer.current = null;
+        }
+    };
+
+    const handleTouchStart = (item: any, type: 'emoji' | 'category', e: React.TouchEvent | React.MouseEvent) => {
+        // 1. Always reset state first to ensure clean slate for any interaction
+        // This fixes the bug where deleting a category leaves the flag true, blocking clicks on system categories
+        clearTimer(); 
+        isLongPressTriggered.current = false;
+
+        // 2. Prevent deletion logic for system categories (Long press disabled)
+        if (type === 'category' && (item.isSystem || item.id === 'default')) return;
+        
+        // 3. Store coordinates and start timer for valid long-press candidates
+        if ('touches' in e) {
+            startPos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        } else {
+            startPos.current = { x: e.clientX, y: e.clientY };
+        }
+
+        longPressTimer.current = setTimeout(() => {
+            isLongPressTriggered.current = true;
+            // Trigger action
+            if (type === 'emoji') {
+                onPanelAction('delete-emoji-req', item);
+            } else {
+                onPanelAction('delete-category-req', item);
+            }
+        }, 500); // 500ms threshold
+    };
+
+    const handleTouchMove = (e: React.TouchEvent | React.MouseEvent) => {
+        if (!longPressTimer.current) return;
+
+        let clientX, clientY;
+        if ('touches' in e) {
+            clientX = e.touches[0].clientX;
+            clientY = e.touches[0].clientY;
+        } else {
+            clientX = e.clientX;
+            clientY = e.clientY;
+        }
+
+        const diffX = Math.abs(clientX - startPos.current.x);
+        const diffY = Math.abs(clientY - startPos.current.y);
+
+        // Cancel long press if moved more than 10px (scrolling)
+        if (diffX > 10 || diffY > 10) {
+            clearTimer();
+        }
+    };
+
+    const handleTouchEnd = () => {
+        clearTimer();
+    };
+
+    // Wrapper for Click to prevent conflicts
+    const handleItemClick = (e: React.MouseEvent, item: any, type: 'emoji' | 'category') => {
+        // If long press action triggered, block the click event (do not send)
+        if (isLongPressTriggered.current) {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+        }
+
+        // If click happens, ensure timer is cleared (prevents "Send then Pop up" ghost issue)
+        clearTimer();
+
+        if (type === 'emoji') {
+            onPanelAction('send-emoji', item);
+        } else {
+            onPanelAction('select-category', item.id);
         }
     };
 
@@ -128,14 +195,16 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 {categories.map(cat => (
                                     <button 
                                         key={cat.id} 
-                                        onClick={() => onPanelAction('select-category', cat.id)}
-                                        // Long press handlers
-                                        onTouchStart={() => handleCategoryTouchStart(cat)}
-                                        onTouchEnd={handleCategoryTouchEnd}
-                                        onMouseDown={() => handleCategoryTouchStart(cat)}
-                                        onMouseUp={handleCategoryTouchEnd}
-                                        onMouseLeave={handleCategoryTouchEnd}
-                                        onContextMenu={(e) => { e.preventDefault(); if (!cat.isSystem && cat.id !== 'default') onPanelAction('delete-category-req', cat); }}
+                                        onClick={(e) => handleItemClick(e, cat, 'category')}
+                                        // Long press handlers for Categories
+                                        onTouchStart={(e) => handleTouchStart(cat, 'category', e)}
+                                        onTouchMove={handleTouchMove}
+                                        onTouchEnd={handleTouchEnd}
+                                        onMouseDown={(e) => handleTouchStart(cat, 'category', e)}
+                                        onMouseMove={handleTouchMove}
+                                        onMouseUp={handleTouchEnd}
+                                        onMouseLeave={handleTouchEnd}
+                                        onContextMenu={(e) => e.preventDefault()}
                                         className={`px-3 py-1 text-xs rounded-full whitespace-nowrap transition-all select-none ${activeCategory === cat.id ? 'bg-primary text-white font-bold shadow-sm' : 'bg-slate-100 text-slate-500'}`}
                                     >
                                         {cat.name}
@@ -150,9 +219,17 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                     {emojis.map((e, i) => (
                                         <button 
                                             key={i} 
-                                            onClick={() => onPanelAction('send-emoji', e)}
-                                            onContextMenu={(ev) => { ev.preventDefault(); onPanelAction('delete-emoji-req', e); }}
-                                            className="aspect-square bg-white rounded-2xl p-2 shadow-sm relative active:scale-95 transition-transform"
+                                            onClick={(ev) => handleItemClick(ev, e, 'emoji')}
+                                            // Long press handlers for Emojis
+                                            onTouchStart={(ev) => handleTouchStart(e, 'emoji', ev)}
+                                            onTouchMove={handleTouchMove}
+                                            onTouchEnd={handleTouchEnd}
+                                            onMouseDown={(ev) => handleTouchStart(e, 'emoji', ev)}
+                                            onMouseMove={handleTouchMove}
+                                            onMouseUp={handleTouchEnd}
+                                            onMouseLeave={handleTouchEnd}
+                                            onContextMenu={(ev) => ev.preventDefault()}
+                                            className="aspect-square bg-white rounded-2xl p-2 shadow-sm relative active:scale-95 transition-transform select-none"
                                         >
                                             <img src={e.url} className="w-full h-full object-contain pointer-events-none" />
                                         </button>

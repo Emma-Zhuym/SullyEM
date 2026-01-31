@@ -1,5 +1,5 @@
 
-import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import JSZip from 'jszip';
 import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, Message } from '../types';
 import { DB } from '../utils/db';
@@ -78,6 +78,10 @@ interface OSContextType {
   // Logs
   systemLogs: SystemLog[];
   clearLogs: () => void;
+
+  // Navigation Logic
+  registerBackHandler: (handler: () => boolean) => () => void; // Returns unregister function
+  handleBack: () => void;
 }
 
 const defaultTheme: OSTheme = {
@@ -312,6 +316,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   const schedulerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const interceptorsInitialized = useRef(false);
+  
+  // Back Handler Ref
+  const backHandlerRef = useRef<(() => boolean) | null>(null);
 
   // --- Helper to inject custom font ---
   const applyCustomFont = (fontData: string | undefined) => {
@@ -1220,6 +1227,27 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const closeApp = () => setActiveApp(AppID.Launcher);
   const unlock = () => setIsLocked(false);
 
+  // --- Back Handler Logic ---
+  const registerBackHandler = useCallback((handler: () => boolean) => {
+      backHandlerRef.current = handler;
+      return () => {
+          if (backHandlerRef.current === handler) {
+              backHandlerRef.current = null;
+          }
+      };
+  }, []);
+
+  const handleBack = useCallback(() => {
+      if (backHandlerRef.current) {
+          const handled = backHandlerRef.current();
+          if (handled) return;
+      }
+      // Default: Close App
+      if (activeApp !== AppID.Launcher) {
+          closeApp();
+      }
+  }, [activeApp, closeApp]);
+
   const value: OSContextType = {
     activeApp,
     openApp,
@@ -1271,7 +1299,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     resetSystem,
     sysOperation,
     systemLogs,
-    clearLogs
+    clearLogs,
+    registerBackHandler,
+    handleBack
   };
 
   return (
