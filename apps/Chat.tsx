@@ -171,13 +171,13 @@ const Chat: React.FC = () => {
         if (scrollRef.current && !selectionMode) {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
         }
-    }, [messages.length, activeCharacterId, selectionMode]);
+    }, [messages, activeCharacterId, selectionMode]);
 
     useEffect(() => {
         if (isTyping && scrollRef.current && !selectionMode) {
              scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
         }
-    }, [messages.length, isTyping, recallStatus, searchStatus, selectionMode]);
+    }, [messages, isTyping, recallStatus, searchStatus, diaryStatus, selectionMode]);
 
     const formatTime = (ts: number) => {
         return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
