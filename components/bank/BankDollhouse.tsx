@@ -58,6 +58,7 @@ const BankDollhouse: React.FC<Props> = ({
     const [showUnlockConfirm, setShowUnlockConfirm] = useState<string | null>(null);
     const [showDecorPanel, setShowDecorPanel] = useState(false);
     const [decorTab, setDecorTab] = useState<DecorTab>('furniture');
+    const [editMode, setEditMode] = useState(false);
     const [draggingActorId, setDraggingActorId] = useState<string | null>(null);
     const [actorPositions, setActorPositions] = useState<Record<string, { x: number; y: number }>>({});
 
@@ -85,6 +86,9 @@ const BankDollhouse: React.FC<Props> = ({
     const stickerLongPressRef = useRef<number | null>(null);
     // Local sticker positions during drag (avoids rapid DB writes)
     const [localStickerPos, setLocalStickerPos] = useState<Record<string, { x: number; y: number }>>({});
+    // Trash zone hover during sticker drag
+    const [overTrash, setOverTrash] = useState(false);
+    const trashRef = useRef<HTMLDivElement>(null);
 
     // --- Local scale for debounced slider ---
     const [localRoomScale, setLocalRoomScale] = useState<number | null>(null);
@@ -440,32 +444,51 @@ const BankDollhouse: React.FC<Props> = ({
 
         // Only update local visual state during drag (no DB writes)
         setLocalStickerPos(prev => ({ ...prev, [draggingStickerInfo.stickerId]: { x: clampedX, y: clampedY } }));
+
+        // Check if pointer is over trash zone
+        if (editMode && trashRef.current) {
+            const trashRect = trashRef.current.getBoundingClientRect();
+            const isOver = e.clientX >= trashRect.left && e.clientX <= trashRect.right && e.clientY >= trashRect.top && e.clientY <= trashRect.bottom;
+            setOverTrash(isOver);
+        }
     };
 
-    const handleStickerPointerUp = async () => {
+    const handleStickerPointerUp = async (e?: React.PointerEvent | PointerEvent) => {
         cancelStickerLongPress();
         if (draggingStickerInfo) {
-            // Persist final position to DB on pointer up
-            const pos = localStickerPos[draggingStickerInfo.stickerId];
-            if (pos) {
-                await saveDollhouse(prev => ({
-                    ...prev,
-                    rooms: prev.rooms.map(r => {
-                        if (r.id !== draggingStickerInfo.roomId) return r;
-                        return {
-                            ...r,
-                            stickers: r.stickers.map(s =>
-                                s.id === draggingStickerInfo.stickerId ? { ...s, x: pos.x, y: pos.y } : s
-                            )
-                        };
-                    })
-                }));
+            // Check if dropped on trash zone
+            let droppedOnTrash = overTrash;
+            if (!droppedOnTrash && e && trashRef.current) {
+                const rect = trashRef.current.getBoundingClientRect();
+                droppedOnTrash = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
+            }
+            if (droppedOnTrash && editMode) {
+                await handleDeleteSticker(draggingStickerInfo.roomId, draggingStickerInfo.stickerId);
+                addToast('家具已删除', 'success');
+            } else {
+                // Persist final position to DB on pointer up
+                const pos = localStickerPos[draggingStickerInfo.stickerId];
+                if (pos) {
+                    await saveDollhouse(prev => ({
+                        ...prev,
+                        rooms: prev.rooms.map(r => {
+                            if (r.id !== draggingStickerInfo.roomId) return r;
+                            return {
+                                ...r,
+                                stickers: r.stickers.map(s =>
+                                    s.id === draggingStickerInfo.stickerId ? { ...s, x: pos.x, y: pos.y } : s
+                                )
+                            };
+                        })
+                    }));
+                }
             }
             setLocalStickerPos(prev => {
                 const next = { ...prev };
                 delete next[draggingStickerInfo.stickerId];
                 return next;
             });
+            setOverTrash(false);
             setDraggingStickerInfo(null);
         }
     };
@@ -741,8 +764,8 @@ const BankDollhouse: React.FC<Props> = ({
                         className="absolute left-0 right-0 top-0"
                         style={{ height: `${WALL_H_RATIO * 100}%`, background: wallBg }}
                         onPointerMove={(e) => draggingStickerInfo && handleStickerPointerMove(room.id, 'leftWall', e)}
-                        onPointerUp={handleStickerPointerUp}
-                        onPointerCancel={handleStickerPointerUp}
+                        onPointerUp={(e) => { void handleStickerPointerUp(e.nativeEvent); }}
+                        onPointerCancel={() => { void handleStickerPointerUp(); }}
                     >
                         <div className="absolute inset-0 opacity-[0.08]" style={{ backgroundImage: 'radial-gradient(circle at 2px 2px, #fff 1px, transparent 1.5px)', backgroundSize: '18px 18px' }} />
                         {!locked && wallStickers.map(sticker => {
@@ -755,22 +778,23 @@ const BankDollhouse: React.FC<Props> = ({
                                     className={`absolute select-none group/sticker ${isDraggingThis ? 'cursor-grabbing ring-2 ring-[#FF8E6B] ring-offset-1 rounded-lg' : 'cursor-grab'} transition-transform`}
                                     style={{ left: `${stkPos.x}%`, top: `${stkPos.y}%`, transform: `translate(-50%, -50%) scale(${sticker.scale}) ${isDraggingThis ? 'scale(1.1)' : ''}`, zIndex: isDraggingThis ? 50 : sticker.zIndex, fontSize: '1.5rem' }}
                                     onPointerDown={(e) => { e.stopPropagation(); handleStickerPressStart(sticker.id, room.id, sticker.surface); }}
-                                    onPointerUp={(e) => { e.stopPropagation(); handleStickerPointerUp(); }}
-                                    onDoubleClick={() => handleDeleteSticker(room.id, sticker.id)}
+                                    onPointerUp={(e) => { e.stopPropagation(); void handleStickerPointerUp(e.nativeEvent); }}
                                 >
                                     {isUrl ? <img src={sticker.url} alt="" className="w-10 h-10 object-contain drop-shadow-sm" draggable={false} /> : sticker.url}
-                                    <div className="absolute -right-8 top-0 flex flex-col gap-0.5 opacity-0 group-hover/sticker:opacity-100 transition-opacity z-40" onDoubleClick={(e) => e.stopPropagation()}>
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); void handleStickerScaleChange(room.id, sticker.id, 0.15); }}
-                                            onPointerDown={(e) => { e.stopPropagation(); cancelStickerLongPress(); }}
-                                            className="w-5 h-5 rounded-full bg-white/90 border border-[#E0CBBA] shadow-sm flex items-center justify-center text-[10px] font-bold text-[#6B4528] active:scale-90 transition-transform"
-                                        >+</button>
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); void handleStickerScaleChange(room.id, sticker.id, -0.15); }}
-                                            onPointerDown={(e) => { e.stopPropagation(); cancelStickerLongPress(); }}
-                                            className="w-5 h-5 rounded-full bg-white/90 border border-[#E0CBBA] shadow-sm flex items-center justify-center text-[10px] font-bold text-[#6B4528] active:scale-90 transition-transform"
-                                        >-</button>
-                                    </div>
+                                    {editMode && (
+                                        <div className="absolute -right-8 top-0 flex flex-col gap-0.5 z-40">
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); void handleStickerScaleChange(room.id, sticker.id, 0.15); }}
+                                                onPointerDown={(e) => { e.stopPropagation(); cancelStickerLongPress(); }}
+                                                className="w-5 h-5 rounded-full bg-white/90 border border-[#E0CBBA] shadow-sm flex items-center justify-center text-[10px] font-bold text-[#6B4528] active:scale-90 transition-transform"
+                                            >+</button>
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); void handleStickerScaleChange(room.id, sticker.id, -0.15); }}
+                                                onPointerDown={(e) => { e.stopPropagation(); cancelStickerLongPress(); }}
+                                                className="w-5 h-5 rounded-full bg-white/90 border border-[#E0CBBA] shadow-sm flex items-center justify-center text-[10px] font-bold text-[#6B4528] active:scale-90 transition-transform"
+                                            >-</button>
+                                        </div>
+                                    )}
                                 </div>
                             );
                         })}
@@ -781,8 +805,8 @@ const BankDollhouse: React.FC<Props> = ({
                         className="absolute left-0 right-0 bottom-0"
                         style={{ height: `${FLOOR_H_RATIO * 100}%`, background: floorBg, borderTop: '2px solid rgba(156,104,64,0.15)' }}
                         onPointerMove={(e) => draggingStickerInfo && handleStickerPointerMove(room.id, 'floor', e)}
-                        onPointerUp={handleStickerPointerUp}
-                        onPointerCancel={handleStickerPointerUp}
+                        onPointerUp={(e) => { void handleStickerPointerUp(e.nativeEvent); }}
+                        onPointerCancel={() => { void handleStickerPointerUp(); }}
                     >
                         <div className="absolute inset-0 opacity-[0.06]" style={{ backgroundImage: 'linear-gradient(0deg, rgba(0,0,0,0.15) 1px, transparent 1px),linear-gradient(90deg, rgba(0,0,0,0.15) 1px, transparent 1px)', backgroundSize: '22px 22px' }} />
                         {!locked && floorStickers.map(sticker => {
@@ -795,22 +819,23 @@ const BankDollhouse: React.FC<Props> = ({
                                     className={`absolute select-none group/sticker ${isDraggingThis ? 'cursor-grabbing ring-2 ring-[#FF8E6B] ring-offset-1 rounded-lg' : 'cursor-grab'} transition-transform`}
                                     style={{ left: `${stkPos.x}%`, top: `${stkPos.y}%`, transform: `translate(-50%, -50%) scale(${sticker.scale}) ${isDraggingThis ? 'scale(1.1)' : ''}`, zIndex: isDraggingThis ? 50 : sticker.zIndex, fontSize: '1.5rem' }}
                                     onPointerDown={(e) => { e.stopPropagation(); handleStickerPressStart(sticker.id, room.id, sticker.surface); }}
-                                    onPointerUp={(e) => { e.stopPropagation(); handleStickerPointerUp(); }}
-                                    onDoubleClick={() => handleDeleteSticker(room.id, sticker.id)}
+                                    onPointerUp={(e) => { e.stopPropagation(); void handleStickerPointerUp(e.nativeEvent); }}
                                 >
                                     {isUrl ? <img src={sticker.url} alt="" className="w-10 h-10 object-contain drop-shadow-sm" draggable={false} /> : sticker.url}
-                                    <div className="absolute -right-8 top-0 flex flex-col gap-0.5 opacity-0 group-hover/sticker:opacity-100 transition-opacity z-40" onDoubleClick={(e) => e.stopPropagation()}>
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); void handleStickerScaleChange(room.id, sticker.id, 0.15); }}
-                                            onPointerDown={(e) => { e.stopPropagation(); cancelStickerLongPress(); }}
-                                            className="w-5 h-5 rounded-full bg-white/90 border border-[#E0CBBA] shadow-sm flex items-center justify-center text-[10px] font-bold text-[#6B4528] active:scale-90 transition-transform"
-                                        >+</button>
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); void handleStickerScaleChange(room.id, sticker.id, -0.15); }}
-                                            onPointerDown={(e) => { e.stopPropagation(); cancelStickerLongPress(); }}
-                                            className="w-5 h-5 rounded-full bg-white/90 border border-[#E0CBBA] shadow-sm flex items-center justify-center text-[10px] font-bold text-[#6B4528] active:scale-90 transition-transform"
-                                        >-</button>
-                                    </div>
+                                    {editMode && (
+                                        <div className="absolute -right-8 top-0 flex flex-col gap-0.5 z-40">
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); void handleStickerScaleChange(room.id, sticker.id, 0.15); }}
+                                                onPointerDown={(e) => { e.stopPropagation(); cancelStickerLongPress(); }}
+                                                className="w-5 h-5 rounded-full bg-white/90 border border-[#E0CBBA] shadow-sm flex items-center justify-center text-[10px] font-bold text-[#6B4528] active:scale-90 transition-transform"
+                                            >+</button>
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); void handleStickerScaleChange(room.id, sticker.id, -0.15); }}
+                                                onPointerDown={(e) => { e.stopPropagation(); cancelStickerLongPress(); }}
+                                                className="w-5 h-5 rounded-full bg-white/90 border border-[#E0CBBA] shadow-sm flex items-center justify-center text-[10px] font-bold text-[#6B4528] active:scale-90 transition-transform"
+                                            >-</button>
+                                        </div>
+                                    )}
                                 </div>
                             );
                         })}
@@ -994,6 +1019,21 @@ const BankDollhouse: React.FC<Props> = ({
                         <path strokeLinecap="round" strokeLinejoin="round" d="M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.049.58.025 1.193-.14 1.743" />
                     </svg>
                 </button>
+                {/* Edit Mode Toggle */}
+                <button
+                    onClick={() => setEditMode(prev => !prev)}
+                    className={`w-10 h-10 rounded-xl border text-base shadow-sm flex items-center justify-center active:scale-90 transition-all ${
+                        editMode
+                            ? 'bg-gradient-to-br from-[#4CAF50] to-[#388E3C] text-white border-[#388E3C] shadow-[0_3px_12px_rgba(76,175,80,0.35)]'
+                            : 'bg-white/90 border-[#E8D5C4] text-[#7A5238]'
+                    }`}
+                    aria-label="装修模式"
+                >
+                    <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                    </svg>
+                </button>
                 <button
                     onClick={onOpenGuestbook}
                     className="w-10 h-10 rounded-xl bg-white/90 border border-[#E8D5C4] text-[#7A5238] shadow-sm flex items-center justify-center active:scale-90 transition-transform"
@@ -1005,10 +1045,41 @@ const BankDollhouse: React.FC<Props> = ({
                 </button>
             </div>
 
+            {/* Edit Mode Banner */}
+            {editMode && (
+                <div className="mx-2 mb-1 px-3 py-1.5 rounded-xl bg-[#E8F5E9] border border-[#A5D6A7] flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-[#4CAF50] animate-pulse" />
+                    <span className="text-[10px] font-bold text-[#2E7D32]">装修模式</span>
+                    <span className="text-[10px] text-[#4CAF50]">可调整大小 / 拖到垃圾桶删除</span>
+                </div>
+            )}
+
             {/* Room View */}
             <div className="flex-1 min-h-0 px-1">
                 {renderRoom(activeRoom)}
             </div>
+
+            {/* Trash Zone - visible when dragging a sticker in edit mode */}
+            {editMode && draggingStickerInfo && (
+                <div
+                    ref={trashRef}
+                    onPointerEnter={() => setOverTrash(true)}
+                    onPointerLeave={() => setOverTrash(false)}
+                    onPointerUp={(e) => { void handleStickerPointerUp(e.nativeEvent); }}
+                    className={`absolute bottom-3 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-2 px-6 py-3 rounded-2xl border-2 border-dashed transition-all ${
+                        overTrash
+                            ? 'bg-[#FFEBEE] border-[#EF5350] scale-110'
+                            : 'bg-white/95 border-[#E0CBBA] scale-100'
+                    }`}
+                >
+                    <svg viewBox="0 0 24 24" className={`w-6 h-6 transition-colors ${overTrash ? 'text-[#EF5350]' : 'text-[#B8956E]'}`} fill="none" stroke="currentColor" strokeWidth="2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                    </svg>
+                    <span className={`text-xs font-bold transition-colors ${overTrash ? 'text-[#EF5350]' : 'text-[#B8956E]'}`}>
+                        {overTrash ? '松手删除' : '拖到这里删除'}
+                    </span>
+                </div>
+            )}
 
             {/* Placement Mode Bar */}
             {placingFurniture && (
@@ -1333,7 +1404,7 @@ const BankDollhouse: React.FC<Props> = ({
                                             <path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
                                         </svg>
                                         <div className="text-[10px] text-[#A67E62] leading-relaxed">
-                                            点击家具即可进入摆放模式，在房间内选择位置。长按已放置的家具可拖动，双击删除。
+                                            点击家具即可进入摆放模式，在房间内选择位置。长按已放置的家具可拖动。开启右侧「装修模式」可调整大小，拖入垃圾桶删除。
                                         </div>
                                     </div>
                                 </div>
