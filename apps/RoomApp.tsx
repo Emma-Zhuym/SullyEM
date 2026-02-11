@@ -895,13 +895,20 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
         } : item)); 
     };
 
-    const handlePointerUp = (e: React.PointerEvent) => { 
-        if (draggingId) { 
-            saveRoom(items); 
-            setDraggingId(null); 
+    const handlePointerUp = (e: React.PointerEvent) => {
+        if (draggingId) {
+            // Use functional update to access the latest items (including drag position changes)
+            // instead of stale closure `items` which would revert drag positions
+            setItems(latestItems => {
+                if (char) {
+                    updateCharacter(char.id, { roomConfig: { ...char.roomConfig, items: latestItems } });
+                }
+                return latestItems;
+            });
+            setDraggingId(null);
             dragStartRef.current = null; // Clear ref
-            e.currentTarget.releasePointerCapture(e.pointerId); 
-        } 
+            e.currentTarget.releasePointerCapture(e.pointerId);
+        }
     };
 
     // --- Renderers ---
