@@ -370,6 +370,32 @@ export const DB = {
       });
   },
 
+  getRecentGroupMessagesWithCount: async (groupId: string, limit: number): Promise<{ messages: Message[], totalCount: number }> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_MESSAGES, 'readonly');
+          const store = transaction.objectStore(STORE_MESSAGES);
+          const index = store.index('groupId');
+          const countReq = index.count(IDBKeyRange.only(groupId));
+          countReq.onsuccess = () => {
+              const totalCount = countReq.result;
+              const collected: Message[] = [];
+              const cursorReq = index.openCursor(IDBKeyRange.only(groupId), 'prev');
+              cursorReq.onsuccess = () => {
+                  const cursor = cursorReq.result;
+                  if (cursor && collected.length < limit) {
+                      collected.push(cursor.value as Message);
+                      cursor.continue();
+                  } else {
+                      resolve({ messages: collected.reverse(), totalCount });
+                  }
+              };
+              cursorReq.onerror = () => reject(cursorReq.error);
+          };
+          countReq.onerror = () => reject(countReq.error);
+      });
+  },
+
   getSocialPosts: async (): Promise<SocialPost[]> => {
       const db = await openDB();
       if (!db.objectStoreNames.contains(STORE_SOCIAL_POSTS)) return [];

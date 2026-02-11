@@ -107,8 +107,8 @@ const Chat: React.FC = () => {
         }
     };
 
-    // Max messages to keep in memory for rendering performance
-    const MSG_MEMORY_LIMIT = 200;
+    // How many messages to load per batch (initial load + each "load more" click)
+    const LOAD_BATCH_SIZE = 30;
 
     useEffect(() => {
         if (activeCharacterId) {
@@ -120,7 +120,7 @@ const Chat: React.FC = () => {
                     setMessages(msgs);
                     setTotalMsgCount(totalCount);
                 } else {
-                    const { messages: msgs, totalCount } = await DB.getRecentMessagesWithCount(activeCharacterId, MSG_MEMORY_LIMIT);
+                    const { messages: msgs, totalCount } = await DB.getRecentMessagesWithCount(activeCharacterId, LOAD_BATCH_SIZE);
                     setMessages(msgs);
                     setTotalMsgCount(totalCount);
                 }
@@ -732,19 +732,20 @@ const Chat: React.FC = () => {
              />
 
             <div ref={scrollRef} className="flex-1 overflow-y-auto pt-6 pb-6 no-scrollbar" style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}>
-                {messages.length > visibleCount && (
+                {(char?.hideBeforeMessageId ? messages.length > visibleCount : totalMsgCount > messages.length) && (
                     <div className="flex justify-center mb-6">
                         <button onClick={async () => {
-                            if (!char?.hideBeforeMessageId && visibleCount + 30 >= messages.length && activeCharacterId) {
-                                // Load more messages from DB when nearing in-memory limit (only when no hideBeforeMessageId, since that already loads all)
-                                const { messages: moreMsgs, totalCount } = await DB.getRecentMessagesWithCount(activeCharacterId, messages.length + 100);
-                                if (moreMsgs.length > messages.length) {
-                                    setMessages(moreMsgs);
-                                }
+                            if (char?.hideBeforeMessageId) {
+                                // hideBeforeMessageId mode: all relevant messages already loaded, just show more
+                                setVisibleCount(prev => prev + LOAD_BATCH_SIZE);
+                            } else if (activeCharacterId) {
+                                // Normal mode: fetch next batch from DB
+                                const { messages: moreMsgs, totalCount } = await DB.getRecentMessagesWithCount(activeCharacterId, messages.length + LOAD_BATCH_SIZE);
+                                setMessages(moreMsgs);
                                 setTotalMsgCount(totalCount);
+                                setVisibleCount(moreMsgs.length);
                             }
-                            setVisibleCount(prev => prev + 30);
-                        }} className="px-4 py-2 bg-white/50 backdrop-blur-sm rounded-full text-xs text-slate-500 shadow-sm border border-white hover:bg-white transition-colors">加载历史消息 ({messages.length - visibleCount})</button>
+                        }} className="px-4 py-2 bg-white/50 backdrop-blur-sm rounded-full text-xs text-slate-500 shadow-sm border border-white hover:bg-white transition-colors">加载历史消息 ({char?.hideBeforeMessageId ? messages.length - visibleCount : totalMsgCount - messages.length})</button>
                     </div>
                 )}
 

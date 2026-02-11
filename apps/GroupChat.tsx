@@ -173,6 +173,7 @@ const GroupChat: React.FC = () => {
     const [view, setView] = useState<'list' | 'chat'>('list');
     const [activeGroup, setActiveGroup] = useState<GroupProfile | null>(null);
     const [messages, setMessages] = useState<Message[]>([]);
+    const [totalMsgCount, setTotalMsgCount] = useState(0);
     const [visibleCount, setVisibleCount] = useState(30);
     const [input, setInput] = useState('');
     const [isTyping, setIsTyping] = useState(false);
@@ -229,8 +230,9 @@ const GroupChat: React.FC = () => {
     useEffect(() => {
         if (activeGroup) {
             setVisibleCount(30);
-            DB.getGroupMessages(activeGroup.id).then(msgs => {
-                setMessages(msgs.sort((a, b) => a.timestamp - b.timestamp));
+            DB.getRecentGroupMessagesWithCount(activeGroup.id, 30).then(({ messages: msgs, totalCount }) => {
+                setMessages(msgs);
+                setTotalMsgCount(totalCount);
             });
             // Fetch emojis AND categories
             Promise.all([DB.getEmojis(), DB.getEmojiCategories()]).then(([es, cats]) => {
@@ -980,10 +982,15 @@ ${recentGroupMsgs}
 
             {/* Messages Area */}
             <div className="flex-1 overflow-y-auto p-4 no-scrollbar space-y-2 bg-[#f0f4f8]" ref={scrollRef}>
-                {messages.length > visibleCount && (
+                {totalMsgCount > messages.length && activeGroup && (
                     <div className="flex justify-center mb-4">
-                        <button onClick={() => setVisibleCount(prev => prev + 30)} className="px-4 py-2 bg-white/50 backdrop-blur-sm rounded-full text-xs text-slate-500 shadow-sm border border-white hover:bg-white transition-colors">
-                            加载历史消息 ({messages.length - visibleCount})
+                        <button onClick={async () => {
+                            const { messages: moreMsgs, totalCount } = await DB.getRecentGroupMessagesWithCount(activeGroup.id, messages.length + 30);
+                            setMessages(moreMsgs);
+                            setTotalMsgCount(totalCount);
+                            setVisibleCount(moreMsgs.length);
+                        }} className="px-4 py-2 bg-white/50 backdrop-blur-sm rounded-full text-xs text-slate-500 shadow-sm border border-white hover:bg-white transition-colors">
+                            加载历史消息 ({totalMsgCount - messages.length})
                         </button>
                     </div>
                 )}
