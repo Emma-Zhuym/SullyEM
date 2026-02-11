@@ -144,7 +144,7 @@ interface OSContextType {
   clearUnread: (charId: string) => void; // New: Method to clear unread
 
   // System
-  exportSystem: (mode: 'text_only' | 'media_only') => Promise<Blob>; 
+  exportSystem: (mode: 'text_only' | 'media_only' | 'full') => Promise<Blob>;
   importSystem: (fileOrJson: File | string) => Promise<void>; // Accept File or String
   resetSystem: () => Promise<void>;
   sysOperation: { status: 'idle' | 'processing', message: string, progress: number }; // Progress state
@@ -1013,7 +1013,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const addToast = (message: string, type: Toast['type'] = 'info') => { const id = Date.now().toString(); setToasts(prev => [...prev, { id, message, type }]); setTimeout(() => { setToasts(prev => prev.filter(t => t.id !== id)); }, 3000); };
 
   // --- MODIFIED EXPORT SYSTEM WITH SEPARATED ASSETS ZIP ---
-  const exportSystem = async (mode: 'text_only' | 'media_only'): Promise<Blob> => {
+  const exportSystem = async (mode: 'text_only' | 'media_only' | 'full'): Promise<Blob> => {
       try {
           setSysOperation({ status: 'processing', message: '正在初始化打包引擎...', progress: 0 });
           
@@ -1086,7 +1086,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               'bank_transactions', 'bank_data'
           ];
 
-          if (mode === 'text_only') {
+          if (mode === 'full') {
+              storesToProcess = allStores; // Include everything
+          } else if (mode === 'text_only') {
               storesToProcess = allStores.filter(s => s !== 'assets'); // Exclude raw assets store
           } else if (mode === 'media_only') {
               // media_only now includes themes/assets for complete media backup
@@ -1101,20 +1103,20 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const backupData: Partial<FullBackupData> = {
               timestamp: Date.now(),
               version: 2,
-              apiConfig: mode === 'text_only' ? apiConfig : undefined, // Only export API config in full text backup
-              apiPresets: mode === 'text_only' ? apiPresets : undefined,
-              availableModels: mode === 'text_only' ? availableModels : undefined,
-              realtimeConfig: mode === 'text_only' ? realtimeConfig : undefined, // 导出实时感知配置（天气/新闻/Notion）
+              apiConfig: (mode === 'text_only' || mode === 'full') ? apiConfig : undefined,
+              apiPresets: (mode === 'text_only' || mode === 'full') ? apiPresets : undefined,
+              availableModels: (mode === 'text_only' || mode === 'full') ? availableModels : undefined,
+              realtimeConfig: (mode === 'text_only' || mode === 'full') ? realtimeConfig : undefined,
               theme: theme, // Include theme in all modes (text/media)
               
-              socialAppData: (mode === 'text_only' || mode === 'media_only') ? {
+              socialAppData: (mode === 'text_only' || mode === 'media_only' || mode === 'full') ? {
                   charHandles: JSON.parse(localStorage.getItem('spark_char_handles') || '{}'),
                   userProfile: sparkSocialProfile ? JSON.parse(sparkSocialProfile) : undefined,
                   userId: localStorage.getItem('spark_user_id') || undefined,
                   userBg: sparkUserBg || undefined
               } : undefined,
               
-              roomCustomAssets: (mode === 'text_only' || mode === 'media_only') ? (roomCustomAssets ? JSON.parse(roomCustomAssets) : []) : undefined,
+              roomCustomAssets: (mode === 'text_only' || mode === 'media_only' || mode === 'full') ? (roomCustomAssets ? JSON.parse(roomCustomAssets) : []) : undefined,
               mediaAssets: [], // Initialize mediaAssets array
           };
 
