@@ -759,20 +759,18 @@ const BankDollhouse: React.FC<Props> = ({
                                     onDoubleClick={() => handleDeleteSticker(room.id, sticker.id)}
                                 >
                                     {isUrl ? <img src={sticker.url} alt="" className="w-10 h-10 object-contain drop-shadow-sm" draggable={false} /> : sticker.url}
-                                    {showDecorPanel && (
-                                        <div className="absolute -right-8 top-0 flex flex-col gap-0.5 opacity-0 group-hover/sticker:opacity-100 transition-opacity z-40" onDoubleClick={(e) => e.stopPropagation()}>
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); void handleStickerScaleChange(room.id, sticker.id, 0.15); }}
-                                                onPointerDown={(e) => { e.stopPropagation(); cancelStickerLongPress(); }}
-                                                className="w-5 h-5 rounded-full bg-white/90 border border-[#E0CBBA] shadow-sm flex items-center justify-center text-[10px] font-bold text-[#6B4528] active:scale-90 transition-transform"
-                                            >+</button>
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); void handleStickerScaleChange(room.id, sticker.id, -0.15); }}
-                                                onPointerDown={(e) => { e.stopPropagation(); cancelStickerLongPress(); }}
-                                                className="w-5 h-5 rounded-full bg-white/90 border border-[#E0CBBA] shadow-sm flex items-center justify-center text-[10px] font-bold text-[#6B4528] active:scale-90 transition-transform"
-                                            >-</button>
-                                        </div>
-                                    )}
+                                    <div className="absolute -right-8 top-0 flex flex-col gap-0.5 opacity-0 group-hover/sticker:opacity-100 transition-opacity z-40" onDoubleClick={(e) => e.stopPropagation()}>
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); void handleStickerScaleChange(room.id, sticker.id, 0.15); }}
+                                            onPointerDown={(e) => { e.stopPropagation(); cancelStickerLongPress(); }}
+                                            className="w-5 h-5 rounded-full bg-white/90 border border-[#E0CBBA] shadow-sm flex items-center justify-center text-[10px] font-bold text-[#6B4528] active:scale-90 transition-transform"
+                                        >+</button>
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); void handleStickerScaleChange(room.id, sticker.id, -0.15); }}
+                                            onPointerDown={(e) => { e.stopPropagation(); cancelStickerLongPress(); }}
+                                            className="w-5 h-5 rounded-full bg-white/90 border border-[#E0CBBA] shadow-sm flex items-center justify-center text-[10px] font-bold text-[#6B4528] active:scale-90 transition-transform"
+                                        >-</button>
+                                    </div>
                                 </div>
                             );
                         })}
@@ -801,20 +799,18 @@ const BankDollhouse: React.FC<Props> = ({
                                     onDoubleClick={() => handleDeleteSticker(room.id, sticker.id)}
                                 >
                                     {isUrl ? <img src={sticker.url} alt="" className="w-10 h-10 object-contain drop-shadow-sm" draggable={false} /> : sticker.url}
-                                    {showDecorPanel && (
-                                        <div className="absolute -right-8 top-0 flex flex-col gap-0.5 opacity-0 group-hover/sticker:opacity-100 transition-opacity z-40" onDoubleClick={(e) => e.stopPropagation()}>
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); void handleStickerScaleChange(room.id, sticker.id, 0.15); }}
-                                                onPointerDown={(e) => { e.stopPropagation(); cancelStickerLongPress(); }}
-                                                className="w-5 h-5 rounded-full bg-white/90 border border-[#E0CBBA] shadow-sm flex items-center justify-center text-[10px] font-bold text-[#6B4528] active:scale-90 transition-transform"
-                                            >+</button>
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); void handleStickerScaleChange(room.id, sticker.id, -0.15); }}
-                                                onPointerDown={(e) => { e.stopPropagation(); cancelStickerLongPress(); }}
-                                                className="w-5 h-5 rounded-full bg-white/90 border border-[#E0CBBA] shadow-sm flex items-center justify-center text-[10px] font-bold text-[#6B4528] active:scale-90 transition-transform"
-                                            >-</button>
-                                        </div>
-                                    )}
+                                    <div className="absolute -right-8 top-0 flex flex-col gap-0.5 opacity-0 group-hover/sticker:opacity-100 transition-opacity z-40" onDoubleClick={(e) => e.stopPropagation()}>
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); void handleStickerScaleChange(room.id, sticker.id, 0.15); }}
+                                            onPointerDown={(e) => { e.stopPropagation(); cancelStickerLongPress(); }}
+                                            className="w-5 h-5 rounded-full bg-white/90 border border-[#E0CBBA] shadow-sm flex items-center justify-center text-[10px] font-bold text-[#6B4528] active:scale-90 transition-transform"
+                                        >+</button>
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); void handleStickerScaleChange(room.id, sticker.id, -0.15); }}
+                                            onPointerDown={(e) => { e.stopPropagation(); cancelStickerLongPress(); }}
+                                            className="w-5 h-5 rounded-full bg-white/90 border border-[#E0CBBA] shadow-sm flex items-center justify-center text-[10px] font-bold text-[#6B4528] active:scale-90 transition-transform"
+                                        >-</button>
+                                    </div>
                                 </div>
                             );
                         })}
