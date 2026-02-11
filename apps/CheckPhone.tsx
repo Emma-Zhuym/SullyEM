@@ -78,10 +78,19 @@ const CheckPhone: React.FC = () => {
         }
     }, [characters]);
 
+    // Reset page scroll on navigation to prevent mobile layout shift
+    useEffect(() => {
+        window.scrollTo(0, 0);
+    }, [activeAppId, view]);
+
     // Auto scroll to bottom of chat detail
+    // NOTE: Do NOT use scrollIntoView - it propagates to page scroll on mobile, shifting the entire layout up
     useEffect(() => {
         if (activeAppId === 'chat_detail' && chatEndRef.current) {
-            chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+            const container = chatEndRef.current.parentElement;
+            if (container) {
+                container.scrollTop = container.scrollHeight;
+            }
         }
     }, [selectedChatRecord?.detail, activeAppId]);
 
@@ -436,7 +445,7 @@ Format:
 
     return (
         // 关键修复：添加不透明背景色，确保完全覆盖
-      <div className="fixed inset-0 flex flex-col bg-[#f2f2f2] z-[100] overflow-hidden" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
+      <div className="absolute inset-0 w-full h-full flex flex-col bg-[#f2f2f2] z-[100] overflow-hidden">
             {renderHeader(selectedChatRecord.title, () => setActiveAppId('chat'))}
             
             {/* 聊天内容区域 */}
@@ -663,7 +672,7 @@ Format:
                     <span className="font-bold text-white tracking-widest uppercase text-sm">Target Device</span>
                     <div className="w-8"></div>
                 </div>
-                <div className="p-6 grid grid-cols-2 gap-5 overflow-y-auto pb-20 no-scrollbar overscroll-contain">
+                <div className="flex-1 min-h-0 p-6 grid grid-cols-2 gap-5 overflow-y-auto pb-20 no-scrollbar overscroll-contain content-start">
                     {characters.map(c => (
                         <div key={c.id} onClick={() => handleSelectChar(c)} className="aspect-[3/4] bg-slate-800 rounded-xl border border-slate-700 p-4 flex flex-col items-center justify-center gap-4 cursor-pointer active:scale-95 transition-all group hover:border-green-500 hover:shadow-[0_0_15px_rgba(34,197,94,0.3)]">
                             <div className="w-20 h-20 rounded-full p-[2px] border-2 border-slate-600 group-hover:border-green-500 transition-colors">

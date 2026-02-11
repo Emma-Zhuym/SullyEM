@@ -12,7 +12,7 @@ import Modal from '../components/os/Modal';
 import { useChatAI } from '../hooks/useChatAI';
 
 const Chat: React.FC = () => {
-    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread } = useOS();
+    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig } = useOS();
     const [messages, setMessages] = useState<Message[]>([]);
     const [visibleCount, setVisibleCount] = useState(30);
     const [input, setInput] = useState('');
@@ -50,13 +50,26 @@ const Chat: React.FC = () => {
     const [selectionMode, setSelectionMode] = useState(false);
     const [selectedMsgIds, setSelectedMsgIds] = useState<Set<number>>(new Set());
 
+    // --- Translation State (per-character toggle, global language settings) ---
+    const [translationEnabled, setTranslationEnabled] = useState(() => {
+        try { return JSON.parse(localStorage.getItem(`chat_translate_enabled_${activeCharacterId}`) || 'false'); } catch { return false; }
+    });
+    const [translateSourceLang, setTranslateSourceLang] = useState(() => {
+        return localStorage.getItem('chat_translate_source_lang') || '日本語';
+    });
+    const [translateTargetLang, setTranslateTargetLang] = useState(() => {
+        return localStorage.getItem('chat_translate_lang') || '中文';
+    });
+    // Which messages are currently showing "译" version (toggle state only, no API calls)
+    const [showingTargetIds, setShowingTargetIds] = useState<Set<number>>(new Set());
+
     const char = characters.find(c => c.id === activeCharacterId) || characters[0];
     const currentThemeId = char?.bubbleStyle || 'default';
     const activeTheme = useMemo(() => customThemes.find(t => t.id === currentThemeId) || PRESET_THEMES[currentThemeId] || PRESET_THEMES.default, [currentThemeId, customThemes]);
     const draftKey = `chat_draft_${activeCharacterId}`;
 
     // --- Initialize Hook ---
-    const { isTyping, recallStatus, lastTokenUsage, setLastTokenUsage, triggerAI } = useChatAI({
+    const { isTyping, recallStatus, searchStatus, lastTokenUsage, setLastTokenUsage, triggerAI } = useChatAI({
         char,
         userProfile,
         apiConfig,
@@ -64,10 +77,24 @@ const Chat: React.FC = () => {
         emojis,
         categories,
         addToast,
-        setMessages // Allow hook to update messages
+        setMessages,
+        realtimeConfig,
+        translationConfig: translationEnabled
+            ? { enabled: true, sourceLang: translateSourceLang, targetLang: translateTargetLang }
+            : undefined
     });
 
     const canReroll = !isTyping && messages.length > 0 && messages[messages.length - 1].role === 'assistant';
+
+    // --- Translation: pure frontend toggle (no API calls, bilingual data is already in message content) ---
+    const handleTranslateToggle = useCallback((msgId: number) => {
+        setShowingTargetIds(prev => {
+            const next = new Set(prev);
+            if (next.has(msgId)) next.delete(msgId);
+            else next.add(msgId);
+            return next;
+        });
+    }, []);
 
     const loadEmojiData = async () => {
         await DB.initializeEmojiData();
@@ -79,9 +106,13 @@ const Chat: React.FC = () => {
         }
     };
 
+    // Max messages to keep in memory for rendering performance
+    const MSG_MEMORY_LIMIT = 200;
+
     useEffect(() => {
         if (activeCharacterId) {
-            DB.getMessagesByCharId(activeCharacterId).then(setMessages);
+            // Performance: Only load recent messages into state, not the entire history
+            DB.getRecentMessagesByCharId(activeCharacterId, MSG_MEMORY_LIMIT).then(setMessages);
             loadEmojiData();
             const savedDraft = localStorage.getItem(draftKey);
             setInput(savedDraft || '');
@@ -90,11 +121,16 @@ const Chat: React.FC = () => {
                 setSettingsHideSysLogs(char.hideSystemLogs || false);
                 clearUnread(char.id);
             }
+            // Per-character translation toggle
+            try {
+                setTranslationEnabled(JSON.parse(localStorage.getItem(`chat_translate_enabled_${activeCharacterId}`) || 'false'));
+            } catch { setTranslationEnabled(false); }
             setVisibleCount(30);
             setLastTokenUsage(null);
             setReplyTarget(null);
             setSelectionMode(false);
             setSelectedMsgIds(new Set());
+            setShowingTargetIds(new Set());
         }
     }, [activeCharacterId]);
 
@@ -113,7 +149,7 @@ const Chat: React.FC = () => {
 
     useEffect(() => {
         if (activeCharacterId && lastMsgTimestamp > 0) {
-            DB.getMessagesByCharId(activeCharacterId).then(setMessages);
+            DB.getRecentMessagesByCharId(activeCharacterId, MSG_MEMORY_LIMIT).then(setMessages);
             clearUnread(activeCharacterId);
         }
     }, [lastMsgTimestamp]);
@@ -134,7 +170,7 @@ const Chat: React.FC = () => {
         if (isTyping && scrollRef.current && !selectionMode) {
              scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
         }
-    }, [messages, isTyping, recallStatus, selectionMode]);
+    }, [messages, isTyping, recallStatus, searchStatus, selectionMode]);
 
     const formatTime = (ts: number) => {
         return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -150,11 +186,17 @@ const Chat: React.FC = () => {
         if (!customContent) { setInput(''); localStorage.removeItem(draftKey); }
         
         if (type === 'image') {
+            const recentChat = messages.slice(-10).map(m => {
+                const sender = m.role === 'user' ? userProfile.name : char.name;
+                return `${sender}: ${m.content.substring(0, 100)}`;
+            });
             await DB.saveGalleryImage({
                 id: `img-${Date.now()}-${Math.random()}`,
                 charId: char.id,
                 url: text,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                savedDate: new Date().toISOString().split('T')[0],
+                chatContext: recentChat
             });
             addToast('图片已保存至相册', 'info');
         }
@@ -180,7 +222,7 @@ const Chat: React.FC = () => {
 
     const handleReroll = async () => {
         if (isTyping || messages.length === 0) return;
-        
+
         const lastMsg = messages[messages.length - 1];
         if (lastMsg.role !== 'assistant') return;
 
@@ -472,6 +514,14 @@ const Chat: React.FC = () => {
         setModalType('none');
     };
 
+    const handleCopyMessage = () => {
+        if (!selectedMessage) return;
+        navigator.clipboard.writeText(selectedMessage.content);
+        setModalType('none');
+        setSelectedMessage(null);
+        addToast('已复制到剪贴板', 'success');
+    };
+
     const handleDeleteEmoji = async () => {
         if (!selectedEmoji) return;
         await DB.deleteEmoji(selectedEmoji.name);
@@ -500,6 +550,12 @@ const Chat: React.FC = () => {
         });
     }, []);
 
+    // Memoized callbacks for MessageItem to avoid busting React.memo
+    const handleMessageLongPress = useCallback((msg: Message) => {
+        setSelectedMessage(msg);
+        setModalType('message-options');
+    }, []);
+
     const handleBatchDelete = async () => {
         if (selectedMsgIds.size === 0) return;
         await DB.deleteMessages(Array.from(selectedMsgIds));
@@ -509,11 +565,86 @@ const Chat: React.FC = () => {
         setSelectedMsgIds(new Set());
     };
 
-    const displayMessages = messages
+    // --- Forward Chat Records ---
+    const [showForwardModal, setShowForwardModal] = useState(false);
+
+    const handleForwardSelected = () => {
+        if (selectedMsgIds.size === 0) return;
+        setShowForwardModal(true);
+    };
+
+    const handleForwardToCharacter = async (targetCharId: string) => {
+        if (!char) return;
+        const selectedMsgs = messages
+            .filter(m => selectedMsgIds.has(m.id))
+            .sort((a, b) => a.id - b.id);
+
+        if (selectedMsgs.length === 0) return;
+
+        // Build preview text (first few messages)
+        const previewLines = selectedMsgs.slice(0, 4).map(m => {
+            const sender = m.role === 'user' ? userProfile.name : char.name;
+            const text = m.type === 'text' ? m.content.slice(0, 30) : `[${m.type === 'image' ? '图片' : m.type === 'emoji' ? '表情' : m.type}]`;
+            return `${sender}: ${text}`;
+        });
+        if (selectedMsgs.length > 4) previewLines.push(`... 共 ${selectedMsgs.length} 条消息`);
+
+        const forwardData = {
+            fromUserName: userProfile.name,
+            fromCharName: char.name,
+            count: selectedMsgs.length,
+            preview: previewLines,
+            messages: selectedMsgs.map(m => ({
+                role: m.role,
+                type: m.type,
+                content: m.content,
+                timestamp: m.timestamp || Date.now()
+            }))
+        };
+
+        // Save forward card to target character's chat
+        await DB.saveMessage({
+            charId: targetCharId,
+            role: 'user',
+            type: 'chat_forward' as MessageType,
+            content: JSON.stringify(forwardData),
+        });
+
+        // Also save a copy in the current chat so the user can see what they forwarded
+        const targetChar = characters.find(c => c.id === targetCharId);
+        if (char.id !== targetCharId) {
+            await DB.saveMessage({
+                charId: char.id,
+                role: 'system',
+                type: 'text' as MessageType,
+                content: `[转发了 ${selectedMsgs.length} 条聊天记录给 ${targetChar?.name || ''}]`,
+            });
+            // Refresh messages to show the forwarding system message
+            DB.getRecentMessagesByCharId(char.id, MSG_MEMORY_LIMIT).then(setMessages);
+        }
+
+        addToast(`已转发 ${selectedMsgs.length} 条记录给 ${targetChar?.name || ''}`, 'success');
+        setShowForwardModal(false);
+        setSelectionMode(false);
+        setSelectedMsgIds(new Set());
+    };
+
+    const displayMessages = useMemo(() => messages
         .filter(m => m.metadata?.source !== 'date')
         .filter(m => !char.hideBeforeMessageId || m.id >= char.hideBeforeMessageId)
         .filter(m => { if (char.hideSystemLogs && m.role === 'system') return false; return true; })
-        .slice(-visibleCount);
+        .slice(-visibleCount),
+        [messages, char?.hideBeforeMessageId, char?.hideSystemLogs, visibleCount]);
+
+    // Memoize filtered emojis for ChatInputArea
+    const filteredEmojis = useMemo(() => emojis.filter(e => {
+        if (activeCategory === 'default') return !e.categoryId || e.categoryId === 'default';
+        return e.categoryId === activeCategory;
+    }), [emojis, activeCategory]);
+
+    // Memoize ChatInputArea callbacks
+    const handleSendCallback = useCallback(() => handleSendText(), [char, input, replyTarget]);
+    const handleCharSelectCallback = useCallback((id: string) => { setActiveCharacterId(id); setShowPanel('none'); }, []);
 
     return (
         <div 
@@ -548,7 +679,13 @@ const Chat: React.FC = () => {
                 onCreatePrompt={createNewPrompt} onEditPrompt={editSelectedPrompt} onSavePrompt={handleSavePrompt} onDeletePrompt={handleDeletePrompt}
                 onSetHistoryStart={handleSetHistoryStart} onEnterSelectionMode={handleEnterSelectionMode}
                 onReplyMessage={handleReplyMessage} onEditMessageStart={() => { if (selectedMessage) { setEditContent(selectedMessage.content); setModalType('edit-message'); } }}
-                onConfirmEditMessage={confirmEditMessage} onDeleteMessage={handleDeleteMessage} onDeleteEmoji={handleDeleteEmoji} onDeleteCategory={handleDeleteCategory}
+                onConfirmEditMessage={confirmEditMessage} onDeleteMessage={handleDeleteMessage} onCopyMessage={handleCopyMessage} onDeleteEmoji={handleDeleteEmoji} onDeleteCategory={handleDeleteCategory}
+                translationEnabled={translationEnabled}
+                onToggleTranslation={() => { const next = !translationEnabled; setTranslationEnabled(next); localStorage.setItem(`chat_translate_enabled_${activeCharacterId}`, JSON.stringify(next)); if (!next) { setShowingTargetIds(new Set()); } }}
+                translateSourceLang={translateSourceLang}
+                translateTargetLang={translateTargetLang}
+                onSetTranslateSourceLang={(lang: string) => { setTranslateSourceLang(lang); localStorage.setItem('chat_translate_source_lang', lang); setShowingTargetIds(new Set()); }}
+                onSetTranslateLang={(lang: string) => { setTranslateTargetLang(lang); localStorage.setItem('chat_translate_lang', lang); setShowingTargetIds(new Set()); }}
              />
              
              <ChatHeader 
@@ -567,7 +704,16 @@ const Chat: React.FC = () => {
             <div ref={scrollRef} className="flex-1 overflow-y-auto pt-6 pb-6 no-scrollbar" style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}>
                 {messages.length > visibleCount && (
                     <div className="flex justify-center mb-6">
-                        <button onClick={() => setVisibleCount(prev => prev + 30)} className="px-4 py-2 bg-white/50 backdrop-blur-sm rounded-full text-xs text-slate-500 shadow-sm border border-white hover:bg-white transition-colors">加载历史消息 ({messages.length - visibleCount})</button>
+                        <button onClick={async () => {
+                            if (visibleCount + 30 >= messages.length && activeCharacterId) {
+                                // Load more messages from DB when nearing in-memory limit
+                                const allMsgs = await DB.getRecentMessagesByCharId(activeCharacterId, messages.length + 100);
+                                if (allMsgs.length > messages.length) {
+                                    setMessages(allMsgs);
+                                }
+                            }
+                            setVisibleCount(prev => prev + 30);
+                        }} className="px-4 py-2 bg-white/50 backdrop-blur-sm rounded-full text-xs text-slate-500 shadow-sm border border-white hover:bg-white transition-colors">加载历史消息 ({messages.length - visibleCount})</button>
                     </div>
                 )}
 
@@ -575,7 +721,7 @@ const Chat: React.FC = () => {
                     const prevRole = i > 0 ? displayMessages[i - 1].role : null;
                     const nextRole = i < displayMessages.length - 1 ? displayMessages[i + 1].role : null;
                     return (
-                        <MessageItem 
+                        <MessageItem
                             key={m.id || i}
                             msg={m}
                             isFirstInGroup={prevRole !== m.role}
@@ -584,19 +730,27 @@ const Chat: React.FC = () => {
                             charAvatar={char.avatar}
                             charName={char.name}
                             userAvatar={userProfile.avatar}
-                            onLongPress={(msg) => { setSelectedMessage(msg); setModalType('message-options'); }}
+                            onLongPress={handleMessageLongPress}
                             selectionMode={selectionMode}
                             isSelected={selectedMsgIds.has(m.id)}
                             onToggleSelect={toggleMessageSelection}
+                            translationEnabled={translationEnabled && m.type === 'text' && m.role === 'assistant'}
+                            isShowingTarget={showingTargetIds.has(m.id)}
+                            onTranslateToggle={handleTranslateToggle}
                         />
                     );
                 })}
                 
-                {(isTyping || recallStatus) && !selectionMode && (
+                {(isTyping || recallStatus || searchStatus) && !selectionMode && (
                     <div className="flex items-end gap-3 px-3 mb-6 animate-fade-in">
                         <img src={char.avatar} className="w-9 h-9 rounded-[10px] object-cover" />
                         <div className="bg-white px-4 py-3 rounded-2xl shadow-sm">
-                            {recallStatus ? (
+                            {searchStatus ? (
+                                <div className="flex items-center gap-2 text-xs text-emerald-500 font-medium">
+                                    <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                    🔍 {searchStatus}
+                                </div>
+                            ) : recallStatus ? (
                                 <div className="flex items-center gap-2 text-xs text-indigo-500 font-medium">
                                     <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                                     {recallStatus}
@@ -617,19 +771,17 @@ const Chat: React.FC = () => {
                     </div>
                 )}
                 
-                <ChatInputArea 
+                <ChatInputArea
                     input={input} setInput={handleInputChange}
                     isTyping={isTyping} selectionMode={selectionMode}
                     showPanel={showPanel} setShowPanel={setShowPanel}
-                    onSend={() => handleSendText()}
+                    onSend={handleSendCallback}
                     onDeleteSelected={handleBatchDelete}
+                    onForwardSelected={handleForwardSelected}
                     selectedCount={selectedMsgIds.size}
-                    emojis={emojis.filter(e => {
-                        if (activeCategory === 'default') return !e.categoryId || e.categoryId === 'default';
-                        return e.categoryId === activeCategory;
-                    })}
+                    emojis={filteredEmojis}
                     characters={characters} activeCharacterId={activeCharacterId}
-                    onCharSelect={(id) => { setActiveCharacterId(id); setShowPanel('none'); }}
+                    onCharSelect={handleCharSelectCallback}
                     customThemes={customThemes} onUpdateTheme={(id) => updateCharacter(char.id, { bubbleStyle: id })}
                     onRemoveTheme={removeCustomTheme} activeThemeId={currentThemeId}
                     onPanelAction={handlePanelAction}
@@ -641,6 +793,30 @@ const Chat: React.FC = () => {
                     canReroll={canReroll}
                 />
             </div>
+
+            {/* Forward Modal */}
+            <Modal isOpen={showForwardModal} title="转发聊天记录" onClose={() => setShowForwardModal(false)}>
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                    <p className="text-xs text-slate-400 mb-3">选择要转发给的角色 (已选 {selectedMsgIds.size} 条消息)</p>
+                    {characters.filter(c => c.id !== activeCharacterId).map(c => (
+                        <button
+                            key={c.id}
+                            onClick={() => handleForwardToCharacter(c.id)}
+                            className="w-full flex items-center gap-3 p-3 rounded-2xl bg-slate-50 hover:bg-slate-100 active:scale-[0.98] transition-all border border-slate-100"
+                        >
+                            <img src={c.avatar} className="w-10 h-10 rounded-xl object-cover" />
+                            <div className="flex-1 text-left">
+                                <div className="font-bold text-sm text-slate-700">{c.name}</div>
+                                <div className="text-[10px] text-slate-400 truncate">{c.description}</div>
+                            </div>
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-slate-300"><path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
+                        </button>
+                    ))}
+                    {characters.filter(c => c.id !== activeCharacterId).length === 0 && (
+                        <div className="text-center text-xs text-slate-400 py-8">没有其他角色可以转发</div>
+                    )}
+                </div>
+            </Modal>
         </div>
     );
 };

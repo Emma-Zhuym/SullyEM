@@ -60,10 +60,19 @@ class AppErrorBoundary extends Component<{ children: React.ReactNode, onCloseApp
                 <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 text-white p-6 text-center space-y-4">
                     <div className="text-4xl">😵</div>
                     <h2 className="text-lg font-bold">应用运行错误</h2>
-                    <p className="text-xs text-slate-400 font-mono bg-black/30 p-2 rounded max-w-full overflow-hidden text-ellipsis">
+                    <p className="text-xs text-slate-400 font-mono bg-black/30 p-3 rounded max-w-full overflow-auto max-h-40 select-text break-all whitespace-pre-wrap">
                         {this.state.error?.message || 'Unknown Error'}
                     </p>
-                    <button 
+                    <button
+                        onClick={() => {
+                            const errText = this.state.error?.message || 'Unknown Error';
+                            navigator.clipboard?.writeText(errText).then(() => {}).catch(() => {});
+                        }}
+                        className="px-4 py-2 bg-slate-700 rounded-full text-xs active:scale-95 transition-transform"
+                    >
+                        复制错误信息
+                    </button>
+                    <button
                         onClick={() => { this.setState({ hasError: false }); this.props.onCloseApp(); }}
                         className="px-6 py-3 bg-red-600 rounded-full font-bold text-sm shadow-lg active:scale-95 transition-transform"
                     >
@@ -231,9 +240,8 @@ const PhoneShell: React.FC = () => {
              transform: activeApp !== AppID.Launcher ? 'scale(1.1)' : 'scale(1)',
              filter: activeApp !== AppID.Launcher ? 'blur(10px)' : 'none',
              opacity: activeApp !== AppID.Launcher ? 0.6 : 1,
-             willChange: 'transform, filter, opacity', // Performance Hint
-             backfaceVisibility: 'hidden', // Reduce flicker
-             transformStyle: 'preserve-3d'
+             backfaceVisibility: 'hidden',
+             contain: 'strict'
          }}
        />
        
@@ -253,14 +261,14 @@ const PhoneShell: React.FC = () => {
   }}
 > 
           {/* App Container */}
-         <div className="flex-1 relative overflow-hidden">
+         <div className="flex-1 relative overflow-hidden" style={{ contain: 'layout style paint' }}>
     <AppErrorBoundary onCloseApp={closeApp}>
         {renderApp()}
     </AppErrorBoundary>
 </div>
 
           {/* Overlays: Status Bar (Top) */}
-          <StatusBar />
+          {!theme.hideStatusBar && <StatusBar />}
           
           {/* Overlays: Toasts (Top) */}
           <div className="absolute top-12 left-0 w-full flex flex-col items-center gap-2 pointer-events-none z-[60]">

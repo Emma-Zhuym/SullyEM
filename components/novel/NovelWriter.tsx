@@ -114,6 +114,7 @@ const NovelWriter: React.FC<NovelWriterProps> = ({
     const [summaryContent, setSummaryContent] = useState('');
     const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
     const [showHistoryModal, setShowHistoryModal] = useState(false);
+    const [readingChapterIndex, setReadingChapterIndex] = useState<number | null>(null);
 
     const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -144,6 +145,25 @@ const NovelWriter: React.FC<NovelWriterProps> = ({
         return segments.filter(s => s.focus === 'chapter_summary');
     }, [segments]);
 
+    // Compute full chapter content list for reading mode
+    const chapterContentList = useMemo(() => {
+        const chapters: { title: string; segments: NovelSegment[]; summary: string }[] = [];
+        const summaryIndices: number[] = [];
+        segments.forEach((s, i) => { if (s.focus === 'chapter_summary') summaryIndices.push(i); });
+
+        for (let ci = 0; ci < summaryIndices.length; ci++) {
+            const start = ci === 0 ? 0 : summaryIndices[ci - 1] + 1;
+            const end = summaryIndices[ci];
+            const chapterSegs = segments.slice(start, end).filter(s => s.type === 'story');
+            chapters.push({
+                title: `第 ${ci + 1} 章`,
+                segments: chapterSegs,
+                summary: segments[summaryIndices[ci]].content
+            });
+        }
+        return chapters;
+    }, [segments]);
+
     // --- Actions ---
 
     const runGeneration = async (char: CharacterProfile, userPrompt: string, contextSegments: NovelSegment[]) => {
@@ -170,7 +190,7 @@ const NovelWriter: React.FC<NovelWriterProps> = ({
             
             currentChapterSegs.forEach(s => {
                 const authorName = s.authorId === 'user' ? userProfile.name : (characters.find(c => c.id === s.authorId)?.name || 'AI');
-                storyContext += `\n[${authorName}]: ${s.content.substring(0, 500)}\n`;
+                storyContext += `\n[${authorName}]: ${s.content}\n`;
             });
 
             const prompt = buildPrompt(char, userProfile, activeBook, userPrompt, storyContext, genOptions, contextSegments, characters);
@@ -307,7 +327,29 @@ const NovelWriter: React.FC<NovelWriterProps> = ({
                 return;
             }
 
-            const prompt = `### Task: Chapter Summary\nNovel: "${activeBook.title}"\nContent:\n${chapterText.substring(0, 200000)}\n\nGenerate a structured summary.`;
+            const existingSummaries = segments.filter(s => s.focus === 'chapter_summary');
+            const prevSummaryContext = existingSummaries.length > 0
+                ? `\n### 前章摘要参考（保持一致性）\n${existingSummaries.map((s, i) => `第${i+1}章：${s.content.substring(0, 300)}`).join('\n')}\n`
+                : '';
+
+            const prompt = `### 任务：章节归档总结
+小说：《${activeBook.title}》
+世界观：${activeBook.worldSetting || '未设定'}
+${prevSummaryContext}
+### 当前章节正文
+${chapterText.substring(0, 200000)}
+
+### 总结要求
+请为上述章节内容生成一份**高质量归档总结**，满足以下要求：
+
+1. **剧情轨迹**：按时间顺序梳理本章发生的所有关键事件，不遗漏任何主线或支线转折点。
+2. **角色动态**：记录每个出场角色的行为、态度变化、关系发展。特别注意角色之间的互动和情感变化。
+3. **氛围与基调**：描述本章的整体氛围（例如：紧张、温馨、悬疑），以及氛围的转折点。
+4. **重要信息**：标记所有可能影响后续剧情的伏笔、承诺、悬念、新设定等。
+5. **场景与环境**：记录关键场景的地点、时间、环境特征。
+6. **写作格式**：使用清晰的结构化格式（可以分段或使用标记），让后续章节的AI仅凭此总结就能无缝衔接创作。
+
+请直接输出总结内容，不需要JSON格式。`;
             const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
@@ -477,7 +519,46 @@ const NovelWriter: React.FC<NovelWriterProps> = ({
             <Modal isOpen={showHistoryModal} title="历史章节" onClose={() => setShowHistoryModal(false)}>
                 <div className="max-h-[60vh] overflow-y-auto space-y-4 p-1">
                     {historicalSummaries.length === 0 && <div className="text-center text-slate-400 py-4 text-xs">暂无历史章节</div>}
-                    {historicalSummaries.map((s, i) => (<div key={s.id} className="bg-slate-50 p-4 rounded-xl border border-slate-100"><div className="font-bold text-sm text-slate-700 mb-2">第 {i + 1} 章</div><div className="text-xs text-slate-600 leading-relaxed whitespace-pre-wrap">{s.content}</div></div>))}
+                    {historicalSummaries.map((s, i) => (
+                        <div key={s.id} className="bg-slate-50 p-4 rounded-xl border border-slate-100">
+                            <div className="flex items-center justify-between mb-2">
+                                <div className="font-bold text-sm text-slate-700">第 {i + 1} 章</div>
+                                <button onClick={() => { setReadingChapterIndex(i); setShowHistoryModal(false); }} className="text-[10px] bg-indigo-50 text-indigo-600 px-2.5 py-1 rounded-lg font-bold hover:bg-indigo-100 border border-indigo-100 transition-colors">阅读原文</button>
+                            </div>
+                            <div className="text-xs text-slate-600 leading-relaxed whitespace-pre-wrap line-clamp-4">{s.content}</div>
+                        </div>
+                    ))}
+                </div>
+            </Modal>
+
+            {/* Chapter Reading Mode */}
+            <Modal isOpen={readingChapterIndex !== null} title={chapterContentList[readingChapterIndex ?? 0]?.title || ''} onClose={() => setReadingChapterIndex(null)}>
+                <div className="max-h-[70vh] overflow-y-auto space-y-4 p-1">
+                    {readingChapterIndex !== null && chapterContentList[readingChapterIndex] && (
+                        <>
+                            {chapterContentList[readingChapterIndex].segments.map(seg => {
+                                const isUser = seg.authorId === 'user';
+                                const char = !isUser ? characters.find(c => c.id === seg.authorId) : null;
+                                return (
+                                    <div key={seg.id} className={`${activeTheme.paper} p-5 rounded-sm leading-loose text-justify text-[15px] ${activeTheme.text} ${isUser ? 'border-l-4 border-slate-300' : ''}`}>
+                                        <div className="text-[9px] font-sans font-bold uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1.5">
+                                            {!isUser && char && <img src={char.avatar} className="w-3 h-3 rounded-full object-cover" />}
+                                            <span>{isUser ? '我' : char?.name} 执笔</span>
+                                        </div>
+                                        <div className="whitespace-pre-wrap font-serif">{seg.content}</div>
+                                    </div>
+                                );
+                            })}
+                            <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 mt-4">
+                                <div className="text-[10px] font-bold text-indigo-400 uppercase mb-2">章节总结</div>
+                                <div className="text-xs text-indigo-700 leading-relaxed whitespace-pre-wrap">{chapterContentList[readingChapterIndex].summary}</div>
+                            </div>
+                            <div className="flex justify-between pt-2">
+                                <button onClick={() => setReadingChapterIndex(Math.max(0, (readingChapterIndex ?? 0) - 1))} disabled={readingChapterIndex === 0} className="text-xs text-slate-400 disabled:opacity-30 px-3 py-1.5 rounded-lg hover:bg-slate-100">← 上一章</button>
+                                <button onClick={() => setReadingChapterIndex(Math.min(chapterContentList.length - 1, (readingChapterIndex ?? 0) + 1))} disabled={readingChapterIndex === chapterContentList.length - 1} className="text-xs text-slate-400 disabled:opacity-30 px-3 py-1.5 rounded-lg hover:bg-slate-100">下一章 →</button>
+                            </div>
+                        </>
+                    )}
                 </div>
             </Modal>
         </div>

@@ -41,6 +41,19 @@ export interface AppConfig {
   color: string;
 }
 
+export interface DesktopDecoration {
+  id: string;
+  type: 'image' | 'preset';
+  content: string; // data URI for image, SVG data URI or emoji for preset
+  x: number;       // percentage 0-100
+  y: number;       // percentage 0-100
+  scale: number;   // multiplier (0.2 - 3)
+  rotation: number; // degrees (-180 to 180)
+  opacity: number;  // 0-1
+  zIndex: number;
+  flip?: boolean;
+}
+
 export interface OSTheme {
   hue: number;
   saturation: number;
@@ -48,8 +61,17 @@ export interface OSTheme {
   wallpaper: string;
   darkMode: boolean;
   contentColor?: string;
-  launcherWidgetImage?: string; 
-  customFont?: string; 
+  launcherWidgetImage?: string; // kept for backward compat, migrated to launcherWidgets['wide']
+  launcherWidgets?: Record<string, string>; // slots: 'tl' | 'tr' | 'wide'
+  desktopDecorations?: DesktopDecoration[];
+  customFont?: string;
+  hideStatusBar?: boolean;
+}
+
+export interface TranslationConfig {
+  enabled: boolean;
+  sourceLang: string; // e.g. '日本語' - the language messages are displayed in (选)
+  targetLang: string; // e.g. '中文' - the language to translate into (译)
 }
 
 export interface VirtualTime {
@@ -68,6 +90,33 @@ export interface ApiPreset {
   id: string;
   name: string;
   config: APIConfig;
+}
+
+// 实时上下文配置 - 让AI角色感知真实世界
+export interface RealtimeConfig {
+  // 天气配置
+  weatherEnabled: boolean;
+  weatherApiKey: string;  // OpenWeatherMap API Key
+  weatherCity: string;    // 城市名
+
+  // 新闻配置
+  newsEnabled: boolean;
+  newsApiKey?: string;
+
+  // Notion 配置
+  notionEnabled: boolean;
+  notionApiKey: string;   // Notion Integration Token
+  notionDatabaseId: string; // 日记数据库ID
+
+  // 飞书配置 (中国区 Notion 替代)
+  feishuEnabled: boolean;
+  feishuAppId: string;      // 飞书应用 App ID
+  feishuAppSecret: string;  // 飞书应用 App Secret
+  feishuBaseId: string;     // 多维表格 App Token
+  feishuTableId: string;    // 数据表 Table ID
+
+  // 缓存配置
+  cacheMinutes: number;
 }
 
 export interface MemoryFragment {
@@ -304,6 +353,10 @@ export interface ShopStaff {
     personality?: string; // New: Custom personality
     x?: number; // New: Position X (0-100)
     y?: number; // New: Position Y (0-100)
+    // Pet System
+    ownerCharId?: string; // If set, this staff is a "pet" belonging to this character
+    isPet?: boolean; // Flag to indicate this is a pet
+    scale?: number; // Display scale (0.4-2)
 }
 
 export interface ShopRecipe {
@@ -328,6 +381,53 @@ export interface BankGuestbookItem {
     isChar: boolean;
     charId?: string;
     timestamp: number;
+    systemMessageId?: number; // Linked system message ID for deletion
+}
+
+// --- DOLLHOUSE / ROOM DECORATION TYPES ---
+export interface DollhouseSticker {
+    id: string;
+    url: string;       // image URL or emoji
+    x: number;         // % position within the surface
+    y: number;
+    scale: number;
+    rotation: number;
+    zIndex: number;
+    surface: 'floor' | 'leftWall' | 'rightWall';
+}
+
+export interface DollhouseRoom {
+    id: string;
+    name: string;
+    floor: number;         // 0 = ground floor, 1 = second floor
+    position: 'left' | 'right';
+    isUnlocked: boolean;
+    layoutId: string;      // references a RoomLayout template
+    wallpaperLeft?: string;  // CSS gradient or image URL
+    wallpaperRight?: string;
+    floorStyle?: string;     // CSS gradient or image URL
+    roomTextureUrl?: string; // optional full-room overlay image
+    roomTextureScale?: number;
+    stickers: DollhouseSticker[];
+    staffIds: string[];      // staff assigned to this room
+}
+
+export interface RoomLayout {
+    id: string;
+    name: string;
+    icon: string;
+    description: string;
+    apCost: number;
+    floorWidthRatio: number;   // relative width (0-1)
+    floorDepthRatio: number;   // relative depth (0-1)
+    hasCounter: boolean;
+    hasWindow: boolean;
+}
+
+export interface DollhouseState {
+    rooms: DollhouseRoom[];
+    activeRoomId: string | null;   // currently zoomed-in room
+    selectedLayoutId?: string;
 }
 
 export interface BankShopState {
@@ -343,16 +443,23 @@ export interface BankShopState {
         message: string;
         timestamp: number;
         giftAp?: number; // Optional gift from visitor
+        roomId?: string;
+        x?: number;
+        y?: number;
+        scale?: number;
     };
-    guestbook?: BankGuestbookItem[]; // New: Guestbook messages
+    guestbook?: BankGuestbookItem[];
+    dollhouse?: DollhouseState;
 }
 
 export interface BankFullState {
     config: BankConfig;
     shop: BankShopState;
     goals: SavingsGoal[];
-    todaySpent: number; 
+    firedStaff?: ShopStaff[]; // Fired staff pool: can rehire or permanently delete
+    todaySpent: number;
     lastLoginDate: string;
+    dataVersion?: number; // Migration version tracker (undefined = v0/v1 legacy)
 }
 // ---------------------------------
 
@@ -383,7 +490,8 @@ export interface CharacterProfile {
   dateBackground?: string;
   sprites?: Record<string, string>;
   spriteConfig?: SpriteConfig;
-  
+  customDateSprites?: string[]; // User-added custom emotion names for date mode (per-character)
+
   savedDateState?: DateState;
 
   socialProfile?: {
@@ -444,6 +552,8 @@ export interface GalleryImage {
     timestamp: number;
     review?: string;
     reviewTimestamp?: number;
+    savedDate?: string; // YYYY-MM-DD format
+    chatContext?: string[]; // Recent chat messages at time of save
 }
 
 export interface StickerData {
@@ -590,7 +700,7 @@ export interface GameSession {
     lastPlayedAt: number;
 }
 
-export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card';
+export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward';
 
 export interface Message {
     id: number;
@@ -627,6 +737,7 @@ export interface FullBackupData {
     apiConfig?: APIConfig;
     apiPresets?: ApiPreset[];
     availableModels?: string[];
+    realtimeConfig?: RealtimeConfig;  // 实时感知配置（天气/新闻/Notion）
     customIcons?: Record<string, string>;
     characters?: CharacterProfile[];
     groups?: GroupProfile[]; 
@@ -653,6 +764,7 @@ export interface FullBackupData {
     
     // Bank Data
     bankState?: BankFullState;
+    bankDollhouse?: DollhouseState;
     bankTransactions?: BankTransaction[];
 
     socialAppData?: {

@@ -1,20 +1,71 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import * as pdfjsLib from 'pdfjs-dist';
-import katex from 'katex';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { StudyCourse, StudyChapter, CharacterProfile, Message, UserProfile } from '../types';
 import { ContextBuilder } from '../utils/context';
 import Modal from '../components/os/Modal';
 
-// Fix for pdfjs-dist ESM/CJS interop
-const pdfjs = (pdfjsLib as any).default || pdfjsLib;
+type PdfJsLike = {
+    getDocument: (src: { data: ArrayBuffer }) => { promise: Promise<any> };
+    GlobalWorkerOptions?: { workerSrc?: string };
+};
 
-// Setup PDF worker
-if (pdfjs.GlobalWorkerOptions) {
-    pdfjs.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
-}
+type KatexLike = {
+    renderToString: (latex: string, options: any) => string;
+};
+
+let pdfjsPromise: Promise<PdfJsLike> | null = null;
+let katexPromise: Promise<KatexLike> | null = null;
+
+const loadScript = (src: string): Promise<void> => new Promise((resolve, reject) => {
+    const existing = document.querySelector(`script[data-src=\"${src}\"]`) as HTMLScriptElement | null;
+    if (existing) {
+        if ((existing as any).dataset.loaded === 'true') {
+            resolve();
+            return;
+        }
+        existing.addEventListener('load', () => resolve(), { once: true });
+        existing.addEventListener('error', () => reject(new Error(`load failed: ${src}`)), { once: true });
+        return;
+    }
+
+    const script = document.createElement('script');
+    script.src = src;
+    script.async = true;
+    script.dataset.src = src;
+    script.onload = () => {
+        script.dataset.loaded = 'true';
+        resolve();
+    };
+    script.onerror = () => reject(new Error(`load failed: ${src}`));
+    document.head.appendChild(script);
+});
+
+const loadPdfJs = async (): Promise<PdfJsLike> => {
+    if (!pdfjsPromise) {
+        pdfjsPromise = loadScript('https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js').then(() => {
+            const pdfjs = (window as any).pdfjsLib as PdfJsLike | undefined;
+            if (!pdfjs) throw new Error('pdfjs 加载失败');
+            if (pdfjs?.GlobalWorkerOptions) {
+                pdfjs.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+            }
+            return pdfjs;
+        });
+    }
+    return pdfjsPromise;
+};
+
+const loadKatex = async (): Promise<KatexLike> => {
+    if (!katexPromise) {
+        katexPromise = loadScript('https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js').then(() => {
+            const katex = (window as any).katex as KatexLike | undefined;
+            if (!katex) throw new Error('KaTeX 加载失败');
+            return katex;
+        });
+    }
+    return katexPromise;
+};
 
 // --- Styles ---
 const GRADIENTS = [
@@ -28,7 +79,7 @@ const GRADIENTS = [
 
 // --- Renderer Component ---
 // Enhanced Markdown & Math Renderer
-const BlackboardRenderer: React.FC<{ text: string, isTyping?: boolean }> = ({ text, isTyping }) => {
+const BlackboardRenderer: React.FC<{ text: string, isTyping?: boolean, katexRenderer?: { renderToString: (latex: string, options: any) => string } | null }> = ({ text, isTyping, katexRenderer }) => {
     
     // Helper to render math using KaTeX
     const renderMath = (latex: string, displayMode: boolean) => {
@@ -38,11 +89,14 @@ const BlackboardRenderer: React.FC<{ text: string, isTyping?: boolean }> = ({ te
                 .replace(/\\\[/g, '') // Remove \[
                 .replace(/\\\]/g, ''); // Remove \]
 
-            const html = katex.renderToString(cleanLatex, {
+            const html = katexRenderer?.renderToString(cleanLatex, {
                 displayMode: displayMode,
                 throwOnError: false, 
                 output: 'html',
             });
+            if (!html) {
+                return <span className="font-mono text-emerald-200">{latex}</span>;
+            }
             // Force white color for KaTeX elements specifically
             return <span dangerouslySetInnerHTML={{ __html: html }} className={displayMode ? "block my-2 w-full overflow-x-auto" : "inline-block mx-1"} />;
         } catch (e) {
@@ -146,6 +200,62 @@ const BlackboardRenderer: React.FC<{ text: string, isTyping?: boolean }> = ({ te
         );
     };
 
+
+
+    const isTableRow = (line: string) => {
+        const trimmed = line.trim();
+        return trimmed.includes('|') && /^\|?.+\|.+\|?$/.test(trimmed);
+    };
+
+    const isTableSeparator = (line: string) => {
+        const cleaned = line.trim().replace(/^\|/, '').replace(/\|$/, '');
+        const segments = cleaned.split('|').map(seg => seg.trim());
+        if (segments.length < 2) return false;
+        return segments.every(seg => /^:?-{3,}:?$/.test(seg));
+    };
+
+    const splitTableCells = (line: string) => line
+        .trim()
+        .replace(/^\|/, '')
+        .replace(/\|$/, '')
+        .split('|')
+        .map(cell => cell.trim());
+
+    const renderTable = (rows: string[], index: number) => {
+        if (rows.length < 2) return renderBlock(rows[0], index, storedMath, storedCode);
+
+        const header = splitTableCells(rows[0]);
+        const hasSeparator = rows[1] ? isTableSeparator(rows[1]) : false;
+        const bodyRows = (hasSeparator ? rows.slice(2) : rows.slice(1)).map(splitTableCells);
+
+        return (
+            <div key={`table-${index}`} className="my-4 overflow-x-auto rounded-xl border border-white/10 bg-black/25">
+                <table className="w-full min-w-[360px] border-collapse text-sm text-left">
+                    <thead className="bg-white/10">
+                        <tr>
+                            {header.map((cell, i) => (
+                                <th key={i} className="px-3 py-2 text-emerald-200 font-bold border-b border-white/10">
+                                    {parseInline(cell)}
+                                </th>
+                            ))}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {bodyRows.map((row, rowIndex) => (
+                            <tr key={rowIndex} className="odd:bg-white/0 even:bg-white/[0.03]">
+                                {header.map((_, colIndex) => (
+                                    <td key={colIndex} className="px-3 py-2 text-white/90 border-t border-white/5 align-top leading-relaxed">
+                                        {parseInline(row[colIndex] || '')}
+                                    </td>
+                                ))}
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        );
+    };
+
     // --- Pre-processing Logic ---
     // Protect blocks (Math $$...$$ and Code ```...```) from being split by newlines
     const storedMath: string[] = [];
@@ -167,8 +277,25 @@ const BlackboardRenderer: React.FC<{ text: string, isTyping?: boolean }> = ({ te
         return `\n__BLOCK_MATH_${storedMath.length - 1}__\n`;
     });
 
-    // 3. Split by newlines
+    // 3. Split by newlines + merge markdown table blocks
     const blocks = processedText.split('\n');
+    const renderedBlocks: React.ReactNode[] = [];
+
+    for (let i = 0; i < blocks.length; i++) {
+        const line = blocks[i];
+        if (isTableRow(line) && i + 1 < blocks.length && isTableSeparator(blocks[i + 1])) {
+            const tableLines = [line, blocks[i + 1]];
+            let j = i + 2;
+            while (j < blocks.length && isTableRow(blocks[j])) {
+                tableLines.push(blocks[j]);
+                j += 1;
+            }
+            renderedBlocks.push(renderTable(tableLines, i));
+            i = j - 1;
+            continue;
+        }
+        renderedBlocks.push(renderBlock(line, i, storedMath, storedCode));
+    }
     
     return (
         <div className="space-y-1">
@@ -179,7 +306,7 @@ const BlackboardRenderer: React.FC<{ text: string, isTyping?: boolean }> = ({ te
                 .katex-html { color: white !important; }
             `}</style>
             
-            {blocks.map((b, i) => renderBlock(b, i, storedMath, storedCode))}
+            {renderedBlocks}
             {isTyping && (
                 <div className="mt-4 animate-pulse flex items-center gap-2 text-emerald-500">
                     <span className="w-2 h-5 bg-emerald-500"></span>
@@ -217,6 +344,7 @@ const StudyApp: React.FC = () => {
     const [showImportModal, setShowImportModal] = useState(false);
     const [importPreference, setImportPreference] = useState('');
     const [tempPdfData, setTempPdfData] = useState<{name: string, text: string} | null>(null);
+    const [katexRenderer, setKatexRenderer] = useState<KatexLike | null>(null);
 
     // Delete Confirmation State
     const [deleteTarget, setDeleteTarget] = useState<StudyCourse | null>(null);
@@ -230,6 +358,13 @@ const StudyApp: React.FC = () => {
             setSelectedChar(char);
         }
     }, [activeCharacterId]);
+
+
+    useEffect(() => {
+        loadKatex().then(setKatexRenderer).catch(() => {
+            // KaTeX is optional in dev if dependency is absent
+        });
+    }, []);
 
     // Refresh courses when returning to bookshelf
     useEffect(() => {
@@ -289,6 +424,7 @@ const StudyApp: React.FC = () => {
 
         try {
             const arrayBuffer = await file.arrayBuffer();
+            const pdfjs = await loadPdfJs();
             const loadingTask = pdfjs.getDocument({ data: arrayBuffer });
             const pdf = await loadingTask.promise;
             
@@ -858,7 +994,7 @@ Note: Use "我" (I) to refer to yourself.
             {/* Main Text Content - Layout Optimized (Removed padding-right to allow full width) */}
             <div className="flex-1 overflow-y-auto no-scrollbar p-6 pt-20 pb-32 relative z-10">
                 <div className="max-w-[100%]">
-                    <BlackboardRenderer text={displayedText} isTyping={isTyping} />
+                    <BlackboardRenderer text={displayedText} isTyping={isTyping} katexRenderer={katexRenderer} />
                 </div>
             </div>
 

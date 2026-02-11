@@ -147,9 +147,15 @@ const DateSession: React.FC<DateSessionProps> = ({
             setDialogueBatch(initialState.dialogueBatch);
             setIsNovelMode(initialState.isNovelMode);
         } else {
-            // New Session
+            // New Session - pick initial sprite from date emotions only
             const s = char.sprites;
-            const initSprite = s?.['normal'] || s?.['default'] || (s && Object.values(s)[0]) || char.avatar;
+            let initSprite = s?.['normal'] || s?.['default'];
+            if (!initSprite && s) {
+                // Fallback: find the first sprite that belongs to a date emotion
+                const fallbackKey = dateEmotionKeys.find(k => s[k]);
+                initSprite = fallbackKey ? s[fallbackKey] : Object.values(s).find(v => v) || char.avatar;
+            }
+            if (!initSprite) initSprite = char.avatar;
             setCurrentSprite(initSprite);
             
             // Parse Peek Status as opening
@@ -204,17 +210,26 @@ const DateSession: React.FC<DateSessionProps> = ({
 
     // --- Logic ---
 
+    // Only allow date-relevant emotions (required + custom), never chibi or other non-date sprites
+    const REQUIRED_EMOTIONS_SET = ['normal', 'happy', 'angry', 'sad', 'shy'];
+    const dateEmotionKeys = [...REQUIRED_EMOTIONS_SET, ...(char.customDateSprites || [])];
+
     const processNextDialogue = (item: DialogueItem, remaining: DialogueItem[]) => {
         setCurrentText(item.text);
         if (item.emotion && char.sprites) {
-            let nextSprite = char.sprites[item.emotion];
-            if (!nextSprite) {
-                // Fuzzy match
-                const keys = Object.keys(char.sprites);
-                const found = keys.find(k => item.emotion!.includes(k));
-                nextSprite = found ? char.sprites[found] : currentSprite;
+            // Only resolve emotions that are in the date emotion set
+            const emotionKey = item.emotion.toLowerCase();
+            if (dateEmotionKeys.includes(emotionKey)) {
+                const nextSprite = char.sprites[emotionKey];
+                if (nextSprite) setCurrentSprite(nextSprite);
+            } else {
+                // Unknown emotion tag (e.g. chibi) - fuzzy match only against date emotions
+                const found = dateEmotionKeys.find(k => emotionKey.includes(k));
+                if (found && char.sprites[found]) {
+                    setCurrentSprite(char.sprites[found]);
+                }
+                // If no match in date emotions, keep current sprite (don't show chibi)
             }
-            if (nextSprite) setCurrentSprite(nextSprite);
         }
         setDialogueQueue(remaining);
     };

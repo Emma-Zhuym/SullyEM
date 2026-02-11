@@ -58,8 +58,16 @@ interface ChatModalsProps {
     onEditMessageStart: () => void;
     onConfirmEditMessage: () => void;
     onDeleteMessage: () => void;
+    onCopyMessage: () => void;
     onDeleteEmoji: () => void;
     onDeleteCategory: () => void;
+    // Translation
+    translationEnabled?: boolean;
+    onToggleTranslation?: () => void;
+    translateSourceLang?: string;
+    translateTargetLang?: string;
+    onSetTranslateSourceLang?: (lang: string) => void;
+    onSetTranslateLang?: (lang: string) => void;
 }
 
 const ChatModals: React.FC<ChatModalsProps> = ({
@@ -77,7 +85,8 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     onTransfer, onImportEmoji, onSaveSettings,
     onBgUpload, onRemoveBg, onClearHistory,
     onArchive, onCreatePrompt, onEditPrompt, onSavePrompt, onDeletePrompt,
-    onSetHistoryStart, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onDeleteMessage, onDeleteEmoji, onDeleteCategory
+    onSetHistoryStart, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onDeleteMessage, onCopyMessage, onDeleteEmoji, onDeleteCategory,
+    translationEnabled, onToggleTranslation, translateSourceLang, translateTargetLang, onSetTranslateSourceLang, onSetTranslateLang
 }) => {
     const bgInputRef = useRef<HTMLInputElement>(null);
 
@@ -142,6 +151,57 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                          <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
                              开启后，将不再显示 Date/App 产生的上下文提示文本（转账、戳一戳、图片发送提示除外）。
                          </p>
+                     </div>
+
+                     {/* Translation Settings */}
+                     <div className="pt-2 border-t border-slate-100">
+                         <div className="flex justify-between items-center cursor-pointer" onClick={onToggleTranslation}>
+                             <label className="text-xs font-bold text-slate-400 uppercase pointer-events-none">消息翻译</label>
+                             <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${translationEnabled ? 'bg-primary' : 'bg-slate-200'}`}>
+                                 <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${translationEnabled ? 'translate-x-4' : ''}`}></div>
+                             </div>
+                         </div>
+                         <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+                             开启后，AI 消息自动翻译为「选」的语言显示，点「译」切换到目标语言。
+                         </p>
+                         {translationEnabled && (
+                             <div className="mt-3 space-y-3">
+                                 {/* Source Language (选) */}
+                                 <div>
+                                     <label className="text-[10px] font-bold text-slate-400 mb-1.5 block">选（气泡显示语言）</label>
+                                     <div className="flex flex-wrap gap-1.5">
+                                         {['中文', 'English', '日本語', '한국어', 'Français', 'Español'].map(lang => (
+                                             <button
+                                                 key={`src-${lang}`}
+                                                 onClick={() => onSetTranslateSourceLang?.(lang)}
+                                                 className={`px-2.5 py-1 rounded-full text-[11px] font-bold transition-all ${translateSourceLang === lang ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-500'}`}
+                                             >
+                                                 {lang}
+                                             </button>
+                                         ))}
+                                     </div>
+                                 </div>
+                                 {/* Target Language (译) */}
+                                 <div>
+                                     <label className="text-[10px] font-bold text-slate-400 mb-1.5 block">译（翻译目标语言）</label>
+                                     <div className="flex flex-wrap gap-1.5">
+                                         {['中文', 'English', '日本語', '한국어', 'Français', 'Español'].map(lang => (
+                                             <button
+                                                 key={`tgt-${lang}`}
+                                                 onClick={() => onSetTranslateLang?.(lang)}
+                                                 className={`px-2.5 py-1 rounded-full text-[11px] font-bold transition-all ${translateTargetLang === lang ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500'}`}
+                                             >
+                                                 {lang}
+                                             </button>
+                                         ))}
+                                     </div>
+                                 </div>
+                                 {/* Preview */}
+                                 <div className="text-[11px] text-center text-slate-500 bg-slate-50 rounded-lg py-2">
+                                     选<span className="font-bold text-slate-700">{translateSourceLang || '?'}</span> 译<span className="font-bold text-primary">{translateTargetLang || '?'}</span>
+                                 </div>
+                             </div>
+                         )}
                      </div>
 
                      <div className="pt-2 border-t border-slate-100">
@@ -243,6 +303,11 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                     {selectedMessage?.type === 'text' && (
                         <button onClick={onEditMessageStart} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
                             编辑内容
+                        </button>
+                    )}
+                    {selectedMessage?.type === 'text' && (
+                        <button onClick={onCopyMessage} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
+                            复制文字
                         </button>
                     )}
                     <button onClick={onDeleteMessage} className="w-full py-3 bg-red-50 text-red-500 font-medium rounded-2xl active:bg-red-100 transition-colors flex items-center justify-center gap-2">

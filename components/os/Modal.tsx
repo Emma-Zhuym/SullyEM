@@ -19,7 +19,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, title, onClose, children, footer 
                 <div className="px-6 pt-6 pb-2">
                     <h3 className="text-lg font-bold text-slate-800 text-center">{title}</h3>
                 </div>
-                <div className="px-6 py-4">
+                <div className="px-6 py-4 max-h-[60vh] overflow-y-auto no-scrollbar">
                     {children}
                 </div>
                 {footer ? (

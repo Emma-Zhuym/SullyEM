@@ -1,11 +1,11 @@
 
 
 
-import { 
-    CharacterProfile, ChatTheme, Message, UserProfile, 
-    Task, Anniversary, DiaryEntry, RoomTodo, RoomNote, 
+import {
+    CharacterProfile, ChatTheme, Message, UserProfile,
+    Task, Anniversary, DiaryEntry, RoomTodo, RoomNote,
     GalleryImage, FullBackupData, GroupProfile, SocialPost, StudyCourse, GameSession, Worldbook, NovelBook, Emoji, EmojiCategory,
-    BankTransaction, SavingsGoal, BankFullState
+    BankTransaction, SavingsGoal, BankFullState, DollhouseState
 } from '../types';
 
 const DB_NAME = 'AetherOS_Data';
@@ -182,6 +182,23 @@ export const DB = {
       request.onsuccess = () => {
           const results = (request.result || []).filter((m: Message) => !m.groupId);
           resolve(results);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  },
+
+  // Performance: Load only the most recent N messages for a character
+  getRecentMessagesByCharId: async (charId: string, limit: number): Promise<Message[]> => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_MESSAGES, 'readonly');
+      const store = transaction.objectStore(STORE_MESSAGES);
+      const index = store.index('charId');
+      const request = index.getAll(IDBKeyRange.only(charId));
+      request.onsuccess = () => {
+          const results = (request.result || []).filter((m: Message) => !m.groupId);
+          // Only return the last N messages to reduce memory usage
+          resolve(results.slice(-limit));
       };
       request.onerror = () => reject(request.error);
     });
@@ -449,6 +466,23 @@ export const DB = {
     transaction.objectStore(STORE_ASSETS).put({ id, data });
   },
 
+  getAssetRaw: async (id: string): Promise<any | null> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_ASSETS, 'readonly');
+          const store = transaction.objectStore(STORE_ASSETS);
+          const request = store.get(id);
+          request.onsuccess = () => resolve(request.result?.data ?? null);
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  saveAssetRaw: async (id: string, data: any): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_ASSETS, 'readwrite');
+      transaction.objectStore(STORE_ASSETS).put({ id, data });
+  },
+
   deleteAsset: async (id: string): Promise<void> => {
     const db = await openDB();
     const transaction = db.transaction(STORE_ASSETS, 'readwrite');
@@ -519,6 +553,12 @@ export const DB = {
           };
           req.onerror = () => reject(req.error);
       });
+  },
+
+  deleteGalleryImage: async (id: string): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_GALLERY, 'readwrite');
+      transaction.objectStore(STORE_GALLERY).delete(id);
   },
 
   saveScheduledMessage: async (msg: ScheduledMessage): Promise<void> => {
@@ -804,7 +844,37 @@ export const DB = {
   saveBankState: async (state: BankFullState): Promise<void> => {
       const db = await openDB();
       const transaction = db.transaction(STORE_BANK_DATA, 'readwrite');
-      transaction.objectStore(STORE_BANK_DATA).put({ ...state, id: 'main_state' });
+      // Strip dollhouse from the main state save (dollhouse is saved separately)
+      const { dollhouse: _dh, ...shopWithoutDollhouse } = (state.shop || {}) as any;
+      const cleanState = { ...state, shop: shopWithoutDollhouse };
+      transaction.objectStore(STORE_BANK_DATA).put({ ...cleanState, id: 'main_state' });
+      return new Promise((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+      });
+  },
+
+  // Dollhouse state saved separately (same pattern as RoomApp's per-character roomConfig)
+  getBankDollhouse: async (): Promise<DollhouseState | null> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          if (!db.objectStoreNames.contains(STORE_BANK_DATA)) { resolve(null); return; }
+          const transaction = db.transaction(STORE_BANK_DATA, 'readonly');
+          const store = transaction.objectStore(STORE_BANK_DATA);
+          const req = store.get('dollhouse_state');
+          req.onsuccess = () => resolve(req.result?.data || null);
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  saveBankDollhouse: async (state: DollhouseState): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_BANK_DATA, 'readwrite');
+      transaction.objectStore(STORE_BANK_DATA).put({ id: 'dollhouse_state', data: state });
+      return new Promise((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+      });
   },
 
   getAllTransactions: async (): Promise<BankTransaction[]> => {
@@ -890,11 +960,13 @@ export const DB = {
           bio: userProfiles[0].bio
       } : undefined;
 
-      const bankState = bankData.length > 0 ? bankData[0] : undefined;
+      const mainState = bankData.find((d: any) => d.id === 'main_state');
+      const dollhouseRecord = bankData.find((d: any) => d.id === 'dollhouse_state');
 
       return {
           characters, messages, customThemes: themes, savedEmojis: emojis, emojiCategories, assets, galleryImages, userProfile, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, savedJournalStickers: journalStickers, socialPosts, courses, games, worldbooks, novels,
-          bankState: bankState ? { ...bankState, id: undefined } : undefined, // Clean ID
+          bankState: mainState ? { ...mainState, id: undefined } : undefined,
+          bankDollhouse: dollhouseRecord?.data || undefined,
           bankTransactions: bankTx
       };
   },
@@ -1027,11 +1099,16 @@ export const DB = {
           }
       }
 
-      if (data.bankState) {
+      if (data.bankState || data.bankDollhouse) {
           if (availableStores.includes(STORE_BANK_DATA)) {
               const store = tx.objectStore(STORE_BANK_DATA);
               store.clear();
-              store.put({ ...data.bankState, id: 'main_state' });
+              if (data.bankState) {
+                  store.put({ ...data.bankState, id: 'main_state' });
+              }
+              if (data.bankDollhouse) {
+                  store.put({ id: 'dollhouse_state', data: data.bankDollhouse });
+              }
           }
       }
 

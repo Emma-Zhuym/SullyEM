@@ -1,8 +1,78 @@
 
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
-import JSZip from 'jszip';
-import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, Message } from '../types';
+import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, Message, RealtimeConfig } from '../types';
 import { DB } from '../utils/db';
+
+
+type JSZipLike = {
+  folder: (name: string) => { file: (name: string, data: string, options?: { base64?: boolean }) => void } | null;
+  file: (name: string) => { async: (type: 'string') => Promise<string> } | null;
+  generateAsync: (options: { type: 'blob' }, onUpdate?: (metadata: { percent: number }) => void) => Promise<Blob>;
+};
+
+type JSZipCtorLike = {
+  new (): JSZipLike;
+  loadAsync: (file: File) => Promise<JSZipLike>;
+};
+
+const dynamicImport = new Function('m', 'return import(m)') as (m: string) => Promise<any>;
+let jszipCtorPromise: Promise<JSZipCtorLike> | null = null;
+
+const loadScript = (src: string): Promise<void> => new Promise((resolve, reject) => {
+  const existing = document.querySelector(`script[data-src=\"${src}\"]`) as HTMLScriptElement | null;
+  if (existing) {
+    if ((existing as any).dataset.loaded === 'true') {
+      resolve();
+      return;
+    }
+    existing.addEventListener('load', () => resolve(), { once: true });
+    existing.addEventListener('error', () => reject(new Error(`load failed: ${src}`)), { once: true });
+    return;
+  }
+
+  const script = document.createElement('script');
+  script.src = src;
+  script.async = true;
+  script.dataset.src = src;
+  script.onload = () => {
+    script.dataset.loaded = 'true';
+    resolve();
+  };
+  script.onerror = () => reject(new Error(`load failed: ${src}`));
+  document.head.appendChild(script);
+});
+
+const loadJSZip = async (): Promise<JSZipCtorLike> => {
+  if (!jszipCtorPromise) {
+    jszipCtorPromise = dynamicImport('jszip')
+      .then((mod) => ((mod as any).default || mod) as JSZipCtorLike)
+      .catch(async () => {
+        await loadScript('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js');
+        const ctor = (window as any).JSZip as JSZipCtorLike | undefined;
+        if (!ctor) throw new Error('JSZip 加载失败');
+        return ctor;
+      });
+  }
+  return jszipCtorPromise;
+};
+
+// 默认实时配置
+const defaultRealtimeConfig: RealtimeConfig = {
+  weatherEnabled: false,
+  weatherApiKey: '',
+  weatherCity: 'Beijing',
+  newsEnabled: false,
+  newsApiKey: '',
+  notionEnabled: false,
+  notionApiKey: '',
+  notionDatabaseId: '',
+  feishuEnabled: false,
+  feishuAppId: '',
+  feishuAppSecret: '',
+  feishuBaseId: '',
+  feishuTableId: '',
+  cacheMinutes: 30
+};
 
 interface OSContextType {
   activeApp: AppID;
@@ -53,6 +123,10 @@ interface OSContextType {
   addApiPreset: (name: string, config: APIConfig) => void;
   removeApiPreset: (id: string) => void;
 
+  // 实时配置 (天气、新闻、Notion等)
+  realtimeConfig: RealtimeConfig;
+  updateRealtimeConfig: (updates: Partial<RealtimeConfig>) => void;
+
   customThemes: ChatTheme[];
   addCustomTheme: (theme: ChatTheme) => void;
   removeCustomTheme: (id: string) => void;
@@ -70,7 +144,7 @@ interface OSContextType {
   clearUnread: (charId: string) => void; // New: Method to clear unread
 
   // System
-  exportSystem: (mode: 'text_only' | 'media_only' | 'theme_only') => Promise<Blob>; 
+  exportSystem: (mode: 'text_only' | 'media_only') => Promise<Blob>; 
   importSystem: (fileOrJson: File | string) => Promise<void>; // Accept File or String
   resetSystem: () => Promise<void>;
   sysOperation: { status: 'idle' | 'processing', message: string, progress: number }; // Progress state
@@ -301,6 +375,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [isDataLoaded, setIsDataLoaded] = useState(false);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [apiPresets, setApiPresets] = useState<ApiPreset[]>([]);
+  const [realtimeConfig, setRealtimeConfig] = useState<RealtimeConfig>(defaultRealtimeConfig);
   const [customThemes, setCustomThemes] = useState<ChatTheme[]>([]);
   const [customIcons, setCustomIcons] = useState<Record<string, string>>({});
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -476,6 +551,16 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         if (savedModels) setAvailableModels(JSON.parse(savedModels));
         if (savedPresets) setApiPresets(JSON.parse(savedPresets));
 
+        // 加载实时配置
+        const savedRealtimeConfig = localStorage.getItem('os_realtime_config');
+        if (savedRealtimeConfig) {
+            try {
+                setRealtimeConfig({ ...defaultRealtimeConfig, ...JSON.parse(savedRealtimeConfig) });
+            } catch (e) {
+                console.error('Failed to load realtime config', e);
+            }
+        }
+
         try {
             const assets = await DB.getAllAssets();
             const assetMap: Record<string, string> = {};
@@ -496,13 +581,32 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                 }
                 
                 const loadedIcons: Record<string, string> = {};
+                const loadedWidgets: Record<string, string> = {};
                 Object.keys(assetMap).forEach(key => {
                     if (key.startsWith('icon_')) {
                         const appId = key.replace('icon_', '');
                         loadedIcons[appId] = assetMap[key];
                     }
+                    if (key.startsWith('widget_')) {
+                        const slot = key.replace('widget_', '');
+                        loadedWidgets[slot] = assetMap[key];
+                    }
                 });
                 setCustomIcons(loadedIcons);
+                if (Object.keys(loadedWidgets).length > 0) {
+                    loadedTheme.launcherWidgets = { ...(loadedTheme.launcherWidgets || {}), ...loadedWidgets };
+                }
+
+                // Restore desktop decoration images from IndexedDB
+                if (loadedTheme.desktopDecorations && loadedTheme.desktopDecorations.length > 0) {
+                    loadedTheme.desktopDecorations = loadedTheme.desktopDecorations.map(d => {
+                        if (d.type === 'image' && (!d.content || d.content === '')) {
+                            const restored = assetMap[`deco_${d.id}`];
+                            return restored ? { ...d, content: restored } : d;
+                        }
+                        return d;
+                    }).filter(d => d.content && d.content !== '');
+                }
             }
         } catch (e) {
             console.error("Failed to load assets from DB", e);
@@ -685,7 +789,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   };
 
   const updateTheme = async (updates: Partial<OSTheme>) => {
-    const { wallpaper, launcherWidgetImage, customFont, ...styleUpdates } = updates;
+    const { wallpaper, launcherWidgetImage, launcherWidgets, desktopDecorations, customFont, ...styleUpdates } = updates;
     const newTheme = { ...theme, ...updates };
     setTheme(newTheme);
 
@@ -706,6 +810,37 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         }
     }
 
+    // Save widget images to IndexedDB (each slot is a separate asset)
+    if (launcherWidgets !== undefined) {
+        const slots = ['tl', 'tr', 'wide', 'bl', 'br'];
+        for (const slot of slots) {
+            const val = launcherWidgets[slot];
+            if (val && val.startsWith('data:')) {
+                await DB.saveAsset(`widget_${slot}`, val);
+            } else if (!val) {
+                await DB.deleteAsset(`widget_${slot}`);
+            }
+        }
+    }
+
+    // Save desktop decoration images to IndexedDB
+    if (desktopDecorations !== undefined) {
+        // Clean up old decoration assets first
+        const allAssets = await DB.getAllAssets();
+        const oldDecoKeys = allAssets.filter(a => a.id.startsWith('deco_')).map(a => a.id);
+        for (const key of oldDecoKeys) {
+            await DB.deleteAsset(key);
+        }
+        // Save new decoration images
+        if (desktopDecorations) {
+            for (const deco of desktopDecorations) {
+                if (deco.content && deco.content.startsWith('data:') && deco.type === 'image') {
+                    await DB.saveAsset(`deco_${deco.id}`, deco.content);
+                }
+            }
+        }
+    }
+
     // Logic for Font: Differentiate between Data URI (Blob) and URL (Web Font)
     if (customFont !== undefined) {
         if (customFont && customFont.startsWith('data:')) {
@@ -723,17 +858,34 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         }
     }
 
-    // Save lightweight settings to LocalStorage
+    // Save lightweight settings to LocalStorage (strip data URIs)
     const lsTheme = { ...newTheme };
-    if (lsTheme.wallpaper && lsTheme.wallpaper.startsWith('data:')) lsTheme.wallpaper = ''; 
-    if (lsTheme.launcherWidgetImage && lsTheme.launcherWidgetImage.startsWith('data:')) lsTheme.launcherWidgetImage = ''; 
-    
+    if (lsTheme.wallpaper && lsTheme.wallpaper.startsWith('data:')) lsTheme.wallpaper = '';
+    if (lsTheme.launcherWidgetImage && lsTheme.launcherWidgetImage.startsWith('data:')) lsTheme.launcherWidgetImage = '';
+    // Strip data URIs from widget slots for LS
+    if (lsTheme.launcherWidgets) {
+        const cleanWidgets: Record<string, string> = {};
+        for (const [k, v] of Object.entries(lsTheme.launcherWidgets)) {
+            cleanWidgets[k] = (v && v.startsWith('data:')) ? '' : v;
+        }
+        lsTheme.launcherWidgets = cleanWidgets;
+    }
+
+    // Strip data URIs from desktop decorations for LS
+    if (lsTheme.desktopDecorations) {
+        lsTheme.desktopDecorations = lsTheme.desktopDecorations.map(d => ({
+            ...d,
+            content: (d.content && d.content.startsWith('data:') && d.type === 'image') ? '' : d.content
+        }));
+    }
+
     // Clear data URI font from LS, keep URL font
-    if (lsTheme.customFont && lsTheme.customFont.startsWith('data:')) lsTheme.customFont = ''; 
-    
+    if (lsTheme.customFont && lsTheme.customFont.startsWith('data:')) lsTheme.customFont = '';
+
     localStorage.setItem('os_theme', JSON.stringify(lsTheme));
   };
   const updateApiConfig = (updates: Partial<APIConfig>) => { const newConfig = { ...apiConfig, ...updates }; setApiConfig(newConfig); localStorage.setItem('os_api_config', JSON.stringify(newConfig)); };
+  const updateRealtimeConfig = (updates: Partial<RealtimeConfig>) => { const newConfig = { ...realtimeConfig, ...updates }; setRealtimeConfig(newConfig); localStorage.setItem('os_realtime_config', JSON.stringify(newConfig)); };
   const saveModels = (models: string[]) => { setAvailableModels(models); localStorage.setItem('os_available_models', JSON.stringify(models)); };
   const addApiPreset = (name: string, config: APIConfig) => { setApiPresets(prev => { const next = [...prev, { id: Date.now().toString(), name, config }]; localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
   const removeApiPreset = (id: string) => { setApiPresets(prev => { const next = prev.filter(p => p.id !== id); localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
@@ -861,10 +1013,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const addToast = (message: string, type: Toast['type'] = 'info') => { const id = Date.now().toString(); setToasts(prev => [...prev, { id, message, type }]); setTimeout(() => { setToasts(prev => prev.filter(t => t.id !== id)); }, 3000); };
 
   // --- MODIFIED EXPORT SYSTEM WITH SEPARATED ASSETS ZIP ---
-  const exportSystem = async (mode: 'text_only' | 'media_only' | 'theme_only'): Promise<Blob> => {
+  const exportSystem = async (mode: 'text_only' | 'media_only'): Promise<Blob> => {
       try {
           setSysOperation({ status: 'processing', message: '正在初始化打包引擎...', progress: 0 });
           
+          const JSZip = await loadJSZip();
           const zip = new JSZip();
           const assetsFolder = zip.folder("assets");
           let assetCount = 0;
@@ -929,15 +1082,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const allStores = [
               'characters', 'messages', 'themes', 'emojis', 'assets', 'gallery', 
               'user_profile', 'diaries', 'tasks', 'anniversaries', 'room_todos', 
-              'room_notes', 'groups', 'journal_stickers', 'social_posts', 'courses', 'games', 'worldbooks', 'novels'
+              'room_notes', 'groups', 'journal_stickers', 'social_posts', 'courses', 'games', 'worldbooks', 'novels',
+              'bank_transactions', 'bank_data'
           ];
 
           if (mode === 'text_only') {
               storesToProcess = allStores.filter(s => s !== 'assets'); // Exclude raw assets store
           } else if (mode === 'media_only') {
-              storesToProcess = ['gallery', 'emojis', 'journal_stickers', 'user_profile', 'characters', 'messages'];
-          } else if (mode === 'theme_only') {
-              storesToProcess = ['themes', 'assets']; // assets includes wallpapers and icons
+              // media_only now includes themes/assets for complete media backup
+              storesToProcess = ['gallery', 'emojis', 'journal_stickers', 'user_profile', 'characters', 'messages', 'themes', 'assets', 'bank_data'];
           }
 
           // Fetch Social App & Room Assets (Optional, depends on mode)
@@ -947,11 +1100,12 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
           const backupData: Partial<FullBackupData> = {
               timestamp: Date.now(),
-              version: 2, 
+              version: 2,
               apiConfig: mode === 'text_only' ? apiConfig : undefined, // Only export API config in full text backup
               apiPresets: mode === 'text_only' ? apiPresets : undefined,
               availableModels: mode === 'text_only' ? availableModels : undefined,
-              theme: (mode === 'text_only' || mode === 'theme_only') ? theme : undefined,
+              realtimeConfig: mode === 'text_only' ? realtimeConfig : undefined, // 导出实时感知配置（天气/新闻/Notion）
+              theme: theme, // Include theme in all modes (text/media)
               
               socialAppData: (mode === 'text_only' || mode === 'media_only') ? {
                   charHandles: JSON.parse(localStorage.getItem('spark_char_handles') || '{}'),
@@ -978,7 +1132,22 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               if (backupData.socialAppData?.userProfile) backupData.socialAppData.userProfile = stripBase64(backupData.socialAppData.userProfile);
               if (backupData.socialAppData?.userBg) backupData.socialAppData.userBg = stripBase64(backupData.socialAppData.userBg);
               if (backupData.roomCustomAssets) backupData.roomCustomAssets = stripBase64(backupData.roomCustomAssets);
-              if (backupData.theme) backupData.theme = stripBase64(backupData.theme);
+              if (backupData.theme) {
+                  // Save preset decoration content before stripping (SVGs start with data:image and would be stripped)
+                  const savedPresetDecos = backupData.theme.desktopDecorations
+                      ?.filter(d => d.type === 'preset')
+                      .map(d => ({ id: d.id, content: d.content }));
+                  backupData.theme = stripBase64(backupData.theme);
+                  // Restore preset SVGs and remove image decorations (they have no data in text mode)
+                  if (backupData.theme.desktopDecorations && savedPresetDecos) {
+                      backupData.theme.desktopDecorations = backupData.theme.desktopDecorations
+                          .map(d => {
+                              const saved = savedPresetDecos.find(p => p.id === d.id);
+                              return saved ? { ...d, content: saved.content } : d;
+                          })
+                          .filter(d => d.content && d.content !== '');
+                  }
+              }
           }
 
           for (const storeName of storesToProcess) {
@@ -1031,11 +1200,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       continue; // Skip standard assignment
                   }
 
-                  if (storeName === 'assets' && mode === 'theme_only') {
-                      // Filter assets: Keep wallpapers, icons. Exclude large binary blobs if not relevant?
-                      // Actually just export all assets for simplicity in theme mode
-                  }
-
                   processedData = processObject(rawData);
               }
 
@@ -1059,7 +1223,17 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   case 'courses': backupData.courses = processedData; break;
                   case 'games': backupData.games = processedData; break;
                   case 'worldbooks': backupData.worldbooks = processedData; break;
-                  case 'novels': backupData.novels = processedData; break; 
+                  case 'novels': backupData.novels = processedData; break;
+                  case 'bank_transactions': backupData.bankTransactions = processedData; break;
+                  case 'bank_data': {
+                      if (Array.isArray(processedData)) {
+                          const mainState = processedData.find((d: any) => d.id === 'main_state');
+                          const dollhouseRecord = processedData.find((d: any) => d.id === 'dollhouse_state');
+                          backupData.bankState = mainState ? { ...mainState, id: undefined } : undefined;
+                          backupData.bankDollhouse = dollhouseRecord?.data || undefined;
+                      }
+                      break;
+                  }
               }
 
               await new Promise(resolve => setTimeout(resolve, 10));
@@ -1089,7 +1263,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       try {
           setSysOperation({ status: 'processing', message: '正在解析备份文件...', progress: 0 });
           let data: FullBackupData;
-          let zip: JSZip | null = null;
+          let zip: JSZipLike | null = null;
 
           if (typeof fileOrJson === 'string') {
               data = JSON.parse(fileOrJson);
@@ -1102,6 +1276,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       throw new Error("无效的文件格式，请上传 .zip 或 .json");
                   }
               } else {
+                  const JSZip = await loadJSZip();
                   const loadedZip = await JSZip.loadAsync(fileOrJson);
                   zip = loadedZip;
                   const dataFile = loadedZip.file("data.json");
@@ -1166,12 +1341,20 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               // This prevents updateTheme from triggering DB deletion for these assets if they were just restored to DB.
               if (cleanTheme.wallpaper && cleanTheme.wallpaper.startsWith('data:')) { delete cleanTheme.wallpaper; }
               if (cleanTheme.launcherWidgetImage && cleanTheme.launcherWidgetImage.startsWith('data:')) { delete cleanTheme.launcherWidgetImage; }
+              if (cleanTheme.launcherWidgets) {
+                  const cw = { ...cleanTheme.launcherWidgets };
+                  for (const k of Object.keys(cw)) { if (cw[k]?.startsWith('data:')) delete cw[k]; }
+                  cleanTheme.launcherWidgets = Object.keys(cw).length > 0 ? cw : undefined;
+              }
               if (cleanTheme.customFont && cleanTheme.customFont.startsWith('data:')) { delete cleanTheme.customFont; }
+              // For desktop decorations: keep preset SVGs, strip uploaded image data URIs (they'll be re-saved by updateTheme from the data)
+              // Note: uploaded image decorations with data: content are passed through so updateTheme can save them to DB
               updateTheme(cleanTheme);
           }
           if (data.apiConfig) updateApiConfig(data.apiConfig);
           if (data.availableModels) saveModels(data.availableModels);
           if (data.apiPresets) savePresets(data.apiPresets);
+          if (data.realtimeConfig) updateRealtimeConfig(data.realtimeConfig); // 恢复实时感知配置
           
           if (data.socialAppData) {
               if (data.socialAppData.charHandles) localStorage.setItem('spark_char_handles', JSON.stringify(data.socialAppData.charHandles));
@@ -1284,6 +1467,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     apiPresets,
     addApiPreset,
     removeApiPreset,
+    realtimeConfig,
+    updateRealtimeConfig,
     customThemes,
     addCustomTheme,
     removeCustomTheme,

@@ -16,10 +16,11 @@ interface DateSettingsProps {
 const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
     const { updateCharacter, addToast } = useOS();
     const fileInputRef = useRef<HTMLInputElement>(null);
-    
+
     const [uploadTarget, setUploadTarget] = useState<'bg' | 'sprite'>('bg');
     const [targetEmotionKey, setTargetEmotionKey] = useState<string>('');
     const [tempSpriteConfig, setTempSpriteConfig] = useState<SpriteConfig>(DEFAULT_SPRITE_CONFIG);
+    const [newEmotionName, setNewEmotionName] = useState<string>('');
 
     // Sync config on mount
     useEffect(() => {
@@ -65,6 +66,30 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
         updateCharacter(char.id, { spriteConfig: tempSpriteConfig });
         addToast('配置已保存', 'success');
         onBack();
+    };
+
+    const customEmotions = char.customDateSprites || [];
+
+    const handleAddCustomEmotion = () => {
+        const key = newEmotionName.trim().toLowerCase().replace(/\s+/g, '_');
+        if (!key) { addToast('请输入情绪名称', 'error'); return; }
+        if (REQUIRED_EMOTIONS.includes(key)) { addToast('该名称与默认情绪重复', 'error'); return; }
+        if (customEmotions.includes(key)) { addToast('该自定义情绪已存在', 'error'); return; }
+        if (key === 'chibi') { addToast('不能使用 chibi 作为情绪名', 'error'); return; }
+        const updated = [...customEmotions, key];
+        updateCharacter(char.id, { customDateSprites: updated });
+        setNewEmotionName('');
+        addToast(`已添加自定义情绪 [${key}]`, 'success');
+    };
+
+    const handleDeleteCustomEmotion = (key: string) => {
+        const updated = customEmotions.filter(e => e !== key);
+        updateCharacter(char.id, { customDateSprites: updated });
+        // Also remove the sprite image for this emotion
+        const newSprites = { ...(char.sprites || {}) };
+        delete newSprites[key];
+        updateCharacter(char.id, { sprites: newSprites, customDateSprites: updated });
+        addToast(`已删除自定义情绪 [${key}]`, 'success');
     };
 
     return (
@@ -127,7 +152,7 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                 </section>
                 
                 <section>
-                    <h3 className="text-xs font-bold text-slate-400 uppercase mb-3">立绘管理</h3>
+                    <h3 className="text-xs font-bold text-slate-400 uppercase mb-3">基础情绪立绘</h3>
                     <div className="grid grid-cols-3 gap-3">
                         {REQUIRED_EMOTIONS.map(key => (
                             <div key={key} onClick={() => triggerUpload('sprite', key)} className="flex flex-col gap-2 group cursor-pointer">
@@ -146,6 +171,61 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                         ))}
                     </div>
                 </section>
+
+                <section>
+                    <h3 className="text-xs font-bold text-slate-400 uppercase mb-3">自定义情绪 (Custom Emotions)</h3>
+                    <p className="text-[11px] text-slate-400 mb-4">为该角色添加专属情绪，AI 会在见面时使用。每个角色的自定义情绪互相独立。</p>
+
+                    {/* Existing custom emotions grid */}
+                    {customEmotions.length > 0 && (
+                        <div className="grid grid-cols-3 gap-3 mb-4">
+                            {customEmotions.map(key => (
+                                <div key={key} className="flex flex-col gap-2 group relative">
+                                    <div
+                                        onClick={() => triggerUpload('sprite', key)}
+                                        className={`aspect-[3/4] rounded-xl overflow-hidden relative border ${sprites[key] ? 'border-slate-200 bg-white' : 'border-dashed border-slate-300 bg-slate-100'} shadow-sm flex items-center justify-center transition-all group-hover:border-primary cursor-pointer`}
+                                    >
+                                        {sprites[key] ? (
+                                            <>
+                                                <img src={sprites[key]} className="w-full h-full object-cover" />
+                                                <div className="absolute inset-0 bg-black/20 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"><span className="text-white text-[10px]">更换</span></div>
+                                            </>
+                                        ) : <span className="text-slate-300 text-2xl">+</span>}
+                                    </div>
+                                    <div className="text-center flex items-center justify-center gap-1">
+                                        <div className="text-xs font-bold text-slate-600 capitalize truncate">{key}</div>
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); handleDeleteCustomEmotion(key); }}
+                                            className="text-slate-300 hover:text-red-400 transition-colors shrink-0"
+                                        >
+                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* Add new custom emotion */}
+                    <div className="flex gap-2">
+                        <input
+                            type="text"
+                            value={newEmotionName}
+                            onChange={e => setNewEmotionName(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') handleAddCustomEmotion(); }}
+                            placeholder="输入情绪名 (如 scared, excited...)"
+                            className="flex-1 px-4 py-3 bg-slate-100 rounded-xl text-sm focus:ring-1 focus:ring-primary/30 outline-none transition-all"
+                        />
+                        <button
+                            onClick={handleAddCustomEmotion}
+                            disabled={!newEmotionName.trim()}
+                            className="px-5 py-3 bg-primary text-white text-sm font-bold rounded-xl disabled:opacity-40 active:scale-95 transition-all"
+                        >
+                            添加
+                        </button>
+                    </div>
+                </section>
+
                 <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
             </div>
 

@@ -660,7 +660,7 @@ ${identityMap}
         if (!selectedPost) return null;
         return (
             <div 
-                className="fixed inset-0 z-[60] h-full w-full bg-white/90 backdrop-blur-xl flex flex-col"
+                className="absolute inset-0 z-[60] h-full w-full bg-white/90 backdrop-blur-xl flex flex-col"
             >
                 {/* 
                    Animation Wrapper. 
@@ -668,8 +668,8 @@ ${identityMap}
                    We ensure this doesn't re-render on state changes like comments.
                 */}
                 <div className="flex-1 w-full h-full flex flex-col animate-slide-up relative overflow-hidden">
-                    {/* Header - Shrink 0 to stay at top */}
-                    <div className="h-14 flex items-center justify-between px-4 bg-white/60 backdrop-blur-xl border-b border-white/20 shrink-0 z-20">
+                    {/* Header - Shrink 0 to stay at top, with safe-area for notch devices */}
+                    <div className="flex items-center justify-between px-4 bg-white/60 backdrop-blur-xl border-b border-white/20 shrink-0 z-20" style={{ paddingTop: 'max(12px, env(safe-area-inset-top))', paddingBottom: '12px' }}>
                         <Icons.Back onClick={() => setSelectedPost(null)} />
                         <div className="flex items-center gap-2">
                             <img src={selectedPost.authorAvatar} className="w-8 h-8 rounded-full object-cover border border-white/50" />
@@ -885,7 +885,7 @@ ${identityMap}
             <div className={`flex-col h-full ${selectedPost || isCreateOpen ? 'hidden' : 'flex'}`}>
                 
                 {/* Top Nav - Glass */}
-                <div className="h-14 flex items-center justify-between px-4 sticky top-0 bg-white/60 backdrop-blur-xl z-30 border-b border-white/20">
+                <div className="h-11 flex items-center justify-between px-4 sticky top-0 bg-white/60 backdrop-blur-xl z-30 border-b border-white/20">
                     <button onClick={closeApp} className="p-1"><Icons.Back onClick={closeApp} /></button>
                     <div className="flex gap-6 text-base font-bold text-slate-300">
                         <button className={`${activeTab === 'home' ? 'text-slate-800 scale-110 border-b-2 border-[#ff2442] pb-1' : 'hover:text-slate-500'} transition-all`} onClick={() => setActiveTab('home')}>发现</button>
@@ -899,14 +899,20 @@ ${identityMap}
                     
                     {activeTab === 'home' && (
                         <div className="p-2 min-h-full">
-                            {isRefreshing && <div className="text-center py-4 text-xs text-[#ff2442] font-bold animate-pulse flex justify-center items-center gap-2"><div className="w-4 h-4 border-2 border-[#ff2442] border-t-transparent rounded-full animate-spin"></div> 正在获取新鲜事...</div>}
+                            {/* Refresh Button - Above Posts */}
+                            <div className="flex items-center justify-center py-3">
+                                {isRefreshing ? (
+                                    <div className="text-center text-xs text-[#ff2442] font-bold animate-pulse flex items-center gap-2">
+                                        <div className="w-4 h-4 border-2 border-[#ff2442] border-t-transparent rounded-full animate-spin"></div> 正在获取新鲜事...
+                                    </div>
+                                ) : (
+                                    <button onClick={handleRefresh} className="px-6 py-2 bg-white/80 backdrop-blur-md rounded-full text-xs font-bold text-slate-500 shadow-sm border border-white hover:text-[#ff2442] active:scale-95 transition-all">
+                                        点击刷新推荐流
+                                    </button>
+                                )}
+                            </div>
                             <div className="columns-2 gap-2 space-y-2 pb-24">
                                 {feed.map(post => renderFeedItem(post))}
-                            </div>
-                            <div className="h-32 flex items-center justify-center pb-8">
-                                <button onClick={handleRefresh} className="px-6 py-2 bg-white/80 backdrop-blur-md rounded-full text-xs font-bold text-slate-500 shadow-sm border border-white hover:text-[#ff2442] active:scale-95 transition-all">
-                                    点击刷新推荐流
-                                </button>
                             </div>
                         </div>
                     )}

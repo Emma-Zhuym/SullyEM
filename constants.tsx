@@ -121,7 +121,7 @@ export const INSTALLED_APPS: AppConfig[] = [
   // { id: AppID.Browser, name: '浏览器', icon: 'Browser', color: 'blue' }, // Hidden
   { id: AppID.Social, name: 'Spark', icon: 'Social', color: 'red' }, 
   { id: AppID.User, name: '档案', icon: 'User', color: 'blue' },
-  // { id: AppID.Bank, name: '存钱罐', icon: 'Bank', color: 'lime' }, // Hidden
+  { id: AppID.Bank, name: '存钱罐', icon: 'Bank', color: 'lime' }, // Hidden
   { id: AppID.Schedule, name: '时光契约', icon: 'Schedule', color: 'cyan' },
   { id: AppID.Journal, name: '交换日记', icon: 'Journal', color: 'amber' },
   { id: AppID.Date, name: '见面', icon: 'Date', color: 'pink' },

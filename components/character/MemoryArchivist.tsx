@@ -1,13 +1,16 @@
 
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { MemoryFragment } from '../../types';
 import Modal from '../../components/os/Modal';
+import { DEFAULT_ARCHIVE_PROMPTS } from '../../components/chat/ChatConstants';
 
 interface MemoryArchivistProps {
     memories: MemoryFragment[];
     refinedMemories: Record<string, string>;
     activeMemoryMonths: string[];
-    onRefine: (year: string, month: string, summary: string) => Promise<void>;
+    charName: string;
+    userName: string;
+    onRefine: (year: string, month: string, summary: string, formattedPrompt?: string) => Promise<void>;
     onDeleteMemories: (ids: string[]) => void;
     onUpdateMemory: (id: string, newSummary: string) => void;
     onToggleActiveMonth: (year: string, month: string) => void;
@@ -15,7 +18,7 @@ interface MemoryArchivistProps {
     onDeleteRefinedMemory: (year: string, month: string) => void;
 }
 
-const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemories, activeMemoryMonths, onRefine, onDeleteMemories, onUpdateMemory, onToggleActiveMonth, onUpdateRefinedMemory, onDeleteRefinedMemory }) => {
+const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemories, activeMemoryMonths, charName, userName, onRefine, onDeleteMemories, onUpdateMemory, onToggleActiveMonth, onUpdateRefinedMemory, onDeleteRefinedMemory }) => {
     const [viewState, setViewState] = useState<{
         level: 'root' | 'year' | 'month';
         selectedYear: string | null;
@@ -26,11 +29,27 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [editMemory, setEditMemory] = useState<MemoryFragment | null>(null);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-    
+
     // Core Memory Edit State
     const [editingCore, setEditingCore] = useState<{year: string, month: string, content: string} | null>(null);
     const [showCoreDeleteConfirm, setShowCoreDeleteConfirm] = useState(false);
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // Archive prompt selection (shared with Chat app)
+    const [archivePrompts, setArchivePrompts] = useState<{id: string, name: string, content: string}[]>(DEFAULT_ARCHIVE_PROMPTS);
+    const [selectedPromptId, setSelectedPromptId] = useState<string>('preset_rational');
+    const [showPromptPanel, setShowPromptPanel] = useState(false);
+
+    useEffect(() => {
+        const savedPrompts = localStorage.getItem('chat_archive_prompts');
+        if (savedPrompts) {
+            try {
+                const parsed = JSON.parse(savedPrompts);
+                const merged = [...DEFAULT_ARCHIVE_PROMPTS, ...parsed.filter((p: any) => !p.id.startsWith('preset_'))];
+                setArchivePrompts(merged);
+            } catch(e) {}
+        }
+    }, []);
 
     const { tree, stats } = useMemo(() => {
         const tree: Record<string, Record<string, MemoryFragment[]>> = {};
@@ -70,7 +89,21 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
         setIsRefining(true);
         const monthMems = tree[viewState.selectedYear][viewState.selectedMonth];
         const combinedText = monthMems.map(m => `${m.date}: ${m.summary} (${m.mood || '无'})`).join('\n');
-        try { await onRefine(viewState.selectedYear, viewState.selectedMonth, combinedText); } finally { setIsRefining(false); }
+
+        // Build formatted prompt if a template is selected
+        let formattedPrompt: string | undefined;
+        const templateObj = archivePrompts.find(p => p.id === selectedPromptId);
+        if (templateObj) {
+            const dateStr = `${viewState.selectedYear}-${viewState.selectedMonth}`;
+            formattedPrompt = templateObj.content
+                .replace(/\$\{dateStr\}/g, dateStr)
+                .replace(/\$\{char\.name\}/g, charName)
+                .replace(/\$\{userProfile\.name\}/g, userName)
+                .replace(/\$\{rawLog.*?\}/g, combinedText.substring(0, 10000));
+            formattedPrompt = `[角色记忆精炼: ${charName} - ${dateStr}]\n${formattedPrompt}`;
+        }
+
+        try { await onRefine(viewState.selectedYear, viewState.selectedMonth, combinedText, formattedPrompt); } finally { setIsRefining(false); }
     };
 
     const toggleSelection = (id: string) => {
@@ -171,9 +204,26 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                         <div className="flex items-center gap-2 text-indigo-700"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M14.615 1.595a.75.75 0 0 1 .359.852L12.982 9.75h7.268a.75.75 0 0 1 .548 1.262l-10.5 11.25a.75.75 0 0 1-1.272-.71l1.992-7.302H3.75a.75.75 0 0 1-.548-1.262l10.5-11.25a.75.75 0 0 1 .914-.143Z" clipRule="evenodd" /></svg><h4 className="text-xs font-bold tracking-wide uppercase">核心记忆 (AI Context)</h4></div>
                         <div className="flex gap-2">
                              <button onClick={() => onToggleActiveMonth(viewState.selectedYear!, viewState.selectedMonth!)} className={`text-[10px] px-3 py-1 rounded-full border shadow-sm transition-colors flex items-center gap-1 ${isActive ? 'bg-primary text-white border-primary' : 'bg-white text-slate-500 border-slate-200'}`}>{isActive ? '详细回忆已激活 (Active)' : '仅使用核心记忆 (Default)'}</button>
+                             <button onClick={() => setShowPromptPanel(!showPromptPanel)} className="text-[10px] bg-white text-slate-500 px-2 py-1 rounded-full border border-slate-200 shadow-sm hover:bg-slate-50 transition-colors">
+                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75" /></svg>
+                             </button>
                              <button onClick={triggerRefine} disabled={isRefining} className="text-[10px] bg-white text-indigo-600 px-3 py-1 rounded-full border border-indigo-200 shadow-sm hover:bg-indigo-500 hover:text-white transition-colors flex items-center gap-1">{isRefining ? '...' : (refinedContent ? '重新精炼' : '生成')}</button>
                         </div>
                     </div>
+                    {/* Prompt Selection Panel */}
+                    {showPromptPanel && (
+                        <div className="mb-3 bg-white/70 p-3 rounded-xl border border-indigo-100 animate-fade-in">
+                            <label className="text-[9px] font-bold text-indigo-400 uppercase mb-2 block">选择总结提示词</label>
+                            <div className="flex flex-col gap-1.5">
+                                {archivePrompts.map(p => (
+                                    <div key={p.id} onClick={() => setSelectedPromptId(p.id)} className={`px-3 py-2 rounded-lg border cursor-pointer text-xs font-bold transition-all ${selectedPromptId === p.id ? 'bg-indigo-50 border-indigo-400 text-indigo-700 shadow-sm' : 'bg-white/50 border-indigo-100 text-slate-500 hover:bg-white'}`}>
+                                        {p.name}
+                                    </div>
+                                ))}
+                            </div>
+                            <p className="text-[8px] text-indigo-300 mt-2 leading-tight">提示词与聊天-归档共享，可在聊天设置中自定义。</p>
+                        </div>
+                    )}
                     {/* Display Refined Memory Content if exists */}
                     {refinedContent && (
                         <div 

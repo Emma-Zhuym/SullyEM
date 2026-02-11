@@ -1,4 +1,4 @@
-import React, { useMemo, useEffect, useState, useRef } from 'react';
+import React, { useMemo, useEffect, useLayoutEffect, useState, useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { INSTALLED_APPS, DOCK_APPS } from '../constants';
 import AppIcon from '../components/os/AppIcon';
@@ -29,7 +29,7 @@ const DesktopClock = React.memo(() => {
              </div>
 
              <div className="flex items-end gap-4">
-                 <div className="text-[6.5rem] leading-[0.85] font-bold tracking-tighter drop-shadow-2xl font-sans" style={{ willChange: 'contents' }}>
+                 <div className="text-[6.5rem] leading-[0.85] font-bold tracking-tighter drop-shadow-2xl font-sans">
                     {virtualTime.hours.toString().padStart(2, '0')}
                     <span className="opacity-40 font-light mx-1">:</span>
                     {virtualTime.minutes.toString().padStart(2, '0')}
@@ -203,17 +203,20 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, characte
     );
 });
 
+// --- Persist scroll page across remounts (e.g. returning from apps) ---
+let _lastPageIndex = 0;
+
 // --- Main Launcher ---
 
 const Launcher: React.FC = () => {
   const { openApp, characters, activeCharacterId, theme, lastMsgTimestamp, isDataLoaded, unreadMessages } = useOS();
-  
+
   // Local state for widget data to prevent context trashing
   const [widgetChar, setWidgetChar] = useState<CharacterProfile | null>(null);
   const [lastMessage, setLastMessage] = useState<string>('');
   const [anniversaries, setAnniversaries] = useState<Anniversary[]>([]);
-  
-  const [activePageIndex, setActivePageIndex] = useState(0);
+
+  const [activePageIndex, setActivePageIndex] = useState(_lastPageIndex);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Mouse Drag Logic refs
@@ -289,12 +292,25 @@ const Launcher: React.FC = () => {
       }
   }, [activeCharacterId, lastMsgTimestamp, isDataLoaded, characters]); // Trigger on characters change
 
+  // Restore scroll position BEFORE paint to avoid visible flash/slide
+  useLayoutEffect(() => {
+      const el = scrollContainerRef.current;
+      if (el && _lastPageIndex > 0) {
+          // Temporarily disable smooth scroll so jump is instant
+          el.style.scrollBehavior = 'auto';
+          el.scrollLeft = el.clientWidth * _lastPageIndex;
+          // Re-enable on next frame
+          requestAnimationFrame(() => { el.style.scrollBehavior = 'smooth'; });
+      }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleScroll = () => {
       if (scrollContainerRef.current) {
           const width = scrollContainerRef.current.clientWidth;
           const scrollLeft = scrollContainerRef.current.scrollLeft;
           const index = Math.round(scrollLeft / width);
           setActivePageIndex(index);
+          _lastPageIndex = index; // Persist across remounts
       }
   };
 
@@ -351,10 +367,10 @@ const Launcher: React.FC = () => {
   return (
     <div className="h-full w-full flex flex-col relative z-10 overflow-hidden font-sans select-none">
       
-      {/* Visual Elements (Decorative Background - Static) */}
-      <div className="absolute inset-0 pointer-events-none" style={{ willChange: 'transform' }}>
-          <div className="absolute -top-20 -right-20 w-80 h-80 bg-white/5 rounded-full blur-3xl"></div>
-          <div className="absolute -bottom-20 -left-20 w-80 h-80 bg-blue-500/10 rounded-full blur-3xl"></div>
+      {/* Visual Elements (Decorative Background - Static, low-cost gradients instead of blur) */}
+      <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute -top-20 -right-20 w-80 h-80 rounded-full" style={{ background: 'radial-gradient(circle, rgba(255,255,255,0.05) 0%, transparent 70%)' }}></div>
+          <div className="absolute -bottom-20 -left-20 w-80 h-80 rounded-full" style={{ background: 'radial-gradient(circle, rgba(59,130,246,0.08) 0%, transparent 70%)' }}></div>
       </div>
 
       {/* Scrollable Content Layer */}
@@ -368,12 +384,11 @@ const Launcher: React.FC = () => {
         onMouseLeave={handleMouseLeave}
         onClickCapture={handleClickCapture}
         className="flex-1 flex overflow-x-auto snap-x snap-mandatory no-scrollbar cursor-grab active:cursor-grabbing"
-        // Ensure horizontal swipe logic is contained and doesn't trigger browser navigation
-        style={{ scrollBehavior: 'smooth', overscrollBehaviorX: 'contain' }}
+        style={{ scrollBehavior: 'smooth', overscrollBehaviorX: 'contain', contain: 'layout style', transform: 'translateZ(0)' }}
       >
           {/* Render App Pages */}
           {appPages.map((pageApps, idx) => (
-              <div key={idx} className="w-full flex-shrink-0 snap-center snap-always flex flex-col px-6 pt-12 pb-8 h-full">
+              <div key={idx} className="w-full flex-shrink-0 snap-center snap-always flex flex-col px-6 pt-12 pb-8 h-full" style={{ contentVisibility: 'auto' }}>
                   {idx === 0 ? (
                       // Page 1: Clock + Widget + Apps
                       <>
@@ -393,24 +408,62 @@ const Launcher: React.FC = () => {
                         </div>
                       </>
                   ) : (
-                      // Page 2+: Custom Widget (if any) + Apps
-                      <div className="pt-12 flex-1 flex flex-col">
-                          {idx === 1 && theme.launcherWidgetImage ? (
-                              <div className="w-full h-48 mb-8 rounded-[1.5rem] overflow-hidden shadow-lg border border-white/20 relative group">
-                                  <img 
-                                    src={theme.launcherWidgetImage} 
-                                    className="w-full h-full object-cover" 
-                                    alt="Custom Widget"
-                                  />
-                                  <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent pointer-events-none"></div>
-                              </div>
-                          ) : (
-                              // Default Spacer if no widget
-                              <div className="h-20"></div>
-                          )}
-                          
-                          <AppGridPage 
-                                apps={pageApps} 
+                      // Page 2+: Widget Grid + Free Decorations + Apps
+                      <div className="pt-10 flex-1 flex flex-col relative">
+                          {idx === 1 && (() => {
+                            const raw = theme.launcherWidgets || {};
+                            const w = { ...raw };
+                            if (!w['wide'] && theme.launcherWidgetImage) w['wide'] = theme.launcherWidgetImage;
+                            const hasAny = w['tl'] || w['tr'] || w['wide'];
+                            const hasTopRow = w['tl'] || w['tr'];
+                            return (
+                              <>
+                                {hasAny && (
+                                  <div className="mb-3 space-y-2 relative z-10">
+                                    {hasTopRow && (
+                                      <div className="flex gap-2">
+                                        {['tl', 'tr'].map(key => w[key] ? (
+                                          <div key={key} className="flex-1 aspect-square rounded-2xl overflow-hidden shadow-md border border-white/20">
+                                            <img src={w[key]} className="w-full h-full object-cover" alt="" loading="lazy" />
+                                          </div>
+                                        ) : <div key={key} className="flex-1"></div>)}
+                                      </div>
+                                    )}
+                                    {w['wide'] && (
+                                      <div className="w-full h-32 rounded-2xl overflow-hidden shadow-md border border-white/20">
+                                        <img src={w['wide']} className="w-full h-full object-cover" alt="" loading="lazy" />
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                                {/* Free-positioned Desktop Decorations (z-20 to float above widgets z-10) */}
+                                {theme.desktopDecorations && theme.desktopDecorations.length > 0 && (
+                                  <div className="absolute inset-0 pointer-events-none overflow-hidden z-20">
+                                    {theme.desktopDecorations.map(deco => (
+                                      <img
+                                        key={deco.id}
+                                        src={deco.content}
+                                        alt=""
+                                        loading="lazy"
+                                        className="absolute w-16 h-16 object-contain select-none"
+                                        style={{
+                                          left: `${deco.x}%`,
+                                          top: `${deco.y}%`,
+                                          transform: `translate(-50%, -50%) scale(${deco.scale}) rotate(${deco.rotation}deg)${deco.flip ? ' scaleX(-1)' : ''}`,
+                                          opacity: deco.opacity,
+                                          zIndex: deco.zIndex,
+                                          filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.15))',
+                                        }}
+                                      />
+                                    ))}
+                                  </div>
+                                )}
+                              </>
+                            );
+                          })()}
+
+                          <AppGridPage
+                                apps={pageApps}
                                 openApp={openApp}
                           />
                           <div className="flex-1"></div>
@@ -447,7 +500,7 @@ const Launcher: React.FC = () => {
                    <div key={app.id} className="relative">
                         <AppIcon app={app} onClick={() => openApp(app.id)} variant="dock" size="md" />
                         {app.id === 'chat' && totalUnread > 0 && (
-                            <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-white text-[9px] flex items-center justify-center border-2 border-white/20 shadow-sm font-bold pointer-events-none animate-bounce">
+                            <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-white text-[9px] flex items-center justify-center border-2 border-white/20 shadow-sm font-bold pointer-events-none animate-pop-in">
                                 {totalUnread > 9 ? '9+' : totalUnread}
                             </div>
                         )}

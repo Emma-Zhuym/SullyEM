@@ -6,6 +6,7 @@ import { Message, GroupProfile, CharacterProfile, MessageType, ChatTheme, Memory
 import Modal from '../components/os/Modal';
 import { ContextBuilder } from '../utils/context';
 import { processImage } from '../utils/file';
+import { DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 
 // 复用 Chat.tsx 的高颜值样式逻辑，但针对群聊微调
 const PRESET_THEME_GROUP: ChatTheme = {
@@ -172,16 +173,27 @@ const GroupChat: React.FC = () => {
     const [view, setView] = useState<'list' | 'chat'>('list');
     const [activeGroup, setActiveGroup] = useState<GroupProfile | null>(null);
     const [messages, setMessages] = useState<Message[]>([]);
+    const [visibleCount, setVisibleCount] = useState(30);
     const [input, setInput] = useState('');
     const [isTyping, setIsTyping] = useState(false);
     
     // UI State
     const [showActions, setShowActions] = useState(false);
     const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-    const [modalType, setModalType] = useState<'none' | 'create' | 'settings' | 'transfer' | 'member_select'>('none');
+    const [modalType, setModalType] = useState<'none' | 'create' | 'settings' | 'transfer' | 'member_select' | 'message-options'>('none');
+    const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
     const [preserveContext, setPreserveContext] = useState(true);
     const [isSummarizing, setIsSummarizing] = useState(false);
     const [summaryProgress, setSummaryProgress] = useState('');
+
+    // Archive prompt selection (shared with Chat app)
+    const [archivePrompts, setArchivePrompts] = useState<{id: string, name: string, content: string}[]>(DEFAULT_ARCHIVE_PROMPTS);
+    const [selectedPromptId, setSelectedPromptId] = useState<string>('preset_rational');
+
+    // Context limit (like Chat app's settingsContextLimit)
+    const [contextLimit, setContextLimit] = useState<number>(() => {
+        try { return parseInt(localStorage.getItem('groupchat_context_limit') || '30'); } catch { return 30; }
+    });
     
     // Selection Mode
     const [selectionMode, setSelectionMode] = useState(false);
@@ -201,9 +213,22 @@ const GroupChat: React.FC = () => {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const groupAvatarInputRef = useRef<HTMLInputElement>(null);
 
+    // Load shared archive prompts from localStorage (same key as Chat app)
+    useEffect(() => {
+        const savedPrompts = localStorage.getItem('chat_archive_prompts');
+        if (savedPrompts) {
+            try {
+                const parsed = JSON.parse(savedPrompts);
+                const merged = [...DEFAULT_ARCHIVE_PROMPTS, ...parsed.filter((p: any) => !p.id.startsWith('preset_'))];
+                setArchivePrompts(merged);
+            } catch(e) {}
+        }
+    }, []);
+
     // Initial Load
     useEffect(() => {
         if (activeGroup) {
+            setVisibleCount(30);
             DB.getGroupMessages(activeGroup.id).then(msgs => {
                 setMessages(msgs.sort((a, b) => a.timestamp - b.timestamp));
             });
@@ -221,6 +246,8 @@ const GroupChat: React.FC = () => {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
         }
     }, [messages.length, activeGroup, showActions, showEmojiPicker, isTyping, selectionMode]);
+
+    const displayMessages = useMemo(() => messages.slice(-visibleCount), [messages, visibleCount]);
 
     const canReroll = useMemo(() => {
         if (isTyping || messages.length === 0) return false;
@@ -266,10 +293,39 @@ const GroupChat: React.FC = () => {
     // --- Logic: Selection & Deletion ---
 
     const handleMessageLongPress = (id: number) => {
-        setSelectionMode(true);
-        setSelectedMsgIds(new Set([id]));
+        const msg = messages.find(m => m.id === id);
+        if (msg) {
+            setSelectedMessage(msg);
+            setModalType('message-options');
+        }
         setShowActions(false);
         setShowEmojiPicker(false);
+    };
+
+    const handleCopyMessage = () => {
+        if (!selectedMessage) return;
+        navigator.clipboard.writeText(selectedMessage.content);
+        setModalType('none');
+        setSelectedMessage(null);
+        addToast('已复制到剪贴板', 'success');
+    };
+
+    const handleEnterSelectionMode = () => {
+        if (selectedMessage) {
+            setSelectedMsgIds(new Set([selectedMessage.id]));
+            setSelectionMode(true);
+            setModalType('none');
+            setSelectedMessage(null);
+        }
+    };
+
+    const handleDeleteSingleMessage = async () => {
+        if (!selectedMessage) return;
+        await DB.deleteMessage(selectedMessage.id);
+        setMessages(prev => prev.filter(m => m.id !== selectedMessage.id));
+        setModalType('none');
+        setSelectedMessage(null);
+        addToast('消息已删除', 'success');
     };
 
     const toggleMessageSelection = (id: number) => {
@@ -421,13 +477,27 @@ const GroupChat: React.FC = () => {
                 
                 const dayMsgs = msgsByDate[date];
                 const logText = dayMsgs.map(m => {
-                    const sender = m.role === 'user' 
-                        ? userProfile.name 
+                    const sender = m.role === 'user'
+                        ? userProfile.name
                         : (characters.find(c => c.id === m.charId)?.name || '未知成员');
                     return `${sender}: ${m.content}`;
                 }).join('\n');
 
-                const prompt = `
+                // Use selected prompt template or fall back to default group summary
+                const templateObj = archivePrompts.find(p => p.id === selectedPromptId);
+                let prompt: string;
+
+                if (templateObj) {
+                    // Adapt the chat prompt for group context - replace per-character variables
+                    const memberNames = activeGroup.members.map(id => characters.find(c => c.id === id)?.name || '未知').join('、');
+                    prompt = templateObj.content
+                        .replace(/\$\{dateStr\}/g, date)
+                        .replace(/\$\{char\.name\}/g, `群成员(${memberNames})`)
+                        .replace(/\$\{userProfile\.name\}/g, userProfile.name)
+                        .replace(/\$\{rawLog.*?\}/g, logText.substring(0, 10000));
+                    prompt = `[群聊: ${activeGroup.name}]\n${prompt}`;
+                } else {
+                    prompt = `
 ### Task: Group Chat Summary
 Group: "${activeGroup.name}"
 Date: ${date}
@@ -444,6 +514,7 @@ summary: "In [Group Name], [Char A] shared a photo of a cat. [Char B] made a jok
 ### Logs
 ${logText.substring(0, 10000)}
 `;
+                }
 
                 const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
                     method: 'POST',
@@ -589,8 +660,8 @@ ${recentPrivate || '(暂无私聊)'}
 `;
             }
 
-            // 3. Group History (Last 30 messages)
-            const recentGroupMsgs = currentMsgs.slice(-30).map(m => {
+            // 3. Group History (uses configurable context limit)
+            const recentGroupMsgs = currentMsgs.slice(-contextLimit).map(m => {
                 let name = '用户';
                 if (m.role === 'assistant') {
                     name = characters.find(c => c.id === m.charId)?.name || '未知';
@@ -909,17 +980,24 @@ ${recentGroupMsgs}
 
             {/* Messages Area */}
             <div className="flex-1 overflow-y-auto p-4 no-scrollbar space-y-2 bg-[#f0f4f8]" ref={scrollRef}>
-                {messages.map((m, i) => {
+                {messages.length > visibleCount && (
+                    <div className="flex justify-center mb-4">
+                        <button onClick={() => setVisibleCount(prev => prev + 30)} className="px-4 py-2 bg-white/50 backdrop-blur-sm rounded-full text-xs text-slate-500 shadow-sm border border-white hover:bg-white transition-colors">
+                            加载历史消息 ({messages.length - visibleCount})
+                        </button>
+                    </div>
+                )}
+                {displayMessages.map((m, i) => {
                     const isUser = m.role === 'user';
                     const char = characters.find(c => c.id === m.charId);
-                    
+
                     return (
-                        <GroupMessageItem 
-                            key={i} 
-                            msg={m} 
-                            isUser={isUser} 
-                            char={char} 
-                            userAvatar={userProfile.avatar} 
+                        <GroupMessageItem
+                            key={m.id || i}
+                            msg={m}
+                            isUser={isUser}
+                            char={char}
+                            userAvatar={userProfile.avatar}
                             onImageClick={(url) => window.open(url, '_blank')}
                             selectionMode={selectionMode}
                             isSelected={selectedMsgIds.has(m.id)}
@@ -1049,9 +1127,31 @@ ${recentGroupMsgs}
                         <input value={tempGroupName} onChange={e => setTempGroupName(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:bg-white focus:border-violet-300 transition-all" />
                     </div>
 
+                    {/* Context Limit */}
+                    <div className="pt-2 border-t border-slate-100">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">AI 上下文条数 ({contextLimit})</label>
+                        <input type="range" min="20" max="5000" step="10" value={contextLimit} onChange={e => { const v = parseInt(e.target.value); setContextLimit(v); localStorage.setItem('groupchat_context_limit', String(v)); }} className="w-full h-2 bg-slate-200 rounded-full appearance-none accent-violet-500" />
+                        <div className="flex justify-between text-[10px] text-slate-400 mt-1"><span>20 (省流)</span><span>5000 (超长记忆)</span></div>
+                        <p className="text-[9px] text-slate-400 mt-1 leading-tight">控制每次触发AI导演时发送的群聊历史消息数量。越多上下文越丰富，但消耗更多token。</p>
+                    </div>
+
                     {/* Memory & Context Management */}
                     <div className="pt-2 border-t border-slate-100">
                         <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 block">群聊记忆 (Neural Link)</label>
+
+                        {/* Prompt Selection */}
+                        <div className="bg-indigo-50/50 p-3 rounded-xl border border-indigo-100 mb-3">
+                            <label className="text-[9px] font-bold text-indigo-400 uppercase mb-2 block">选择总结提示词</label>
+                            <div className="flex flex-col gap-1.5">
+                                {archivePrompts.map(p => (
+                                    <div key={p.id} onClick={() => setSelectedPromptId(p.id)} className={`px-3 py-2 rounded-lg border cursor-pointer text-xs font-bold transition-all ${selectedPromptId === p.id ? 'bg-white border-indigo-400 text-indigo-700 shadow-sm' : 'bg-white/50 border-indigo-100 text-slate-500 hover:bg-white'}`}>
+                                        {p.name}
+                                    </div>
+                                ))}
+                            </div>
+                            <p className="text-[8px] text-indigo-300 mt-2 leading-tight">提示词与聊天-归档共享，可在聊天设置中自定义。</p>
+                        </div>
+
                         <button onClick={handleGroupSummary} disabled={isSummarizing} className="w-full py-3 bg-indigo-50 text-indigo-600 font-bold rounded-2xl border border-indigo-100 active:scale-95 transition-transform flex items-center justify-center gap-2 mb-2">
                             {isSummarizing ? (
                                 <><div className="w-4 h-4 border-2 border-indigo-200 border-t-indigo-500 rounded-full animate-spin"></div><span className="text-xs">{summaryProgress || '处理中...'}</span></>
@@ -1059,7 +1159,7 @@ ${recentGroupMsgs}
                                 <><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" /></svg> 生成总结并同步到全员记忆</>
                             )}
                         </button>
-                        <p className="text-[9px] text-slate-400 leading-tight px-1">生成"第三人称"的群聊总结，并作为记忆植入到所有群成员的大脑中。</p>
+                        <p className="text-[9px] text-slate-400 leading-tight px-1">使用选中的提示词风格生成群聊总结，并作为记忆植入到所有群成员的大脑中。</p>
                     </div>
 
                     {/* Danger Zone */}
@@ -1081,6 +1181,23 @@ ${recentGroupMsgs}
                             <button onClick={() => { if(activeGroup) handleDeleteGroup(activeGroup.id); }} className="flex-1 py-3 text-white bg-red-500 hover:bg-red-600 rounded-2xl text-xs font-bold transition-colors shadow-lg shadow-red-200">解散群聊</button>
                         </div>
                     </div>
+                </div>
+            </Modal>
+
+            {/* Message Options Modal */}
+            <Modal isOpen={modalType === 'message-options'} title="消息操作" onClose={() => { setModalType('none'); setSelectedMessage(null); }}>
+                <div className="space-y-3">
+                    <button onClick={handleEnterSelectionMode} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
+                        多选 / 批量删除
+                    </button>
+                    {selectedMessage?.type === 'text' && (
+                        <button onClick={handleCopyMessage} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
+                            复制文字
+                        </button>
+                    )}
+                    <button onClick={handleDeleteSingleMessage} className="w-full py-3 bg-red-50 text-red-500 font-medium rounded-2xl active:bg-red-100 transition-colors flex items-center justify-center gap-2">
+                        删除消息
+                    </button>
                 </div>
             </Modal>
 

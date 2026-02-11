@@ -49,9 +49,10 @@ interface ImpressionPanelProps {
     isGenerating: boolean;
     onGenerate: (type: 'initial' | 'update') => void;
     onUpdateImpression: (newImp: UserImpression) => void;
+    onDelete?: () => void;
 }
 
-const ImpressionPanel: React.FC<ImpressionPanelProps> = ({ impression, isGenerating, onGenerate, onUpdateImpression }) => {
+const ImpressionPanel: React.FC<ImpressionPanelProps> = ({ impression, isGenerating, onGenerate, onUpdateImpression, onDelete }) => {
     
     const removeTag = (path: string[], tag: string) => {
         if (!impression) return;
@@ -109,6 +110,7 @@ const ImpressionPanel: React.FC<ImpressionPanelProps> = ({ impression, isGenerat
                     <div className="text-xs text-slate-600">上次更新: {new Date(impression?.lastUpdated || Date.now()).toLocaleDateString()}</div>
                 </div>
                 <div className="flex gap-2">
+                     {onDelete && <button onClick={() => { if (window.confirm('确定要彻底删除印象档案吗？删除后可重新生成。')) onDelete(); }} className="px-3 py-1.5 text-xs font-bold text-red-400 bg-red-50 rounded-lg hover:bg-red-100">删除</button>}
                      <button onClick={() => onGenerate('initial')} className="px-3 py-1.5 text-xs font-bold text-slate-400 bg-slate-50 rounded-lg hover:bg-slate-100">重置</button>
                      <button onClick={() => onGenerate('update')} className="px-4 py-1.5 text-xs font-bold text-white bg-indigo-500 rounded-lg shadow-md shadow-indigo-200 hover:bg-indigo-600 active:scale-95 transition-all">追加/更新</button>
                 </div>

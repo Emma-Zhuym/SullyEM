@@ -235,8 +235,9 @@ const DateApp: React.FC = () => {
         }));
 
         let systemPrompt = ContextBuilder.buildCoreContext(char, userProfile);
-        const availableSprites = Object.keys(char.sprites || {});
-        
+        const REQUIRED_EMOTIONS = ['normal', 'happy', 'angry', 'sad', 'shy'];
+        const dateEmotions = [...REQUIRED_EMOTIONS, ...(char.customDateSprites || [])];
+
         // Explicitly tell AI about the scene
         systemPrompt += `### [Visual Novel Mode: 视觉小说脚本模式]
 你正在与用户进行**面对面**的互动。
@@ -244,8 +245,8 @@ const DateApp: React.FC = () => {
 ### 核心规则：一行一念 (One Line per Beat)
 前端解析器基于**换行符**来分割气泡。
 1. **禁止混写**: 严禁在同一行里既写动作又写带引号的台词。
-2. **情绪标签**: \`[emotion]\` (放在行首)。可用: ${availableSprites.join(', ') || 'normal, happy, angry, sad, shy'}
-3. **格式**: 台词用双引号 **“...”**，动作直接写。
+2. **情绪标签**: \`[emotion]\` (放在行首)。**仅限使用以下情绪**: ${dateEmotions.join(', ')}。**不要使用任何不在此列表中的标签。**
+3. **格式**: 台词用双引号 **"..."**，动作直接写。
 
 ### 场景上下文
 1. **Location**: 你们现在**面对面**。
@@ -304,8 +305,9 @@ const DateApp: React.FC = () => {
         }));
 
         let systemPrompt = ContextBuilder.buildCoreContext(char, userProfile);
-        const availableSprites = Object.keys(char.sprites || {});
-        systemPrompt += `### [Visual Novel Mode: 视觉小说脚本模式]\n(Same rules apply... Emotion tags: ${availableSprites.join(', ')})`;
+        const REQUIRED_EMOTIONS_R = ['normal', 'happy', 'angry', 'sad', 'shy'];
+        const dateEmotionsR = [...REQUIRED_EMOTIONS_R, ...(char.customDateSprites || [])];
+        systemPrompt += `### [Visual Novel Mode: 视觉小说脚本模式]\n(Same rules apply... **仅限使用以下情绪标签**: ${dateEmotionsR.join(', ')}。不要使用不在列表中的标签。)`;
 
         const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
             method: 'POST',

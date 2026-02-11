@@ -9,17 +9,18 @@ import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import { DB } from '../utils/db';
 import { ContextBuilder } from '../utils/context';
+import { DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import ImpressionPanel from '../components/character/ImpressionPanel';
 import MemoryArchivist from '../components/character/MemoryArchivist';
 
-const CharacterCard: React.FC<{ 
-    char: CharacterProfile; 
+const CharacterCard: React.FC<{
+    char: CharacterProfile;
     onClick: () => void;
     onDelete: (e: React.MouseEvent) => void;
 }> = ({ char, onClick, onDelete }) => (
-    <div 
+    <div
         onClick={onClick}
-        className="relative p-4 rounded-3xl border bg-white/40 border-white/40 hover:bg-white/60 hover:scale-[1.01] transition-all duration-300 cursor-pointer group shadow-sm"
+        className="relative p-4 rounded-3xl border bg-white/40 border-white/40 hover:bg-white/60 hover:scale-[1.01] transition-all duration-300 cursor-pointer group shadow-sm shrink-0"
     >
         <div className="flex items-center gap-4">
             <div className="w-14 h-14 rounded-full bg-slate-100 border border-white/50 overflow-hidden relative shadow-inner">
@@ -76,8 +77,28 @@ const Character: React.FC = () => {
   const [isBatchProcessing, setIsBatchProcessing] = useState(false);
   const [batchProgress, setBatchProgress] = useState('');
 
+  // Archive Prompts State (shared with ChatApp)
+  const [archivePrompts, setArchivePrompts] = useState<{id: string, name: string, content: string}[]>(DEFAULT_ARCHIVE_PROMPTS);
+  const [selectedPromptId, setSelectedPromptId] = useState<string>('preset_rational');
+  const [editingPrompt, setEditingPrompt] = useState<{id: string, name: string, content: string} | null>(null);
+  const [showPromptEditor, setShowPromptEditor] = useState(false);
+
   // Impression State
   const [isGeneratingImpression, setIsGeneratingImpression] = useState(false);
+
+  // Load archive prompts from localStorage (shared with ChatApp)
+  useEffect(() => {
+      const savedPrompts = localStorage.getItem('chat_archive_prompts');
+      if (savedPrompts) {
+          try {
+              const parsed = JSON.parse(savedPrompts);
+              const merged = [...DEFAULT_ARCHIVE_PROMPTS, ...parsed.filter((p: any) => !p.id.startsWith('preset_'))];
+              setArchivePrompts(merged);
+          } catch(e) {}
+      }
+      const savedId = localStorage.getItem('chat_active_archive_prompt_id');
+      if (savedId) setSelectedPromptId(savedId);
+  }, []);
 
   // Sync Ref with State
   useEffect(() => {
@@ -213,13 +234,13 @@ const Character: React.FC = () => {
       }
   };
   
-  const handleRefineMonth = async (year: string, month: string, rawText: string) => {
+  const handleRefineMonth = async (year: string, month: string, rawText: string, formattedPrompt?: string) => {
       if (!apiConfig.apiKey) { addToast('请先配置 API Key', 'error'); return; }
       if (!formData) return;
-      
+
       const targetId = formData.id; // LOCK ID
-      const prompt = `Task: Summarize the following logs (${year}-${month}) into a concise memory. Language: Same as logs (Chinese). ${rawText.substring(0, 5000)}`;
-      
+      const prompt = formattedPrompt || `Task: Summarize the following logs (${year}-${month}) into a concise memory. Language: Same as logs (Chinese). ${rawText.substring(0, 5000)}`;
+
       try {
           const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
               method: 'POST',
@@ -352,34 +373,13 @@ const Character: React.FC = () => {
                     return `[${time}] ${m.role === 'user' ? userProfile.name : formData.name}: ${content}`;
                 }).join('\n');
 
-                const prompt = `${baseContext}
-
-### [System Instruction: Memory Archival]
-当前日期: ${date}
-任务: 请回顾今天的聊天记录，生成一份【高精度的事件日志】。
-
-### 核心撰写规则 (Strict Protocols)
-1.  **覆盖率 (Coverage)**:
-    - 必须包含今天聊过的**每一个**独立话题。
-    - **严禁**为了精简而合并不同的话题。哪怕只是聊了一句“天气不好”，如果这是一个独立的话题，也要单独列出。
-    - 不要忽略闲聊，那是生活的一部分。
-
-2.  **视角 (Perspective)**:
-    - 你【就是】"${formData.name}"。这是【你】的私密日记。
-    - 每一条都必须是“我”的视角。用“${userProfile.name}”称呼对方。
-
-3.  **格式 (Format)**:
-    - 不要写成一整段。
-    - **必须**使用 Markdown 无序列表 ( - ... )。
-    - 每一行对应一个具体的事件或话题。
-
-4.  **去水 (Conciseness)**:
-    - 不要写“今天我和xx聊了...”，直接写发生了什么。
-    - 示例: "- 早上和${userProfile.name}讨论早餐，我想吃小笼包。"
-
-### 待处理的聊天日志 (Chat Logs)
-${rawLog.substring(0, 200000)}
-`;
+                // Use selected template (same as ChatApp) with variable substitution
+                const templateObj = archivePrompts.find(p => p.id === selectedPromptId) || DEFAULT_ARCHIVE_PROMPTS[0];
+                let prompt = baseContext + '\n\n' + templateObj.content;
+                prompt = prompt.replace(/\$\{dateStr\}/g, date);
+                prompt = prompt.replace(/\$\{char\.name\}/g, formData.name);
+                prompt = prompt.replace(/\$\{userProfile\.name\}/g, userProfile.name);
+                prompt = prompt.replace(/\$\{rawLog.*?\}/g, rawLog.substring(0, 200000));
 
                 const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
                     method: 'POST',
@@ -450,27 +450,31 @@ ${rawLog.substring(0, 200000)}
       try {
           const charName = formData.name;
           const boundUser = userProfile;
-          
+
+          // 构建完整角色上下文（包含人设、世界观、用户档案、精炼记忆等宏观信息）
+          const fullContext = ContextBuilder.buildCoreContext(formData, userProfile);
+
           let messagesToAnalyze = "";
+
+          // 第一层：完整上下文 —— 宏观人格分析的基石
+          messagesToAnalyze += `\n【完整角色上下文 (Full Context - 宏观分析的基石)】:\n${fullContext}\n`;
+
+          // 第二层：最近聊天 —— 仅用于检测近期变化
+          // 记忆部分已包含在 buildCoreContext 中（精炼月度总结 + 点亮月份的详细记忆），
+          // 与聊天时角色能看到的记忆完全一致，不再额外抓取。
+          // 重置模式下大幅减少近期聊天的数量，避免近因偏差
           const msgs = await DB.getMessagesByCharId(targetId);
-          const recentMsgs = msgs.slice(-50); 
+          const recentMsgs = msgs.slice(type === 'initial' ? -15 : -50);
           const msgText = recentMsgs.map(m => {
               let content = m.content;
               if (m.type === 'image') content = '[图片]';
               return `${m.role === 'user' ? boundUser.name : charName}: ${content}`;
           }).join('\n');
-          
-          if (msgText) messagesToAnalyze += `\n【最近的聊天记录 (Recent Chats)】:\n${msgText}\n`;
-          
-          const mems = formData.memories || [];
-          let memoryText = "";
-          if (mems.length > 0) {
-              const sortedMems = [...mems].sort((a,b) => b.date.localeCompare(a.date));
-              memoryText = sortedMems.slice(0, 100).map(m => `[${m.date}] ${m.summary}`).join('\n');
-              messagesToAnalyze += `\n【长期记忆库 (Long-Term Memories)】:\n${memoryText}\n`;
-          }
 
-          const currentProfileJSON = formData.impression ? JSON.stringify(formData.impression, null, 2) : "null";
+          if (msgText) messagesToAnalyze += `\n【最近的聊天记录 (Recent Chats - 仅用于检测近期变化)】:\n${msgText}\n`;
+
+          // 重置时不传旧印象，避免模型锚定在旧内容上
+          const currentProfileJSON = (type === 'initial') ? "null" : (formData.impression ? JSON.stringify(formData.impression, null, 2) : "null");
           const isInitialGeneration = type === 'initial' || !formData.impression;
           
           const summaryInstruction = isInitialGeneration 
@@ -491,9 +495,21 @@ ${messagesToAnalyze}
 你【就是】"${charName}"。这份档案是你写的【私人笔记】。
 因此，所有总结性的字段（如 \`core_values\`, \`summary\`, \`emotion_summary\` 等），【必须】使用你的第一人称（"我"）视角来撰写。
 
-【核心指令：权重分配】
-1. **长期记忆 (Long-Term Memories)**: 这是你对TA印象的【基石】。核心性格、核心价值观、互动模式应主要基于此。
-2. **近期聊天 (Recent Chats)**: 这只代表TA【当下的状态】。除非发生重大事件，否则不要因为最近几次聊天的情绪波动（如偶尔生气）就改变对TA本质的判断。请用它来更新 [behavior_profile.emotion_summary] 和 [observed_changes]。
+【核心指令：数据层级与权重分配】
+1. **完整角色上下文 (Full Context)**: 这是你【最重要的分析基础】。它包含了你的人设、世界观、用户档案、以及你的全部记忆（月度核心总结 + 激活月份的每日详细回忆）。你对TA的核心性格、核心价值观、互动模式、人格特质的判断，必须主要基于这些跨越完整时间线的宏观数据。你必须【平等对待】早期记忆和近期记忆，从整段关系的完整弧线中提炼人格特征。
+2. **近期聊天 (Recent Chats)**: 这【仅仅】代表TA当下的状态切片。它的作用【严格限定】在更新 [behavior_profile.emotion_summary] 和 [observed_changes] 两个字段。除非发生了重大事件（如价值观冲突、人生转折），否则【绝对不要】因为最近几次聊天的情绪波动就改变对TA本质人格的判断。
+${isInitialGeneration ? `
+【重置模式特别指令 - CRITICAL】
+这是一次【完全重置】，你需要从零开始，基于所有可用的宏观数据重新构建对TA的完整认知。
+- 你的分析必须覆盖从最早记忆到最新记忆的【完整时间跨度】
+- 早期记忆和近期记忆拥有【相同的权重】——不要因为某些记忆发生得更近就赋予它们更大的影响
+- personality_core、value_map、emotion_schema 必须反映TA在【整段关系中】展现出的稳定特征，而非仅仅是近期状态
+- 如果早期记忆和近期记忆中TA的表现有差异，请在 observed_changes 中记录这种演变，但 personality_core 应反映最持久稳定的特质
+` : ''}
+【反面教材 - 严禁出现】
+- ❌ 仅根据最近聊天就总结"TA是一个喜欢讨论XX话题的人" —— 这是把近期话题当成了人格特质
+- ❌ personality_core.summary 里出现"最近"、"这几天"等时间限定词 —— summary 应该是跨越所有记忆的宏观总结
+- ✅ 正确做法：personality_core 基于完整上下文和长期记忆，observed_changes 基于近期聊天与长期印象的对比
 
 分析指令：五维画像更新 (第一人称视角)
 根据【强制对比协议】和你自己的视角，分析新消息，并${isInitialGeneration ? '【生成】' : '【增量更新】'}以下JSON结构。
@@ -706,7 +722,7 @@ ${messagesToAnalyze}
                         <button onClick={closeApp} className="p-2 rounded-full bg-white/40 hover:bg-white/80 transition-colors"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 text-slate-600"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg></button>
                    </div>
                </div>
-               <div className="flex-1 overflow-y-auto px-5 pb-20 no-scrollbar space-y-3">
+               <div className="flex-1 overflow-y-auto px-5 pb-20 no-scrollbar flex flex-col gap-3">
                    {characters.map(char => (
                        <CharacterCard 
                            key={char.id} 
@@ -718,7 +734,7 @@ ${messagesToAnalyze}
                            }} 
                        />
                    ))}
-                   <button onClick={addCharacter} className="w-full py-4 rounded-3xl border border-dashed border-slate-300 text-slate-400 text-sm hover:bg-white/30 transition-all flex items-center justify-center gap-2">
+                   <button onClick={addCharacter} className="w-full py-4 rounded-3xl border border-dashed border-slate-300 text-slate-400 text-sm hover:bg-white/30 transition-all flex items-center justify-center gap-2 shrink-0">
                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>新建链接
                    </button>
                </div>
@@ -817,10 +833,12 @@ ${messagesToAnalyze}
                                <button onClick={() => setShowImportModal(true)} className="px-4 py-2 bg-white rounded-full text-xs font-semibold text-slate-500 shadow-sm border border-slate-100">导入/清洗</button>
                                <button onClick={handleExportPreview} className="px-4 py-2 bg-white rounded-full text-xs font-semibold text-slate-500 shadow-sm border border-slate-100">备份</button>
                            </div>
-                           <MemoryArchivist 
-                               memories={formData.memories || []} 
-                               refinedMemories={formData.refinedMemories || {}} 
+                           <MemoryArchivist
+                               memories={formData.memories || []}
+                               refinedMemories={formData.refinedMemories || {}}
                                activeMemoryMonths={formData.activeMemoryMonths || []}
+                               charName={formData.name || ''}
+                               userName={userProfile.name}
                                onRefine={handleRefineMonth}
                                onDeleteMemories={handleDeleteMemories}
                                onUpdateMemory={handleUpdateMemory}
@@ -832,11 +850,12 @@ ${messagesToAnalyze}
                    )}
 
                    {detailTab === 'impression' && (
-                       <ImpressionPanel 
+                       <ImpressionPanel
                            impression={formData.impression}
                            isGenerating={isGeneratingImpression}
                            onGenerate={handleGenerateImpression}
                            onUpdateImpression={(newImp) => handleChange('impression', newImp)}
+                           onDelete={() => handleChange('impression', undefined)}
                        />
                    )}
                </div>
@@ -848,17 +867,72 @@ ${messagesToAnalyze}
            <div className="space-y-3"><div className="text-xs text-slate-400 leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-100">AI 将自动整理乱序文本为记忆档案。</div>{importStatus && <div className="text-xs text-primary font-medium">{importStatus}</div>}<textarea value={importText} onChange={e => setImportText(e.target.value)} placeholder="在此粘贴文本..." className="w-full h-32 bg-slate-100 border-none rounded-2xl px-4 py-3 text-sm text-slate-700 resize-none focus:ring-2 focus:ring-primary/20 transition-all"/></div>
        </Modal>
 
-       <Modal isOpen={showBatchModal} title="自动日记生成" onClose={() => setShowBatchModal(false)} footer={
-           isBatchProcessing ? 
+       <Modal isOpen={showBatchModal} title="批量记忆总结" onClose={() => { setShowBatchModal(false); setShowPromptEditor(false); }} footer={
+           isBatchProcessing ?
            <div className="w-full py-3 bg-slate-100 text-primary font-bold rounded-2xl text-center flex items-center justify-center gap-2"><div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>{batchProgress}</div> :
            <button onClick={handleBatchSummarize} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">开始生成</button>
        }>
            <div className="space-y-3">
-               <p className="text-xs text-slate-400">将遍历所有聊天记录，按天生成日记风格的记忆总结。</p>
+               <p className="text-xs text-slate-400">将遍历所有聊天记录，按天使用所选提示词模板生成记忆总结。</p>
+               {/* Prompt Selection */}
+               <div className="bg-indigo-50 p-3 rounded-xl border border-indigo-100">
+                   <label className="text-[10px] font-bold text-indigo-400 uppercase mb-2 block">选择提示词模板</label>
+                   <div className="flex flex-col gap-2">
+                       {archivePrompts.map(p => (
+                           <div key={p.id} onClick={() => { setSelectedPromptId(p.id); localStorage.setItem('chat_active_archive_prompt_id', p.id); }} className={`p-2.5 rounded-lg border cursor-pointer flex items-center justify-between ${selectedPromptId === p.id ? 'bg-white border-indigo-500 shadow-sm ring-1 ring-indigo-500' : 'bg-white/50 border-indigo-200 hover:bg-white'}`}>
+                               <span className={`text-xs font-bold ${selectedPromptId === p.id ? 'text-indigo-700' : 'text-slate-600'}`}>{p.name}</span>
+                               <div className="flex gap-1.5">
+                                   <button onClick={(e) => { e.stopPropagation(); setEditingPrompt(p); setShowPromptEditor(true); }} className="text-[10px] text-slate-400 hover:text-indigo-500 px-2 py-0.5 rounded bg-slate-100 hover:bg-indigo-50">查看</button>
+                                   {!p.id.startsWith('preset_') && (
+                                       <button onClick={(e) => { e.stopPropagation(); const next = archivePrompts.filter(ap => ap.id !== p.id); setArchivePrompts(next); localStorage.setItem('chat_archive_prompts', JSON.stringify(next.filter(ap => !ap.id.startsWith('preset_')))); if (selectedPromptId === p.id) setSelectedPromptId('preset_rational'); }} className="text-[10px] text-red-300 hover:text-red-500 px-1.5 py-0.5 rounded hover:bg-red-50">x</button>
+                                   )}
+                               </div>
+                           </div>
+                       ))}
+                   </div>
+                   <button onClick={() => { const newP = { id: `custom_${Date.now()}`, name: '新自定义模板', content: DEFAULT_ARCHIVE_PROMPTS[0].content }; setEditingPrompt(newP); setShowPromptEditor(true); }} className="mt-2 w-full py-1.5 text-xs font-bold text-indigo-500 border border-dashed border-indigo-300 rounded-lg hover:bg-indigo-100">+ 新建自定义提示词</button>
+               </div>
+               {/* Date Range */}
                <div className="flex gap-2">
                    <div className="flex-1"><label className="text-[10px] uppercase text-slate-400 font-bold">开始日期 (可选)</label><input type="date" value={batchRange.start} onChange={e => setBatchRange({...batchRange, start: e.target.value})} className="w-full bg-slate-100 rounded-xl px-3 py-2 text-xs" /></div>
                    <div className="flex-1"><label className="text-[10px] uppercase text-slate-400 font-bold">结束日期 (可选)</label><input type="date" value={batchRange.end} onChange={e => setBatchRange({...batchRange, end: e.target.value})} className="w-full bg-slate-100 rounded-xl px-3 py-2 text-xs" /></div>
                </div>
+               <div className="text-[10px] text-slate-400 bg-slate-50 p-2.5 rounded-xl leading-relaxed">
+                   支持变量: <code>{'${dateStr}'}</code>, <code>{'${char.name}'}</code>, <code>{'${userProfile.name}'}</code>, <code>{'${rawLog}'}</code>
+               </div>
+           </div>
+       </Modal>
+
+       {/* Prompt Editor Modal */}
+       <Modal isOpen={showPromptEditor} title="编辑提示词" onClose={() => setShowPromptEditor(false)} footer={<button onClick={() => {
+           if (!editingPrompt) return;
+           const isNew = !archivePrompts.some(p => p.id === editingPrompt.id);
+           const next = isNew ? [...archivePrompts, editingPrompt] : archivePrompts.map(p => p.id === editingPrompt.id ? editingPrompt : p);
+           setArchivePrompts(next);
+           setSelectedPromptId(editingPrompt.id);
+           localStorage.setItem('chat_archive_prompts', JSON.stringify(next.filter(p => !p.id.startsWith('preset_'))));
+           localStorage.setItem('chat_active_archive_prompt_id', editingPrompt.id);
+           setShowPromptEditor(false);
+           addToast('提示词已保存', 'success');
+       }} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">保存</button>}>
+           <div className="space-y-3">
+               <input
+                   value={editingPrompt?.name || ''}
+                   onChange={e => setEditingPrompt(prev => prev ? {...prev, name: e.target.value} : null)}
+                   placeholder="预设名称"
+                   className="w-full px-4 py-2 bg-slate-100 rounded-xl text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-primary/20"
+                   readOnly={editingPrompt?.id.startsWith('preset_')}
+               />
+               <textarea
+                   value={editingPrompt?.content || ''}
+                   onChange={e => setEditingPrompt(prev => prev ? {...prev, content: e.target.value} : null)}
+                   className="w-full h-64 bg-slate-100 rounded-xl p-3 text-xs font-mono resize-none focus:outline-none focus:ring-2 focus:ring-primary/20 leading-relaxed"
+                   placeholder="输入提示词内容..."
+                   readOnly={editingPrompt?.id.startsWith('preset_')}
+               />
+               {editingPrompt?.id.startsWith('preset_') && (
+                   <p className="text-[10px] text-slate-400 text-center">预设模板不可编辑（仅查看）</p>
+               )}
            </div>
        </Modal>
 
