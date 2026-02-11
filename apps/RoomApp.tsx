@@ -917,7 +917,7 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                     <span className="font-bold text-slate-700 text-lg tracking-wide">拜访谁的房间?</span>
                     <div className="w-8"></div>
                 </div>
-               <div className="p-6 grid grid-cols-2 gap-4 overflow-y-auto pb-20 no-scrollbar auto-rows-fr">
+               <div className="p-6 grid grid-cols-2 gap-4 overflow-y-auto pb-20 no-scrollbar">
     {characters.map(c => (
         <div key={c.id} onClick={() => handleEnterRoom(c)} className="min-h-[180px] bg-white rounded-2xl shadow-sm border border-slate-100 p-4 flex flex-col items-center justify-center gap-3 cursor-pointer active:scale-95 transition-all relative overflow-hidden group hover:shadow-md">
                             <div className="w-20 h-20 rounded-full p-1 border-2 border-slate-100 relative">
