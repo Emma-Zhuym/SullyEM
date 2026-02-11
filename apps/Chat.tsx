@@ -112,11 +112,20 @@ const Chat: React.FC = () => {
 
     useEffect(() => {
         if (activeCharacterId) {
-            // Performance: Only load recent messages into state, not the entire history
-            DB.getRecentMessagesWithCount(activeCharacterId, MSG_MEMORY_LIMIT).then(({ messages: msgs, totalCount }) => {
-                setMessages(msgs);
-                setTotalMsgCount(totalCount);
-            });
+            // Load messages: if hideBeforeMessageId is set, load all messages from that point forward
+            // Otherwise, load the most recent MSG_MEMORY_LIMIT messages for rendering performance
+            const loadMessages = async () => {
+                if (char?.hideBeforeMessageId) {
+                    const { messages: msgs, totalCount } = await DB.getMessagesFromId(activeCharacterId, char.hideBeforeMessageId);
+                    setMessages(msgs);
+                    setTotalMsgCount(totalCount);
+                } else {
+                    const { messages: msgs, totalCount } = await DB.getRecentMessagesWithCount(activeCharacterId, MSG_MEMORY_LIMIT);
+                    setMessages(msgs);
+                    setTotalMsgCount(totalCount);
+                }
+            };
+            loadMessages();
             loadEmojiData();
             const savedDraft = localStorage.getItem(draftKey);
             setInput(savedDraft || '');
@@ -153,10 +162,17 @@ const Chat: React.FC = () => {
 
     useEffect(() => {
         if (activeCharacterId && lastMsgTimestamp > 0) {
-            DB.getRecentMessagesWithCount(activeCharacterId, MSG_MEMORY_LIMIT).then(({ messages: msgs, totalCount }) => {
-                setMessages(msgs);
-                setTotalMsgCount(totalCount);
-            });
+            if (char?.hideBeforeMessageId) {
+                DB.getMessagesFromId(activeCharacterId, char.hideBeforeMessageId).then(({ messages: msgs, totalCount }) => {
+                    setMessages(msgs);
+                    setTotalMsgCount(totalCount);
+                });
+            } else {
+                DB.getRecentMessagesWithCount(activeCharacterId, MSG_MEMORY_LIMIT).then(({ messages: msgs, totalCount }) => {
+                    setMessages(msgs);
+                    setTotalMsgCount(totalCount);
+                });
+            }
             clearUnread(activeCharacterId);
         }
     }, [lastMsgTimestamp]);
@@ -716,11 +732,11 @@ const Chat: React.FC = () => {
              />
 
             <div ref={scrollRef} className="flex-1 overflow-y-auto pt-6 pb-6 no-scrollbar" style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}>
-                {totalMsgCount > visibleCount && (
+                {messages.length > visibleCount && (
                     <div className="flex justify-center mb-6">
                         <button onClick={async () => {
-                            if (visibleCount + 30 >= messages.length && activeCharacterId) {
-                                // Load more messages from DB when nearing in-memory limit
+                            if (!char?.hideBeforeMessageId && visibleCount + 30 >= messages.length && activeCharacterId) {
+                                // Load more messages from DB when nearing in-memory limit (only when no hideBeforeMessageId, since that already loads all)
                                 const { messages: moreMsgs, totalCount } = await DB.getRecentMessagesWithCount(activeCharacterId, messages.length + 100);
                                 if (moreMsgs.length > messages.length) {
                                     setMessages(moreMsgs);
@@ -728,7 +744,7 @@ const Chat: React.FC = () => {
                                 setTotalMsgCount(totalCount);
                             }
                             setVisibleCount(prev => prev + 30);
-                        }} className="px-4 py-2 bg-white/50 backdrop-blur-sm rounded-full text-xs text-slate-500 shadow-sm border border-white hover:bg-white transition-colors">加载历史消息 ({totalMsgCount - visibleCount})</button>
+                        }} className="px-4 py-2 bg-white/50 backdrop-blur-sm rounded-full text-xs text-slate-500 shadow-sm border border-white hover:bg-white transition-colors">加载历史消息 ({messages.length - visibleCount})</button>
                     </div>
                 )}
 

@@ -194,13 +194,21 @@ export const DB = {
       const transaction = db.transaction(STORE_MESSAGES, 'readonly');
       const store = transaction.objectStore(STORE_MESSAGES);
       const index = store.index('charId');
-      const request = index.getAll(IDBKeyRange.only(charId));
-      request.onsuccess = () => {
-          const results = (request.result || []).filter((m: Message) => !m.groupId);
-          // Only return the last N messages to reduce memory usage
-          resolve(results.slice(-limit));
+      // Use reverse cursor to only collect the last N messages without loading all into memory
+      const collected: Message[] = [];
+      const cursorReq = index.openCursor(IDBKeyRange.only(charId), 'prev');
+      cursorReq.onsuccess = () => {
+          const cursor = cursorReq.result;
+          if (cursor && collected.length < limit) {
+              const m = cursor.value as Message;
+              if (!m.groupId) collected.push(m);
+              cursor.continue();
+          } else {
+              // Reverse to chronological order
+              resolve(collected.reverse());
+          }
       };
-      request.onerror = () => reject(request.error);
+      cursorReq.onerror = () => reject(cursorReq.error);
     });
   },
 
@@ -211,12 +219,52 @@ export const DB = {
       const transaction = db.transaction(STORE_MESSAGES, 'readonly');
       const store = transaction.objectStore(STORE_MESSAGES);
       const index = store.index('charId');
-      const request = index.getAll(IDBKeyRange.only(charId));
-      request.onsuccess = () => {
-          const results = (request.result || []).filter((m: Message) => !m.groupId);
-          resolve({ messages: results.slice(-limit), totalCount: results.length });
+      const countReq = index.count(IDBKeyRange.only(charId));
+      countReq.onsuccess = () => {
+          const totalCount = countReq.result;
+          // Use reverse cursor to only collect the last N messages
+          const collected: Message[] = [];
+          const cursorReq = index.openCursor(IDBKeyRange.only(charId), 'prev');
+          cursorReq.onsuccess = () => {
+              const cursor = cursorReq.result;
+              if (cursor && collected.length < limit) {
+                  const m = cursor.value as Message;
+                  if (!m.groupId) collected.push(m);
+                  cursor.continue();
+              } else {
+                  resolve({ messages: collected.reverse(), totalCount });
+              }
+          };
+          cursorReq.onerror = () => reject(cursorReq.error);
       };
-      request.onerror = () => reject(request.error);
+      countReq.onerror = () => reject(countReq.error);
+    });
+  },
+
+  // Get all messages for a character from a given message ID onward (for hideBeforeMessageId)
+  getMessagesFromId: async (charId: string, fromId: number): Promise<{ messages: Message[], totalCount: number }> => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_MESSAGES, 'readonly');
+      const store = transaction.objectStore(STORE_MESSAGES);
+      const index = store.index('charId');
+      const collected: Message[] = [];
+      let totalCount = 0;
+      const cursorReq = index.openCursor(IDBKeyRange.only(charId));
+      cursorReq.onsuccess = () => {
+          const cursor = cursorReq.result;
+          if (cursor) {
+              const m = cursor.value as Message;
+              if (!m.groupId) {
+                  totalCount++;
+                  if (m.id >= fromId) collected.push(m);
+              }
+              cursor.continue();
+          } else {
+              resolve({ messages: collected, totalCount });
+          }
+      };
+      cursorReq.onerror = () => reject(cursorReq.error);
     });
   },
 
