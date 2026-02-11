@@ -35,6 +35,7 @@ export const useChatAI = ({
     const [isTyping, setIsTyping] = useState(false);
     const [recallStatus, setRecallStatus] = useState<string>('');
     const [searchStatus, setSearchStatus] = useState<string>('');
+    const [diaryStatus, setDiaryStatus] = useState<string>('');
     const [lastTokenUsage, setLastTokenUsage] = useState<number | null>(null);
 
     const triggerAI = async (currentMsgs: Message[]) => {
@@ -149,6 +150,7 @@ export const useChatAI = ({
                     });
                     if (response.ok) {
                         data = await response.json();
+                        if (data.usage?.total_tokens) setLastTokenUsage(data.usage.total_tokens);
                         aiContent = data.choices?.[0]?.message?.content || '';
                         // Re-clean
                         aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
@@ -194,6 +196,7 @@ export const useChatAI = ({
 
                         if (response.ok) {
                             data = await response.json();
+                            if (data.usage?.total_tokens) setLastTokenUsage(data.usage.total_tokens);
                             aiContent = data.choices?.[0]?.message?.content || '';
                             console.log('🔍 [Search] AI基于搜索结果生成的新回复:', aiContent.slice(0, 100) + '...');
                             // Re-clean
@@ -304,129 +307,149 @@ export const useChatAI = ({
 
             // 5.7 Handle Read Diary (翻阅日记)
             const readDiaryMatch = aiContent.match(/\[\[READ_DIARY:\s*(.+?)\]\]/);
-            if (readDiaryMatch && realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionDatabaseId) {
+
+            // Helper: make a fallback API call so the AI keeps talking even when diary fails
+            const diaryFallbackCall = async (reason: string, tagPattern: RegExp) => {
+                const cleaned = aiContent.replace(tagPattern, '').trim() || '让我翻翻日记...';
+                const msgs = [
+                    ...fullMessages,
+                    { role: 'assistant', content: cleaned },
+                    { role: 'system', content: `[系统: ${reason}。请你：\n1. 先正常回应用户刚才说的话（用户还在等你回复！）\n2. 可以自然地提一下，比如"日记好像打不开诶"、"嗯...好像没找到"\n3. 继续正常聊天，用多条消息回复\n4. 严禁再输出[[READ_DIARY:...]]或[[FS_READ_DIARY:...]]标记]` }
+                ];
+                try {
+                    response = await fetch(`${baseUrl}/chat/completions`, {
+                        method: 'POST', headers,
+                        body: JSON.stringify({ model: apiConfig.model, messages: msgs, temperature: 0.8, stream: false })
+                    });
+                    if (response.ok) {
+                        data = await response.json();
+                        if (data.usage?.total_tokens) setLastTokenUsage(data.usage.total_tokens);
+                        aiContent = data.choices?.[0]?.message?.content || '';
+                        aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
+                        aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, '');
+                        aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
+                    }
+                } catch (fallbackErr) {
+                    console.error('📖 [Diary Fallback] 也失败了:', fallbackErr);
+                    aiContent = aiContent.replace(tagPattern, '').trim();
+                }
+            };
+
+            // Helper: parse various date formats
+            const parseDiaryDate = (dateInput: string): string => {
+                const now = new Date();
+                if (/^\d{4}-\d{2}-\d{2}$/.test(dateInput)) return dateInput;
+                if (dateInput === '今天') return now.toISOString().split('T')[0];
+                if (dateInput === '昨天') { const d = new Date(now); d.setDate(d.getDate() - 1); return d.toISOString().split('T')[0]; }
+                if (dateInput === '前天') { const d = new Date(now); d.setDate(d.getDate() - 2); return d.toISOString().split('T')[0]; }
+                const daysAgo = dateInput.match(/^(\d+)天前$/);
+                if (daysAgo) { const d = new Date(now); d.setDate(d.getDate() - parseInt(daysAgo[1])); return d.toISOString().split('T')[0]; }
+                const monthDay = dateInput.match(/(\d{1,2})月(\d{1,2})/);
+                if (monthDay) return `${now.getFullYear()}-${monthDay[1].padStart(2, '0')}-${monthDay[2].padStart(2, '0')}`;
+                const parsed = new Date(dateInput);
+                if (!isNaN(parsed.getTime())) return parsed.toISOString().split('T')[0];
+                return '';
+            };
+
+            if (readDiaryMatch) {
                 const dateInput = readDiaryMatch[1].trim();
                 console.log('📖 [ReadDiary] AI想翻阅日记:', dateInput);
 
-                // 解析日期输入 - 支持 YYYY-MM-DD, 昨天, 前天, N天前, M月D日 等
-                let targetDate = '';
-                const now = new Date();
+                if (realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionDatabaseId) {
+                    const targetDate = parseDiaryDate(dateInput);
 
-                if (/^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
-                    targetDate = dateInput;
-                } else if (dateInput === '今天') {
-                    targetDate = now.toISOString().split('T')[0];
-                } else if (dateInput === '昨天') {
-                    const d = new Date(now); d.setDate(d.getDate() - 1);
-                    targetDate = d.toISOString().split('T')[0];
-                } else if (dateInput === '前天') {
-                    const d = new Date(now); d.setDate(d.getDate() - 2);
-                    targetDate = d.toISOString().split('T')[0];
-                } else if (/^(\d+)天前$/.test(dateInput)) {
-                    const days = parseInt(dateInput.match(/^(\d+)天前$/)![1]);
-                    const d = new Date(now); d.setDate(d.getDate() - days);
-                    targetDate = d.toISOString().split('T')[0];
-                } else if (/(\d{1,2})月(\d{1,2})[日号]?$/.test(dateInput)) {
-                    const m = dateInput.match(/(\d{1,2})月(\d{1,2})/);
-                    if (m) {
-                        const month = m[1].padStart(2, '0');
-                        const day = m[2].padStart(2, '0');
-                        targetDate = `${now.getFullYear()}-${month}-${day}`;
-                    }
-                } else {
-                    // 尝试直接作为日期解析
-                    const parsed = new Date(dateInput);
-                    if (!isNaN(parsed.getTime())) {
-                        targetDate = parsed.toISOString().split('T')[0];
-                    }
-                }
+                    if (targetDate) {
+                        try {
+                            setDiaryStatus(`正在翻阅 ${targetDate} 的日记...`);
 
-                if (targetDate) {
-                    try {
-                        // 1. 按日期查找日记
-                        const findResult = await NotionManager.getDiaryByDate(
-                            realtimeConfig.notionApiKey,
-                            realtimeConfig.notionDatabaseId,
-                            char.name,
-                            targetDate
-                        );
+                            const findResult = await NotionManager.getDiaryByDate(
+                                realtimeConfig.notionApiKey,
+                                realtimeConfig.notionDatabaseId,
+                                char.name,
+                                targetDate
+                            );
 
-                        if (findResult.success && findResult.entries.length > 0) {
-                            // 2. 读取每篇日记的内容（一天可能有多篇）
-                            const diaryContents: string[] = [];
-                            for (const entry of findResult.entries) {
-                                const readResult = await NotionManager.readDiaryContent(
-                                    realtimeConfig.notionApiKey,
-                                    entry.id
-                                );
-                                if (readResult.success) {
-                                    diaryContents.push(`📔「${entry.title}」(${entry.date})\n${readResult.content}`);
+                            if (findResult.success && findResult.entries.length > 0) {
+                                setDiaryStatus(`找到 ${findResult.entries.length} 篇日记，正在阅读...`);
+                                const diaryContents: string[] = [];
+                                for (const entry of findResult.entries) {
+                                    const readResult = await NotionManager.readDiaryContent(
+                                        realtimeConfig.notionApiKey,
+                                        entry.id
+                                    );
+                                    if (readResult.success) {
+                                        diaryContents.push(`📔「${entry.title}」(${entry.date})\n${readResult.content}`);
+                                    }
                                 }
-                            }
 
-                            if (diaryContents.length > 0) {
-                                const diaryText = diaryContents.join('\n\n---\n\n');
-                                console.log('📖 [ReadDiary] 成功读取', findResult.entries.length, '篇日记');
+                                if (diaryContents.length > 0) {
+                                    const diaryText = diaryContents.join('\n\n---\n\n');
+                                    console.log('📖 [ReadDiary] 成功读取', findResult.entries.length, '篇日记');
+                                    setDiaryStatus('正在整理日记回忆...');
 
-                                // 3. 重新调用 API，注入日记内容
-                                const cleanedForDiary = aiContent.replace(/\[\[READ_DIARY:.*?\]\]/g, '').trim() || '让我翻翻日记...';
-                                const diaryMessages = [
+                                    const cleanedForDiary = aiContent.replace(/\[\[READ_DIARY:.*?\]\]/g, '').trim() || '让我翻翻日记...';
+                                    const diaryMessages = [
+                                        ...fullMessages,
+                                        { role: 'assistant', content: cleanedForDiary },
+                                        { role: 'system', content: `[系统: 你翻开了自己 ${targetDate} 的日记，以下是你当时写的内容]\n\n${diaryText}\n\n[系统: 你已经看完了日记。现在请你：\n1. 先正常回应用户刚才说的话（这是最重要的！用户还在等你回复）\n2. 自然地把日记中的回忆融入你的回复中，比如"我想起来了那天..."、"看了日记才发现..."等\n3. 可以分享日记中有趣的细节，表达当时的情绪\n4. 用多条消息回复，别只说一句话就结束\n5. 严禁再输出[[READ_DIARY:...]]标记]` }
+                                    ];
+
+                                    response = await fetch(`${baseUrl}/chat/completions`, {
+                                        method: 'POST', headers,
+                                        body: JSON.stringify({ model: apiConfig.model, messages: diaryMessages, temperature: 0.8, stream: false })
+                                    });
+
+                                    if (response.ok) {
+                                        data = await response.json();
+                                        if (data.usage?.total_tokens) setLastTokenUsage(data.usage.total_tokens);
+                                        aiContent = data.choices?.[0]?.message?.content || '';
+                                        aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
+                                        aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, '');
+                                        aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
+                                        addToast(`📖 ${char.name}翻阅了${targetDate}的日记`, 'info');
+                                    }
+                                } else {
+                                    console.log('📖 [ReadDiary] 日记内容为空');
+                                    await diaryFallbackCall('你翻开了日记本但页面是空白的', /\[\[READ_DIARY:.*?\]\]/g);
+                                }
+                            } else {
+                                console.log('📖 [ReadDiary] 该日期没有日记:', targetDate);
+                                setDiaryStatus(`${targetDate} 没有找到日记...`);
+                                const cleanedForNoDiary = aiContent.replace(/\[\[READ_DIARY:.*?\]\]/g, '').trim() || '让我翻翻日记...';
+                                const nodiaryMessages = [
                                     ...fullMessages,
-                                    { role: 'assistant', content: cleanedForDiary },
-                                    { role: 'system', content: `[系统: 你翻开了自己 ${targetDate} 的日记，以下是你当时写的内容]\n\n${diaryText}\n\n[系统: 你已经看完了日记。现在请你：\n1. 先正常回应用户刚才说的话（这是最重要的！用户还在等你回复）\n2. 自然地把日记中的回忆融入你的回复中，比如"我想起来了那天..."、"看了日记才发现..."等\n3. 可以分享日记中有趣的细节，表达当时的情绪\n4. 用多条消息回复，别只说一句话就结束\n5. 严禁再输出[[READ_DIARY:...]]标记]` }
+                                    { role: 'assistant', content: cleanedForNoDiary },
+                                    { role: 'system', content: `[系统: 你翻了翻日记本，发现 ${targetDate} 那天没有写日记。请你：\n1. 先正常回应用户刚才说的话（用户还在等你回复！）\n2. 自然地提到没找到那天的日记，比如"嗯...那天好像没写日记"、"翻了翻没找到诶"\n3. 用多条消息回复，保持对话自然\n4. 严禁再输出[[READ_DIARY:...]]标记]` }
                                 ];
 
                                 response = await fetch(`${baseUrl}/chat/completions`, {
                                     method: 'POST', headers,
-                                    body: JSON.stringify({ model: apiConfig.model, messages: diaryMessages, temperature: 0.8, stream: false })
+                                    body: JSON.stringify({ model: apiConfig.model, messages: nodiaryMessages, temperature: 0.8, stream: false })
                                 });
 
                                 if (response.ok) {
                                     data = await response.json();
+                                    if (data.usage?.total_tokens) setLastTokenUsage(data.usage.total_tokens);
                                     aiContent = data.choices?.[0]?.message?.content || '';
                                     aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
                                     aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, '');
                                     aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
-                                    addToast(`📖 ${char.name}翻阅了${targetDate}的日记`, 'info');
                                 }
-                            } else {
-                                console.log('📖 [ReadDiary] 日记内容为空');
-                                aiContent = aiContent.replace(readDiaryMatch[0], '').trim();
                             }
-                        } else {
-                            console.log('📖 [ReadDiary] 该日期没有日记:', targetDate);
-                            // 注入"没找到"的信息让AI自然处理
-                            const cleanedForNoDiary = aiContent.replace(/\[\[READ_DIARY:.*?\]\]/g, '').trim() || '让我翻翻日记...';
-                            const nodiaryMessages = [
-                                ...fullMessages,
-                                { role: 'assistant', content: cleanedForNoDiary },
-                                { role: 'system', content: `[系统: 你翻了翻日记本，发现 ${targetDate} 那天没有写日记。请你：\n1. 先正常回应用户刚才说的话（用户还在等你回复！）\n2. 自然地提到没找到那天的日记，比如"嗯...那天好像没写日记"、"翻了翻没找到诶"\n3. 用多条消息回复，保持对话自然\n4. 严禁再输出[[READ_DIARY:...]]标记]` }
-                            ];
-
-                            response = await fetch(`${baseUrl}/chat/completions`, {
-                                method: 'POST', headers,
-                                body: JSON.stringify({ model: apiConfig.model, messages: nodiaryMessages, temperature: 0.8, stream: false })
-                            });
-
-                            if (response.ok) {
-                                data = await response.json();
-                                aiContent = data.choices?.[0]?.message?.content || '';
-                                aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
-                                aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, '');
-                                aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
-                            }
+                        } catch (e) {
+                            console.error('📖 [ReadDiary] 读取异常:', e);
+                            setDiaryStatus('日记读取失败，继续对话...');
+                            await diaryFallbackCall('你想翻阅日记但读取出了问题（可能是网络问题）', /\[\[READ_DIARY:.*?\]\]/g);
                         }
-                    } catch (e) {
-                        console.error('📖 [ReadDiary] 读取异常:', e);
-                        aiContent = aiContent.replace(readDiaryMatch[0], '').trim();
+                    } else {
+                        console.log('📖 [ReadDiary] 无法解析日期:', dateInput);
+                        await diaryFallbackCall(`你想翻阅日记但没能理解要找哪天的（"${dateInput}"）`, /\[\[READ_DIARY:.*?\]\]/g);
                     }
                 } else {
-                    console.log('📖 [ReadDiary] 无法解析日期:', dateInput);
-                    aiContent = aiContent.replace(readDiaryMatch[0], '').trim();
+                    console.log('📖 [ReadDiary] 检测到读日记意图但未配置Notion');
+                    await diaryFallbackCall('你想翻阅日记但日记本暂时不可用', /\[\[READ_DIARY:.*?\]\]/g);
                 }
-            } else if (readDiaryMatch) {
-                console.log('📖 [ReadDiary] 检测到读日记意图但未配置Notion');
-                aiContent = aiContent.replace(readDiaryMatch[0], '').trim();
+                setDiaryStatus('');
             }
 
             // 清理残留的读日记标记
@@ -507,117 +530,100 @@ export const useChatAI = ({
 
             // 5.9 Handle Feishu Read Diary (翻阅飞书日记)
             const fsReadDiaryMatch = aiContent.match(/\[\[FS_READ_DIARY:\s*(.+?)\]\]/);
-            if (fsReadDiaryMatch && realtimeConfig?.feishuEnabled && realtimeConfig?.feishuAppId && realtimeConfig?.feishuAppSecret && realtimeConfig?.feishuBaseId && realtimeConfig?.feishuTableId) {
+            if (fsReadDiaryMatch) {
                 const dateInput = fsReadDiaryMatch[1].trim();
                 console.log('📖 [Feishu ReadDiary] AI想翻阅飞书日记:', dateInput);
 
-                let targetDate = '';
-                const now = new Date();
+                if (realtimeConfig?.feishuEnabled && realtimeConfig?.feishuAppId && realtimeConfig?.feishuAppSecret && realtimeConfig?.feishuBaseId && realtimeConfig?.feishuTableId) {
+                    const targetDate = parseDiaryDate(dateInput);
 
-                if (/^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
-                    targetDate = dateInput;
-                } else if (dateInput === '今天') {
-                    targetDate = now.toISOString().split('T')[0];
-                } else if (dateInput === '昨天') {
-                    const d = new Date(now); d.setDate(d.getDate() - 1);
-                    targetDate = d.toISOString().split('T')[0];
-                } else if (dateInput === '前天') {
-                    const d = new Date(now); d.setDate(d.getDate() - 2);
-                    targetDate = d.toISOString().split('T')[0];
-                } else if (/^(\d+)天前$/.test(dateInput)) {
-                    const days = parseInt(dateInput.match(/^(\d+)天前$/)![1]);
-                    const d = new Date(now); d.setDate(d.getDate() - days);
-                    targetDate = d.toISOString().split('T')[0];
-                } else if (/(\d{1,2})月(\d{1,2})[日号]?$/.test(dateInput)) {
-                    const m = dateInput.match(/(\d{1,2})月(\d{1,2})/);
-                    if (m) {
-                        const month = m[1].padStart(2, '0');
-                        const day = m[2].padStart(2, '0');
-                        targetDate = `${now.getFullYear()}-${month}-${day}`;
-                    }
-                } else {
-                    const parsed = new Date(dateInput);
-                    if (!isNaN(parsed.getTime())) {
-                        targetDate = parsed.toISOString().split('T')[0];
-                    }
-                }
+                    if (targetDate) {
+                        try {
+                            setDiaryStatus(`正在翻阅 ${targetDate} 的飞书日记...`);
 
-                if (targetDate) {
-                    try {
-                        const findResult = await FeishuManager.getDiaryByDate(
-                            realtimeConfig.feishuAppId,
-                            realtimeConfig.feishuAppSecret,
-                            realtimeConfig.feishuBaseId,
-                            realtimeConfig.feishuTableId,
-                            char.name,
-                            targetDate
-                        );
+                            const findResult = await FeishuManager.getDiaryByDate(
+                                realtimeConfig.feishuAppId,
+                                realtimeConfig.feishuAppSecret,
+                                realtimeConfig.feishuBaseId,
+                                realtimeConfig.feishuTableId,
+                                char.name,
+                                targetDate
+                            );
 
-                        if (findResult.success && findResult.entries.length > 0) {
-                            const diaryContents: string[] = [];
-                            for (const entry of findResult.entries) {
-                                diaryContents.push(`📒「${entry.title}」(${entry.date})\n${entry.content}`);
-                            }
+                            if (findResult.success && findResult.entries.length > 0) {
+                                setDiaryStatus(`找到 ${findResult.entries.length} 篇飞书日记，正在阅读...`);
+                                const diaryContents: string[] = [];
+                                for (const entry of findResult.entries) {
+                                    diaryContents.push(`📒「${entry.title}」(${entry.date})\n${entry.content}`);
+                                }
 
-                            if (diaryContents.length > 0) {
-                                const diaryText = diaryContents.join('\n\n---\n\n');
-                                console.log('📖 [Feishu ReadDiary] 成功读取', findResult.entries.length, '篇日记');
+                                if (diaryContents.length > 0) {
+                                    const diaryText = diaryContents.join('\n\n---\n\n');
+                                    console.log('📖 [Feishu ReadDiary] 成功读取', findResult.entries.length, '篇日记');
+                                    setDiaryStatus('正在整理日记回忆...');
 
-                                const cleanedForFsDiary = aiContent.replace(/\[\[FS_READ_DIARY:.*?\]\]/g, '').trim() || '让我翻翻日记...';
-                                const diaryMessages = [
+                                    const cleanedForFsDiary = aiContent.replace(/\[\[FS_READ_DIARY:.*?\]\]/g, '').trim() || '让我翻翻日记...';
+                                    const diaryMessages = [
+                                        ...fullMessages,
+                                        { role: 'assistant', content: cleanedForFsDiary },
+                                        { role: 'system', content: `[系统: 你翻开了自己 ${targetDate} 的日记（飞书），以下是你当时写的内容]\n\n${diaryText}\n\n[系统: 你已经看完了日记。现在请你：\n1. 先正常回应用户刚才说的话（这是最重要的！用户还在等你回复）\n2. 自然地把日记中的回忆融入你的回复中，比如"我想起来了那天..."、"看了日记才发现..."等\n3. 可以分享日记中有趣的细节，表达当时的情绪\n4. 用多条消息回复，别只说一句话就结束\n5. 严禁再输出[[FS_READ_DIARY:...]]标记]` }
+                                    ];
+
+                                    response = await fetch(`${baseUrl}/chat/completions`, {
+                                        method: 'POST', headers,
+                                        body: JSON.stringify({ model: apiConfig.model, messages: diaryMessages, temperature: 0.8, stream: false })
+                                    });
+
+                                    if (response.ok) {
+                                        data = await response.json();
+                                        if (data.usage?.total_tokens) setLastTokenUsage(data.usage.total_tokens);
+                                        aiContent = data.choices?.[0]?.message?.content || '';
+                                        aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
+                                        aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, '');
+                                        aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
+                                        addToast(`📖 ${char.name}翻阅了${targetDate}的飞书日记`, 'info');
+                                    }
+                                } else {
+                                    console.log('📖 [Feishu ReadDiary] 日记内容为空');
+                                    await diaryFallbackCall('你翻开了飞书日记本但页面是空白的', /\[\[FS_READ_DIARY:.*?\]\]/g);
+                                }
+                            } else {
+                                setDiaryStatus(`${targetDate} 没有找到飞书日记...`);
+                                const cleanedForFsNoDiary = aiContent.replace(/\[\[FS_READ_DIARY:.*?\]\]/g, '').trim() || '让我翻翻日记...';
+                                const nodiaryMessages = [
                                     ...fullMessages,
-                                    { role: 'assistant', content: cleanedForFsDiary },
-                                    { role: 'system', content: `[系统: 你翻开了自己 ${targetDate} 的日记（飞书），以下是你当时写的内容]\n\n${diaryText}\n\n[系统: 你已经看完了日记。现在请你：\n1. 先正常回应用户刚才说的话（这是最重要的！用户还在等你回复）\n2. 自然地把日记中的回忆融入你的回复中，比如"我想起来了那天..."、"看了日记才发现..."等\n3. 可以分享日记中有趣的细节，表达当时的情绪\n4. 用多条消息回复，别只说一句话就结束\n5. 严禁再输出[[FS_READ_DIARY:...]]标记]` }
+                                    { role: 'assistant', content: cleanedForFsNoDiary },
+                                    { role: 'system', content: `[系统: 你翻了翻飞书日记本，发现 ${targetDate} 那天没有写日记。请你：\n1. 先正常回应用户刚才说的话（用户还在等你回复！）\n2. 自然地提到没找到那天的日记，比如"嗯...那天好像没写日记"、"翻了翻没找到诶"\n3. 用多条消息回复，保持对话自然\n4. 严禁再输出[[FS_READ_DIARY:...]]标记]` }
                                 ];
 
                                 response = await fetch(`${baseUrl}/chat/completions`, {
                                     method: 'POST', headers,
-                                    body: JSON.stringify({ model: apiConfig.model, messages: diaryMessages, temperature: 0.8, stream: false })
+                                    body: JSON.stringify({ model: apiConfig.model, messages: nodiaryMessages, temperature: 0.8, stream: false })
                                 });
 
                                 if (response.ok) {
                                     data = await response.json();
+                                    if (data.usage?.total_tokens) setLastTokenUsage(data.usage.total_tokens);
                                     aiContent = data.choices?.[0]?.message?.content || '';
                                     aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
                                     aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, '');
                                     aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
-                                    addToast(`📖 ${char.name}翻阅了${targetDate}的飞书日记`, 'info');
                                 }
-                            } else {
-                                aiContent = aiContent.replace(fsReadDiaryMatch[0], '').trim();
                             }
-                        } else {
-                            const cleanedForFsNoDiary = aiContent.replace(/\[\[FS_READ_DIARY:.*?\]\]/g, '').trim() || '让我翻翻日记...';
-                            const nodiaryMessages = [
-                                ...fullMessages,
-                                { role: 'assistant', content: cleanedForFsNoDiary },
-                                { role: 'system', content: `[系统: 你翻了翻飞书日记本，发现 ${targetDate} 那天没有写日记。请你：\n1. 先正常回应用户刚才说的话（用户还在等你回复！）\n2. 自然地提到没找到那天的日记，比如"嗯...那天好像没写日记"、"翻了翻没找到诶"\n3. 用多条消息回复，保持对话自然\n4. 严禁再输出[[FS_READ_DIARY:...]]标记]` }
-                            ];
-
-                            response = await fetch(`${baseUrl}/chat/completions`, {
-                                method: 'POST', headers,
-                                body: JSON.stringify({ model: apiConfig.model, messages: nodiaryMessages, temperature: 0.8, stream: false })
-                            });
-
-                            if (response.ok) {
-                                data = await response.json();
-                                aiContent = data.choices?.[0]?.message?.content || '';
-                                aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
-                                aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, '');
-                                aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
-                            }
+                        } catch (e) {
+                            console.error('📖 [Feishu ReadDiary] 读取异常:', e);
+                            setDiaryStatus('飞书日记读取失败，继续对话...');
+                            await diaryFallbackCall('你想翻阅飞书日记但读取出了问题（可能是网络问题）', /\[\[FS_READ_DIARY:.*?\]\]/g);
                         }
-                    } catch (e) {
-                        console.error('📖 [Feishu ReadDiary] 读取异常:', e);
-                        aiContent = aiContent.replace(fsReadDiaryMatch[0], '').trim();
+                    } else {
+                        console.log('📖 [Feishu ReadDiary] 无法解析日期:', dateInput);
+                        await diaryFallbackCall(`你想翻阅飞书日记但没能理解要找哪天的（"${dateInput}"）`, /\[\[FS_READ_DIARY:.*?\]\]/g);
                     }
                 } else {
-                    console.log('📖 [Feishu ReadDiary] 无法解析日期:', dateInput);
-                    aiContent = aiContent.replace(fsReadDiaryMatch[0], '').trim();
+                    console.log('📖 [Feishu ReadDiary] 检测到读日记意图但未配置飞书');
+                    await diaryFallbackCall('你想翻阅飞书日记但飞书暂时不可用', /\[\[FS_READ_DIARY:.*?\]\]/g);
                 }
-            } else if (fsReadDiaryMatch) {
-                console.log('📖 [Feishu ReadDiary] 检测到读日记意图但未配置飞书');
-                aiContent = aiContent.replace(fsReadDiaryMatch[0], '').trim();
+                setDiaryStatus('');
             }
 
             // 清理残留的飞书读日记标记
@@ -803,6 +809,7 @@ export const useChatAI = ({
             setIsTyping(false);
             setRecallStatus('');
             setSearchStatus('');
+            setDiaryStatus('');
         }
     };
 
@@ -810,6 +817,7 @@ export const useChatAI = ({
         isTyping,
         recallStatus,
         searchStatus,
+        diaryStatus,
         lastTokenUsage,
         setLastTokenUsage, // Allow manual reset if needed
         triggerAI
