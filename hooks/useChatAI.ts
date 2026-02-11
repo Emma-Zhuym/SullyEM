@@ -143,7 +143,7 @@ export const useChatAI = ({
                 const detailedLogs = getDetailedLogs(year, month);
                 
                 if (detailedLogs) {
-                    const recallMessages = [...fullMessages, { role: 'system', content: `[系统: 已成功调取 ${year}-${month} 的详细日志]\n${detailedLogs}\n[系统: 现在请结合这些细节回答用户。保持对话自然。]` }];
+                    const recallMessages = [...fullMessages, { role: 'user', content: `[系统: 已成功调取 ${year}-${month} 的详细日志]\n${detailedLogs}\n[系统: 现在请结合这些细节回答用户。保持对话自然。]` }];
                     response = await fetch(`${baseUrl}/chat/completions`, {
                         method: 'POST', headers,
                         body: JSON.stringify({ model: apiConfig.model, messages: recallMessages, temperature: 0.8, stream: false })
@@ -186,7 +186,7 @@ export const useChatAI = ({
                         const searchMessages = [
                             ...fullMessages,
                             { role: 'assistant', content: cleanedForSearch },
-                            { role: 'system', content: `[系统: 搜索完成！以下是关于"${searchQuery}"的搜索结果]\n\n${resultsStr}\n\n[系统: 现在请根据这些真实信息回复用户。用自然的语气分享，比如"我刚搜了一下发现..."、"诶我看到说..."。不要再输出[[SEARCH:...]]了。]` }
+                            { role: 'user', content: `[系统: 搜索完成！以下是关于"${searchQuery}"的搜索结果]\n\n${resultsStr}\n\n[系统: 现在请根据这些真实信息回复用户。用自然的语气分享，比如"我刚搜了一下发现..."、"诶我看到说..."。不要再输出[[SEARCH:...]]了。]` }
                         ];
 
                         response = await fetch(`${baseUrl}/chat/completions`, {
@@ -309,12 +309,14 @@ export const useChatAI = ({
             const readDiaryMatch = aiContent.match(/\[\[READ_DIARY:\s*(.+?)\]\]/);
 
             // Helper: make a fallback API call so the AI keeps talking even when diary fails
+            // NOTE: Uses role:'user' for the system instruction to ensure API compatibility
+            // (some providers reject conversations not ending with a user message)
             const diaryFallbackCall = async (reason: string, tagPattern: RegExp) => {
                 const cleaned = aiContent.replace(tagPattern, '').trim() || '让我翻翻日记...';
                 const msgs = [
                     ...fullMessages,
                     { role: 'assistant', content: cleaned },
-                    { role: 'system', content: `[系统: ${reason}。请你：\n1. 先正常回应用户刚才说的话（用户还在等你回复！）\n2. 可以自然地提一下，比如"日记好像打不开诶"、"嗯...好像没找到"\n3. 继续正常聊天，用多条消息回复\n4. 严禁再输出[[READ_DIARY:...]]或[[FS_READ_DIARY:...]]标记]` }
+                    { role: 'user', content: `[系统: ${reason}。请你：\n1. 先正常回应用户刚才说的话（用户还在等你回复！）\n2. 可以自然地提一下，比如"日记好像打不开诶"、"嗯...好像没找到"\n3. 继续正常聊天，用多条消息回复\n4. 严禁再输出[[READ_DIARY:...]]或[[FS_READ_DIARY:...]]标记]` }
                 ];
                 try {
                     response = await fetch(`${baseUrl}/chat/completions`, {
@@ -391,7 +393,7 @@ export const useChatAI = ({
                                     const diaryMessages = [
                                         ...fullMessages,
                                         { role: 'assistant', content: cleanedForDiary },
-                                        { role: 'system', content: `[系统: 你翻开了自己 ${targetDate} 的日记，以下是你当时写的内容]\n\n${diaryText}\n\n[系统: 你已经看完了日记。现在请你：\n1. 先正常回应用户刚才说的话（这是最重要的！用户还在等你回复）\n2. 自然地把日记中的回忆融入你的回复中，比如"我想起来了那天..."、"看了日记才发现..."等\n3. 可以分享日记中有趣的细节，表达当时的情绪\n4. 用多条消息回复，别只说一句话就结束\n5. 严禁再输出[[READ_DIARY:...]]标记]` }
+                                        { role: 'user', content: `[系统: 你翻开了自己 ${targetDate} 的日记，以下是你当时写的内容]\n\n${diaryText}\n\n[系统: 你已经看完了日记。现在请你：\n1. 先正常回应用户刚才说的话（这是最重要的！用户还在等你回复）\n2. 自然地把日记中的回忆融入你的回复中，比如"我想起来了那天..."、"看了日记才发现..."等\n3. 可以分享日记中有趣的细节，表达当时的情绪\n4. 用多条消息回复，别只说一句话就结束\n5. 严禁再输出[[READ_DIARY:...]]标记]` }
                                     ];
 
                                     response = await fetch(`${baseUrl}/chat/completions`, {
@@ -419,7 +421,7 @@ export const useChatAI = ({
                                 const nodiaryMessages = [
                                     ...fullMessages,
                                     { role: 'assistant', content: cleanedForNoDiary },
-                                    { role: 'system', content: `[系统: 你翻了翻日记本，发现 ${targetDate} 那天没有写日记。请你：\n1. 先正常回应用户刚才说的话（用户还在等你回复！）\n2. 自然地提到没找到那天的日记，比如"嗯...那天好像没写日记"、"翻了翻没找到诶"\n3. 用多条消息回复，保持对话自然\n4. 严禁再输出[[READ_DIARY:...]]标记]` }
+                                    { role: 'user', content: `[系统: 你翻了翻日记本，发现 ${targetDate} 那天没有写日记。请你：\n1. 先正常回应用户刚才说的话（用户还在等你回复！）\n2. 自然地提到没找到那天的日记，比如"嗯...那天好像没写日记"、"翻了翻没找到诶"\n3. 用多条消息回复，保持对话自然\n4. 严禁再输出[[READ_DIARY:...]]标记]` }
                                 ];
 
                                 response = await fetch(`${baseUrl}/chat/completions`, {
@@ -566,7 +568,7 @@ export const useChatAI = ({
                                     const diaryMessages = [
                                         ...fullMessages,
                                         { role: 'assistant', content: cleanedForFsDiary },
-                                        { role: 'system', content: `[系统: 你翻开了自己 ${targetDate} 的日记（飞书），以下是你当时写的内容]\n\n${diaryText}\n\n[系统: 你已经看完了日记。现在请你：\n1. 先正常回应用户刚才说的话（这是最重要的！用户还在等你回复）\n2. 自然地把日记中的回忆融入你的回复中，比如"我想起来了那天..."、"看了日记才发现..."等\n3. 可以分享日记中有趣的细节，表达当时的情绪\n4. 用多条消息回复，别只说一句话就结束\n5. 严禁再输出[[FS_READ_DIARY:...]]标记]` }
+                                        { role: 'user', content: `[系统: 你翻开了自己 ${targetDate} 的日记（飞书），以下是你当时写的内容]\n\n${diaryText}\n\n[系统: 你已经看完了日记。现在请你：\n1. 先正常回应用户刚才说的话（这是最重要的！用户还在等你回复）\n2. 自然地把日记中的回忆融入你的回复中，比如"我想起来了那天..."、"看了日记才发现..."等\n3. 可以分享日记中有趣的细节，表达当时的情绪\n4. 用多条消息回复，别只说一句话就结束\n5. 严禁再输出[[FS_READ_DIARY:...]]标记]` }
                                     ];
 
                                     response = await fetch(`${baseUrl}/chat/completions`, {
@@ -593,7 +595,7 @@ export const useChatAI = ({
                                 const nodiaryMessages = [
                                     ...fullMessages,
                                     { role: 'assistant', content: cleanedForFsNoDiary },
-                                    { role: 'system', content: `[系统: 你翻了翻飞书日记本，发现 ${targetDate} 那天没有写日记。请你：\n1. 先正常回应用户刚才说的话（用户还在等你回复！）\n2. 自然地提到没找到那天的日记，比如"嗯...那天好像没写日记"、"翻了翻没找到诶"\n3. 用多条消息回复，保持对话自然\n4. 严禁再输出[[FS_READ_DIARY:...]]标记]` }
+                                    { role: 'user', content: `[系统: 你翻了翻飞书日记本，发现 ${targetDate} 那天没有写日记。请你：\n1. 先正常回应用户刚才说的话（用户还在等你回复！）\n2. 自然地提到没找到那天的日记，比如"嗯...那天好像没写日记"、"翻了翻没找到诶"\n3. 用多条消息回复，保持对话自然\n4. 严禁再输出[[FS_READ_DIARY:...]]标记]` }
                                 ];
 
                                 response = await fetch(`${baseUrl}/chat/completions`, {
