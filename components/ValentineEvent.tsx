@@ -16,6 +16,9 @@ import { DB } from '../utils/db';
 import { ContextBuilder } from '../utils/context';
 import { safeResponseJson } from '../utils/safeApi';
 import { CharacterProfile, SpecialMomentRecord } from '../types';
+import { Capacitor } from '@capacitor/core';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 
 // ============================================================
 // 情人节立绘 Sprite 映射 (占位 emoji，等图片整理好后替换为图床URL)
@@ -613,10 +616,29 @@ export const ValentineSession: React.FC<ValentineSessionProps> = ({ charId, onCl
                 useCORS: true,
                 logging: false,
             });
-            const link = document.createElement('a');
-            link.download = `valentine_${char?.name || 'record'}_2026.png`;
-            link.href = canvas.toDataURL('image/png');
-            link.click();
+            const fileName = `valentine_${char?.name || 'record'}_2026.png`;
+
+            if (Capacitor.isNativePlatform()) {
+                const dataUrl = canvas.toDataURL('image/png');
+                await Filesystem.writeFile({
+                    path: fileName,
+                    data: dataUrl,
+                    directory: Directory.Cache,
+                });
+                const uriResult = await Filesystem.getUri({
+                    directory: Directory.Cache,
+                    path: fileName,
+                });
+                await Share.share({
+                    title: '特别时光 - 导出长图',
+                    files: [uriResult.uri],
+                });
+            } else {
+                const link = document.createElement('a');
+                link.download = fileName;
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+            }
             addToast('导出成功', 'success');
         } catch (e: any) {
             console.error('Export failed:', e);
