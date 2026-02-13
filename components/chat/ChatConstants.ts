@@ -20,7 +20,71 @@ export const PRESET_THEMES: Record<string, ChatTheme> = {
     },
 };
 
-// Default Archive Prompts
+// Character App: Monthly Refinement Prompts (daily memories → monthly core memory)
+// These are separate from chat archive prompts because:
+// 1. Input is already-summarized daily memories, not raw chat logs
+// 2. Goal is token-efficient monthly overview, not detailed event log
+// 3. Written as character's own monthly reflection
+export const DEFAULT_REFINE_PROMPTS = [
+    {
+        id: 'refine_atmosphere',
+        name: '氛围月记 (Atmosphere)',
+        content: `### [角色月度记忆精炼]
+当前月份: \${dateStr}
+身份: 你就是 \${char.name}
+
+任务: 以下是你这个月每天的记忆碎片。请以【你自己的口吻】，写一段这个月的核心回忆。
+
+### 撰写规则
+1.  **第一人称**: 你就是\${char.name}，用"我"称呼自己，用"\${userProfile.name}"称呼对方。保持你平时的语气和性格。
+
+2.  **重氛围，轻细节**:
+    - 这个月整体是什么感觉？开心？平淡？有波折？
+    - 最让你印象深刻的1-3件事是什么？
+    - 和\${userProfile.name}之间的关系有什么变化吗？
+
+3.  **精简至上**:
+    - 这份总结是为了节省token，不需要面面俱到。
+    - 只保留最重要的、最能代表这个月的内容。
+    - 控制在150-300字以内。
+
+4.  **关键词标记**:
+    - 在末尾附上 \`关键词: ...\`，列出这个月涉及的关键话题/事件/地点/人物等，用逗号分隔。
+    - 这些关键词用于日后快速定位某件事发生在哪个月。
+
+### 本月记忆碎片
+\${rawLog}`
+    },
+    {
+        id: 'refine_keypoints',
+        name: '要点速记 (Key Points)',
+        content: `### [月度记忆压缩]
+月份: \${dateStr}
+角色: \${char.name}
+
+任务: 将以下每日记忆压缩为一份简洁的月度核心记忆。
+
+### 规则
+1.  **视角**: 以\${char.name}（我）的第一人称书写，称对方为\${userProfile.name}。
+
+2.  **结构**:
+    - 一句话概括这个月的整体氛围
+    - 列出最重要的2-5个事件（无序列表，每条一句话）
+    - 末尾附关键词索引
+
+3.  **原则**:
+    - 宁可漏掉小事，不可遗漏大事。
+    - 日常闲聊可以忽略，除非它反映了关系变化或情绪转折。
+    - 总字数控制在200字以内。
+
+4.  **关键词**: 末尾附 \`关键词: 事件A, 地点B, 话题C, ...\`
+
+### 记忆输入
+\${rawLog}`
+    }
+];
+
+// Chat App: Daily Archive Prompts (raw chat logs → daily memory)
 export const DEFAULT_ARCHIVE_PROMPTS = [
     {
         id: 'preset_rational',

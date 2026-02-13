@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { MemoryFragment } from '../../types';
 import Modal from '../../components/os/Modal';
-import { DEFAULT_ARCHIVE_PROMPTS } from '../../components/chat/ChatConstants';
+import { DEFAULT_REFINE_PROMPTS } from '../../components/chat/ChatConstants';
 
 interface MemoryArchivistProps {
     memories: MemoryFragment[];
@@ -35,17 +35,17 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
     const [showCoreDeleteConfirm, setShowCoreDeleteConfirm] = useState(false);
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // Archive prompt selection (shared with Chat app)
-    const [archivePrompts, setArchivePrompts] = useState<{id: string, name: string, content: string}[]>(DEFAULT_ARCHIVE_PROMPTS);
-    const [selectedPromptId, setSelectedPromptId] = useState<string>('preset_rational');
+    // Monthly refinement prompt selection (character-specific, independent from Chat app)
+    const [archivePrompts, setArchivePrompts] = useState<{id: string, name: string, content: string}[]>(DEFAULT_REFINE_PROMPTS);
+    const [selectedPromptId, setSelectedPromptId] = useState<string>('refine_atmosphere');
     const [showPromptPanel, setShowPromptPanel] = useState(false);
 
     useEffect(() => {
-        const savedPrompts = localStorage.getItem('chat_archive_prompts');
+        const savedPrompts = localStorage.getItem('character_refine_prompts');
         if (savedPrompts) {
             try {
                 const parsed = JSON.parse(savedPrompts);
-                const merged = [...DEFAULT_ARCHIVE_PROMPTS, ...parsed.filter((p: any) => !p.id.startsWith('preset_'))];
+                const merged = [...DEFAULT_REFINE_PROMPTS, ...parsed.filter((p: any) => !p.id.startsWith('refine_'))];
                 setArchivePrompts(merged);
             } catch(e) {}
         }
@@ -221,7 +221,7 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                                     </div>
                                 ))}
                             </div>
-                            <p className="text-[8px] text-indigo-300 mt-2 leading-tight">提示词与聊天-归档共享，可在聊天设置中自定义。</p>
+                            <p className="text-[8px] text-indigo-300 mt-2 leading-tight">角色月度精炼专用提示词，与聊天归档独立。</p>
                         </div>
                     )}
                     {/* Display Refined Memory Content if exists */}
