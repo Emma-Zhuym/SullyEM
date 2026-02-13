@@ -240,7 +240,16 @@ const Character: React.FC = () => {
       if (!formData) return;
 
       const targetId = formData.id; // LOCK ID
-      const prompt = formattedPrompt || `Task: Summarize the following logs (${year}-${month}) into a concise memory. Language: Same as logs (Chinese). ${rawText.substring(0, 5000)}`;
+
+      // Build lightweight character identity context (no memories - we're generating those)
+      let identityContext = `[角色身份]\n名字: ${formData.name}\n`;
+      if (formData.systemPrompt) identityContext += `核心性格/指令:\n${formData.systemPrompt}\n`;
+      if (formData.worldview?.trim()) identityContext += `世界观设定: ${formData.worldview}\n`;
+      identityContext += `互动对象: ${userProfile.name}`;
+      if (userProfile.bio) identityContext += ` (${userProfile.bio})`;
+      identityContext += '\n\n';
+
+      const prompt = identityContext + (formattedPrompt || `Task: Summarize the following logs (${year}-${month}) into a concise memory. Language: Same as logs (Chinese). ${rawText.substring(0, 5000)}`);
 
       try {
           const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
