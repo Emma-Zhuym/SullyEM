@@ -423,13 +423,16 @@ const GroupChat: React.FC = () => {
 
     const handleClearHistory = async () => {
         if (!activeGroup) return;
-        
-        let msgsToDelete = messages;
+
+        // Fetch ALL messages from DB, not just the loaded subset
+        const allGroupMsgs = await DB.getGroupMessages(activeGroup.id);
+
+        let msgsToDelete = allGroupMsgs;
         let keepCount = 0;
 
         if (preserveContext) {
-            msgsToDelete = messages.slice(0, -10);
-            keepCount = Math.min(messages.length, 10);
+            msgsToDelete = allGroupMsgs.slice(0, -10);
+            keepCount = Math.min(allGroupMsgs.length, 10);
         }
 
         if (msgsToDelete.length === 0) {
@@ -438,11 +441,12 @@ const GroupChat: React.FC = () => {
         }
 
         await DB.deleteMessages(msgsToDelete.map(m => m.id));
-        
+
         // Refresh local state
-        const remaining = preserveContext ? messages.slice(-10) : [];
+        const remaining = preserveContext ? allGroupMsgs.slice(-10) : [];
         setMessages(remaining);
-        
+        setTotalMsgCount(remaining.length);
+
         addToast(`已清理 ${msgsToDelete.length} 条记录${preserveContext ? ' (保留最近10条)' : ''}`, 'success');
         setModalType('none');
     };

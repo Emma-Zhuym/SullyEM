@@ -35,6 +35,7 @@ const Chat: React.FC = () => {
     const [replyTarget, setReplyTarget] = useState<Message | null>(null);
 
     const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility'>('none');
+    const [allHistoryMessages, setAllHistoryMessages] = useState<Message[]>([]);
     const [transferAmt, setTransferAmt] = useState('');
     const [emojiImportText, setEmojiImportText] = useState('');
     const [settingsContextLimit, setSettingsContextLimit] = useState(500);
@@ -165,6 +166,18 @@ const Chat: React.FC = () => {
             setShowingTargetIds(new Set());
         }
     }, [activeCharacterId, reloadMessages]);
+
+    // Load all messages when history-manager modal opens
+    useEffect(() => {
+        if (modalType === 'history-manager' && activeCharacterId) {
+            DB.getMessagesByCharId(activeCharacterId).then(allMsgs => {
+                const filtered = allMsgs
+                    .filter(m => m.metadata?.source !== 'date')
+                    .filter(m => !(char?.hideSystemLogs && m.role === 'system'));
+                setAllHistoryMessages(filtered);
+            });
+        }
+    }, [modalType, activeCharacterId, char?.hideSystemLogs]);
 
     useEffect(() => {
         const savedPrompts = localStorage.getItem('chat_archive_prompts');
@@ -752,6 +765,7 @@ const Chat: React.FC = () => {
                 archivePrompts={archivePrompts} selectedPromptId={selectedPromptId} setSelectedPromptId={setSelectedPromptId}
                 editingPrompt={editingPrompt} setEditingPrompt={setEditingPrompt} isSummarizing={isSummarizing}
                 selectedMessage={selectedMessage} selectedEmoji={selectedEmoji} activeCharacter={char} messages={messages}
+                allHistoryMessages={allHistoryMessages}
                 
                 newCategoryName={newCategoryName} setNewCategoryName={setNewCategoryName} onAddCategory={handleAddCategory}
                 selectedCategory={selectedCategory}

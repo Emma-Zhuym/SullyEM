@@ -39,6 +39,7 @@ interface ChatModalsProps {
     selectedCategory: EmojiCategory | null;
     activeCharacter: CharacterProfile;
     messages: Message[];
+    allHistoryMessages?: Message[];
 
     // Handlers
     onTransfer: () => void;
@@ -85,6 +86,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     archivePrompts, selectedPromptId, setSelectedPromptId,
     editingPrompt, setEditingPrompt, isSummarizing,
     selectedMessage, selectedEmoji, selectedCategory, activeCharacter, messages,
+    allHistoryMessages = [],
     onTransfer, onImportEmoji, onSaveSettings,
     onBgUpload, onRemoveBg, onClearHistory,
     onArchive, onCreatePrompt, onEditPrompt, onSavePrompt, onDeletePrompt,
@@ -94,6 +96,8 @@ const ChatModals: React.FC<ChatModalsProps> = ({
 }) => {
     const bgInputRef = useRef<HTMLInputElement>(null);
     const [visibilitySelection, setVisibilitySelection] = useState<Set<string>>(new Set());
+    const [historyPage, setHistoryPage] = useState(0);
+    const HISTORY_PAGE_SIZE = 50;
 
     const openVisibilityModal = () => {
         if (selectedCategory) {
@@ -303,21 +307,40 @@ const ChatModals: React.FC<ChatModalsProps> = ({
 
             {/* History Manager Modal */}
             <Modal
-                isOpen={modalType === 'history-manager'} title="历史记录断点" onClose={() => setModalType('none')}
-                footer={<><button onClick={() => onSetHistoryStart(undefined)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl">恢复全部</button><button onClick={() => setModalType('none')} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl">完成</button></>}
+                isOpen={modalType === 'history-manager'} title="历史记录断点" onClose={() => { setModalType('none'); setHistoryPage(0); }}
+                footer={<><button onClick={() => onSetHistoryStart(undefined)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl">恢复全部</button><button onClick={() => { setModalType('none'); setHistoryPage(0); }} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl">完成</button></>}
             >
                 <div className="space-y-2 max-h-[50vh] overflow-y-auto no-scrollbar p-1">
-                    <p className="text-xs text-slate-400 text-center mb-2">点击某条消息，将其设为“新的起点”。此条之前的消息将被隐藏且不发送给 AI。</p>
-                    {messages.slice().reverse().map(m => (
-                        <div key={m.id} onClick={() => onSetHistoryStart(m.id)} className={`p-3 rounded-xl border cursor-pointer text-xs flex gap-2 items-start ${activeCharacter.hideBeforeMessageId === m.id ? 'bg-primary/10 border-primary ring-1 ring-primary' : 'bg-white border-slate-100 hover:bg-slate-50'}`}>
-                            <span className="text-slate-400 font-mono whitespace-nowrap pt-0.5">[{new Date(m.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}]</span>
-                            <div className="flex-1 min-w-0">
-                                <div className="font-bold text-slate-600 mb-0.5">{m.role === 'user' ? '我' : activeCharacter.name}</div>
-                                <div className="text-slate-500 truncate">{m.content}</div>
-                            </div>
-                            {activeCharacter.hideBeforeMessageId === m.id && <span className="text-primary font-bold text-[10px] bg-white px-2 rounded-full border border-primary/20">起点</span>}
-                        </div>
-                    ))}
+                    <p className="text-xs text-slate-400 text-center mb-2">点击某条消息，将其设为"新的起点"。此条之前的消息将被隐藏且不发送给 AI。</p>
+                    {(() => {
+                        const reversed = allHistoryMessages.slice().reverse();
+                        const totalPages = Math.max(1, Math.ceil(reversed.length / HISTORY_PAGE_SIZE));
+                        const pageMessages = reversed.slice(historyPage * HISTORY_PAGE_SIZE, (historyPage + 1) * HISTORY_PAGE_SIZE);
+                        return (<>
+                            {reversed.length > HISTORY_PAGE_SIZE && (
+                                <div className="flex items-center justify-between px-1 py-1">
+                                    <button onClick={() => setHistoryPage(p => Math.max(0, p - 1))} disabled={historyPage === 0} className={`px-3 py-1 text-xs rounded-lg ${historyPage === 0 ? 'text-slate-300' : 'text-primary hover:bg-primary/10'}`}>上一页</button>
+                                    <span className="text-xs text-slate-400">{historyPage + 1} / {totalPages}（共 {reversed.length} 条）</span>
+                                    <button onClick={() => setHistoryPage(p => Math.min(totalPages - 1, p + 1))} disabled={historyPage >= totalPages - 1} className={`px-3 py-1 text-xs rounded-lg ${historyPage >= totalPages - 1 ? 'text-slate-300' : 'text-primary hover:bg-primary/10'}`}>下一页</button>
+                                </div>
+                            )}
+                            {pageMessages.map(m => (
+                                <div key={m.id} onClick={() => onSetHistoryStart(m.id)} className={`p-3 rounded-xl border cursor-pointer text-xs flex gap-2 items-start ${activeCharacter.hideBeforeMessageId === m.id ? 'bg-primary/10 border-primary ring-1 ring-primary' : 'bg-white border-slate-100 hover:bg-slate-50'}`}>
+                                    <span className="text-slate-400 font-mono whitespace-nowrap pt-0.5">[{new Date(m.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}]</span>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="font-bold text-slate-600 mb-0.5">{m.role === 'user' ? '我' : activeCharacter.name}</div>
+                                        <div className="text-slate-500 truncate">{m.content}</div>
+                                    </div>
+                                    {activeCharacter.hideBeforeMessageId === m.id && <span className="text-primary font-bold text-[10px] bg-white px-2 rounded-full border border-primary/20">起点</span>}
+                                </div>
+                            ))}
+                            {reversed.length > HISTORY_PAGE_SIZE && (
+                                <div className="flex items-center justify-center px-1 pt-2">
+                                    <span className="text-xs text-slate-400">{historyPage + 1} / {totalPages}</span>
+                                </div>
+                            )}
+                        </>);
+                    })()}
                 </div>
             </Modal>
             
