@@ -161,37 +161,48 @@ export const useChatAI = ({
             if (recallMatch) {
                 const year = recallMatch[1];
                 const month = recallMatch[2];
-                setRecallStatus(`正在调阅 ${year}年${month}月 的详细档案...`);
-                
-                // Helper to fetch detailed logs (duplicated logic from Chat.tsx, moved inside hook context)
-                const getDetailedLogs = (y: string, m: string) => {
-                    if (!char.memories) return null;
-                    const target = `${y}-${m.padStart(2, '0')}`;
-                    const logs = char.memories.filter(mem => {
-                        return mem.date.includes(target) || mem.date.includes(`${y}年${parseInt(m)}月`);
-                    });
-                    if (logs.length === 0) return null;
-                    return logs.map(mem => `[${mem.date}] (${mem.mood || 'normal'}): ${mem.summary}`).join('\n');
-                };
+                const targetMonth = `${year}-${month.padStart(2, '0')}`;
 
-                const detailedLogs = getDetailedLogs(year, month);
-                
-                if (detailedLogs) {
-                    const recallMessages = [...fullMessages, { role: 'user', content: `[系统: 已成功调取 ${year}-${month} 的详细日志]\n${detailedLogs}\n[系统: 现在请结合这些细节回答用户。保持对话自然。]` }];
-                    try {
-                        data = await safeFetchJson(`${baseUrl}/chat/completions`, {
-                            method: 'POST', headers,
-                            body: JSON.stringify({ model: apiConfig.model, messages: recallMessages, temperature: 0.8, stream: false })
+                // Check if this month is already in activeMemoryMonths (already in system prompt)
+                const alreadyActive = char.activeMemoryMonths?.includes(targetMonth);
+
+                if (alreadyActive) {
+                    // Memory already present in system prompt via buildCoreContext, skip redundant API call
+                    console.log(`♻️ [Recall] ${targetMonth} already in activeMemoryMonths, skipping duplicate recall`);
+                    aiContent = aiContent.replace(/\[\[RECALL:\s*\d{4}[-/年]\d{1,2}\]\]/g, '').trim();
+                } else {
+                    setRecallStatus(`正在调阅 ${year}年${month}月 的详细档案...`);
+
+                    // Helper to fetch detailed logs (duplicated logic from Chat.tsx, moved inside hook context)
+                    const getDetailedLogs = (y: string, m: string) => {
+                        if (!char.memories) return null;
+                        const target = `${y}-${m.padStart(2, '0')}`;
+                        const logs = char.memories.filter(mem => {
+                            return mem.date.includes(target) || mem.date.includes(`${y}年${parseInt(m)}月`);
                         });
-                        updateTokenUsage(data, historyMsgCount, 'recall');
-                        aiContent = data.choices?.[0]?.message?.content || '';
-                        // Re-clean
-                        aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
-                        aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, '');
-                        aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
-                        addToast(`已调用 ${year}-${month} 详细记忆`, 'info');
-                    } catch (recallErr: any) {
-                        console.error('Recall API failed:', recallErr.message);
+                        if (logs.length === 0) return null;
+                        return logs.map(mem => `[${mem.date}] (${mem.mood || 'normal'}): ${mem.summary}`).join('\n');
+                    };
+
+                    const detailedLogs = getDetailedLogs(year, month);
+
+                    if (detailedLogs) {
+                        const recallMessages = [...fullMessages, { role: 'user', content: `[系统: 已成功调取 ${year}-${month} 的详细日志]\n${detailedLogs}\n[系统: 现在请结合这些细节回答用户。保持对话自然。]` }];
+                        try {
+                            data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                                method: 'POST', headers,
+                                body: JSON.stringify({ model: apiConfig.model, messages: recallMessages, temperature: 0.8, stream: false })
+                            });
+                            updateTokenUsage(data, historyMsgCount, 'recall');
+                            aiContent = data.choices?.[0]?.message?.content || '';
+                            // Re-clean
+                            aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
+                            aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, '');
+                            aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
+                            addToast(`已调用 ${year}-${month} 详细记忆`, 'info');
+                        } catch (recallErr: any) {
+                            console.error('Recall API failed:', recallErr.message);
+                        }
                     }
                 }
             }

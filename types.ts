@@ -133,6 +133,12 @@ export interface SpriteConfig {
   y: number;
 }
 
+export interface SkinSet {
+  id: string;
+  name: string;
+  sprites: Record<string, string>; // emotion -> image URL or base64
+}
+
 export interface RoomItem {
     id: string;
     name: string;
@@ -499,6 +505,9 @@ export interface CharacterProfile {
   sprites?: Record<string, string>;
   spriteConfig?: SpriteConfig;
   customDateSprites?: string[]; // User-added custom emotion names for date mode (per-character)
+  dateLightReading?: boolean;   // Light reading mode for novel/text view in date
+  dateSkinSets?: SkinSet[];     // Multiple skin sets for portrait mode
+  activeSkinSetId?: string;     // Currently active skin set ID
 
   savedDateState?: DateState;
   specialMomentRecords?: Record<string, SpecialMomentRecord>;

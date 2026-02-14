@@ -721,7 +721,7 @@ ${recentGroupMsgs}
    - **可用表情 (按分类)**: ${emojiContextStr}
 4. **气泡分段 (Bubble Splitting)**:
    - 就像真人聊天一样，如果一个角色要说长话，或者有停顿，请把内容分成多条消息。
-   - 或者在一条内容中，使用句号 "。" 作为自然的分隔符（前端会自动拆分）。
+   - 在一条内容中，使用换行符分隔不同的气泡，每一行会变成一个独立气泡。
 5. **私聊感知 (优先级最高)**:
    - 请务必检查每个角色的 [私聊空窗期]。
    - 如果某个角色刚刚才私聊过用户，哪怕群里很冷清，TA也应该表现得很熟络，不能说 "好久不见"。
@@ -833,19 +833,10 @@ ${recentGroupMsgs}
                 let textContent = action.content.replace(/\[\[SEND_EMOJI:.*?\]\]/g, '').trim();
                 
                 if (textContent) {
-                    let tempContent = textContent
-                        .replace(/\.\.\./g, '{{ELLIPSIS_ENG}}')
-                        .replace(/……/g, '{{ELLIPSIS_CN}}')
-                        .replace(/([。])(?![）\)\]】"”'])/g, '{{SPLIT}}') // FIX: Don't split if followed by closing bracket
-                        .replace(/\.($|\s+)/g, '{{SPLIT}}')
-                        .replace(/([！!？?~]+)(?![）\)\]】"”'])/g, '$1{{SPLIT}}') // FIX: Don't split if followed by closing bracket
-                        .replace(/\n+/g, '{{SPLIT}}');
-
-                    const chunks = tempContent
-                        .split('{{SPLIT}}')
+                    // Only split on line breaks - let the AI decide bubble boundaries
+                    const chunks = textContent.split(/(?:\r\n|\r|\n|\u2028|\u2029)+/)
                         .map(c => c.trim())
-                        .filter(c => c.length > 0)
-                        .map(c => c.replace(/{{ELLIPSIS_ENG}}/g, '...').replace(/{{ELLIPSIS_CN}}/g, '……'));
+                        .filter(c => c.length > 0);
 
                     if (chunks.length === 0) chunks.push(textContent); // Fallback
 

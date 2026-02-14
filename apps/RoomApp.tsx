@@ -261,6 +261,11 @@ const RoomApp: React.FC = () => {
     const [draggingId, setDraggingId] = useState<string | null>(null);
     // Use Ref to store drag offset context
     const dragStartRef = useRef<{ startX: number, startY: number, initialItemX: number, initialItemY: number, width: number, height: number } | null>(null);
+    const draggingIdRef = useRef<string | null>(null); // Non-reactive drag ID for perf
+    const dragElementRef = useRef<HTMLElement | null>(null); // Direct DOM ref for dragged element
+    const rafRef = useRef<number | null>(null); // requestAnimationFrame handle
+    const pendingDragPos = useRef<{ x: number, y: number } | null>(null); // Pending drag position
+    const saveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null); // Debounce DB writes
     const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
     const [isToolbarCollapsed, setIsToolbarCollapsed] = useState(false);
     const roomRef = useRef<HTMLDivElement>(null);
@@ -284,6 +289,14 @@ const RoomApp: React.FC = () => {
     const assetLongPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const char = characters.find(c => c.id === activeCharacterId);
+
+    // PERF: Cleanup rAF and debounce timers on unmount
+    useEffect(() => {
+        return () => {
+            if (rafRef.current) cancelAnimationFrame(rafRef.current);
+            if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current);
+        };
+    }, []);
 
     // Load custom assets on mount (Migrate from LocalStorage if needed)
     useEffect(() => {
@@ -749,7 +762,19 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
         addToast(`已添加: ${asset.name}`, 'success'); 
     };
 
-    const updateSelectedItem = (updates: Partial<RoomItem>) => { if (!selectedItemId) return; const newItems = items.map(i => i.id === selectedItemId ? { ...i, ...updates } : i); saveRoom(newItems); };
+    // PERF: Update items in state immediately (visual), but debounce DB persistence
+    const updateSelectedItem = (updates: Partial<RoomItem>) => {
+        if (!selectedItemId) return;
+        const newItems = items.map(i => i.id === selectedItemId ? { ...i, ...updates } : i);
+        setItems(newItems); // Instant visual update
+        // Debounce the DB write (300ms) - prevents IndexedDB thrashing from sliders
+        if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current);
+        saveDebounceRef.current = setTimeout(() => {
+            if (char) {
+                updateCharacter(char.id, { roomConfig: { ...char.roomConfig, items: newItems } });
+            }
+        }, 300);
+    };
     const deleteSelectedItem = () => { if (!selectedItemId) return; saveRoom(items.filter(i => i.id !== selectedItemId)); setSelectedItemId(null); };
     const handleWallChange = (bg: string) => { if (char) updateCharacter(char.id, { roomConfig: { ...char.roomConfig, items, wallImage: bg } }); };
     const handleFloorChange = (bg: string) => { if (char) updateCharacter(char.id, { roomConfig: { ...char.roomConfig, items, floorImage: bg } }); };
@@ -852,19 +877,20 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
         addToast('Sully 的房间已还原', 'success');
     };
 
-    // --- FIX: Smooth Dragging Implementation ---
-    // Instead of snapping anchor to mouse, calculate relative offset on drag start.
-    const handlePointerDown = (e: React.PointerEvent, id: string) => { 
-        if (mode !== 'edit') return; 
-        e.preventDefault(); // Stop native drag behavior
-        e.stopPropagation(); 
-        e.currentTarget.setPointerCapture(e.pointerId); 
-        
+    // --- PERF FIX: Direct DOM Dragging (bypasses React re-renders) ---
+    // During drag: manipulate DOM directly via element.style
+    // On drop: sync final position to React state once
+    const handlePointerDown = (e: React.PointerEvent, id: string) => {
+        if (mode !== 'edit') return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.currentTarget.setPointerCapture(e.pointerId);
+
         const item = items.find(i => i.id === id);
         if (!item || !roomRef.current) return;
 
         const rect = roomRef.current.getBoundingClientRect();
-        
+
         dragStartRef.current = {
             startX: e.clientX,
             startY: e.clientY,
@@ -874,42 +900,88 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
             height: rect.height
         };
 
-        setDraggingId(id); 
-        setSelectedItemId(id); 
+        // Store refs for direct DOM access (no React re-renders during drag)
+        draggingIdRef.current = id;
+        dragElementRef.current = e.currentTarget as HTMLElement;
+        if (dragElementRef.current) {
+            dragElementRef.current.style.transition = 'none';
+            dragElementRef.current.style.zIndex = '100';
+            dragElementRef.current.style.willChange = 'left, top';
+        }
+
+        setDraggingId(id);
+        setSelectedItemId(id);
     };
 
-    const handlePointerMove = (e: React.PointerEvent) => { 
-        if (!draggingId || !dragStartRef.current) return; 
-        
+    const handlePointerMove = (e: React.PointerEvent) => {
+        // Fast-path: skip entirely if not dragging (avoids any work on passive touch)
+        if (!draggingIdRef.current || !dragStartRef.current) return;
+
+        e.preventDefault();
+
         const { startX, startY, initialItemX, initialItemY, width, height } = dragStartRef.current;
         const deltaX = e.clientX - startX;
         const deltaY = e.clientY - startY;
-        
-        // Convert px delta to percentage delta
-        const nextX = initialItemX + (deltaX / width) * 100;
-        const nextY = initialItemY + (deltaY / height) * 100;
 
-        setItems(prev => prev.map(item => item.id === draggingId ? { 
-            ...item, 
-            x: Math.max(0, Math.min(100, nextX)), 
-            y: Math.max(0, Math.min(100, nextY)) 
-        } : item)); 
+        const nextX = Math.max(0, Math.min(100, initialItemX + (deltaX / width) * 100));
+        const nextY = Math.max(0, Math.min(100, initialItemY + (deltaY / height) * 100));
+
+        // Store pending position
+        pendingDragPos.current = { x: nextX, y: nextY };
+
+        // Throttle DOM updates via requestAnimationFrame (once per frame, ~16ms)
+        if (!rafRef.current) {
+            rafRef.current = requestAnimationFrame(() => {
+                if (dragElementRef.current && pendingDragPos.current) {
+                    // Direct DOM manipulation - NO React re-render
+                    dragElementRef.current.style.left = `${pendingDragPos.current.x}%`;
+                    dragElementRef.current.style.top = `${pendingDragPos.current.y}%`;
+                }
+                rafRef.current = null;
+            });
+        }
     };
 
     const handlePointerUp = (e: React.PointerEvent) => {
-        if (draggingId) {
-            // Use functional update to access the latest items (including drag position changes)
-            // instead of stale closure `items` which would revert drag positions
-            setItems(latestItems => {
-                if (char) {
-                    updateCharacter(char.id, { roomConfig: { ...char.roomConfig, items: latestItems } });
-                }
-                return latestItems;
-            });
-            setDraggingId(null);
-            dragStartRef.current = null; // Clear ref
-            e.currentTarget.releasePointerCapture(e.pointerId);
+        if (!draggingIdRef.current) return;
+
+        // Cancel any pending rAF
+        if (rafRef.current) {
+            cancelAnimationFrame(rafRef.current);
+            rafRef.current = null;
         }
+
+        // Restore element styles
+        if (dragElementRef.current) {
+            dragElementRef.current.style.willChange = '';
+            dragElementRef.current.style.transition = '';
+            dragElementRef.current.style.zIndex = '';
+        }
+
+        // Sync final position to React state (only if moved)
+        if (pendingDragPos.current) {
+            const finalPos = pendingDragPos.current;
+            const dragId = draggingIdRef.current;
+
+            const newItems = items.map(item => item.id === dragId ? {
+                ...item,
+                x: finalPos.x,
+                y: finalPos.y
+            } : item);
+
+            setItems(newItems);
+            if (char) {
+                updateCharacter(char.id, { roomConfig: { ...char.roomConfig, items: newItems } });
+            }
+        }
+
+        // Cleanup all refs
+        draggingIdRef.current = null;
+        dragElementRef.current = null;
+        pendingDragPos.current = null;
+        dragStartRef.current = null;
+        setDraggingId(null);
+        try { e.currentTarget.releasePointerCapture(e.pointerId); } catch(_) {}
     };
 
     // --- Renderers ---
@@ -943,7 +1015,8 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
     // ROOM SCREEN
     // Use chibi sprite if available, else avatar. Fallback for Sully is injected via OSContext now.
     const actorImage = char?.sprites?.['chibi'] || char?.avatar;
-    const stickerClass = "filter drop-shadow-[0_0_1px_#fff] drop-shadow-[0_0_2px_#fff] drop-shadow-[0_4px_6px_rgba(0,0,0,0.2)]";
+    // PERF: Reduced from 3 drop-shadows to 1 simple shadow -- massive mobile GPU savings
+    const stickerClass = "filter drop-shadow-[0_2px_4px_rgba(0,0,0,0.15)]";
     
     // Background Style Construction (Logic 1: Legacy String vs New Config)
     const getBgStyle = (img: string | undefined, scale: number | undefined, repeat: boolean | undefined) => {
@@ -997,24 +1070,25 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                             key={item.id} 
                             onPointerDown={(e) => handlePointerDown(e, item.id)} 
                             onClick={(e) => handleLookAt(item, e)} 
-                            className={`absolute origin-bottom-center ${stickerClass} ${mode === 'edit' ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : (item.isInteractive ? 'cursor-pointer hover:scale-105 active:scale-95' : '')} ${selectedItemId === item.id ? 'ring-2 ring-blue-400 rounded-lg ring-offset-4' : ''} touch-none select-none`} 
-                            style={{ 
-                                left: `${item.x}%`, 
-                                top: `${item.y}%`, 
-                                width: `${80 * item.scale}px`, 
-                                transform: `translate(-50%, -100%) rotate(${item.rotation}deg)`, 
-                                zIndex: isDragging ? 100 : Math.floor(item.y), // Pop to top when dragging
-                                transition: isDragging ? 'none' : 'transform 0.3s ease-out' // Disable transition when dragging
+                            className={`absolute origin-bottom-center ${stickerClass} ${mode === 'edit' ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : (item.isInteractive ? 'cursor-pointer active:scale-95' : '')} ${selectedItemId === item.id ? 'ring-2 ring-blue-400 rounded-lg ring-offset-4' : ''} touch-none select-none`}
+                            style={{
+                                left: `${item.x}%`,
+                                top: `${item.y}%`,
+                                width: `${80 * item.scale}px`,
+                                transform: `translate(-50%, -100%) rotate(${item.rotation}deg)`,
+                                zIndex: isDragging ? 100 : Math.floor(item.y),
+                                transition: isDragging ? 'none' : 'transform 0.2s ease-out',
+                                willChange: isDragging ? 'left, top' : 'auto' // GPU layer only when needed
                             }}
                         >
-                            <img src={item.image} className="w-full h-auto object-contain pointer-events-none select-none" draggable={false} />
+                            <img src={item.image} className="w-full h-auto object-contain pointer-events-none select-none" draggable={false} loading="lazy" />
                             {mode === 'edit' && selectedItemId === item.id && <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-blue-500 text-white text-[9px] px-2 py-0.5 rounded-full whitespace-nowrap">选中</div>}
                         </div>
                     );
                 })}
                 
                 {/* Character Actor - Z Index Boosted to simulate standing in front */}
-                <div onClick={(e) => { e.stopPropagation(); handlePokeActor(); }} className={`absolute transition-all duration-[1000ms] ease-in-out origin-bottom-center ${stickerClass} cursor-pointer active:scale-95 group`} style={{ left: `${actorState.x}%`, top: `${actorState.y}%`, width: '120px', transform: `translate(-50%, -100%) scale(${actorState.action === 'walk' ? 1.05 : (actorState.action === 'bounce' ? 1.1 : 1)})`, zIndex: Math.floor(actorState.y) + 20 }}>
+                <div onClick={(e) => { e.stopPropagation(); handlePokeActor(); }} className={`absolute transition-[left,top] duration-[1000ms] ease-in-out origin-bottom-center ${stickerClass} cursor-pointer active:scale-95 group`} style={{ left: `${actorState.x}%`, top: `${actorState.y}%`, width: '120px', transform: `translate(-50%, -100%) scale(${actorState.action === 'walk' ? 1.05 : (actorState.action === 'bounce' ? 1.1 : 1)})`, zIndex: Math.floor(actorState.y) + 20 }}>
                     <img src={actorImage} className={`w-full h-full object-contain ${actorState.action === 'walk' ? 'animate-bounce' : ''}`} />
                     {mode === 'edit' && <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-black/60 text-white text-[9px] px-2 py-1 rounded backdrop-blur-sm whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">📷 换装</div>}
                     {/* Fixed: Wider bubble width */}
@@ -1023,10 +1097,10 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
             </div>
 
             {/* Sidebar Toggle Button */}
-            <button onClick={() => setShowSidebar(true)} className={`absolute right-0 top-1/2 -translate-y-1/2 bg-white/80 backdrop-blur-sm p-3 rounded-l-2xl shadow-lg border border-r-0 border-white/20 transition-transform duration-300 z-[300] ${showSidebar ? 'translate-x-full' : 'translate-x-0'}`}>
+            <button onClick={() => setShowSidebar(true)} className={`absolute right-0 top-1/2 -translate-y-1/2 bg-white/90 p-3 rounded-l-2xl shadow-lg border border-r-0 border-slate-200 transition-transform duration-300 z-[300] ${showSidebar ? 'translate-x-full' : 'translate-x-0'}`}>
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 text-slate-500"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
             </button>
-            {showSidebar && <div className="absolute inset-0 z-[290] bg-black/20 backdrop-blur-[1px]" onClick={() => setShowSidebar(false)}></div>}
+            {showSidebar && <div className="absolute inset-0 z-[290] bg-black/20" onClick={() => setShowSidebar(false)}></div>}
             <div className={`absolute right-0 top-0 bottom-0 w-3/4 max-w-sm bg-white shadow-2xl z-[300] transition-transform duration-300 ease-out flex flex-col ${showSidebar ? 'translate-x-0' : 'translate-x-full'}`}>
                 <div className="p-6 pb-2 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                     <h3 className="text-lg font-bold text-slate-700 tracking-tight">生活碎片</h3>
@@ -1095,7 +1169,7 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
             </div>
 
             {/* Observation Card (Bottom) */}
-            {observationText && mode === 'view' && <div className="absolute bottom-6 left-4 right-4 bg-white/95 backdrop-blur-xl p-5 rounded-2xl shadow-2xl border border-white/50 z-[150] animate-slide-up"><div className="flex justify-between items-start mb-2"><span className="text-xs font-bold text-blue-500 uppercase tracking-widest">OBSERVATION</span><button onClick={() => setObservationText('')} className="text-slate-400 hover:text-slate-600">×</button></div><p className="text-sm text-slate-700 leading-relaxed font-medium text-justify">{observationText}</p></div>}
+            {observationText && mode === 'view' && <div className="absolute bottom-6 left-4 right-4 bg-white p-5 rounded-2xl shadow-2xl border border-slate-100 z-[150] animate-slide-up"><div className="flex justify-between items-start mb-2"><span className="text-xs font-bold text-blue-500 uppercase tracking-widest">OBSERVATION</span><button onClick={() => setObservationText('')} className="text-slate-400 hover:text-slate-600">×</button></div><p className="text-sm text-slate-700 leading-relaxed font-medium text-justify">{observationText}</p></div>}
 
             {/* Edit Mode Toolbar - Collapsible */}
             {mode === 'edit' && (
@@ -1140,7 +1214,7 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                     {Object.entries(displayLibrary).map(([category, assets]) => (
                         assets && assets.length > 0 && (
                             <div key={category} className="mb-6">
-                                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 sticky top-0 bg-white/95 backdrop-blur py-2 z-10 flex justify-between">
+                                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 sticky top-0 bg-white py-2 z-10 flex justify-between">
                                     {category === 'sully_special' ? 'Sully 专属 (Special)' : (category === 'custom' ? '自定义 (Custom)' : category)}
                                     <span className="text-[9px] bg-slate-100 px-2 rounded-full">{assets.length}</span>
                                 </h4>

@@ -147,11 +147,16 @@ const DateSession: React.FC<DateSessionProps> = ({
             setDialogueBatch(initialState.dialogueBatch);
             setIsNovelMode(initialState.isNovelMode);
         } else {
-            // New Session - pick initial sprite from date emotions only
-            const s = char.sprites;
+            // New Session - pick initial sprite from active skin set or default sprites
+            const s = (() => {
+                if (char.activeSkinSetId && char.dateSkinSets) {
+                    const skin = char.dateSkinSets.find(sk => sk.id === char.activeSkinSetId);
+                    if (skin && Object.keys(skin.sprites).length > 0) return skin.sprites;
+                }
+                return char.sprites;
+            })();
             let initSprite = s?.['normal'] || s?.['default'];
             if (!initSprite && s) {
-                // Fallback: find the first sprite that belongs to a date emotion
                 const fallbackKey = dateEmotionKeys.find(k => s[k]);
                 initSprite = fallbackKey ? s[fallbackKey] : Object.values(s).find(v => v) || char.avatar;
             }
@@ -214,21 +219,27 @@ const DateSession: React.FC<DateSessionProps> = ({
     const REQUIRED_EMOTIONS_SET = ['normal', 'happy', 'angry', 'sad', 'shy'];
     const dateEmotionKeys = [...REQUIRED_EMOTIONS_SET, ...(char.customDateSprites || [])];
 
+    // Resolve active sprites: if a skin set is active, use its sprites; otherwise fall back to char.sprites
+    const activeSprites = React.useMemo(() => {
+        if (char.activeSkinSetId && char.dateSkinSets) {
+            const skin = char.dateSkinSets.find(s => s.id === char.activeSkinSetId);
+            if (skin) return skin.sprites;
+        }
+        return char.sprites || {};
+    }, [char.activeSkinSetId, char.dateSkinSets, char.sprites]);
+
     const processNextDialogue = (item: DialogueItem, remaining: DialogueItem[]) => {
         setCurrentText(item.text);
-        if (item.emotion && char.sprites) {
-            // Only resolve emotions that are in the date emotion set
+        if (item.emotion && activeSprites) {
             const emotionKey = item.emotion.toLowerCase();
             if (dateEmotionKeys.includes(emotionKey)) {
-                const nextSprite = char.sprites[emotionKey];
+                const nextSprite = activeSprites[emotionKey];
                 if (nextSprite) setCurrentSprite(nextSprite);
             } else {
-                // Unknown emotion tag (e.g. chibi) - fuzzy match only against date emotions
                 const found = dateEmotionKeys.find(k => emotionKey.includes(k));
-                if (found && char.sprites[found]) {
-                    setCurrentSprite(char.sprites[found]);
+                if (found && activeSprites[found]) {
+                    setCurrentSprite(activeSprites[found]);
                 }
-                // If no match in date emotions, keep current sprite (don't show chibi)
             }
         }
         setDialogueQueue(remaining);
@@ -369,8 +380,8 @@ const DateSession: React.FC<DateSessionProps> = ({
 
             {/* Menu Layer */}
             <div className="absolute top-0 right-0 p-4 pt-12 z-[100] flex justify-end gap-3 pointer-events-auto">
-                {!isTyping && canReroll && !isNovelMode && (
-                    <button onClick={(e) => { e.stopPropagation(); handleRerollClick(); }} className="bg-black/30 backdrop-blur-md text-white w-10 h-10 rounded-full flex items-center justify-center border border-white/20 hover:bg-white/20 transition-all shadow-lg active:scale-95">
+                {!isTyping && canReroll && (
+                    <button onClick={(e) => { e.stopPropagation(); handleRerollClick(); }} className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all shadow-lg active:scale-95 ${isNovelMode ? 'bg-white/10 backdrop-blur-md border-slate-300/30 text-slate-400 hover:bg-white/20' : 'bg-black/30 backdrop-blur-md border-white/20 text-white hover:bg-white/20'}`}>
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
                     </button>
                 )}
@@ -398,36 +409,35 @@ const DateSession: React.FC<DateSessionProps> = ({
 
             {/* Novel Mode View */}
             {isNovelMode && (
-                <div ref={novelScrollRef} className="absolute inset-0 z-20 overflow-y-auto no-scrollbar pt-24 pb-32 px-8 mask-image-gradient bg-black/90 backdrop-blur-sm overscroll-contain" onClick={(e) => { e.stopPropagation(); setShowInputBox(true); }}>
+                <div ref={novelScrollRef} className={`absolute inset-0 z-20 overflow-y-auto no-scrollbar pt-24 pb-32 px-8 mask-image-gradient overscroll-contain ${char.dateLightReading ? 'bg-[#faf8f5]' : 'bg-black/90 backdrop-blur-sm'}`} onClick={(e) => { e.stopPropagation(); setShowInputBox(true); }}>
                     <div className="min-h-full flex flex-col justify-end">
                         <div className="max-w-2xl mx-auto animate-fade-in space-y-6">
-                            {/* If no messages but have peek status, show it as intro with tags stripped */}
                             {sessionMessages.length === 0 && peekStatus && (
-                                <div className="text-slate-200/50 italic text-center text-sm mb-8 px-4">
+                                <div className={`italic text-center text-sm mb-8 px-4 ${char.dateLightReading ? 'text-stone-400' : 'text-slate-200/50'}`}>
                                     {cleanTextForDisplay(peekStatus).split('\n').map((line, idx) => line.trim() && <p key={idx} className="whitespace-pre-wrap leading-relaxed tracking-wide my-2">{line}</p>)}
                                 </div>
                             )}
                             {sessionMessages.map((msg) => (
-                                <div 
-                                    key={msg.id} 
-                                    className="group relative rounded-xl transition-colors -mx-4 px-4 py-2 active:bg-white/5" 
-                                    onTouchStart={(e) => handleMsgTouchStart(e, msg)} 
-                                    onTouchEnd={handleMsgTouchEnd} 
+                                <div
+                                    key={msg.id}
+                                    className={`group relative rounded-xl transition-colors -mx-4 px-4 py-2 ${char.dateLightReading ? 'active:bg-stone-100' : 'active:bg-white/5'}`}
+                                    onTouchStart={(e) => handleMsgTouchStart(e, msg)}
+                                    onTouchEnd={handleMsgTouchEnd}
                                     onTouchMove={handleMsgTouchMove}
-                                    onMouseDown={(e) => handleMsgTouchStart(e, msg)} 
-                                    onMouseUp={handleMsgTouchEnd} 
+                                    onMouseDown={(e) => handleMsgTouchStart(e, msg)}
+                                    onMouseUp={handleMsgTouchEnd}
                                     onMouseMove={handleMsgTouchMove}
-                                    onMouseLeave={handleMsgTouchEnd} 
+                                    onMouseLeave={handleMsgTouchEnd}
                                     onContextMenu={(e) => { e.preventDefault(); setSelectedMessage(msg); setModalType('options'); }}
                                 >
                                     {msg.role === 'user' ? (
-                                        <p className="whitespace-pre-wrap font-serif text-[16px] text-slate-400 text-right leading-loose tracking-wide italic border-r-2 border-slate-600/50 pr-4">{cleanTextForDisplay(msg.content)} <span className="text-[10px] uppercase font-sans not-italic ml-2 opacity-50">{userProfile.name}</span></p>
+                                        <p className={`whitespace-pre-wrap font-serif text-[16px] text-right leading-loose tracking-wide italic pr-4 ${char.dateLightReading ? 'text-stone-400 border-r-2 border-stone-300/50' : 'text-slate-400 border-r-2 border-slate-600/50'}`}>{cleanTextForDisplay(msg.content)} <span className="text-[10px] uppercase font-sans not-italic ml-2 opacity-50">{userProfile.name}</span></p>
                                     ) : (
                                         <div>
                                             {(msg.content || '').split('\n').map((line, idx) => {
                                                 const cleanLine = cleanTextForDisplay(line);
                                                 if (!cleanLine) return null;
-                                                return <p key={idx} className="whitespace-pre-wrap font-serif text-[18px] text-slate-200 text-justify leading-loose tracking-wide drop-shadow-md border-l-2 border-white/10 pl-4 mb-4 last:mb-0">{cleanLine}</p>
+                                                return <p key={idx} className={`whitespace-pre-wrap font-serif text-[18px] text-justify leading-loose tracking-wide pl-4 mb-4 last:mb-0 ${char.dateLightReading ? 'text-stone-700 border-l-2 border-stone-200' : 'text-slate-200 drop-shadow-md border-l-2 border-white/10'}`}>{cleanLine}</p>
                                             })}
                                         </div>
                                     )}
@@ -490,6 +500,13 @@ const DateSession: React.FC<DateSessionProps> = ({
             {/* Message Options Modal */}
             <Modal isOpen={modalType === 'options'} title="操作" onClose={() => setModalType('none')}>
                 <div className="space-y-3">
+                    <button onClick={() => {
+                        if (selectedMessage) {
+                            const clean = (selectedMessage.content || '').replace(/\[.*?\]/g, '').trim();
+                            navigator.clipboard.writeText(clean).then(() => addToast('已复制', 'success')).catch(() => addToast('复制失败', 'error'));
+                        }
+                        setModalType('none');
+                    }} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl">复制文本</button>
                     <button onClick={() => { onEditMessage(selectedMessage!); setModalType('none'); }} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl">编辑内容</button>
                     <button onClick={() => { onDeleteMessage(selectedMessage!); setModalType('none'); }} className="w-full py-3 bg-red-50 text-red-500 font-medium rounded-2xl">删除记录</button>
                 </div>

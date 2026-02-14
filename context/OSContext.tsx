@@ -256,6 +256,21 @@ Sully是小手机的内置AI。
       y: 0
   },
 
+  dateSkinSets: [
+      {
+          id: 'skin_sully_valentine',
+          name: 'Valentine',
+          sprites: {
+              'normal': 'https://sharkpan.xyz/f/4rzdtj/VNormal.png',
+              'happy':  'https://sharkpan.xyz/f/m3adhW/Vha.png',
+              'sad':    'https://sharkpan.xyz/f/BZgDfa/Vsad.png',
+              'angry':  'https://sharkpan.xyz/f/NdlVfv/VAn.png',
+              'shy':    'https://sharkpan.xyz/f/VyontY/Vshy.png',
+              'love':   'https://sharkpan.xyz/f/xl8muX/VBl.png',
+          }
+      }
+  ],
+
   // Default theme settings
   bubbleStyle: 'default', // Or specific theme ID if we had one
   contextLimit: 1000,
@@ -642,10 +657,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                  const currentSprites = existingSully.sprites || {};
                  const isCorrupted = !currentSprites['normal'] || !currentSprites['chibi'];
                  const needsWallUpdate = existingSully.roomConfig?.wallImage !== sullyV2.roomConfig?.wallImage;
-                 
-                 if (isCorrupted || !existingSully.roomConfig || needsWallUpdate) {
+                 const needsSkinSets = !existingSully.dateSkinSets || existingSully.dateSkinSets.length === 0;
+
+                 if (isCorrupted || !existingSully.roomConfig || needsWallUpdate || needsSkinSets) {
                      const restoredSprites = { ...sullyV2.sprites, ...currentSprites };
-                     
+
                      if (!restoredSprites['normal']) restoredSprites['normal'] = sullyV2.sprites!['normal'];
                      if (!restoredSprites['happy']) restoredSprites['happy'] = sullyV2.sprites!['happy'];
                      if (!restoredSprites['sad']) restoredSprites['sad'] = sullyV2.sprites!['sad'];
@@ -655,15 +671,26 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
                      const updatedRoomConfig = existingSully.roomConfig ? {
                          ...existingSully.roomConfig,
-                         wallImage: (existingSully.roomConfig.wallImage?.includes('radial-gradient') || !existingSully.roomConfig.wallImage) 
-                                    ? sullyV2.roomConfig?.wallImage 
+                         wallImage: (existingSully.roomConfig.wallImage?.includes('radial-gradient') || !existingSully.roomConfig.wallImage)
+                                    ? sullyV2.roomConfig?.wallImage
                                     : existingSully.roomConfig.wallImage
                      } : sullyV2.roomConfig;
+
+                     // Merge preset skin sets: add any preset skins not already present
+                     const existingSkins = existingSully.dateSkinSets || [];
+                     const presetSkins = sullyV2.dateSkinSets || [];
+                     const mergedSkins = [...existingSkins];
+                     for (const ps of presetSkins) {
+                         if (!mergedSkins.some(s => s.id === ps.id)) {
+                             mergedSkins.push(ps);
+                         }
+                     }
 
                      const updatedSully = {
                          ...existingSully,
                          sprites: restoredSprites,
-                         roomConfig: updatedRoomConfig
+                         roomConfig: updatedRoomConfig,
+                         dateSkinSets: mergedSkins
                      };
                      
                      await DB.saveCharacter(updatedSully);

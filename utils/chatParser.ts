@@ -153,73 +153,11 @@ export const ChatParser = {
     },
 
     // Chunking text for typing effect - splits into separate chat bubbles
+    // Only splits on line breaks; the AI decides where to break bubbles.
+    // Handles all line break types: \n, \r\n, \r, and Unicode line/paragraph separators
     chunkText: (text: string): string[] => {
-        // 1. Protect special content from being split by sentence-boundary punctuation
-        const protectMap: Record<string, string> = {};
-        let protectIdx = 0;
-        const protect = (match: string): string => {
-            const key = `{{P${protectIdx++}}}`;
-            protectMap[key] = match;
-            return key;
-        };
-
-        let tempContent = text
-            // Protect <翻译> bilingual blocks as atomic units (never split inside)
-            .replace(/<翻译>[\s\S]*?<\/翻译>/g, protect)
-            // Protect QUOTE tags
-            .replace(/\[\[QUOTE:\s*[\s\S]*?\]\]|\[QUOTE:\s*[^\]]*\]/g, protect)
-            // Protect URLs (periods in URLs should NOT trigger splits)
-            .replace(/https?:\/\/[^\s)\]>]+/g, protect)
-            // Protect code blocks
-            .replace(/```[\s\S]*?```/g, protect)
-            // Protect inline code
-            .replace(/`[^`]+`/g, protect)
-            // Protect decimal numbers (e.g. 3.14)
-            .replace(/\d+\.\d+/g, protect)
-            // Protect common abbreviations
-            .replace(/(?:Mr|Mrs|Ms|Dr|Prof|etc|vs|e\.g|i\.e)\./gi, protect);
-
-        // 2. Protect ellipses
-        tempContent = tempContent
-            .replace(/\.{2,}/g, '{{ELLIPSIS_ENG}}')
-            .replace(/…+/g, '{{ELLIPSIS_CN}}');
-
-        // 3. Split on sentence boundaries
-        tempContent = tempContent
-            .replace(/([。])(?![）\)\]】""'])/g, '{{SPLIT}}')
-            // Only split on English period at true end-of-sentence
-            .replace(/\.(?=\s*$)/gm, '{{SPLIT}}')
-            .replace(/\.(?=\s+[A-Z])/g, '.{{SPLIT}}')
-            .replace(/([！!？?~]+)(?![）\)\]】""'])/g, '$1{{SPLIT}}')
-            .replace(/\n+/g, '{{SPLIT}}')
-            .replace(/([\u4e00-\u9fa5])[ ]+([\u4e00-\u9fa5])/g, '$1{{SPLIT}}$2');
-
-        // 4. Split, restore ellipses and protected content
-        let chunks = tempContent.split('{{SPLIT}}')
+        return text.split(/(?:\r\n|\r|\n|\u2028|\u2029)+/)
             .map(c => c.trim())
-            .filter(c => c.length > 0)
-            .map(c => {
-                c = c.replace(/{{ELLIPSIS_ENG}}/g, '...').replace(/{{ELLIPSIS_CN}}/g, '……');
-                // Restore all protected placeholders
-                Object.keys(protectMap).forEach(key => {
-                    c = c.replace(key, protectMap[key]);
-                });
-                return c;
-            });
-
-        // 5. Merge very short chunks (< 3 chars, likely stray punctuation) with the previous chunk
-        if (chunks.length > 1) {
-            const merged: string[] = [];
-            for (let i = 0; i < chunks.length; i++) {
-                if (chunks[i].length < 3 && merged.length > 0) {
-                    merged[merged.length - 1] += chunks[i];
-                } else {
-                    merged.push(chunks[i]);
-                }
-            }
-            chunks = merged;
-        }
-
-        return chunks;
+            .filter(c => c.length > 0);
     }
 }
