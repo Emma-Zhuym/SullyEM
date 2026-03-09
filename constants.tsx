@@ -25,6 +25,8 @@ import {
   Camera,
   Sparkle,
   GlobeSimple,
+  MusicNotes,
+  PhoneCall,
 } from '@phosphor-icons/react';
 
 // SVG 图标库 - Phosphor Icons
@@ -53,11 +55,14 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
   XhsStock: ({ className }) => <Camera className={className} weight="bold" />,
   SpecialMoments: ({ className }) => <Sparkle className={className} weight="bold" />,
   Browser: ({ className }) => <GlobeSimple className={className} weight="bold" />,
+  Songwriting: ({ className }) => <MusicNotes className={className} weight="bold" />,
+  Call: ({ className }) => <PhoneCall className={className} weight="bold" />,
 };
 
 export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.Character, name: '神经链接', icon: 'Character', color: 'indigo' },
   { id: AppID.Chat, name: 'Message', icon: 'Chat', color: 'green' },
+  { id: AppID.Call, name: '电话', icon: 'Call', color: 'emerald' },
   { id: AppID.GroupChat, name: '群聊', icon: 'GroupChat', color: 'violet' }, 
   { id: AppID.Room, name: '小小窝', icon: 'Room', color: 'rose' },
   { id: AppID.CheckPhone, name: '查手机', icon: 'CheckPhone', color: 'slate' }, 
@@ -71,7 +76,8 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.Study, name: '自习室', icon: 'Study', color: 'emerald' }, 
   { id: AppID.Game, name: 'TRPG', icon: 'Game', color: 'orange' },
   { id: AppID.Novel, name: '笔友会', icon: 'Novel', color: 'amber' }, 
-  { id: AppID.Worldbook, name: '世界书', icon: 'Worldbook', color: 'indigo' }, 
+  { id: AppID.Songwriting, name: '写歌', icon: 'Songwriting', color: 'fuchsia' },
+  { id: AppID.Worldbook, name: '世界书', icon: 'Worldbook', color: 'indigo' },
   { id: AppID.FAQ, name: '使用帮助', icon: 'FAQ', color: 'indigo' },
   { id: AppID.Gallery, name: '相册', icon: 'Gallery', color: 'orange' },
   { id: AppID.XhsFreeRoam, name: '自由活动', icon: 'XhsFreeRoam', color: 'rose' },

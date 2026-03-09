@@ -26,6 +26,9 @@ export enum AppID {
   XhsStock = 'xhs_stock', // XHS image stock for publishing
   SpecialMoments = 'special_moments', // Valentine's Day & future events
   XhsFreeRoam = 'xhs_free_roam', // Character autonomous XHS activity
+  Songwriting = 'songwriting', // Songwriting / Lyric creation app
+  Call = 'call', // 语音电话测试（MiniMax TTS）
+  VoiceDesigner = 'voice_designer', // 捏声音 — MiniMax 音色设计器
 }
 
 export interface SystemLog {
@@ -86,6 +89,8 @@ export interface VirtualTime {
 export interface APIConfig {
   baseUrl: string;
   apiKey: string;
+  minimaxApiKey?: string;
+  minimaxGroupId?: string;
   model: string;
 }
 
@@ -119,7 +124,7 @@ export interface RealtimeConfig {
   feishuBaseId: string;     // 多维表格 App Token
   feishuTableId: string;    // 数据表 Table ID
 
-  // 小红书配置 (MCP 浏览器自动化)
+  // 小红书配置 (MCP / Skills 双模式浏览器自动化)
   xhsEnabled: boolean;
   xhsMcpConfig?: XhsMcpConfig;
 
@@ -241,6 +246,12 @@ export interface BubbleStyle {
     avatarDecorationY?: number;
     avatarDecorationScale?: number;
     avatarDecorationRotate?: number;
+
+    voiceBarBg?: string;
+    voiceBarActiveBg?: string;
+    voiceBarBtnColor?: string;
+    voiceBarWaveColor?: string;
+    voiceBarTextColor?: string;
 }
 
 export interface ChatTheme {
@@ -318,6 +329,80 @@ export interface NovelBook {
     segments: NovelSegment[];
     createdAt: number;
     lastActiveAt: number;
+}
+
+// --- SONGWRITING APP TYPES ---
+export type SongMood = 'happy' | 'sad' | 'romantic' | 'angry' | 'chill' | 'epic' | 'nostalgic' | 'dreamy';
+export type SongGenre = 'pop' | 'rock' | 'ballad' | 'rap' | 'folk' | 'electronic' | 'jazz' | 'rnb' | 'free';
+
+export interface SongLine {
+    id: string;
+    authorId: string; // 'user' or charId
+    content: string;
+    section: 'intro' | 'verse' | 'pre-chorus' | 'chorus' | 'bridge' | 'outro' | 'free';
+    annotation?: string; // AI guidance note on this line
+    timestamp: number;
+}
+
+export interface SongComment {
+    id: string;
+    authorId: string; // charId
+    type: 'guidance' | 'praise' | 'suggestion' | 'teaching' | 'reaction';
+    content: string;
+    targetLineId?: string; // which line this comment is about
+    timestamp: number;
+}
+
+export interface ChordInfo {
+    root: string;       // e.g. 'C', 'D', 'Ab'
+    quality: string;    // e.g. 'maj', 'min', '7', 'maj7', 'sus4'
+    display: string;    // e.g. 'C', 'Am', 'G7', 'Fmaj7'
+    midi: number;       // root note MIDI number (for audio)
+}
+
+export interface MelodyNote {
+    midi: number;       // MIDI note number
+    duration: number;   // in beats
+    vowel: number;      // index into vowel formant table (0=a,1=o,2=e,3=i,4=u)
+}
+
+export interface SectionArrangement {
+    section: string;            // matches SongLine.section
+    chords: ChordInfo[];        // one chord per line in this section
+    melodies?: MelodyNote[][];  // melodies[lineIdx] = notes for that line
+}
+
+export interface SongArrangement {
+    rootNote: string;           // e.g. 'C', 'A'
+    scale: 'major' | 'minor';
+    bpm: number;
+    sections: SectionArrangement[];
+    instruments: {
+        piano: boolean;
+        bass: boolean;
+        drums: boolean;
+        melody: boolean;
+    };
+    drumPattern: 'basic' | 'upbeat' | 'halftime' | 'shuffle';
+}
+
+export interface SongSheet {
+    id: string;
+    title: string;
+    subtitle?: string;
+    genre: SongGenre;
+    mood: SongMood;
+    bpm?: number;
+    key?: string; // e.g. "C major", "A minor"
+    collaboratorId: string; // the character guiding the user
+    lines: SongLine[];
+    comments: SongComment[];
+    status: 'draft' | 'completed';
+    coverStyle: string; // gradient/color identifier
+    createdAt: number;
+    lastActiveAt: number;
+    completedAt?: number;
+    arrangement?: SongArrangement;
 }
 
 // --- DATE APP TYPES ---
@@ -545,6 +630,27 @@ export interface CharacterProfile {
       records: PhoneEvidence[];
       customApps?: PhoneCustomApp[]; 
   };
+
+  voiceProfile?: {
+      provider?: 'minimax' | 'custom';
+      voiceId?: string;
+      voiceName?: string;
+      source?: 'system' | 'voice_cloning' | 'voice_generation' | 'custom';
+      model?: string;
+      notes?: string;
+      timberWeights?: { voice_id: string; weight: number }[];
+      voiceModify?: { pitch?: number; intensity?: number; timbre?: number; sound_effects?: string };
+      emotion?: string;
+      speed?: number;
+      vol?: number;
+      pitch?: number;
+  };
+
+  // Chat & Date voice TTS settings
+  chatVoiceEnabled?: boolean;
+  chatVoiceLang?: string;
+  dateVoiceEnabled?: boolean;
+  dateVoiceLang?: string;
 }
 
 export interface GroupProfile {
@@ -697,6 +803,46 @@ export interface StudyCourse {
     preference?: string; 
 }
 
+export interface StudyTutorPreset {
+    id: string;
+    name: string;
+    prompt: string;
+}
+
+// --- QUIZ / PRACTICE BOOK TYPES ---
+export interface QuizQuestionNote {
+    question: string;
+    answer: string;
+    timestamp: number;
+}
+
+export interface QuizQuestion {
+    id: string;
+    type: 'choice' | 'true_false' | 'fill_blank';
+    stem: string;
+    options?: string[];
+    answer: string;           // For choice: "A"/"B"/etc, true_false: "true"/"false", fill_blank: the text
+    explanation: string;
+    userAnswer?: string;
+    isCorrect?: boolean;
+    notes?: QuizQuestionNote[];  // Follow-up Q&A notes per question
+}
+
+export interface QuizSession {
+    id: string;
+    courseId: string;
+    chapterId: string;
+    chapterTitle: string;
+    courseTitle: string;
+    questions: QuizQuestion[];
+    score: number;
+    totalQuestions: number;
+    aiReview: string;         // AI review/commentary full text
+    status: 'in_progress' | 'graded';
+    createdAt: number;
+    gradedAt?: number;
+}
+
 export type GameTheme = 'fantasy' | 'cyber' | 'horror' | 'modern';
 
 export interface GameActionOption {
@@ -738,7 +884,7 @@ export interface GameSession {
     lastPlayedAt: number;
 }
 
-export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card';
+export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card';
 
 export interface Message {
     id: number;
@@ -799,7 +945,8 @@ export interface FullBackupData {
     worldbooks?: Worldbook[]; 
     roomCustomAssets?: {name: string, image: string, defaultScale: number, description?: string}[]; 
     
-    novels?: NovelBook[]; 
+    novels?: NovelBook[];
+    songs?: SongSheet[]; // Songwriting app data
     
     // Bank Data
     bankState?: BankFullState;
@@ -823,6 +970,13 @@ export interface FullBackupData {
 
     xhsActivities?: XhsActivityRecord[];
     xhsStockImages?: XhsStockImage[];
+
+    // Study Room settings
+    studyApiConfig?: Partial<APIConfig>;
+    studyTutorPresets?: StudyTutorPreset[];
+
+    // Quiz / Practice Book
+    quizSessions?: QuizSession[];
 }
 
 // --- XHS FREE ROAM / AUTONOMOUS ACTIVITY TYPES ---
@@ -860,7 +1014,7 @@ export interface XhsFreeRoamSession {
 
 export interface XhsMcpConfig {
     enabled: boolean;
-    serverUrl: string;  // e.g. "http://localhost:18060/mcp"
-    loggedInUserId?: string;   // 登录用户的 user_id，MCP 连接成功后自动获取
+    serverUrl: string;  // MCP: "http://localhost:18060/mcp" | Skills: "http://localhost:18061/api"
+    loggedInUserId?: string;   // 登录用户的 user_id，连接测试成功后自动获取
     loggedInNickname?: string; // 登录用户的昵称
 }
