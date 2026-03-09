@@ -1,6 +1,6 @@
 
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
-import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, Message, RealtimeConfig } from '../types';
+import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig } from '../types';
 import { DB } from '../utils/db';
 
 
@@ -106,6 +106,12 @@ interface OSContextType {
   updateNovel: (id: string, updates: Partial<NovelBook>) => Promise<void>;
   deleteNovel: (id: string) => void;
 
+  // Songs (Songwriting)
+  songs: SongSheet[];
+  addSong: (song: SongSheet) => void;
+  updateSong: (id: string, updates: Partial<SongSheet>) => Promise<void>;
+  deleteSong: (id: string) => void;
+
   // Groups
   groups: GroupProfile[];
   createGroup: (name: string, members: string[]) => void;
@@ -156,6 +162,12 @@ interface OSContextType {
   // Navigation Logic
   registerBackHandler: (handler: () => boolean) => () => void; // Returns unregister function
   handleBack: () => void;
+
+  // Call Suspend
+  suspendedCall: { charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string } | null;
+  suspendCall: (info: { charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string }) => void;
+  resumeCall: () => void;
+  clearSuspendedCall: () => void;
 }
 
 const defaultTheme: OSTheme = {
@@ -170,6 +182,8 @@ const defaultTheme: OSTheme = {
 const defaultApiConfig: APIConfig = {
   baseUrl: '', 
   apiKey: '',
+  minimaxApiKey: '',
+  minimaxGroupId: '',
   model: 'gpt-4o-mini',
 };
 
@@ -384,6 +398,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [groups, setGroups] = useState<GroupProfile[]>([]); 
   const [worldbooks, setWorldbooks] = useState<Worldbook[]>([]); 
   const [novels, setNovels] = useState<NovelBook[]>([]); // New
+  const [songs, setSongs] = useState<SongSheet[]>([]);
 
   const [userProfile, setUserProfile] = useState<UserProfile>(defaultUserProfile);
   
@@ -409,6 +424,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   
   // Back Handler Ref
   const backHandlerRef = useRef<(() => boolean) | null>(null);
+
+  // Call Suspend
+  const [suspendedCall, setSuspendedCall] = useState<{ charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string } | null>(null);
 
   // --- Helper to inject custom font ---
   const applyCustomFont = (fontData: string | undefined) => {
@@ -636,13 +654,14 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       try {
         await loadSettings();
 
-        const [dbChars, dbThemes, dbUser, dbGroups, dbWorldbooks, dbNovels] = await Promise.all([
+        const [dbChars, dbThemes, dbUser, dbGroups, dbWorldbooks, dbNovels, dbSongs] = await Promise.all([
             DB.getAllCharacters(),
             DB.getThemes(),
             DB.getUserProfile(),
             DB.getGroups(),
             DB.getAllWorldbooks(),
-            DB.getAllNovels()
+            DB.getAllNovels(),
+            DB.getAllSongs()
         ]);
 
         let finalChars = dbChars;
@@ -718,6 +737,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         setGroups(dbGroups);
         setWorldbooks(dbWorldbooks);
         setNovels(dbNovels);
+        setSongs(dbSongs);
         setCustomThemes(dbThemes);
         if (dbUser) setUserProfile(dbUser);
 
@@ -745,15 +765,24 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   }, [theme]);
 
   // --- Update: Handle Scheduled Messages with Unread Flags & Web Notifications ---
+  // Refs to avoid stale closures in the scheduled message interval
+  const activeAppRef = useRef(activeApp);
+  const activeCharIdScheduleRef = useRef(activeCharacterId);
+  activeAppRef.current = activeApp;
+  activeCharIdScheduleRef.current = activeCharacterId;
+
   useEffect(() => {
       if (!isDataLoaded || characters.length === 0) return;
+      let cancelled = false;
       const checkAllSchedules = async () => {
+          if (cancelled) return;
           let hasNewMessage = false;
-          let newUnreadState = { ...unreadMessages }; // Local copy to update
+          const unreadUpdates: Record<string, number> = {};
 
           for (const char of characters) {
               try {
                   const dueMessages = await DB.getDueScheduledMessages(char.id);
+                  if (cancelled) return;
                   if (dueMessages.length > 0) {
                       for (const msg of dueMessages) {
                           await DB.saveMessage({
@@ -764,48 +793,51 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                           });
                           await DB.deleteScheduledMessage(msg.id);
                       }
+                      if (cancelled) return;
                       hasNewMessage = true;
-                      const isChattingWithThisChar = activeApp === AppID.Chat && activeCharacterId === char.id;
-                      
+                      // Use refs for latest state (avoids stale closure & unnecessary deps)
+                      const isChattingWithThisChar = activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === char.id;
+
                       // If not chatting specifically with this char right now, mark as unread
                       if (!isChattingWithThisChar) {
                           addToast(`${char.name} 发来了一条消息`, 'success');
-                          newUnreadState[char.id] = (newUnreadState[char.id] || 0) + dueMessages.length;
+                          unreadUpdates[char.id] = dueMessages.length;
 
-                          // [NEW] Web Notification Logic
+                          // Web Notification
                           if (window.Notification && Notification.permission === 'granted') {
                               try {
                                   const notif = new Notification(char.name, {
-                                      body: dueMessages[0].content, // Preview the first message
+                                      body: dueMessages[0].content,
                                       icon: char.avatar,
                                       silent: false
                                   });
-                                  
-                                  // Optional: Focus window on click
                                   notif.onclick = () => {
                                       window.focus();
                                       setActiveApp(AppID.Chat);
                                       setActiveCharacterId(char.id);
                                   };
-                              } catch (e) {
-                                  // console.error("Web Notification failed", e);
-                              }
+                              } catch (e) { /* notification failed */ }
                           }
                       }
                   }
-              } catch (e) {
-                  // console.error("Schedule check failed for", char.name, e);
-              }
+              } catch (e) { /* schedule check failed */ }
           }
-          if (hasNewMessage) {
+          if (hasNewMessage && !cancelled) {
               setLastMsgTimestamp(Date.now());
-              setUnreadMessages(newUnreadState);
+              // Use functional updater to avoid depending on unreadMessages in the effect deps
+              setUnreadMessages(prev => {
+                  const next = { ...prev };
+                  for (const [charId, count] of Object.entries(unreadUpdates)) {
+                      next[charId] = (next[charId] || 0) + count;
+                  }
+                  return next;
+              });
           }
       };
       schedulerRef.current = setInterval(checkAllSchedules, 5000);
       checkAllSchedules();
-      return () => { if (schedulerRef.current) clearInterval(schedulerRef.current); };
-  }, [isDataLoaded, characters, activeApp, activeCharacterId, unreadMessages]); 
+      return () => { cancelled = true; if (schedulerRef.current) clearInterval(schedulerRef.current); };
+  }, [isDataLoaded, characters]);
 
   const clearUnread = (charId: string) => {
       setUnreadMessages(prev => {
@@ -1032,6 +1064,26 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       await DB.deleteNovel(id);
   };
 
+  // Song Methods
+  const addSong = async (song: SongSheet) => {
+      setSongs(prev => [song, ...prev]);
+      await DB.saveSong(song);
+  };
+
+  const updateSong = async (id: string, updates: Partial<SongSheet>) => {
+      setSongs(prev => {
+          const next = prev.map(s => s.id === id ? { ...s, ...updates, lastActiveAt: Date.now() } : s);
+          const target = next.find(s => s.id === id);
+          if (target) DB.saveSong(target);
+          return next;
+      });
+  };
+
+  const deleteSong = async (id: string) => {
+      setSongs(prev => prev.filter(s => s.id !== id));
+      await DB.deleteSong(id);
+  };
+
   const updateUserProfile = async (updates: Partial<UserProfile>) => { setUserProfile(prev => { const next = { ...prev, ...updates }; DB.saveUserProfile(next); return next; }); };
   const addCustomTheme = async (theme: ChatTheme) => { setCustomThemes(prev => { const exists = prev.find(t => t.id === theme.id); if (exists) return prev.map(t => t.id === theme.id ? theme : t); return [...prev, theme]; }); await DB.saveTheme(theme); };
   const removeCustomTheme = async (id: string) => { setCustomThemes(prev => prev.filter(t => t.id !== id)); await DB.deleteTheme(id); };
@@ -1109,9 +1161,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const allStores = [
               'characters', 'messages', 'themes', 'emojis', 'assets', 'gallery',
               'user_profile', 'diaries', 'tasks', 'anniversaries', 'room_todos',
-              'room_notes', 'groups', 'journal_stickers', 'social_posts', 'courses', 'games', 'worldbooks', 'novels',
+              'room_notes', 'groups', 'journal_stickers', 'social_posts', 'courses', 'games', 'worldbooks', 'novels', 'songs',
               'bank_transactions', 'bank_data',
-              'xhs_activities', 'xhs_stock'
+              'xhs_activities', 'xhs_stock',
+              'quizzes'
           ];
 
           if (mode === 'full') {
@@ -1146,6 +1199,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               
               roomCustomAssets: (mode === 'text_only' || mode === 'media_only' || mode === 'full') ? (roomCustomAssets ? JSON.parse(roomCustomAssets) : []) : undefined,
               mediaAssets: [], // Initialize mediaAssets array
+
+              // Study Room settings (localStorage)
+              studyApiConfig: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('study_api_config'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
+              studyTutorPresets: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('study_tutor_presets'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
           };
 
           const totalSteps = storesToProcess.length + 3;
@@ -1254,6 +1311,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   case 'games': backupData.games = processedData; break;
                   case 'worldbooks': backupData.worldbooks = processedData; break;
                   case 'novels': backupData.novels = processedData; break;
+                  case 'songs': backupData.songs = processedData; break;
                   case 'bank_transactions': backupData.bankTransactions = processedData; break;
                   case 'bank_data': {
                       if (Array.isArray(processedData)) {
@@ -1266,6 +1324,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   }
                   case 'xhs_activities': backupData.xhsActivities = processedData; break;
                   case 'xhs_stock': backupData.xhsStockImages = processedData; break;
+                  case 'quizzes': backupData.quizSessions = processedData; break;
               }
 
               await new Promise(resolve => setTimeout(resolve, 10));
@@ -1387,6 +1446,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (data.availableModels) saveModels(data.availableModels);
           if (data.apiPresets) savePresets(data.apiPresets);
           if (data.realtimeConfig) updateRealtimeConfig(data.realtimeConfig); // 恢复实时感知配置
+
+          // Restore Study Room settings
+          if (data.studyApiConfig) localStorage.setItem('study_api_config', JSON.stringify(data.studyApiConfig));
+          if (data.studyTutorPresets) localStorage.setItem('study_tutor_presets', JSON.stringify(data.studyTutorPresets));
           
           if (data.socialAppData) {
               if (data.socialAppData.charHandles) localStorage.setItem('spark_char_handles', JSON.stringify(data.socialAppData.charHandles));
@@ -1408,6 +1471,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const user = await DB.getUserProfile();
           const books = await DB.getAllWorldbooks();
           const novelList = await DB.getAllNovels();
+          const songList = await DB.getAllSongs();
           
           if (data.assets) {
               const assets = await DB.getAllAssets();
@@ -1424,6 +1488,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (user) setUserProfile(user);
           if (books.length > 0) setWorldbooks(books);
           if (novelList.length > 0) setNovels(novelList);
+          if (songList.length > 0) setSongs(songList);
           
           setSysOperation({ status: 'idle', message: '', progress: 100 });
           addToast('恢复成功，系统即将重启...', 'success');
@@ -1441,6 +1506,17 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const openApp = (appId: AppID) => setActiveApp(appId);
   const closeApp = () => setActiveApp(AppID.Launcher);
   const unlock = () => setIsLocked(false);
+
+  const suspendCall = (info: { charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string }) => {
+    setSuspendedCall(info);
+    setActiveApp(AppID.Launcher);
+  };
+  const resumeCall = () => {
+    setActiveApp(AppID.Call);
+  };
+  const clearSuspendedCall = () => {
+    setSuspendedCall(null);
+  };
 
   // --- Back Handler Logic ---
   const registerBackHandler = useCallback((handler: () => boolean) => {
@@ -1489,6 +1565,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     addNovel,
     updateNovel,
     deleteNovel,
+    songs,
+    addSong,
+    updateSong,
+    deleteSong,
     groups,
     createGroup,
     deleteGroup,
@@ -1518,7 +1598,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     systemLogs,
     clearLogs,
     registerBackHandler,
-    handleBack
+    handleBack,
+    suspendedCall,
+    suspendCall,
+    resumeCall,
+    clearSuspendedCall
   };
 
   return (

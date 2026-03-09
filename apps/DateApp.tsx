@@ -230,10 +230,14 @@ const DateApp: React.FC = () => {
         // We exclude the very last message (UserMsg we just sent) from history array 
         // because we'll pass it as the explicit user prompt "content".
         // BUT, we must ensure the Opening (Assistant) is included in history.
-        const historyMsgs = allMsgs.slice(-limit, -1).map(m => ({
-            role: m.role,
-            content: m.type === 'image' ? '[User sent an image]' : m.content
-        }));
+        const historyMsgs = allMsgs.slice(-limit, -1).map(m => {
+            const timeAxis = `[${new Date(m.timestamp).toLocaleString('zh-CN')}]`;
+            const source = m.metadata?.source === 'call' ? '[通话]' : m.metadata?.source === 'date' ? '[约会]' : '[聊天]';
+            return {
+                role: m.role,
+                content: m.type === 'image' ? `${timeAxis} ${source} [User sent an image]` : `${timeAxis} ${source} ${m.content}`
+            };
+        });
 
         let systemPrompt = ContextBuilder.buildCoreContext(char, userProfile);
         const REQUIRED_EMOTIONS = ['normal', 'happy', 'angry', 'sad', 'shy'];
@@ -372,6 +376,13 @@ const DateApp: React.FC = () => {
     const handleDeleteMessage = async (msg: Message) => {
         await DB.deleteMessage(msg.id);
         setDateMessages(prev => prev.filter(m => m.id !== msg.id));
+    };
+
+    const handleDeleteMessages = async (ids: number[]) => {
+        if (ids.length === 0) return;
+        await Promise.all(ids.map(id => DB.deleteMessage(id)));
+        setDateMessages(prev => prev.filter(m => !ids.includes(m.id)));
+        addToast(`已删除 ${ids.length} 条记录`, 'success');
     };
 
     const confirmEditMessage = async () => {
@@ -548,6 +559,7 @@ const DateApp: React.FC = () => {
                     onExit={onExitSession}
                     onEditMessage={(msg) => { setEditTargetMsg(msg); setEditContent(msg.content); setIsEditModalOpen(true); }}
                     onDeleteMessage={handleDeleteMessage}
+                    onDeleteMessages={handleDeleteMessages}
                     onSettings={() => {}} // Removed parent state change, DateSession handles it internally now
                 />
                 

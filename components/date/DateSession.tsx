@@ -2,7 +2,9 @@ import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } f
 import { CharacterProfile, Message, DateState, DialogueItem, UserProfile } from '../../types';
 import Modal from '../../components/os/Modal';
 import { useOS } from '../../context/OSContext';
+import { DB } from '../../utils/db';
 import DateSettings from './DateSettings';
+import { synthesizeSpeech, cleanTextForTts } from '../../utils/minimaxTts';
 
 // Helper: Parse dialogue with simple state machine
 const isContextNoise = (line: string) => {
@@ -19,6 +21,25 @@ const cleanTextForDisplay = (text: string) => {
     // Remove content inside brackets [] and trim extra spaces
     // Also remove typical system prompts if any leak through
     return text.replace(/\[.*?\]/g, '').trim();
+};
+
+// Helper: Check if a line is dialogue (starts with quoted speech "...")
+// A dialogue line must BEGIN with a quote character (after trimming).
+// Lines that merely contain incidental quotes (e.g. 把"项圈草图"塞进...) are narration.
+const isDialogueLine = (text: string) => {
+    const clean = cleanTextForDisplay(text);
+    return /^[""\u201C\u300C]/.test(clean);
+};
+
+// Helper: Extract only the dialogue text from a line for TTS
+const extractDialogueText = (text: string): string => {
+    const clean = cleanTextForDisplay(text);
+    const matches = clean.match(/["\u201C]([^"\u201D]*)["\u201D]/g)
+        || clean.match(/[\u300C]([^\u300D]*)[\u300D]/g);
+    if (matches) {
+        return matches.map(m => m.replace(/["\u201C\u201D\u300C\u300D]/g, '')).join(' ');
+    }
+    return clean;
 };
 
 const parseDialogue = (fullText: string, initialEmotion: string = 'normal'): DialogueItem[] => {
@@ -60,6 +81,7 @@ interface DateSessionProps {
     onExit: (currentState: DateState) => void;
     onEditMessage: (msg: Message) => void;
     onDeleteMessage: (msg: Message) => void;
+    onDeleteMessages: (ids: number[]) => Promise<void>;
     onSettings: () => void;
 }
 
@@ -74,9 +96,10 @@ const DateSession: React.FC<DateSessionProps> = ({
     onExit,
     onEditMessage,
     onDeleteMessage,
+    onDeleteMessages,
     onSettings
 }) => {
-    const { addToast, registerBackHandler } = useOS();
+    const { addToast, registerBackHandler, apiConfig, updateCharacter } = useOS();
     
     // Core VN State
     const [isNovelMode, setIsNovelMode] = useState(false);
@@ -95,6 +118,7 @@ const DateSession: React.FC<DateSessionProps> = ({
     const [input, setInput] = useState('');
     const [showInputBox, setShowInputBox] = useState(false);
     const [isTyping, setIsTyping] = useState(false); // Waiting for API
+    const [isShowingOpening, setIsShowingOpening] = useState(!initialState); // True until first user interaction
     const [showExitModal, setShowExitModal] = useState(false);
     
     // Settings Overlay State (Internal)
@@ -103,9 +127,151 @@ const DateSession: React.FC<DateSessionProps> = ({
     // Edit Msg Logic
     const [modalType, setModalType] = useState<'none' | 'options'>('none');
     const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
+    const [isBatchSelectMode, setIsBatchSelectMode] = useState(false);
+    const [selectedMsgIds, setSelectedMsgIds] = useState<Set<number>>(new Set());
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const touchStartRef = useRef<{x: number, y: number} | null>(null);
     const novelScrollRef = useRef<HTMLDivElement>(null);
+
+    // Voice TTS — single shared cache keyed by dialogue text, used by both GAL & novel mode
+    const [dateVoicePlaying, setDateVoicePlaying] = useState(false);
+    const [galVoiceLoading, setGalVoiceLoading] = useState(false);
+    const [showVoiceLangPicker, setShowVoiceLangPicker] = useState(false);
+    const voiceCacheRef = useRef<Record<string, string>>({});
+    const [novelVoiceLoading, setNovelVoiceLoading] = useState<Set<string>>(new Set());
+    const [novelPlayingId, setNovelPlayingId] = useState<string | null>(null);
+    const dateAudioRef = useRef<HTMLAudioElement | null>(null);
+    const voiceEnabled = !!char.dateVoiceEnabled;
+    const voiceLang = char.dateVoiceLang || '';
+
+    const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
+    const VOICE_LANG_OPTIONS = [{v:'',l:'默认'},{v:'en',l:'EN'},{v:'ja',l:'JP'},{v:'ko',l:'KR'},{v:'fr',l:'FR'},{v:'es',l:'ES'}];
+
+    const translateAndSpeak = async (text: string): Promise<string | null> => {
+        if (!char.voiceProfile?.voiceId && (!char.voiceProfile?.timberWeights?.length)) return null;
+        try {
+            let ttsText = cleanTextForTts(text);
+            if (!ttsText || ttsText.length < 2) return null;
+            if (voiceLang) {
+                const langLabel = VOICE_LANG_LABELS[voiceLang] || voiceLang;
+                try {
+                    const transRes = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
+                        body: JSON.stringify({
+                            model: apiConfig.model,
+                            messages: [{ role: 'system', content: `Translate the following text to ${langLabel}. Output ONLY the translation, nothing else.` }, { role: 'user', content: ttsText }],
+                            temperature: 0.3,
+                        }),
+                    });
+                    const transData = await transRes.json();
+                    const translated = transData?.choices?.[0]?.message?.content?.trim();
+                    if (translated) ttsText = translated;
+                } catch { /* use original */ }
+            }
+            return await synthesizeSpeech(ttsText, char, apiConfig, {
+                languageBoost: voiceLang || undefined,
+                groupId: apiConfig.minimaxGroupId || undefined,
+            });
+        } catch (err: any) {
+            console.warn('Date TTS failed:', err?.message);
+            return null;
+        }
+    };
+
+    // GAL mode: auto-play voice only for dialogue lines (quoted text), stop previous on advance
+    // Uses cache so replaying the same line doesn't re-fetch
+    useEffect(() => {
+        if (!voiceEnabled || isNovelMode || !currentText || isTyping) return;
+        // Stop any currently playing audio when text changes (advancing to next line)
+        if (dateAudioRef.current) {
+            dateAudioRef.current.pause();
+            dateAudioRef.current.currentTime = 0;
+            setDateVoicePlaying(false);
+        }
+        setGalVoiceLoading(false);
+        // Skip voice during opening phase and for non-dialogue lines
+        if (isShowingOpening) return;
+        if (!isDialogueLine(currentText)) return;
+        let cancelled = false;
+        const dialogueText = extractDialogueText(currentText);
+        const cacheKey = dialogueText;
+        const play = async () => {
+            // Check cache first
+            let url = voiceCacheRef.current[cacheKey];
+            if (!url) {
+                setGalVoiceLoading(true);
+                url = await translateAndSpeak(dialogueText) || '';
+                if (cancelled) return;
+                setGalVoiceLoading(false);
+                if (!url) return;
+                voiceCacheRef.current[cacheKey] = url;
+            }
+            if (cancelled) return;
+            if (!dateAudioRef.current) dateAudioRef.current = new Audio();
+            dateAudioRef.current.src = url;
+            dateAudioRef.current.onended = () => setDateVoicePlaying(false);
+            dateAudioRef.current.play().catch(() => {});
+            setDateVoicePlaying(true);
+        };
+        play();
+        return () => { cancelled = true; setGalVoiceLoading(false); if (dateAudioRef.current) { dateAudioRef.current.pause(); } };
+    }, [currentText, voiceEnabled, isNovelMode]);
+
+    // GAL mode: manual play/pause for the current dialogue line
+    const handleGalVoiceToggle = async () => {
+        if (!currentText || !isDialogueLine(currentText)) return;
+        // If playing, pause
+        if (dateVoicePlaying && dateAudioRef.current) {
+            dateAudioRef.current.pause();
+            setDateVoicePlaying(false);
+            return;
+        }
+        const dialogueText = extractDialogueText(currentText);
+        const cacheKey = dialogueText;
+        let url = voiceCacheRef.current[cacheKey];
+        if (!url) {
+            setGalVoiceLoading(true);
+            url = await translateAndSpeak(dialogueText) || '';
+            setGalVoiceLoading(false);
+            if (!url) return;
+            voiceCacheRef.current[cacheKey] = url;
+        }
+        if (!dateAudioRef.current) dateAudioRef.current = new Audio();
+        dateAudioRef.current.src = url;
+        dateAudioRef.current.onended = () => setDateVoicePlaying(false);
+        dateAudioRef.current.play().catch(() => {});
+        setDateVoicePlaying(true);
+    };
+
+    // Novel/Reading mode: play a specific dialogue line (shares voiceCacheRef with GAL mode)
+    const handleNovelLinePlay = async (lineKey: string, dialogueText: string) => {
+        const cachedUrl = voiceCacheRef.current[dialogueText];
+        if (cachedUrl) {
+            // Already have URL (from GAL or previous novel play), just play/pause
+            if (!dateAudioRef.current) dateAudioRef.current = new Audio();
+            if (novelPlayingId === lineKey) {
+                dateAudioRef.current.pause();
+                setNovelPlayingId(null);
+                return;
+            }
+            dateAudioRef.current.src = cachedUrl;
+            dateAudioRef.current.onended = () => setNovelPlayingId(null);
+            dateAudioRef.current.play().catch(() => {});
+            setNovelPlayingId(lineKey);
+            return;
+        }
+        setNovelVoiceLoading(prev => new Set(prev).add(lineKey));
+        const url = await translateAndSpeak(dialogueText);
+        setNovelVoiceLoading(prev => { const n = new Set(prev); n.delete(lineKey); return n; });
+        if (!url) return;
+        voiceCacheRef.current[dialogueText] = url;
+        if (!dateAudioRef.current) dateAudioRef.current = new Audio();
+        dateAudioRef.current.src = url;
+        dateAudioRef.current.onended = () => setNovelPlayingId(null);
+        dateAudioRef.current.play().catch(() => {});
+        setNovelPlayingId(lineKey);
+    };
 
     // Back Handler
     useEffect(() => {
@@ -277,6 +443,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         setInput('');
         setShowInputBox(false);
         setIsTyping(true);
+        setIsShowingOpening(false); // First user interaction - opening phase is over
 
         try {
             const aiContent = await onSendMessage(text);
@@ -311,22 +478,60 @@ const DateSession: React.FC<DateSessionProps> = ({
         }
     };
 
+    const buildCurrentState = (): DateState => ({
+        dialogueQueue,
+        dialogueBatch,
+        currentText,
+        bgImage,
+        currentSprite,
+        isNovelMode,
+        timestamp: Date.now(),
+        peekStatus
+    });
+
     const handleExitClick = () => {
-        const currentState: DateState = {
-            dialogueQueue,
-            dialogueBatch,
-            currentText,
-            bgImage,
-            currentSprite,
-            isNovelMode,
-            timestamp: Date.now(),
-            peekStatus
-        };
-        onExit(currentState);
+        onExit(buildCurrentState());
     };
+
+    // Auto-save: persist date state so refresh/close doesn't lose progress
+    const stateRef = useRef<() => DateState>(buildCurrentState);
+    stateRef.current = buildCurrentState;
+    const onExitRef = useRef(onExit);
+    onExitRef.current = onExit;
+    const charRef = useRef(char);
+    charRef.current = char;
+
+    useEffect(() => {
+        // Direct DB save — works during beforeunload when React state updates are useless
+        const saveStateToDB = () => {
+            try {
+                const state = stateRef.current();
+                DB.saveCharacter({ ...charRef.current, savedDateState: state });
+            } catch (e) { /* best-effort */ }
+        };
+
+        // beforeunload: catch page refresh / tab close
+        const handleBeforeUnload = () => { saveStateToDB(); };
+        // visibilitychange: catch tab switch / app background (more reliable on mobile)
+        const handleVisibilityChange = () => { if (document.visibilityState === 'hidden') saveStateToDB(); };
+        window.addEventListener('beforeunload', handleBeforeUnload);
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+
+        // Periodic auto-save every 30s
+        const interval = setInterval(saveStateToDB, 30000);
+
+        return () => {
+            window.removeEventListener('beforeunload', handleBeforeUnload);
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+            clearInterval(interval);
+            // Also save on React unmount (in-app navigation)
+            onExitRef.current(stateRef.current());
+        };
+    }, []);
 
     // Message Touch Logic (Robust version for scrollable lists)
     const handleMsgTouchStart = (e: React.TouchEvent | React.MouseEvent, msg: Message) => {
+        if (!isNovelMode) return;
         if ('touches' in e) {
             touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
         } else {
@@ -334,8 +539,14 @@ const DateSession: React.FC<DateSessionProps> = ({
         }
 
         longPressTimer.current = setTimeout(() => {
-            setSelectedMessage(msg);
-            setModalType('options');
+            if (char.dateLightReading) {
+                setIsBatchSelectMode(true);
+                setSelectedMsgIds(new Set([msg.id]));
+                addToast('已进入多选模式', 'info');
+            } else {
+                setSelectedMessage(msg);
+                setModalType('options');
+            }
         }, 600);
     };
 
@@ -366,6 +577,26 @@ const DateSession: React.FC<DateSessionProps> = ({
         longPressTimer.current = null;
     };
 
+    const toggleSelectedMsg = (id: number) => {
+        setSelectedMsgIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
+
+    const exitBatchMode = () => {
+        setIsBatchSelectMode(false);
+        setSelectedMsgIds(new Set());
+    };
+
+    const handleBatchDelete = async () => {
+        if (selectedMsgIds.size === 0) return;
+        await onDeleteMessages(Array.from(selectedMsgIds));
+        exitBatchMode();
+    };
+
     // Determine if we can reroll (last message is assistant)
     const canReroll = messages.length > 0 && messages[messages.length - 1].role === 'assistant';
 
@@ -386,8 +617,44 @@ const DateSession: React.FC<DateSessionProps> = ({
                     </button>
                 )}
                 
+                {/* Voice Toggle — tap to enable/disable, long-press or second tap when enabled to show lang picker */}
+                <div className="relative">
+                    <button onClick={(e) => {
+                            e.stopPropagation();
+                            if (voiceEnabled) {
+                                setShowVoiceLangPicker(prev => !prev);
+                            } else {
+                                updateCharacter(char.id, { dateVoiceEnabled: true });
+                                addToast('语音已开启', 'info');
+                                setShowVoiceLangPicker(true);
+                            }
+                        }}
+                        onDoubleClick={(e) => { e.stopPropagation(); if (voiceEnabled) { updateCharacter(char.id, { dateVoiceEnabled: false }); setShowVoiceLangPicker(false); addToast('语音已关闭', 'info'); } }}
+                        className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all shadow-lg active:scale-95 ${voiceEnabled ? 'bg-white/20 backdrop-blur-md border-white/30 text-white/80' : 'bg-black/30 backdrop-blur-md border-white/20 text-white/50 hover:bg-white/20'}`}
+                        title={voiceEnabled ? '点击切换语种 / 双击关闭' : '开启语音'}
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                            {voiceEnabled
+                                ? <path strokeLinecap="round" strokeLinejoin="round" d="M19.114 5.636a9 9 0 0 1 0 12.728M16.463 8.288a5.25 5.25 0 0 1 0 7.424M6.75 8.25l4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z" />
+                                : <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 9.75 19.5 12m0 0 2.25 2.25M19.5 12l2.25-2.25M19.5 12l-2.25 2.25m-10.5-6 4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z" />}
+                        </svg>
+                        {voiceEnabled && voiceLang && <span className="absolute -bottom-1 -right-1 text-[8px] font-bold bg-white/30 text-white rounded-full px-1 leading-tight">{VOICE_LANG_OPTIONS.find(o => o.v === voiceLang)?.l || ''}</span>}
+                    </button>
+                    {/* Collapsible Language Picker */}
+                    {voiceEnabled && showVoiceLangPicker && (
+                        <div className="absolute top-12 right-0 flex flex-col gap-1 animate-fade-in">
+                            {VOICE_LANG_OPTIONS.map(opt => (
+                                <button key={opt.v} onClick={(e) => { e.stopPropagation(); updateCharacter(char.id, { dateVoiceLang: opt.v }); setShowVoiceLangPicker(false); }}
+                                    className={`h-7 px-2.5 rounded-full text-[10px] font-bold transition-all active:scale-95 whitespace-nowrap ${voiceLang === opt.v ? 'bg-white/30 text-white shadow-md' : 'bg-black/30 backdrop-blur-md text-white/60 border border-white/10'}`}>
+                                    {opt.l}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
                 {/* Novel Mode Toggle */}
-                <button onClick={(e) => { e.stopPropagation(); setIsNovelMode(!isNovelMode); }} className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all shadow-lg active:scale-95 ${isNovelMode ? 'bg-white text-black border-white' : 'bg-black/30 backdrop-blur-md border-white/20 text-white hover:bg-white/20'}`}>
+                <button onClick={(e) => { e.stopPropagation(); setIsNovelMode(!isNovelMode); exitBatchMode(); }} className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all shadow-lg active:scale-95 ${isNovelMode ? 'bg-white text-black border-white' : 'bg-black/30 backdrop-blur-md border-white/20 text-white hover:bg-white/20'}`}>
                     {isNovelMode ? (
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg>
                     ) : (
@@ -401,6 +668,14 @@ const DateSession: React.FC<DateSessionProps> = ({
                 <button onClick={(e) => { e.stopPropagation(); setShowSettings(true); }} className="bg-black/30 backdrop-blur-md text-white w-10 h-10 rounded-full flex items-center justify-center border border-white/20 hover:bg-white/20 transition-all shadow-lg active:scale-95">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 1 0 2.555c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.212 1.281c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-2.555c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
                 </button>
+                {isNovelMode && char.dateLightReading && (
+                    <button
+                        onClick={(e) => { e.stopPropagation(); isBatchSelectMode ? exitBatchMode() : setIsBatchSelectMode(true); }}
+                        className={`px-3 h-10 rounded-full text-xs font-bold border shadow-lg ${isBatchSelectMode ? 'bg-primary text-white border-primary' : 'bg-black/30 backdrop-blur-md border-white/20 text-white'}`}
+                    >
+                        {isBatchSelectMode ? '完成' : '多选'}
+                    </button>
+                )}
                 <button onClick={() => setShowExitModal(true)} className="bg-red-500/80 backdrop-blur-md text-white px-4 h-10 rounded-full flex items-center justify-center gap-1 border border-white/20 hover:bg-red-600 transition-colors shadow-lg active:scale-95">
                     <span className="text-xs font-bold mr-1">离开</span>
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15M12 9l-3 3m0 0 3 3m-3-3h12.75" /></svg>
@@ -412,6 +687,16 @@ const DateSession: React.FC<DateSessionProps> = ({
                 <div ref={novelScrollRef} className={`absolute inset-0 z-20 overflow-y-auto no-scrollbar pt-24 pb-32 px-8 mask-image-gradient overscroll-contain ${char.dateLightReading ? 'bg-[#faf8f5]' : 'bg-black/90 backdrop-blur-sm'}`} onClick={(e) => { e.stopPropagation(); setShowInputBox(true); }}>
                     <div className="min-h-full flex flex-col justify-end">
                         <div className="max-w-2xl mx-auto animate-fade-in space-y-6">
+                            {isBatchSelectMode && (
+                                <div className="sticky top-0 z-20 flex items-center justify-between bg-white/90 border border-stone-200 rounded-xl px-3 py-2 text-xs text-stone-700">
+                                    <span>已选 {selectedMsgIds.size} 条</span>
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); handleBatchDelete(); }}
+                                        disabled={selectedMsgIds.size === 0}
+                                        className="px-3 py-1 rounded-full bg-red-500 text-white disabled:opacity-40"
+                                    >删除</button>
+                                </div>
+                            )}
                             {sessionMessages.length === 0 && peekStatus && (
                                 <div className={`italic text-center text-sm mb-8 px-4 ${char.dateLightReading ? 'text-stone-400' : 'text-slate-200/50'}`}>
                                     {cleanTextForDisplay(peekStatus).split('\n').map((line, idx) => line.trim() && <p key={idx} className="whitespace-pre-wrap leading-relaxed tracking-wide my-2">{line}</p>)}
@@ -421,6 +706,11 @@ const DateSession: React.FC<DateSessionProps> = ({
                                 <div
                                     key={msg.id}
                                     className={`group relative rounded-xl transition-colors -mx-4 px-4 py-2 ${char.dateLightReading ? 'active:bg-stone-100' : 'active:bg-white/5'}`}
+                                    onClick={(e) => {
+                                        if (!isBatchSelectMode) return;
+                                        e.stopPropagation();
+                                        toggleSelectedMsg(msg.id);
+                                    }}
                                     onTouchStart={(e) => handleMsgTouchStart(e, msg)}
                                     onTouchEnd={handleMsgTouchEnd}
                                     onTouchMove={handleMsgTouchMove}
@@ -430,6 +720,11 @@ const DateSession: React.FC<DateSessionProps> = ({
                                     onMouseLeave={handleMsgTouchEnd}
                                     onContextMenu={(e) => { e.preventDefault(); setSelectedMessage(msg); setModalType('options'); }}
                                 >
+                                    {isBatchSelectMode && (
+                                        <div className={`absolute left-0 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full border-2 flex items-center justify-center ${selectedMsgIds.has(msg.id) ? 'bg-primary border-primary' : 'bg-white border-stone-300'}`}>
+                                            {selectedMsgIds.has(msg.id) && <span className="text-white text-[10px]">✓</span>}
+                                        </div>
+                                    )}
                                     {msg.role === 'user' ? (
                                         <p className={`whitespace-pre-wrap font-serif text-[16px] text-right leading-loose tracking-wide italic pr-4 ${char.dateLightReading ? 'text-stone-400 border-r-2 border-stone-300/50' : 'text-slate-400 border-r-2 border-slate-600/50'}`}>{cleanTextForDisplay(msg.content)} <span className="text-[10px] uppercase font-sans not-italic ml-2 opacity-50">{userProfile.name}</span></p>
                                     ) : (
@@ -437,7 +732,33 @@ const DateSession: React.FC<DateSessionProps> = ({
                                             {(msg.content || '').split('\n').map((line, idx) => {
                                                 const cleanLine = cleanTextForDisplay(line);
                                                 if (!cleanLine) return null;
-                                                return <p key={idx} className={`whitespace-pre-wrap font-serif text-[18px] text-justify leading-loose tracking-wide pl-4 mb-4 last:mb-0 ${char.dateLightReading ? 'text-stone-700 border-l-2 border-stone-200' : 'text-slate-200 drop-shadow-md border-l-2 border-white/10'}`}>{cleanLine}</p>
+                                                const lineIsDialogue = isDialogueLine(line);
+                                                const lineKey = `${msg.id}-${idx}`;
+                                                const isOpeningMsg = msg.metadata?.isOpening === true;
+                                                return (
+                                                    <div key={idx} className="flex items-start gap-1 mb-4 last:mb-0">
+                                                        <p className={`flex-1 whitespace-pre-wrap font-serif text-[18px] text-justify leading-loose tracking-wide pl-4 ${char.dateLightReading ? 'text-stone-700 border-l-2 border-stone-200' : 'text-slate-200 drop-shadow-md border-l-2 border-white/10'}`}>{cleanLine}</p>
+                                                        {/* Voice button: only for dialogue lines, not opening */}
+                                                        {voiceEnabled && lineIsDialogue && !isOpeningMsg && (
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); handleNovelLinePlay(lineKey, extractDialogueText(line)); }}
+                                                                className={`shrink-0 mt-2 w-7 h-7 rounded-full flex items-center justify-center transition-all active:scale-90 select-none ${
+                                                                    novelPlayingId === lineKey
+                                                                        ? (char.dateLightReading ? 'bg-emerald-100 text-emerald-600' : 'bg-emerald-500/20 text-emerald-300')
+                                                                        : (char.dateLightReading ? 'bg-stone-100 text-stone-400 hover:bg-stone-200' : 'bg-white/5 text-white/40 hover:bg-white/10')
+                                                                }`}
+                                                            >
+                                                                {novelVoiceLoading.has(lineKey) ? (
+                                                                    <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                                                                ) : novelPlayingId === lineKey ? (
+                                                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M5.75 3a.75.75 0 0 0-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 0 0 .75-.75V3.75A.75.75 0 0 0 7.25 3h-1.5ZM12.75 3a.75.75 0 0 0-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 0 0 .75-.75V3.75a.75.75 0 0 0-.75-.75h-1.5Z" /></svg>
+                                                                ) : (
+                                                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M6.3 2.84A1.5 1.5 0 0 0 4 4.11v11.78a1.5 1.5 0 0 0 2.3 1.27l9.344-5.891a1.5 1.5 0 0 0 0-2.538L6.3 2.841Z" /></svg>
+                                                                )}
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                );
                                             })}
                                         </div>
                                     )}
@@ -457,7 +778,24 @@ const DateSession: React.FC<DateSessionProps> = ({
                     {!isTyping && (
                         <div className="absolute inset-x-0 bottom-8 z-30 flex justify-center">
                             <div className="w-[90%] max-w-lg bg-black/60 backdrop-blur-xl rounded-2xl border border-white/10 p-6 min-h-[140px] shadow-2xl animate-slide-up hover:bg-black/70 cursor-pointer">
-                                <div className="absolute -top-3 left-6"><div className="bg-white/90 text-black px-4 py-1 rounded-sm text-xs font-bold tracking-widest uppercase shadow-[0_4px_10px_rgba(0,0,0,0.3)] transform -skew-x-12">{char.name}</div></div>
+                                <div className="absolute -top-3 left-6 flex items-center gap-2">
+                                    <div className="bg-white/90 text-black px-4 py-1 rounded-sm text-xs font-bold tracking-widest uppercase shadow-[0_4px_10px_rgba(0,0,0,0.3)] transform -skew-x-12">{char.name}</div>
+                                    {/* Voice play button next to name */}
+                                    {voiceEnabled && !isTextAnimating && !isShowingOpening && isDialogueLine(currentText) && (
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); handleGalVoiceToggle(); }}
+                                            className={`w-6 h-6 rounded-full flex items-center justify-center transition-all active:scale-90 ${dateVoicePlaying ? 'bg-white/30 text-white/90' : 'bg-white/10 text-white/40 hover:bg-white/20'}`}
+                                        >
+                                            {galVoiceLoading ? (
+                                                <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                                            ) : dateVoicePlaying ? (
+                                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M5.75 3a.75.75 0 0 0-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 0 0 .75-.75V3.75A.75.75 0 0 0 7.25 3h-1.5ZM12.75 3a.75.75 0 0 0-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 0 0 .75-.75V3.75a.75.75 0 0 0-.75-.75h-1.5Z" /></svg>
+                                            ) : (
+                                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M6.3 2.84A1.5 1.5 0 0 0 4 4.11v11.78a1.5 1.5 0 0 0 2.3 1.27l9.344-5.891a1.5 1.5 0 0 0 0-2.538L6.3 2.841Z" /></svg>
+                                            )}
+                                        </button>
+                                    )}
+                                </div>
                                 <p className="text-white/90 text-[16px] leading-relaxed font-light tracking-wide drop-shadow-md mt-2">{displayedText}{isTextAnimating && <span className="inline-block w-2 h-4 bg-white/70 ml-1 animate-pulse align-middle"></span>}</p>
                                 {!isTextAnimating && dialogueQueue.length > 0 && <div className="absolute bottom-3 right-4 animate-bounce opacity-70"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-white"><path fillRule="evenodd" d="M12.53 16.28a.75.75 0 0 1-1.06 0l-7.5-7.5a.75.75 0 0 1 1.06-1.06L12 14.69l6.97-6.97a.75.75 0 1 1 1.06 1.06l-7.5 7.5Z" clipRule="evenodd" /></svg></div>}
                                 {!isTextAnimating && dialogueQueue.length === 0 && dialogueBatch.length > 0 && <div className="absolute bottom-3 right-4 opacity-50 text-[10px] text-white flex items-center gap-1 animate-pulse"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>Loop</div>}

@@ -98,6 +98,11 @@ interface MessageItemProps {
     translationEnabled?: boolean;
     isShowingTarget?: boolean;
     onTranslateToggle?: (msgId: number) => void;
+    // Voice TTS
+    voiceData?: { url: string; originalText: string; spokenText?: string; lang?: string };
+    voiceLoading?: boolean;
+    isVoicePlaying?: boolean;
+    onPlayVoice?: () => void;
 }
 
 const MessageItem = React.memo(({
@@ -115,6 +120,10 @@ const MessageItem = React.memo(({
     translationEnabled,
     isShowingTarget,
     onTranslateToggle,
+    voiceData,
+    voiceLoading,
+    isVoicePlaying,
+    onPlayVoice,
 }: MessageItemProps) => {
     const isUser = m.role === 'user';
     const isSystem = m.role === 'system';
@@ -123,6 +132,7 @@ const MessageItem = React.memo(({
     const startPos = useRef({ x: 0, y: 0 }); // Track touch start position
 
     const styleConfig = isUser ? activeTheme.user : activeTheme.ai;
+    const [showVoiceText, setShowVoiceText] = useState(false);
 
     const handleTouchStart = (e: React.TouchEvent | React.MouseEvent) => {
         // Record initial position
@@ -228,9 +238,46 @@ const MessageItem = React.memo(({
 
     // --- SYSTEM MESSAGE RENDERING ---
     if (isSystem) {
+        const isCallSummary = m.metadata?.source === 'call-end-popup';
         // Clean up text: remove [System:] or [系统:] prefix for display
         const displayText = m.content.replace(/^\[(System|系统|System Log|系统记录)\s*[:：]?\s*/i, '').replace(/\]$/, '').trim();
-        
+
+        if (isCallSummary) {
+            const durationSec = Math.max(1, Number(m.metadata?.durationSec || 0));
+            const turnCount = Math.max(1, Number(m.metadata?.turnCount || 1));
+            const durationText = `${String(Math.floor(durationSec / 60)).padStart(2, '0')}:${String(durationSec % 60).padStart(2, '0')}`;
+            const callMemo = String(m.metadata?.keepsakeLine || `“今天这通电话，我会记很久。” —— ${m.metadata?.characterName || charName}`);
+            const memoTitle = m.metadata?.characterName || charName;
+            const memoAvatar = m.metadata?.characterAvatar || charAvatar;
+            const timeHint = durationSec <= 240 ? '☕ 差不多是一杯咖啡的时间' : '🎵 像听完一首喜欢的歌再多一点';
+
+            return (
+                <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`}>
+                    {selectionMode && (
+                        <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
+                                {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
+                            </div>
+                        </div>
+                    )}
+                    <div className="w-full px-5 my-3" {...interactionProps}>
+                        <div className="rounded-3xl bg-gradient-to-br from-slate-50 to-slate-100/80 border border-slate-200/50 p-4 shadow-sm">
+                            <div className="flex items-center gap-3">
+                                <img src={memoAvatar} alt={memoTitle} className="h-9 w-9 rounded-full object-cover ring-1 ring-slate-200/80" loading="lazy" decoding="async" />
+                                <div className="min-w-0 flex-1">
+                                    <div className="text-sm font-medium text-slate-600 truncate">和 {memoTitle} 通了电话</div>
+                                    <div className="text-xs text-slate-400 mt-0.5">{durationText} · {turnCount}轮对话</div>
+                                </div>
+                            </div>
+                            <div className="mt-3 rounded-2xl bg-white/70 border border-slate-100 px-3.5 py-2.5 text-[13px] italic leading-relaxed text-slate-500">
+                                {callMemo}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
         return (
             <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`}>
                 {selectionMode && (
@@ -243,7 +290,7 @@ const MessageItem = React.memo(({
                 <div className="flex justify-center my-6 px-10 w-full" {...interactionProps}>
                     <div className="flex items-center gap-1.5 bg-slate-200/40 backdrop-blur-md text-slate-500 px-3 py-1 rounded-full shadow-sm border border-white/20 select-none cursor-pointer active:scale-95 transition-transform">
                         {/* Optional Icon based on content */}
-                        {displayText.includes('任务') ? '✨' : 
+                        {displayText.includes('任务') ? '✨' :
                         displayText.includes('纪念日') || displayText.includes('Event') ? '📅' :
                         displayText.includes('转账') ? '💰' : '🔔'}
                         <span className="text-[10px] font-medium tracking-wide">{displayText}</span>
@@ -414,6 +461,74 @@ const MessageItem = React.memo(({
         );
     }
 
+    // --- Score Card Rendering (Songwriting & Quiz) ---
+    if (m.type === 'score_card') {
+        let scoreData: any = null;
+        try { scoreData = m.metadata?.scoreCard || JSON.parse(m.content); } catch {}
+
+        // Quiz Card
+        if (scoreData?.type === 'quiz_card') {
+            const pct = scoreData.scorePercent || 0;
+            const gradientClass = pct === 100 ? 'from-emerald-400 to-teal-500' : pct >= 60 ? 'from-amber-400 to-orange-500' : 'from-red-400 to-rose-500';
+            return commonLayout(
+                <div className="w-64 bg-white rounded-xl overflow-hidden shadow-sm border border-slate-100" {...interactionProps}>
+                    <div className={`h-24 w-full bg-gradient-to-br ${gradientClass} flex flex-col items-center justify-center text-white relative`}>
+                        <div className="text-3xl font-bold">{scoreData.score}<span className="text-lg opacity-70">/{scoreData.total}</span></div>
+                        <div className="text-[10px] opacity-80 mt-1">{pct}%</div>
+                    </div>
+                    <div className="p-3">
+                        <div className="text-xs font-bold text-slate-800 truncate">{scoreData.courseTitle}</div>
+                        <div className="text-[10px] text-slate-500 truncate mt-0.5">{scoreData.chapterTitle}</div>
+                        <div className="mt-2 pt-2 border-t border-slate-50 flex items-center gap-1 text-[10px] text-emerald-500">
+                            📝 刷题报告
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        if (scoreData) {
+            const coverGradients: Record<string, string> = {
+                sunset: 'from-orange-400 via-pink-500 to-purple-600',
+                ocean: 'from-cyan-400 via-blue-500 to-indigo-600',
+                forest: 'from-emerald-400 via-green-500 to-teal-600',
+                midnight: 'from-slate-700 via-indigo-900 to-black',
+                cherry: 'from-pink-300 via-rose-400 to-red-500',
+                lavender: 'from-purple-300 via-violet-400 to-fuchsia-500',
+                golden: 'from-yellow-300 via-amber-400 to-orange-500',
+                monochrome: 'from-slate-200 via-slate-300 to-slate-400',
+            };
+            const gradient = coverGradients[scoreData.coverStyle] || coverGradients.sunset;
+            return commonLayout(
+                <div className="w-64 bg-white rounded-xl overflow-hidden shadow-sm border border-slate-100 cursor-pointer active:opacity-90 transition-opacity" {...interactionProps}>
+                    <div className={`h-28 w-full bg-gradient-to-br ${gradient} flex flex-col items-center justify-center text-white relative`}>
+                        <div className="text-3xl mb-1">{scoreData.genreIcon || '🎵'}</div>
+                        <div className="font-bold text-sm">{scoreData.title}</div>
+                        {scoreData.subtitle && <div className="text-[10px] opacity-80">{scoreData.subtitle}</div>}
+                        {scoreData.status === 'completed' && (
+                            <div className="absolute top-2 right-2 bg-white/20 backdrop-blur-sm px-1.5 py-0.5 rounded text-[9px]">已完成</div>
+                        )}
+                    </div>
+                    <div className="p-3">
+                        <div className="flex items-center gap-2 mb-2 text-[10px] text-slate-500">
+                            <span>{scoreData.genre}</span>
+                            <span>·</span>
+                            <span>{scoreData.moodIcon} {scoreData.mood}</span>
+                            <span>·</span>
+                            <span>{scoreData.lineCount} 行</span>
+                        </div>
+                        {scoreData.lyrics && (
+                            <p className="text-xs text-slate-600 line-clamp-3 leading-relaxed whitespace-pre-wrap">{scoreData.lyrics.substring(0, 100)}</p>
+                        )}
+                        <div className="mt-2 pt-2 border-t border-slate-50 flex items-center gap-1 text-[10px] text-fuchsia-500">
+                            🎵 乐谱分享
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+    }
+
     if (m.type === 'transfer') {
         return commonLayout(
             <div className="w-64 bg-gradient-to-br from-amber-400 to-orange-500 rounded-2xl p-4 text-white shadow-lg relative overflow-hidden group active:scale-[0.98] transition-transform">
@@ -565,12 +680,14 @@ const MessageItem = React.memo(({
         .replace(/%%TRANS%%[\s\S]*/gi, '')           // legacy translation marker
         .replace(/%%BILINGUAL%%/gi, '\n')            // raw bilingual marker → newline
         .replace(/<\/?翻译>|<\/?原文>|<\/?译文>/g, '')  // stray bilingual XML tags
+        .replace(/\s*\[(?:聊天|通话|约会)\]\s*/g, '\n')   // source tags leaked from history context
         .replace(/\[\[(?:QU[OA]TE|引用)[：:][\s\S]*?\]\]/g, '')  // residual double-bracket quotes (incl. typos & Chinese)
         .replace(/\[(?:QU[OA]TE|引用)[：:][^\]]*\]/g, '')     // residual single-bracket quotes (incl. typos & Chinese)
         .replace(/\[回复\s*[""\u201C][^""\u201D]*?[""\u201D](?:\.{0,3})\]\s*[：:]?\s*/g, '')  // [回复 "content"]: format
         // Residual action/system tags that may have leaked through
         .replace(/\[\[(?:ACTION|RECALL|SEARCH|DIARY|READ_DIARY|FS_DIARY|FS_READ_DIARY|SEND_EMOJI|DIARY_START|DIARY_END|FS_DIARY_START|FS_DIARY_END)[:\s][\s\S]*?\]\]/g, '')
         .replace(/\[schedule_message[^\]]*\]/g, '')
+        .replace(/<[语語]音>[\s\S]*?<\/[语語]音>/g, '')  // strip <语音>...</语音> voice tags
         .replace(/^\s*---\s*$/gm, '')                // standalone --- lines
         .replace(/``+/g, '')                          // empty/stray backtick pairs
         .replace(/(^|\s)`(\s|$)/gm, '$1$2')         // lone backticks at boundaries
@@ -590,11 +707,20 @@ const MessageItem = React.memo(({
     const displayContent = (isShowingTarget && langBContent) ? langBContent : langAContent;
     const showTranslateButton = translationEnabled && hasBilingual && langBContent;
 
-    // Don't render empty bubbles (e.g. messages that were just "---")
-    if (!displayContent) return null;
+    // Check if raw content has a <语音> tag (voice-only message that hasn't been TTS'd yet)
+    const hasVoiceTag = !isUser && /<[语語]音>[\s\S]*?<\/[语語]音>/.test(m.content);
+    const hasVoiceContent = voiceData?.url || voiceLoading || hasVoiceTag;
+    // Don't render empty bubbles (e.g. messages that were just "---"), unless voice data exists or pending
+    if (!displayContent && !hasVoiceContent) return null;
+
+    // Voice-only messages (no display text, only voice bar): skip bubble styling
+    const isVoiceOnlyMsg = !displayContent && hasVoiceContent && !isUser && m.type === 'text';
 
     return commonLayout(
-        <div className={`relative shadow-sm px-5 py-3 animate-fade-in border border-black/5 active:scale-[0.98] transition-transform overflow-hidden ${isUser ? 'sully-bubble-user' : 'sully-bubble-ai'}`} style={containerStyle}>
+        <div className={isVoiceOnlyMsg
+            ? 'relative animate-fade-in'
+            : `relative shadow-sm px-5 py-3 animate-fade-in border border-black/5 active:scale-[0.98] transition-transform overflow-visible ${isUser ? 'sully-bubble-user' : 'sully-bubble-ai'}`}
+            style={isVoiceOnlyMsg ? undefined : containerStyle}>
 
             {/* Layer 1: Background Image with Independent Opacity */}
             {styleConfig.backgroundImage && (
@@ -602,7 +728,8 @@ const MessageItem = React.memo(({
                     className="absolute inset-0 bg-cover bg-center pointer-events-none z-0"
                     style={{
                         backgroundImage: `url(${styleConfig.backgroundImage})`,
-                        opacity: styleConfig.backgroundImageOpacity ?? 0.5
+                        opacity: styleConfig.backgroundImageOpacity ?? 0.5,
+                        borderRadius: 'inherit'
                     }}
                 />
             )}
@@ -625,17 +752,19 @@ const MessageItem = React.memo(({
             {m.replyTo && (
                 <div className="relative z-10 mb-1 text-[10px] bg-black/5 p-1.5 rounded-md border-l-2 border-current opacity-60 flex flex-col gap-0.5 max-w-full overflow-hidden">
                     <span className="font-bold opacity-90 truncate">{m.replyTo.name}</span>
-                    <span className="truncate italic">"{m.replyTo.content}"</span>
+                    <span className="truncate italic">"{m.replyTo.content.length > 10 ? m.replyTo.content.slice(0, 10) + '...' : m.replyTo.content}"</span>
                 </div>
             )}
 
-            {/* Layer 4: Text Content */}
+            {/* Layer 4: Text Content — shown when there's visible text after stripping voice tags */}
+            {displayContent && (
             <div className="relative z-10 text-[15px] leading-relaxed whitespace-pre-wrap break-all select-text" style={{ color: styleConfig.textColor }}>
                 {renderContent(displayContent)}
             </div>
+            )}
 
-            {/* Layer 5: Per-bubble Translate Toggle (AI bilingual messages only, no API calls) */}
-            {showTranslateButton && (
+            {/* Layer 5: Per-bubble Translate Toggle (AI bilingual messages only) */}
+            {showTranslateButton && displayContent && (
                 <div className="relative z-10 mt-2 flex justify-end">
                     <button
                         onClick={(e) => { e.stopPropagation(); e.preventDefault(); onTranslateToggle?.(m.id); }}
@@ -660,6 +789,154 @@ const MessageItem = React.memo(({
                     </button>
                 </div>
             )}
+
+            {/* Layer 6: Voice Bar */}
+            {(voiceData?.url || voiceLoading || hasVoiceTag) && !isUser && m.type === 'text' && (() => {
+                const vbBg = styleConfig.voiceBarBg;
+                const vbActiveBg = styleConfig.voiceBarActiveBg;
+                const vbBtn = styleConfig.voiceBarBtnColor;
+                const vbWave = styleConfig.voiceBarWaveColor;
+                const vbText = styleConfig.voiceBarTextColor;
+                // Voice-only mode: no visible text, voice bar is primary content
+                const isVoiceOnly = !!voiceData?.url && !displayContent;
+                return (
+                <div className={`relative z-10 ${isVoiceOnly ? '' : 'mt-2.5'}`}>
+                    {voiceData?.url ? (
+                        <div className="max-w-[260px]">
+                            <button
+                                onClick={(e) => { e.stopPropagation(); e.preventDefault(); onPlayVoice?.(); }}
+                                className="group flex items-center gap-2.5 w-full px-3 py-2 rounded-2xl transition-all duration-300 active:scale-[0.97] select-none"
+                                style={{
+                                    background: isVoicePlaying
+                                        ? (vbActiveBg || 'linear-gradient(135deg, rgba(16,185,129,0.12) 0%, rgba(52,211,153,0.08) 100%)')
+                                        : (vbBg || 'linear-gradient(135deg, rgba(0,0,0,0.03) 0%, rgba(0,0,0,0.06) 100%)'),
+                                    border: isVoicePlaying
+                                        ? `1px solid ${vbBtn ? vbBtn + '33' : 'rgba(16,185,129,0.2)'}`
+                                        : '1px solid rgba(0,0,0,0.05)',
+                                }}
+                            >
+                                {/* Play/Pause circle */}
+                                <div className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-all duration-300"
+                                    style={{
+                                        backgroundColor: isVoicePlaying ? (vbBtn || '#10b981') : (vbBg ? 'rgba(255,255,255,0.25)' : 'rgba(148,163,184,0.2)'),
+                                        boxShadow: isVoicePlaying ? `0 2px 8px ${vbBtn ? vbBtn + '4D' : 'rgba(16,185,129,0.3)'}` : 'none',
+                                    }}
+                                >
+                                    {isVoicePlaying ? (
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3 text-white"><path d="M5.75 3a.75.75 0 0 0-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 0 0 .75-.75V3.75A.75.75 0 0 0 7.25 3h-1.5ZM12.75 3a.75.75 0 0 0-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 0 0 .75-.75V3.75a.75.75 0 0 0-.75-.75h-1.5Z" /></svg>
+                                    ) : (
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill={vbBtn || '#64748b'} className="w-3 h-3 ml-0.5"><path d="M6.3 2.84A1.5 1.5 0 0 0 4 4.11v11.78a1.5 1.5 0 0 0 2.3 1.27l9.344-5.891a1.5 1.5 0 0 0 0-2.538L6.3 2.841Z" /></svg>
+                                    )}
+                                </div>
+                                {/* Waveform bars */}
+                                <div className="flex-1 flex items-center gap-[3px] h-5 overflow-hidden">
+                                    {[4, 10, 6, 14, 8, 12, 5, 11, 7, 13, 4, 9, 6, 11, 5, 8, 10, 7, 12, 6].map((h, i) => (
+                                        <div
+                                            key={i}
+                                            className={`w-[2.5px] rounded-full transition-all duration-150 ${isVoicePlaying ? 'animate-pulse' : ''}`}
+                                            style={{
+                                                height: isVoicePlaying ? `${Math.max(3, h + Math.sin(i * 0.8) * 3)}px` : `${Math.max(2, h * 0.4)}px`,
+                                                backgroundColor: isVoicePlaying
+                                                    ? (vbWave || `rgba(16, 185, 129, ${0.4 + (h / 14) * 0.5})`)
+                                                    : (vbWave ? vbWave + '60' : `rgba(148, 163, 184, ${0.25 + (h / 14) * 0.35})`),
+                                                animationDelay: `${i * 60}ms`,
+                                                animationDuration: `${600 + (i % 3) * 200}ms`,
+                                            }}
+                                        />
+                                    ))}
+                                </div>
+                                {/* Text toggle button — always available so user can read the text */}
+                                <div
+                                    className={`shrink-0 ml-0.5 px-1.5 py-0.5 rounded-lg text-[9px] font-medium transition-all ${showVoiceText ? 'ring-1 ring-current/20' : ''}`}
+                                    style={{
+                                        color: vbText || 'rgba(100,116,139,0.7)',
+                                        backgroundColor: showVoiceText ? 'rgba(0,0,0,0.08)' : 'rgba(0,0,0,0.04)',
+                                    }}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        e.preventDefault();
+                                        setShowVoiceText(v => !v);
+                                    }}
+                                >
+                                    {showVoiceText ? '收起' : '转文字'}
+                                </div>
+                            </button>
+                            {/* Expandable text area — shows spoken text + Chinese translation */}
+                            {showVoiceText && (
+                                <div>
+                                    <div className="mt-1.5 px-3 py-2 rounded-xl text-[11px] leading-relaxed space-y-1"
+                                        style={{
+                                            backgroundColor: vbBg || 'rgba(0,0,0,0.02)',
+                                            color: vbText || '#475569',
+                                            border: '1px solid rgba(0,0,0,0.04)',
+                                        }}
+                                    >
+                                        {/* When foreign lang voice: show spoken text first, then Chinese translation */}
+                                        {voiceData.lang && voiceData.spokenText ? (
+                                            <>
+                                                <div className="whitespace-pre-wrap">{voiceData.spokenText}</div>
+                                                {(voiceData.originalText || displayContent) && (
+                                                    <div
+                                                        style={{ opacity: 0.65 }}
+                                                        className="whitespace-pre-wrap text-[10px] mt-1 pt-1 border-t border-current/10"
+                                                    >
+                                                        {voiceData.originalText || displayContent}
+                                                    </div>
+                                                )}
+                                            </>
+                                        ) : (
+                                            <>
+                                                {/* Default: show original text */}
+                                                {(voiceData.originalText || displayContent) && (
+                                                    <div className="whitespace-pre-wrap">{voiceData.originalText || displayContent}</div>
+                                                )}
+                                                {voiceData.spokenText && (
+                                                    <div
+                                                        style={{ opacity: (voiceData.originalText || displayContent) ? 0.55 : 1 }}
+                                                        className={`whitespace-pre-wrap ${(voiceData.originalText || displayContent) ? 'text-[10px] mt-1 pt-1 border-t border-current/10' : ''}`}
+                                                    >
+                                                        {voiceData.spokenText}
+                                                    </div>
+                                                )}
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    ) : voiceLoading ? (
+                        <div className="flex items-center gap-2 px-3 py-2 max-w-[200px] rounded-2xl" style={{ background: vbBg || 'linear-gradient(135deg, rgba(0,0,0,0.02) 0%, rgba(0,0,0,0.04) 100%)', border: '1px solid rgba(0,0,0,0.04)' }}>
+                            <div className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center" style={{ backgroundColor: vbBg ? 'rgba(255,255,255,0.2)' : '#f1f5f9' }}>
+                                <svg className="animate-spin h-3.5 w-3.5" style={{ color: vbBtn || '#94a3b8' }} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3.5"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                            </div>
+                            <div className="flex-1 flex items-center gap-[3px] h-5 overflow-hidden">
+                                {[...Array(14)].map((_, i) => (
+                                    <div key={i} className="w-[2.5px] rounded-full animate-pulse" style={{ height: `${3 + (i % 3) * 2}px`, backgroundColor: vbWave ? vbWave + '40' : '#e2e8f0', animationDelay: `${i * 100}ms` }} />
+                                ))}
+                            </div>
+                            <span className="text-[10px] shrink-0 animate-pulse" style={{ color: vbText || '#94a3b8' }}>合成中</span>
+                        </div>
+                    ) : hasVoiceTag ? (
+                        /* Voice tag exists in content but TTS hasn't been generated yet (e.g. app restart, or auto-TTS pending) */
+                        <button
+                            onClick={(e) => { e.stopPropagation(); e.preventDefault(); onPlayVoice?.(); }}
+                            className="flex items-center gap-2 px-3 py-2 max-w-[200px] rounded-2xl active:scale-[0.97] transition-transform"
+                            style={{ background: vbBg || 'linear-gradient(135deg, rgba(0,0,0,0.03) 0%, rgba(0,0,0,0.06) 100%)', border: '1px solid rgba(0,0,0,0.05)' }}
+                        >
+                            <div className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center" style={{ backgroundColor: vbBg ? 'rgba(255,255,255,0.25)' : 'rgba(148,163,184,0.2)' }}>
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill={vbBtn || '#64748b'} className="w-3 h-3 ml-0.5"><path d="M6.3 2.84A1.5 1.5 0 0 0 4 4.11v11.78a1.5 1.5 0 0 0 2.3 1.27l9.344-5.891a1.5 1.5 0 0 0 0-2.538L6.3 2.841Z" /></svg>
+                            </div>
+                            <div className="flex-1 flex items-center gap-[3px] h-5 overflow-hidden">
+                                {[4, 10, 6, 14, 8, 12, 5, 11, 7, 13, 4, 9, 6, 11, 5, 8, 10, 7, 12, 6].map((h, i) => (
+                                    <div key={i} className="w-[2.5px] rounded-full" style={{ height: `${Math.max(2, h * 0.4)}px`, backgroundColor: vbWave ? vbWave + '60' : `rgba(148, 163, 184, ${0.25 + (h / 14) * 0.35})` }} />
+                                ))}
+                            </div>
+                            <span className="text-[9px] shrink-0" style={{ color: vbText || 'rgba(100,116,139,0.7)' }}>语音</span>
+                        </button>
+                    ) : null}
+                </div>
+                );
+            })()}
         </div>
     );
 }, (prev, next) => {
@@ -671,7 +948,10 @@ const MessageItem = React.memo(({
            prev.selectionMode === next.selectionMode &&
            prev.isSelected === next.isSelected &&
            prev.translationEnabled === next.translationEnabled &&
-           prev.isShowingTarget === next.isShowingTarget;
+           prev.isShowingTarget === next.isShowingTarget &&
+           prev.voiceData?.url === next.voiceData?.url &&
+           prev.voiceLoading === next.voiceLoading &&
+           prev.isVoicePlaying === next.isVoicePlaying;
 });
 
 export default MessageItem;

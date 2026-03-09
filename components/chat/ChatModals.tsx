@@ -75,6 +75,14 @@ interface ChatModalsProps {
     // XHS toggle
     xhsEnabled?: boolean;
     onToggleXhs?: () => void;
+    // Voice TTS
+    chatVoiceEnabled?: boolean;
+    onToggleChatVoice?: () => void;
+    chatVoiceLang?: string;
+    onSetChatVoiceLang?: (lang: string) => void;
+    // Voice generation from long-press
+    onGenerateVoice?: () => void;
+    voiceAvailable?: boolean; // true if char has voiceProfile configured
 }
 
 const ChatModals: React.FC<ChatModalsProps> = ({
@@ -96,7 +104,9 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     onSetHistoryStart, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onDeleteMessage, onCopyMessage, onDeleteEmoji, onDeleteCategory,
     allCharacters = [], onSaveCategoryVisibility,
     translationEnabled, onToggleTranslation, translateSourceLang, translateTargetLang, onSetTranslateSourceLang, onSetTranslateLang,
-    xhsEnabled, onToggleXhs
+    xhsEnabled, onToggleXhs,
+    chatVoiceEnabled, onToggleChatVoice, chatVoiceLang, onSetChatVoiceLang,
+    onGenerateVoice, voiceAvailable
 }) => {
     const bgInputRef = useRef<HTMLInputElement>(null);
     const [visibilitySelection, setVisibilitySelection] = useState<Set<string>>(new Set());
@@ -254,6 +264,33 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                          </p>
                      </div>
 
+                     {/* Voice TTS */}
+                     <div className="pt-2 border-t border-slate-100">
+                         <div className="flex justify-between items-center cursor-pointer" onClick={onToggleChatVoice}>
+                             <label className="text-xs font-bold text-slate-400 uppercase pointer-events-none">语音消息</label>
+                             <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${chatVoiceEnabled ? 'bg-emerald-400' : 'bg-slate-200'}`}>
+                                 <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${chatVoiceEnabled ? 'translate-x-4' : ''}`}></div>
+                             </div>
+                         </div>
+                         <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+                             开启后，AI 回复自动生成语音条（需配置 MiniMax 和角色语音）。
+                         </p>
+                         {chatVoiceEnabled && (
+                             <div className="mt-3">
+                                 <label className="text-[10px] font-bold text-slate-400 mb-1.5 block">语音语种</label>
+                                 <div className="flex flex-wrap gap-1.5">
+                                     {[{v:'',l:'默认'},{v:'en',l:'English'},{v:'ja',l:'日本語'},{v:'ko',l:'한국어'},{v:'fr',l:'Français'},{v:'es',l:'Español'}].map(opt => (
+                                         <button key={opt.v} onClick={() => onSetChatVoiceLang?.(opt.v)}
+                                             className={`px-2.5 py-1 rounded-full text-[11px] font-bold transition-all ${chatVoiceLang === opt.v ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                                             {opt.l}
+                                         </button>
+                                     ))}
+                                 </div>
+                                 {chatVoiceLang && <p className="text-[10px] text-emerald-600/70 mt-1.5">选择非默认语种时，AI 台词会先翻译再生成语音。</p>}
+                             </div>
+                         )}
+                     </div>
+
                      <div className="pt-2 border-t border-slate-100">
                          <button onClick={() => setModalType('history-manager')} className="w-full py-3 bg-slate-50 text-slate-600 font-bold rounded-2xl border border-slate-200 active:scale-95 transition-transform flex items-center justify-center gap-2">
                              管理上下文 / 隐藏历史
@@ -377,6 +414,12 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                     {selectedMessage?.type === 'text' && (
                         <button onClick={onCopyMessage} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
                             复制文字
+                        </button>
+                    )}
+                    {voiceAvailable && selectedMessage?.role === 'assistant' && selectedMessage?.type === 'text' && onGenerateVoice && (
+                        <button onClick={() => { onGenerateVoice(); setModalType('none'); }} className="w-full py-3 bg-emerald-50 text-emerald-600 font-medium rounded-2xl active:bg-emerald-100 transition-colors flex items-center justify-center gap-2">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M19.114 5.636a9 9 0 0 1 0 12.728M16.463 8.288a5.25 5.25 0 0 1 0 7.424M6.75 8.25l4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z" /></svg>
+                            转换语音
                         </button>
                     )}
                     <button onClick={onDeleteMessage} className="w-full py-3 bg-red-50 text-red-500 font-medium rounded-2xl active:bg-red-100 transition-colors flex items-center justify-center gap-2">

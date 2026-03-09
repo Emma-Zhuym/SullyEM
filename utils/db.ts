@@ -5,11 +5,11 @@ import {
     CharacterProfile, ChatTheme, Message, UserProfile,
     Task, Anniversary, DiaryEntry, RoomTodo, RoomNote,
     GalleryImage, FullBackupData, GroupProfile, SocialPost, StudyCourse, GameSession, Worldbook, NovelBook, Emoji, EmojiCategory,
-    BankTransaction, SavingsGoal, BankFullState, DollhouseState, XhsStockImage, XhsActivityRecord
+    BankTransaction, SavingsGoal, BankFullState, DollhouseState, XhsStockImage, XhsActivityRecord, SongSheet, QuizSession
 } from '../types';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 35; // Bumped for XHS Activities
+const DB_VERSION = 37; // Bumped for Quiz/Practice Book
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -36,6 +36,8 @@ const STORE_BANK_TX = 'bank_transactions';
 const STORE_BANK_DATA = 'bank_data';
 const STORE_XHS_STOCK = 'xhs_stock';
 const STORE_XHS_ACTIVITIES = 'xhs_activities';
+const STORE_SONGS = 'songs';
+const STORE_QUIZZES = 'quizzes';
 
 export interface ScheduledMessage {
     id: string;
@@ -143,6 +145,9 @@ const openDB = (): Promise<IDBDatabase> => {
           const xhsActStore = db.createObjectStore(STORE_XHS_ACTIVITIES, { keyPath: 'id' });
           xhsActStore.createIndex('characterId', 'characterId', { unique: false });
       }
+
+      createStore(STORE_SONGS, { keyPath: 'id' });
+      createStore(STORE_QUIZZES, { keyPath: 'id' });
     };
   });
 };
@@ -944,6 +949,31 @@ export const DB = {
       transaction.objectStore(STORE_COURSES).delete(id);
   },
 
+  // --- Quiz / Practice Book ---
+  getAllQuizzes: async (): Promise<QuizSession[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_QUIZZES)) return [];
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_QUIZZES, 'readonly');
+          const store = transaction.objectStore(STORE_QUIZZES);
+          const request = store.getAll();
+          request.onsuccess = () => resolve(request.result || []);
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  saveQuiz: async (quiz: QuizSession): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_QUIZZES, 'readwrite');
+      transaction.objectStore(STORE_QUIZZES).put(quiz);
+  },
+
+  deleteQuiz: async (id: string): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_QUIZZES, 'readwrite');
+      transaction.objectStore(STORE_QUIZZES).delete(id);
+  },
+
   getAllGames: async (): Promise<GameSession[]> => {
       const db = await openDB();
       if (!db.objectStoreNames.contains(STORE_GAMES)) return [];
@@ -1089,6 +1119,31 @@ export const DB = {
       transaction.objectStore(STORE_BANK_TX).delete(id);
   },
 
+  // --- Songs (Songwriting App) ---
+  getAllSongs: async (): Promise<SongSheet[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_SONGS)) return [];
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_SONGS, 'readonly');
+          const store = transaction.objectStore(STORE_SONGS);
+          const request = store.getAll();
+          request.onsuccess = () => resolve(request.result || []);
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  saveSong: async (song: SongSheet): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_SONGS, 'readwrite');
+      transaction.objectStore(STORE_SONGS).put(song);
+  },
+
+  deleteSong: async (id: string): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_SONGS, 'readwrite');
+      transaction.objectStore(STORE_SONGS).delete(id);
+  },
+
   getRawStoreData: async (storeName: string): Promise<any[]> => {
       const db = await openDB();
       if (!db.objectStoreNames.contains(storeName)) return [];
@@ -1117,7 +1172,7 @@ export const DB = {
           });
       };
 
-      const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages] = await Promise.all([
+      const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, songs, quizzes] = await Promise.all([
           getAllFromStore(STORE_CHARACTERS),
           getAllFromStore(STORE_MESSAGES),
           getAllFromStore(STORE_THEMES),
@@ -1142,6 +1197,8 @@ export const DB = {
           getAllFromStore(STORE_BANK_DATA),
           getAllFromStore(STORE_XHS_ACTIVITIES),
           getAllFromStore(STORE_XHS_STOCK),
+          getAllFromStore(STORE_SONGS),
+          getAllFromStore(STORE_QUIZZES),
       ]);
 
       const userProfile = userProfiles.length > 0 ? {
@@ -1159,7 +1216,9 @@ export const DB = {
           bankDollhouse: dollhouseRecord?.data || undefined,
           bankTransactions: bankTx,
           xhsActivities,
-          xhsStockImages
+          xhsStockImages,
+          songs,
+          quizSessions: quizzes
       };
   },
 
@@ -1170,9 +1229,10 @@ export const DB = {
           STORE_CHARACTERS, STORE_MESSAGES, STORE_THEMES, STORE_EMOJIS, STORE_EMOJI_CATEGORIES,
           STORE_ASSETS, STORE_GALLERY, STORE_USER, STORE_DIARIES,
           STORE_TASKS, STORE_ANNIVERSARIES, STORE_ROOM_TODOS, STORE_ROOM_NOTES,
-          STORE_GROUPS, STORE_JOURNAL_STICKERS, STORE_SOCIAL_POSTS, STORE_COURSES, STORE_GAMES, STORE_WORLDBOOKS, STORE_NOVELS,
+          STORE_GROUPS, STORE_JOURNAL_STICKERS, STORE_SOCIAL_POSTS, STORE_COURSES, STORE_GAMES, STORE_WORLDBOOKS, STORE_NOVELS, STORE_SONGS,
           STORE_BANK_TX, STORE_BANK_DATA,
-          STORE_XHS_ACTIVITIES, STORE_XHS_STOCK
+          STORE_XHS_ACTIVITIES, STORE_XHS_STOCK,
+          STORE_QUIZZES
       ].filter(name => db.objectStoreNames.contains(name));
 
       const tx = db.transaction(availableStores, 'readwrite');
@@ -1282,6 +1342,8 @@ export const DB = {
       if (data.games) clearAndAdd(STORE_GAMES, data.games);
       if (data.worldbooks) clearAndAdd(STORE_WORLDBOOKS, data.worldbooks);
       if (data.novels) clearAndAdd(STORE_NOVELS, data.novels);
+      if (data.songs) clearAndAdd(STORE_SONGS, data.songs);
+      if (data.quizSessions) clearAndAdd(STORE_QUIZZES, data.quizSessions);
       if (data.bankTransactions) clearAndAdd(STORE_BANK_TX, data.bankTransactions);
       if (data.xhsActivities) clearAndAdd(STORE_XHS_ACTIVITIES, data.xhsActivities);
       if (data.xhsStockImages) clearAndAdd(STORE_XHS_STOCK, data.xhsStockImages);

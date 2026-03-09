@@ -813,9 +813,10 @@ ${recentGroupMsgs}
                     if (!action.content) continue;
                 }
 
-                // 1. Check for Emoji Command
-                const emojiMatch = action.content.match(/\[\[SEND_EMOJI:\s*(.*?)\]\]/);
-                if (emojiMatch) {
+                // 1. Check for Emoji Commands (handle multiple emojis)
+                const emojiRegex = /\[\[SEND_EMOJI:\s*(.*?)\]\]/g;
+                let emojiMatch;
+                while ((emojiMatch = emojiRegex.exec(action.content)) !== null) {
                     const emojiName = emojiMatch[1].trim();
                     const foundEmoji = emojis.find(e => e.name === emojiName);
                     if (foundEmoji) {
@@ -828,7 +829,6 @@ ${recentGroupMsgs}
                         });
                         setMessages(await DB.getGroupMessages(activeGroup.id));
                         await new Promise(r => setTimeout(r, 800)); // Delay after emoji
-                        continue; // Skip text processing if it was purely an emoji command (or handled here)
                     }
                 }
 

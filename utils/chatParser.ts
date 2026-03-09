@@ -72,6 +72,10 @@ export const ChatParser = {
      */
     sanitize: (text: string): string => {
         return text
+            // Convert literal \n (backslash + n) the AI sometimes outputs into real newlines
+            .replace(/\\n/g, '\n')
+            // Strip source tags [聊天]/[通话]/[约会] leaked from history context → newline to preserve splits
+            .replace(/\s*\[(?:聊天|通话|约会)\]\s*/g, '\n')
             // Strip leaked timestamps from chat history context:
             // [2026-02-11 13:52] format (bracketed, from history entries)
             .replace(/\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\]\s*/g, '')
@@ -160,21 +164,25 @@ export const ChatParser = {
     // Fallback: if no line breaks and text is long, split on spaces between CJK characters
     //   (Chinese text normally has no spaces, so "汉字 汉字" means the AI intended a line break)
     chunkText: (text: string): string[] => {
-        // Try line breaks first
-        let chunks = text.split(/(?:\r\n|\r|\n|\u2028|\u2029)+/)
+        // CJK character + punctuation ranges (Chinese text normally has no spaces between these)
+        const CJK = '\\u4e00-\\u9fff\\u3400-\\u4dbf\\u3000-\\u303f\\uff00-\\uffef\\u2000-\\u206f\\u2e80-\\u2eff\\u3001-\\u3003\\u2018-\\u201f\\u300a-\\u300f\\uff01-\\uff0f\\uff1a-\\uff20';
+        const cjkSpaceRe = new RegExp(`(?<=[${CJK}])\\s+(?=[${CJK}])`);
+
+        // 1. Split on line breaks (AI decides where to break)
+        const lineChunks = text.split(/(?:\r\n|\r|\n|\u2028|\u2029)+/)
             .map(c => c.trim())
             .filter(c => c.length > 0);
 
-        // Fallback: no line breaks found and text is long enough
-        // Split on spaces that sit between CJK characters/punctuation (中文里不该有空格)
-        if (chunks.length <= 1 && text.trim().length > 50) {
-            // Match a CJK char/punct, then space(s), then CJK char
-            // Split AFTER the first CJK char + space boundary using lookbehind/lookahead
-            chunks = text.split(/(?<=[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef\u2000-\u206f\u2e80-\u2eff\u3001-\u3003\u2018-\u201f\u300a-\u300f\uff01-\uff0f\uff1a-\uff20])\s+(?=[\u4e00-\u9fff\u3400-\u4dbf])/)
+        // 2. For each chunk, also split on spaces between CJK chars/punctuation
+        //    (中文里不该有空格, so "汉字 汉字" means the AI intended a bubble break)
+        const result: string[] = [];
+        for (const chunk of lineChunks) {
+            const sub = chunk.split(cjkSpaceRe)
                 .map(c => c.trim())
                 .filter(c => c.length > 0);
+            result.push(...sub);
         }
 
-        return chunks;
+        return result;
     }
 }

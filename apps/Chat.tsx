@@ -12,6 +12,9 @@ import ChatInputArea from '../components/chat/ChatInputArea';
 import ChatModals from '../components/chat/ChatModals';
 import Modal from '../components/os/Modal';
 import { useChatAI } from '../hooks/useChatAI';
+import { synthesizeSpeech, cleanTextForTts } from '../utils/minimaxTts';
+
+const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 
 const Chat: React.FC = () => {
     const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig } = useOS();
@@ -32,6 +35,7 @@ const Chat: React.FC = () => {
     const scrollThrottleRef = useRef(0);
     const visibleCountRef = useRef(30);
     const activeCharIdRef = useRef(activeCharacterId);
+    const charRef = useRef<typeof char>(null as any);
 
     // Reply Logic
     const [replyTarget, setReplyTarget] = useState<Message | null>(null);
@@ -72,6 +76,7 @@ const Chat: React.FC = () => {
     const [showingTargetIds, setShowingTargetIds] = useState<Set<number>>(new Set());
 
     const char = characters.find(c => c.id === activeCharacterId) || characters[0];
+    charRef.current = char; // Keep ref in sync for async callbacks
     const currentThemeId = char?.bubbleStyle || 'default';
     const activeTheme = useMemo(() => customThemes.find(t => t.id === currentThemeId) || PRESET_THEMES[currentThemeId] || PRESET_THEMES.default, [currentThemeId, customThemes]);
     const draftKey = `chat_draft_${activeCharacterId}`;
@@ -88,6 +93,9 @@ const Chat: React.FC = () => {
         return emojis.filter(e => !e.categoryId || !hiddenIds.has(e.categoryId));
     }, [emojis, categories, visibleCategories]);
 
+
+
+
     // --- Initialize Hook ---
     const { isTyping, recallStatus, searchStatus, diaryStatus, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI } = useChatAI({
         char,
@@ -103,6 +111,146 @@ const Chat: React.FC = () => {
             ? { enabled: true, sourceLang: translateSourceLang, targetLang: translateTargetLang }
             : undefined
     });
+
+    // --- Voice TTS for chat messages ---
+    interface VoiceData { url: string; originalText: string; spokenText?: string; lang?: string; }
+    const [voiceDataMap, setVoiceDataMap] = useState<Record<number, VoiceData>>({});
+    const [voiceLoading, setVoiceLoading] = useState<Set<number>>(new Set());
+    const [playingMsgId, setPlayingMsgId] = useState<number | null>(null);
+    const chatAudioRef = useRef<HTMLAudioElement | null>(null);
+    const prevIsTypingRef = useRef(false);
+
+    const handlePlayVoice = (msgId: number) => {
+        const data = voiceDataMap[msgId];
+        if (!data) {
+            // No voice data yet — trigger TTS generation (e.g. placeholder voice bar clicked)
+            const msg = messages.find(m => m.id === msgId);
+            if (msg) handleManualTts(msg, false);
+            return;
+        }
+        if (!chatAudioRef.current) chatAudioRef.current = new Audio();
+        const audio = chatAudioRef.current;
+        if (playingMsgId === msgId) {
+            audio.pause();
+            setPlayingMsgId(null);
+            return;
+        }
+        audio.src = data.url;
+        audio.onended = () => setPlayingMsgId(null);
+        audio.play().catch(() => {});
+        setPlayingMsgId(msgId);
+    };
+
+    /** Extract <语音>...</语音> tag content from a message, if present */
+    const extractVoiceTag = (content: string): string | null => {
+        const match = content.match(/<[语語]音>([\s\S]*?)<\/[语語]音>/);
+        return match ? match[1].trim() : null;
+    };
+
+    const handleManualTts = async (msg: Message, autoTriggered = false) => {
+        if (voiceDataMap[msg.id] || voiceLoading.has(msg.id)) return;
+
+        // Check if message contains a <语音> tag (AI chose to send voice)
+        const voiceTagContent = extractVoiceTag(msg.content);
+
+        // Auto-TTS: only generate voice when AI explicitly used <语音> tag
+        if (autoTriggered && !voiceTagContent) return;
+
+        setVoiceLoading(prev => new Set(prev).add(msg.id));
+        try {
+            let spokenText: string;
+            let originalText: string;
+            const voiceLang = char.chatVoiceLang || '';
+
+            if (voiceTagContent) {
+                // AI already provided the spoken text (possibly translated) in <语音> tag
+                spokenText = cleanTextForTts(`<语音>${voiceTagContent}</语音>`);
+                // originalText = text OUTSIDE the voice tag (the display/Chinese text)
+                const textOutsideTag = msg.content.replace(/<[语語]音>[\s\S]*?<\/[语語]音>/g, '').trim();
+                originalText = textOutsideTag ? cleanTextForTts(textOutsideTag) : '';
+                // If voice lang is set and no Chinese text outside the tag, translate spoken text back to Chinese
+                if (voiceLang && !originalText && spokenText) {
+                    try {
+                        const transRes = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
+                            body: JSON.stringify({
+                                model: apiConfig.model,
+                                messages: [{ role: 'system', content: '把以下内容翻译成中文。只输出翻译结果，不要任何解释。' }, { role: 'user', content: spokenText }],
+                                temperature: 0.3,
+                            }),
+                        });
+                        const transData = await transRes.json();
+                        const chineseText = transData?.choices?.[0]?.message?.content?.trim();
+                        if (chineseText) originalText = chineseText;
+                    } catch { /* keep originalText empty */ }
+                }
+            } else {
+                // Manual TTS (long-press): no <语音> tag, use old behavior with translation
+                originalText = cleanTextForTts(msg.content);
+                if (!originalText || originalText.length < 2) return;
+                spokenText = originalText;
+                if (voiceLang) {
+                    const langLabel = VOICE_LANG_LABELS[voiceLang] || voiceLang;
+                    try {
+                        const transRes = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
+                            body: JSON.stringify({
+                                model: apiConfig.model,
+                                messages: [{ role: 'system', content: `Translate the following text to ${langLabel}. Output ONLY the translation, nothing else.` }, { role: 'user', content: originalText }],
+                                temperature: 0.3,
+                            }),
+                        });
+                        const transData = await transRes.json();
+                        const translated = transData?.choices?.[0]?.message?.content?.trim();
+                        if (translated) spokenText = translated;
+                    } catch { /* use original */ }
+                }
+            }
+
+            if (!spokenText || spokenText.length < 2) return;
+
+            const blobUrl = await synthesizeSpeech(spokenText, char, apiConfig, {
+                languageBoost: voiceLang || undefined,
+                groupId: apiConfig.minimaxGroupId || undefined,
+            });
+            setVoiceDataMap(prev => ({ ...prev, [msg.id]: { url: blobUrl, originalText, spokenText: voiceTagContent ? spokenText : (voiceLang ? spokenText : undefined), lang: voiceLang || undefined } }));
+            // Auto-play
+            if (!chatAudioRef.current) chatAudioRef.current = new Audio();
+            chatAudioRef.current.src = blobUrl;
+            chatAudioRef.current.onended = () => setPlayingMsgId(null);
+            chatAudioRef.current.play().catch(() => {});
+            setPlayingMsgId(msg.id);
+        } catch (err: any) {
+            addToast(`语音生成失败: ${err?.message || '未知错误'}`, 'error');
+        } finally {
+            setVoiceLoading(prev => { const next = new Set(prev); next.delete(msg.id); return next; });
+        }
+    };
+
+    // --- Auto-TTS: when chatVoiceEnabled, auto-generate voice when AI uses <语音> tag ---
+    // Scans ALL recent assistant messages (not just the last one) because chunkText
+    // may split a single AI response into multiple messages, and the <语音> tag could
+    // end up in any chunk — not necessarily the final one.
+    useEffect(() => {
+        const wasTyping = prevIsTypingRef.current;
+        prevIsTypingRef.current = isTyping;
+        // Only trigger when AI just finished typing (wasTyping → !isTyping)
+        if (!wasTyping || isTyping) return;
+        if (!char.chatVoiceEnabled) return;
+        const voiceProfile = char.voiceProfile;
+        if (!voiceProfile?.voiceId && (!voiceProfile?.timberWeights || voiceProfile.timberWeights.length === 0)) return;
+        // Scan recent assistant messages for unprocessed <语音> tags
+        for (let i = messages.length - 1; i >= 0; i--) {
+            const msg = messages[i];
+            // Stop scanning once we hit a non-assistant message (end of current AI response batch)
+            if (msg.role !== 'assistant') break;
+            if (msg.type !== 'text') continue;
+            if (voiceDataMap[msg.id] || voiceLoading.has(msg.id)) continue;
+            handleManualTts(msg, true);
+        }
+    }, [isTyping]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const canReroll = !isTyping && messages.length > 0 && messages[messages.length - 1].role === 'assistant';
 
@@ -133,20 +281,40 @@ const Chat: React.FC = () => {
         if (!activeCharacterId) return;
 
         const charIdAtStart = activeCharacterId;
-        const allMsgs = await DB.getMessagesByCharId(activeCharacterId);
+        try {
+            const allMsgs = await DB.getMessagesByCharId(activeCharacterId);
 
-        // Guard against stale async results: if the user switched characters
-        // while the DB query was in flight, discard this result.
-        if (activeCharIdRef.current !== charIdAtStart) return;
+            // Guard against stale async results: if the user switched characters
+            // while the DB query was in flight, discard this result.
+            if (activeCharIdRef.current !== charIdAtStart) return;
 
-        const chatScopeMsgs = allMsgs
-            .filter(m => m.metadata?.source !== 'date')
-            .filter(m => !char?.hideBeforeMessageId || m.id >= char.hideBeforeMessageId)
-            .filter(m => !(char?.hideSystemLogs && m.role === 'system'));
+            // Use ref to always get the CURRENT char (avoids stale closure)
+            const currentChar = charRef.current;
+            const chatScopeMsgs = allMsgs
+                .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
+                .filter(m => !currentChar?.hideBeforeMessageId || m.id >= currentChar.hideBeforeMessageId)
+                .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system'));
 
-        setTotalMsgCount(chatScopeMsgs.length);
-        setMessages(chatScopeMsgs.slice(-requestedVisibleCount));
-    }, [activeCharacterId, char?.hideBeforeMessageId, char?.hideSystemLogs]);
+            setTotalMsgCount(chatScopeMsgs.length);
+            setMessages(chatScopeMsgs.slice(-requestedVisibleCount));
+        } catch (e) {
+            // DB read failed — retry once after a short delay
+            if (activeCharIdRef.current !== charIdAtStart) return;
+            await new Promise(r => setTimeout(r, 200));
+            if (activeCharIdRef.current !== charIdAtStart) return;
+            try {
+                const retryMsgs = await DB.getMessagesByCharId(activeCharacterId);
+                if (activeCharIdRef.current !== charIdAtStart) return;
+                const currentChar = charRef.current;
+                const chatScopeMsgs = retryMsgs
+                    .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
+                    .filter(m => !currentChar?.hideBeforeMessageId || m.id >= currentChar.hideBeforeMessageId)
+                    .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system'));
+                setTotalMsgCount(chatScopeMsgs.length);
+                setMessages(chatScopeMsgs.slice(-requestedVisibleCount));
+            } catch { /* give up silently */ }
+        }
+    }, [activeCharacterId]);
 
     useEffect(() => {
         if (activeCharacterId) {
@@ -184,7 +352,7 @@ const Chat: React.FC = () => {
         if (modalType === 'history-manager' && activeCharacterId) {
             DB.getMessagesByCharId(activeCharacterId).then(allMsgs => {
                 const filtered = allMsgs
-                    .filter(m => m.metadata?.source !== 'date')
+                    .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
                     .filter(m => !(char?.hideSystemLogs && m.role === 'system'));
                 setAllHistoryMessages(filtered);
             });
@@ -747,11 +915,11 @@ const Chat: React.FC = () => {
     };
 
     const displayMessages = useMemo(() => messages
-        .filter(m => m.metadata?.source !== 'date')
-        .filter(m => !char.hideBeforeMessageId || m.id >= char.hideBeforeMessageId)
-        .filter(m => { if (char.hideSystemLogs && m.role === 'system') return false; return true; })
+        .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
+        .filter(m => !char?.hideBeforeMessageId || m.id >= char.hideBeforeMessageId)
+        .filter(m => { if (char?.hideSystemLogs && m.role === 'system') return false; return true; })
         .slice(-visibleCount),
-        [messages, char?.hideBeforeMessageId, char?.hideSystemLogs, visibleCount]);
+        [messages, char?.id, char?.hideBeforeMessageId, char?.hideSystemLogs, visibleCount]);
 
     const collapsedCount = Math.max(0, totalMsgCount - displayMessages.length);
 
@@ -824,6 +992,12 @@ const Chat: React.FC = () => {
                 onSetTranslateLang={(lang: string) => { setTranslateTargetLang(lang); localStorage.setItem('chat_translate_lang', lang); setShowingTargetIds(new Set()); }}
                 xhsEnabled={!!char.xhsEnabled}
                 onToggleXhs={() => updateCharacter(char.id, { xhsEnabled: !char.xhsEnabled })}
+                chatVoiceEnabled={!!char.chatVoiceEnabled}
+                onToggleChatVoice={() => updateCharacter(char.id, { chatVoiceEnabled: !char.chatVoiceEnabled })}
+                chatVoiceLang={char.chatVoiceLang || ''}
+                onSetChatVoiceLang={(lang: string) => updateCharacter(char.id, { chatVoiceLang: lang })}
+                voiceAvailable={!!(char.voiceProfile?.voiceId || char.voiceProfile?.timberWeights?.length)}
+                onGenerateVoice={selectedMessage ? () => handleManualTts(selectedMessage) : undefined}
              />
              
              <ChatHeader 
@@ -872,6 +1046,10 @@ const Chat: React.FC = () => {
                             translationEnabled={translationEnabled && m.type === 'text' && m.role === 'assistant'}
                             isShowingTarget={showingTargetIds.has(m.id)}
                             onTranslateToggle={handleTranslateToggle}
+                            voiceData={voiceDataMap[m.id]}
+                            voiceLoading={voiceLoading.has(m.id)}
+                            isVoicePlaying={playingMsgId === m.id}
+                            onPlayVoice={() => handlePlayVoice(m.id)}
                         />
                     );
                 })}
@@ -906,7 +1084,7 @@ const Chat: React.FC = () => {
             <div className="relative z-40">
                 {replyTarget && (
                     <div className="flex items-center justify-between px-4 py-2 bg-slate-50 border-b border-slate-200 text-xs text-slate-500">
-                        <div className="flex items-center gap-2 truncate"><span className="font-bold text-slate-700">正在回复:</span><span className="truncate max-w-[200px]">{replyTarget.content}</span></div>
+                        <div className="flex items-center gap-2 truncate"><span className="font-bold text-slate-700">正在回复:</span><span className="truncate max-w-[200px]">{replyTarget.content.length > 10 ? replyTarget.content.slice(0, 10) + '...' : replyTarget.content}</span></div>
                         <button onClick={() => setReplyTarget(null)} className="p-1 text-slate-400 hover:text-slate-600">×</button>
                     </div>
                 )}
@@ -933,6 +1111,7 @@ const Chat: React.FC = () => {
                     canReroll={canReroll}
                 />
             </div>
+
 
             {/* Forward Modal */}
             <Modal isOpen={showForwardModal} title="转发聊天记录" onClose={() => setShowForwardModal(false)}>

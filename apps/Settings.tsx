@@ -21,6 +21,8 @@ const Settings: React.FC = () => {
   const [localKey, setLocalKey] = useState(apiConfig.apiKey);
   const [localUrl, setLocalUrl] = useState(apiConfig.baseUrl);
   const [localModel, setLocalModel] = useState(apiConfig.model);
+  const [localMiniMaxKey, setLocalMiniMaxKey] = useState(apiConfig.minimaxApiKey || '');
+  const [localMiniMaxGroupId, setLocalMiniMaxGroupId] = useState(apiConfig.minimaxGroupId || '');
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [newPresetName, setNewPresetName] = useState('');
   
@@ -64,12 +66,16 @@ const Settings: React.FC = () => {
       setLocalUrl(apiConfig.baseUrl);
       setLocalKey(apiConfig.apiKey);
       setLocalModel(apiConfig.model);
+      setLocalMiniMaxKey(apiConfig.minimaxApiKey || '');
+      setLocalMiniMaxGroupId(apiConfig.minimaxGroupId || '');
   }, [apiConfig]);
 
   const loadPreset = (preset: typeof apiPresets[0]) => {
       setLocalUrl(preset.config.baseUrl);
       setLocalKey(preset.config.apiKey);
       setLocalModel(preset.config.model);
+      // MiniMax settings are NOT overwritten by presets — typically one user has
+      // only one MiniMax account regardless of which LLM API preset they use.
       addToast(`已加载配置: ${preset.name}`, 'info');
   };
 
@@ -78,7 +84,11 @@ const Settings: React.FC = () => {
           addToast('请输入预设名称', 'error');
           return;
       }
-      addApiPreset(newPresetName, { baseUrl: localUrl, apiKey: localKey, model: localModel });
+      addApiPreset(newPresetName, {
+        baseUrl: localUrl,
+        apiKey: localKey,
+        model: localModel,
+      });
       setNewPresetName('');
       setShowPresetModal(false);
       addToast('预设已保存', 'success');
@@ -87,6 +97,8 @@ const Settings: React.FC = () => {
   const handleSaveApi = () => {
     updateApiConfig({ 
       apiKey: localKey, 
+      minimaxApiKey: localMiniMaxKey,
+      minimaxGroupId: localMiniMaxGroupId,
       baseUrl: localUrl, 
       model: localModel
     });
@@ -272,13 +284,13 @@ const Settings: React.FC = () => {
       }
   };
 
-  // 测试小红书 MCP 连接
+  // 测试小红书 Bridge 连接
   const testXhsMcp = async () => {
       if (!rtXhsMcpUrl) {
-          setRtTestStatus('请填写 MCP Server URL');
+          setRtTestStatus('请填写 Bridge Server URL');
           return;
       }
-      setRtTestStatus('正在连接 MCP Server...');
+      setRtTestStatus('正在连接 Bridge Server...');
       try {
           const result = await XhsMcpClient.testConnection(rtXhsMcpUrl);
           if (result.connected) {
@@ -286,11 +298,9 @@ const Settings: React.FC = () => {
               const loginInfo = result.loggedIn
                   ? ` | ${result.nickname ? `账号: ${result.nickname}` : '已登录'}${result.userId ? ` (ID: ${result.userId})` : ''}`
                   : ' | ⚠️ 未登录，请先在浏览器中登录小红书';
-              setRtTestStatus(`✅ MCP 连接成功! ${toolCount} 个工具可用${loginInfo}`);
-              // 自动填充昵称和userId（如果用户还没手动填过）
+              setRtTestStatus(`✅ 连接成功! ${toolCount} 个功能可用${loginInfo}`);
               if (result.nickname && !rtXhsNickname) setRtXhsNickname(result.nickname);
               if (result.userId && !rtXhsUserId) setRtXhsUserId(result.userId);
-              // 保存登录信息
               updateRealtimeConfig({
                   xhsMcpConfig: {
                       enabled: rtXhsMcpEnabled,
@@ -431,6 +441,18 @@ const Settings: React.FC = () => {
                 <div className="group">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">Key</label>
                     <input type="password" value={localKey} onChange={(e) => setLocalKey(e.target.value)} placeholder="sk-..." className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                </div>
+
+                <div className="group">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">MiniMax Key (可选)</label>
+                    <input type="password" value={localMiniMaxKey} onChange={(e) => setLocalMiniMaxKey(e.target.value)} placeholder="MiniMax API Secret（留空则复用 Key）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                    <p className="text-[11px] text-slate-400 mt-1 pl-1">电话 / 音色查询优先使用这个 Key，空着时回退通用 Key。</p>
+                </div>
+
+                <div className="group">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">MiniMax Group ID (可选)</label>
+                    <input type="text" value={localMiniMaxGroupId} onChange={(e) => setLocalMiniMaxGroupId(e.target.value)} placeholder="group_id（部分账号/模型需要）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                    <p className="text-[11px] text-slate-400 mt-1 pl-1">如控制台给了 group_id，请填这里；会透传到 TTS 请求体和代理日志。</p>
                 </div>
 
                 <div className="pt-2">
@@ -685,12 +707,12 @@ const Settings: React.FC = () => {
                   )}
               </div>
 
-              {/* 小红书 MCP */}
+              {/* 小红书自动化 */}
               <div className="bg-red-50/50 p-4 rounded-2xl space-y-3">
                   <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                           <span className="text-lg">📕</span>
-                          <span className="text-sm font-bold text-red-700">小红书 MCP</span>
+                          <span className="text-sm font-bold text-red-700">小红书</span>
                           <span className="text-[9px] bg-red-100 text-red-500 px-1.5 py-0.5 rounded-full">浏览器自动化</span>
                       </div>
                       <label className="relative inline-flex items-center cursor-pointer">
@@ -699,19 +721,19 @@ const Settings: React.FC = () => {
                       </label>
                   </div>
                   <p className="text-[10px] text-red-500/70 leading-relaxed">
-                      通过 MCP Server（浏览器自动化）操作小红书。角色可以搜索、浏览、发帖、评论。
+                      角色可以搜索、浏览、发帖、评论小红书。支持两种后端，根据 URL 自动切换。
                   </p>
                   {rtXhsMcpEnabled && (
                       <div className="space-y-2">
                           <div>
-                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">MCP Server URL</label>
+                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">服务器 URL</label>
                               <input value={rtXhsMcpUrl} onChange={e => setRtXhsMcpUrl(e.target.value)} className="w-full bg-white/80 border border-red-200 rounded-xl px-3 py-2 text-[11px] font-mono" placeholder="http://localhost:18060/mcp" />
                           </div>
-                          <button onClick={testXhsMcp} className="w-full py-2 bg-red-100 text-red-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试 MCP 连接</button>
+                          <button onClick={testXhsMcp} className="w-full py-2 bg-red-100 text-red-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试连接</button>
                           <div className="grid grid-cols-2 gap-2">
                               <div>
                                   <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">小红书昵称</label>
-                                  <input value={rtXhsNickname} onChange={e => setRtXhsNickname(e.target.value)} className="w-full bg-white/80 border border-red-200 rounded-xl px-3 py-2 text-[11px]" placeholder="手动填写（MCP检测可能不准）" />
+                                  <input value={rtXhsNickname} onChange={e => setRtXhsNickname(e.target.value)} className="w-full bg-white/80 border border-red-200 rounded-xl px-3 py-2 text-[11px]" placeholder="手动填写" />
                               </div>
                               <div>
                                   <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">用户 ID</label>
@@ -719,9 +741,14 @@ const Settings: React.FC = () => {
                               </div>
                           </div>
                           <p className="text-[10px] text-red-500/70 leading-relaxed">
-                              需要部署 xiaohongshu-mcp 并保持登录。在角色聊天设置中单独开关小红书。<br/>
-                              昵称和用户ID用于"查看自己的主页"功能。MCP自动检测可能不准，建议手动填写。<br/>
-                              项目: github.com/xpzouying/xiaohongshu-mcp
+                              <b>MCP 模式（默认，推荐）:</b> 下载 xiaohongshu-mcp + 运行脚本即可<br/>
+                              URL 填: http://localhost:18060/mcp（通过代理则 18061/mcp）<br/>
+                              <br/>
+                              <b>Skills 模式（高级）:</b> 额外支持视频发布、长文<br/>
+                              URL 填: http://localhost:18061/api<br/>
+                              需安装 Python + xiaohongshu-skills + 运行 xhs-bridge.mjs<br/>
+                              <br/>
+                              系统根据 URL 结尾自动判断模式（/mcp 或 /api）
                           </p>
                       </div>
                   )}

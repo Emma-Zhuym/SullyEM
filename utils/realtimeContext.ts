@@ -50,7 +50,7 @@ export interface RealtimeConfig {
     feishuBaseId?: string;
     feishuTableId?: string;
 
-    // 小红书配置 (MCP)
+    // 小红书配置 (xiaohongshu-skills)
     xhsEnabled?: boolean;
     xhsMcpConfig?: { enabled: boolean; serverUrl: string };
 

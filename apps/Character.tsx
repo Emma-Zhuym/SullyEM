@@ -2,6 +2,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useOS } from '../context/OSContext';
 import { AppID, CharacterProfile, CharacterExportData, UserImpression, MemoryFragment } from '../types';
+import { SlidersHorizontal } from '@phosphor-icons/react';
 import Modal from '../components/os/Modal';
 import { processImage } from '../utils/file';
 import { Capacitor } from '@capacitor/core';
@@ -13,6 +14,8 @@ import { DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import ImpressionPanel from '../components/character/ImpressionPanel';
 import MemoryArchivist from '../components/character/MemoryArchivist';
 import { safeResponseJson } from '../utils/safeApi';
+import { fetchMiniMaxVoices, MiniMaxVoiceItem } from '../utils/minimaxVoice';
+import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 
 const CharacterCard: React.FC<{
     char: CharacterProfile;
@@ -86,6 +89,49 @@ const Character: React.FC = () => {
 
   // Impression State
   const [isGeneratingImpression, setIsGeneratingImpression] = useState(false);
+  const [isLoadingVoices, setIsLoadingVoices] = useState(false);
+  const [voiceOptions, setVoiceOptions] = useState<Record<'system' | 'voice_cloning' | 'voice_generation', MiniMaxVoiceItem[]>>({
+      system: [],
+      voice_cloning: [],
+      voice_generation: [],
+  });
+
+  const handleLoadMiniMaxVoices = async () => {
+      const minimaxApiKey = resolveMiniMaxApiKey(apiConfig);
+      if (!minimaxApiKey) {
+          addToast('请先在设置中填入 MiniMax API Key（未填写时会回退使用通用 API Key）', 'error');
+          return;
+      }
+
+      setIsLoadingVoices(true);
+      try {
+          const result = await fetchMiniMaxVoices(minimaxApiKey, 'all');
+          setVoiceOptions({
+              system: result.system_voice,
+              voice_cloning: result.voice_cloning,
+              voice_generation: result.voice_generation,
+          });
+          addToast(`已拉取音色：系统 ${result.system_voice.length} / 复刻 ${result.voice_cloning.length} / 文生 ${result.voice_generation.length}`, 'success');
+      } catch (e: any) {
+          console.error('[MiniMax Voice] load failed', e);
+          addToast(e?.message || '拉取 MiniMax 音色失败', 'error');
+      } finally {
+          setIsLoadingVoices(false);
+      }
+  };
+
+  const applyVoiceToCharacter = (voice: MiniMaxVoiceItem, source: 'system' | 'voice_cloning' | 'voice_generation') => {
+      if (!formData) return;
+      handleChange('voiceProfile', {
+          provider: 'minimax',
+          voiceId: voice.voice_id,
+          voiceName: voice.voice_name || '',
+          source,
+          model: formData.voiceProfile?.model || 'speech-2.8-hd',
+          notes: formData.voiceProfile?.notes || '',
+      });
+      addToast(`已应用音色：${voice.voice_name || voice.voice_id}`, 'success');
+  };
 
   // Load archive prompts from localStorage (shared with ChatApp)
   useEffect(() => {
@@ -797,6 +843,87 @@ ${isInitialGeneration ? `
                                     className="w-full h-24 bg-white rounded-3xl p-5 text-sm shadow-sm resize-none focus:ring-1 focus:ring-primary/20 transition-all" 
                                     placeholder="在这个世界里，魔法是存在的..." 
                                 />
+                           </div>
+
+                           <div className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100 space-y-3">
+                               <div className="flex items-center justify-between">
+                                   <label className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest">🔊 MiniMax 音色设定</label>
+                                   <div className="flex gap-1.5">
+                                       <button
+                                           onClick={() => { setActiveCharacterId(formData.id); openApp(AppID.VoiceDesigner); }}
+                                           className="text-[10px] bg-violet-50 text-violet-700 px-2 py-1 rounded font-bold hover:bg-violet-100 flex items-center gap-0.5"
+                                       >
+                                           <SlidersHorizontal size={10} weight="bold" /> 捏声音
+                                       </button>
+                                       <button
+                                           onClick={handleLoadMiniMaxVoices}
+                                           className="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-1 rounded font-bold hover:bg-emerald-100 disabled:opacity-60"
+                                           disabled={isLoadingVoices}
+                                       >
+                                           {isLoadingVoices ? '拉取中...' : '拉取可用音色'}
+                                       </button>
+                                   </div>
+                               </div>
+                               <p className="text-[11px] text-slate-500">已有 voice_id 可直接填，不依赖查询。聊天角色配置后，后续接 TTS 可直接读取。</p>
+
+                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                   <input
+                                       value={formData.voiceProfile?.voiceId || ''}
+                                       onChange={(e) => handleChange('voiceProfile', {
+                                           provider: 'minimax',
+                                           voiceId: e.target.value,
+                                           voiceName: formData.voiceProfile?.voiceName || '',
+                                           source: formData.voiceProfile?.source || 'custom',
+                                           model: formData.voiceProfile?.model || 'speech-2.8-hd',
+                                           notes: formData.voiceProfile?.notes || '',
+                                       })}
+                                       className="w-full bg-slate-50 rounded-2xl px-3 py-2 text-xs border border-slate-200"
+                                       placeholder="voice_id（可直接贴）"
+                                   />
+                                   <input
+                                       value={formData.voiceProfile?.model || 'speech-2.8-hd'}
+                                       onChange={(e) => handleChange('voiceProfile', {
+                                           provider: 'minimax',
+                                           voiceId: formData.voiceProfile?.voiceId || '',
+                                           voiceName: formData.voiceProfile?.voiceName || '',
+                                           source: formData.voiceProfile?.source || 'custom',
+                                           model: e.target.value,
+                                           notes: formData.voiceProfile?.notes || '',
+                                       })}
+                                       className="w-full bg-slate-50 rounded-2xl px-3 py-2 text-xs border border-slate-200"
+                                       placeholder="TTS 模型（默认 speech-2.8-hd）"
+                                   />
+                               </div>
+
+                               {(voiceOptions.system.length + voiceOptions.voice_cloning.length + voiceOptions.voice_generation.length) > 0 && (
+                                   <div className="space-y-2 pt-1">
+                                       {([
+                                           ['system', '系统音色'],
+                                           ['voice_cloning', '复刻音色'],
+                                           ['voice_generation', '文生音色'],
+                                       ] as const).map(([source, label]) => {
+                                           const list = voiceOptions[source];
+                                           if (!list.length) return null;
+                                           return (
+                                               <div key={source}>
+                                                   <div className="text-[10px] text-slate-400 mb-1">{label}</div>
+                                                   <div className="max-h-28 overflow-y-auto space-y-1 pr-1">
+                                                       {list.slice(0, 50).map((v) => (
+                                                           <button
+                                                               key={`${source}-${v.voice_id}`}
+                                                               onClick={() => applyVoiceToCharacter(v, source)}
+                                                               className="w-full text-left px-2 py-1 rounded-xl text-xs border border-slate-200 hover:border-emerald-200 hover:bg-emerald-50/40"
+                                                           >
+                                                               <div className="font-medium text-slate-700 truncate">{v.voice_name || '未命名音色'}</div>
+                                                               <div className="text-[10px] text-slate-400 truncate">{v.voice_id}</div>
+                                                           </button>
+                                                       ))}
+                                                   </div>
+                                               </div>
+                                           );
+                                       })}
+                                   </div>
+                               )}
                            </div>
 
                            {/* Worldbook Section */}

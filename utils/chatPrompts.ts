@@ -463,6 +463,14 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
    - 看到有趣的帖子想互动 → 留个评论、点个赞、收藏一下
    - 想看看自己的主页 → 看看自己的帖子怎么样了
    - 甚至可以跟用户说"等一下我刷到一个好搞笑的"然后分享
+
+   **让用户知道你能帮ta:**
+   - 用户可能不知道你能用小红书！如果聊到相关话题，可以自然地提一句
+   - 比如聊到美食 → "要不我帮你小红书上搜搜看？"
+   - 聊到想买什么东西 → "我去小红书看看有没有人推荐过"
+   - 聊到旅行/穿搭/好物 → 主动说可以搜一下
+   - 不要生硬地介绍功能，而是在对话自然流动中提起
+   - 第一次提到小红书时可以稍微解释一下："我有小红书号的哦，可以帮你搜东西、看看大家怎么说"
 ` : ''}
 
 `;
@@ -470,6 +478,69 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
         const previousMsg = currentMsgs.length > 1 ? currentMsgs[currentMsgs.length - 2] : null;
         if (previousMsg && previousMsg.metadata?.source === 'date') {
             baseSystemPrompt += `\n\n[System Note: You just finished a face-to-face meeting. You are now back on the phone. Switch back to texting style.]`;
+        }
+        if (previousMsg && (previousMsg.metadata?.source === 'call' || previousMsg.metadata?.source === 'call-end-popup')) {
+            baseSystemPrompt += `\n\n[系统提示: 你刚刚和对方结束了一通电话，现在回到了文字聊天模式。请切换回打字聊天的风格——不要再用电话口吻说话，不要输出语音标签，回到正常的 IM 短句风格。你可以自然地提一下"刚才电话里说的……"之类的衔接，但不要继续以通话模式回复。]`;
+        }
+
+        // Voice message prompt injection
+        if (char.chatVoiceEnabled) {
+            const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español', de: 'Deutsch', ru: 'Русский' };
+            const voiceLang = char.chatVoiceLang || '';
+            const langLabel = voiceLang ? (VOICE_LANG_LABELS[voiceLang] || voiceLang) : '';
+            if (voiceLang) {
+                baseSystemPrompt += `\n\n### 🎤 语音消息功能
+
+用户开启了语音消息功能，语音语种为：${langLabel}（${voiceLang}）。
+
+**你可以发送语音消息！** 就像真人用微信一样，你可以选择打字或者发语音。
+用 \`<语音>要说的话</语音>\` 标签来发送语音。标签里的内容会被转成真正的语音条显示给用户。
+
+因为语音语种设置为${langLabel}，你需要：
+1. 标签外面正常用中文写你想表达的内容（包括舞台指示、括号动作等）
+2. \`<语音>\` 标签里写${langLabel}翻译——这才是真正会被朗读出来的部分
+
+示例：
+嘶……你说真的假的？
+<语音>Wait... are you serious?</语音>
+
+啊不想动了（趴在桌上）
+<语音>I don't wanna move anymore...</语音>
+
+要求：
+- <语音> 里的翻译要自然口语化，符合你的性格，不要机翻味
+- <语音> 里不要包含舞台指示，只写会被朗读的文字
+- 每条消息最多一个 <语音> 标签
+- 不是每条消息都要发语音！像真人一样，有时候打字，有时候发语音，自然切换
+- 比较适合发语音的场景：撒娇、吐槽、语气很重的话、懒得打字的时候
+- 比较适合打字的场景：发链接、正经讨论、很短的回复如"嗯"、"好"
+- **【重要】语音和文字是两种不同的表达方式，不要复读！** 如果你同时发了文字和语音，语音内容不能是文字内容的简单翻译/复述。要么只发语音不发文字，要么文字写一部分内容、语音补充另一部分（比如文字写正经的，语音吐槽；或者文字说事情，语音撒娇）。像真人一样——你不会打完一段字然后再发一条语音把同样的话说一遍吧？`;
+            } else {
+                baseSystemPrompt += `\n\n### 🎤 语音消息功能
+
+用户开启了语音消息功能。
+
+**你可以发送语音消息！** 就像真人用微信一样，你可以选择打字或者发语音。
+用 \`<语音>要说的话</语音>\` 标签来发送语音。标签里的内容会被转成真正的语音条显示给用户。
+
+示例：
+<语音>哎你今天干嘛去了啊？</语音>
+
+嘶我看到一个好搞笑的视频
+<语音>你快去看！就那个什么……啊我忘了叫什么了，反正超搞笑的</语音>
+
+要求：
+- <语音> 里只写会被朗读的文字，不要包含括号动作或舞台指示
+- 每条消息最多一个 <语音> 标签
+- 不是每条消息都要发语音！像真人一样，有时候打字，有时候发语音，自然切换
+- 比较适合发语音的场景：撒娇、吐槽、语气很重的话、懒得打字的时候、想让对方听到你语气的时候
+- 比较适合打字的场景：发链接、正经讨论、很短的回复如"嗯"、"好"
+- 标签外的文字会正常显示为文本消息
+- **【重要】语音和文字是两种不同的表达方式，不要复读！** 如果你同时发了文字和语音，语音的内容不能是文字的重复或复述。要么单独发语音（不带文字），要么文字和语音表达不同的内容（比如文字聊正事，语音补一句吐槽/撒娇；或者文字发完一段话后，语音单独补充一个新的想法）。你不会打完字又发一条语音把同样的话再说一遍的——那很奇怪。`;
+            }
+        } else {
+            // Voice is disabled — explicitly prohibit voice tags to prevent inertia from call/date history
+            baseSystemPrompt += `\n\n[系统提示: 语音消息功能当前未开启。严禁使用 <语音>...</语音> 标签。所有回复必须是纯文字消息。]`;
         }
 
         return baseSystemPrompt;
@@ -498,6 +569,12 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
             apiMessages: historySlice.map((m, index) => {
                 let content: any = m.content;
                 const timeStr = `[${ChatPrompts.formatDate(m.timestamp)}]`;
+                const sourceTag = (() => {
+                    const source = m.metadata?.source;
+                    if (source === 'call') return '[通话]';
+                    if (source === 'date') return '[约会]';
+                    return '[聊天]';
+                })();
                 
                 if (m.replyTo) content = `[回复 "${m.replyTo.content.substring(0, 50)}..."]: ${content}`;
                 
@@ -538,7 +615,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                         content = `${timeStr} [用户转发了一段聊天记录]`;
                     }
                 }
-                else content = `${timeStr} ${content}`;
+                else content = `${timeStr} ${sourceTag} ${content}`;
                 
                 return { role: m.role, content };
             }),

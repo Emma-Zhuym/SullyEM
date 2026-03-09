@@ -28,6 +28,9 @@ import BankApp from '../apps/BankApp';
 import XhsStockApp from '../apps/XhsStockApp';
 import XhsFreeRoamApp from '../apps/XhsFreeRoamApp';
 import BrowserApp from '../apps/BrowserApp';
+import SongwritingApp from '../apps/SongwritingApp';
+import CallApp from '../apps/CallApp';
+import VoiceDesignerApp from '../apps/VoiceDesignerApp';
 import { SpecialMomentsApp, ValentineController, shouldShowValentinePopup } from './ValentineEvent';
 import { AppID } from '../types';
 import { App as CapApp } from '@capacitor/app';
@@ -137,7 +140,7 @@ const DisclaimerPopup: React.FC<{ onAccept: () => void }> = ({ onAccept }) => (
 );
 
 const PhoneShell: React.FC = () => {
-  const { theme, isLocked, unlock, activeApp, closeApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters, handleBack } = useOS();
+  const { theme, isLocked, unlock, activeApp, closeApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters, handleBack, suspendedCall, resumeCall } = useOS();
 
   // Disclaimer popup for first-time users
   const [showDisclaimer, setShowDisclaimer] = useState(() => {
@@ -311,6 +314,9 @@ const PhoneShell: React.FC = () => {
       case AppID.XhsStock: return <XhsStockApp />;
       case AppID.XhsFreeRoam: return <XhsFreeRoamApp />;
       case AppID.Browser: return <BrowserApp />;
+      case AppID.Songwriting: return <SongwritingApp />;
+      case AppID.Call: return <CallApp />;
+      case AppID.VoiceDesigner: return <VoiceDesignerApp />;
       case AppID.SpecialMoments: return <SpecialMomentsApp />;
       case AppID.Launcher:
       default: return <Launcher />;
@@ -357,6 +363,18 @@ const PhoneShell: React.FC = () => {
           {/* Overlays: Status Bar (Top) */}
           {!theme.hideStatusBar && <StatusBar />}
           
+          {/* Overlays: Suspended Call Bar */}
+          {suspendedCall && activeApp !== AppID.Call && (
+            <button
+              onClick={resumeCall}
+              className="absolute top-7 left-0 w-full z-[55] flex items-center justify-center gap-2 bg-emerald-500 text-white text-xs font-bold py-1.5 animate-pulse cursor-pointer active:bg-emerald-600 transition-colors"
+            >
+              <span className="w-2 h-2 rounded-full bg-white animate-ping" />
+              <span>通话中 · {suspendedCall.charName}</span>
+              <span className="opacity-70">点击返回</span>
+            </button>
+          )}
+
           {/* Overlays: Toasts (Top) */}
           <div className="absolute top-12 left-0 w-full flex flex-col items-center gap-2 pointer-events-none z-[60]">
               {toasts.map(toast => (

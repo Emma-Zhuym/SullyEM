@@ -375,10 +375,44 @@ const XhsFreeRoamApp: React.FC = () => {
     const renderHistory = () => (
         <div className="flex-1 overflow-y-auto px-4 py-2 space-y-2 min-h-0">
             {activities.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-16 opacity-40">
-                    <span className="text-4xl mb-3">📕</span>
-                    <p className="text-sm text-slate-400 font-medium">{char?.name || '角色'}还没有自由活动记录</p>
-                    <p className="text-[10px] text-slate-300 mt-1">点击下方按钮开始第一次自由活动</p>
+                <div className="flex flex-col items-center px-2 py-8 space-y-4">
+                    <div className="text-center opacity-60">
+                        <span className="text-4xl">📕</span>
+                        <p className="text-sm text-slate-500 font-medium mt-2">{char?.name || '角色'}还没有自由活动记录</p>
+                    </div>
+
+                    <div className="w-full bg-white/80 rounded-2xl border border-slate-100 p-4 space-y-3">
+                        <p className="text-xs font-bold text-slate-600">自由活动是什么？</p>
+                        <p className="text-[11px] text-slate-500 leading-relaxed">
+                            让{char?.name || '角色'}自主使用小红书 — 就像一个真实的人在刷手机。
+                            ta会根据自己的性格和最近的聊天内容，决定要做什么。
+                        </p>
+                        <div className="space-y-1.5">
+                            <p className="text-[10px] font-bold text-slate-400">ta可能会：</p>
+                            <div className="grid grid-cols-2 gap-1.5">
+                                {[
+                                    { icon: '✍️', text: '发一条笔记' },
+                                    { icon: '🔍', text: '搜感兴趣的话题' },
+                                    { icon: '📱', text: '刷首页看看热门' },
+                                    { icon: '🏠', text: '查看自己的主页' },
+                                    { icon: '💬', text: '回复自己帖子的评论' },
+                                    { icon: '😴', text: '或者什么都不做' },
+                                ].map((item, i) => (
+                                    <div key={i} className="flex items-center gap-1.5 bg-slate-50 rounded-lg px-2 py-1.5">
+                                        <span className="text-xs">{item.icon}</span>
+                                        <span className="text-[10px] text-slate-500">{item.text}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        <div className="bg-rose-50 rounded-xl p-2.5">
+                            <p className="text-[10px] text-rose-400 leading-relaxed">
+                                活动结束后，{char?.name || '角色'}会记住看到的内容。下次聊天时，ta可能会主动跟你分享在小红书上看到的有趣东西。
+                            </p>
+                        </div>
+                    </div>
+
+                    <p className="text-[10px] text-slate-300">点击下方按钮开始第一次自由活动</p>
                 </div>
             ) : (
                 activities.map(a => (
@@ -496,6 +530,9 @@ const XhsFreeRoamApp: React.FC = () => {
                         </span>
                     )}
                 </button>
+                <p className="text-[9px] text-amber-400/80 text-center mt-2 leading-relaxed">
+                    角色可能会给无关用户评论，对真人造成困扰，请及时检查并清理不当评论
+                </p>
             </div>
 
             {/* Modals */}

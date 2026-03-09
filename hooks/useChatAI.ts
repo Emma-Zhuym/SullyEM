@@ -8,7 +8,21 @@ import { RealtimeContextManager, NotionManager, FeishuManager, XhsNote } from '.
 import { XhsMcpClient, extractNotesFromMcpData, normalizeNote } from '../utils/xhsMcpClient';
 import { safeFetchJson, safeResponseJson } from '../utils/safeApi';
 
-// Resolve XHS config: per-character override, MCP-only
+const normalizeAiContent = (raw: string): string => {
+    let cleaned = raw || '';
+    // Strip hidden chain-of-thought blocks such as <think>...</think>
+    cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, '');
+    cleaned = cleaned.replace(/<think>[\s\S]*$/gi, '');
+    cleaned = cleaned.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
+    cleaned = cleaned.replace(/^[\w一-龥]+:\s*/, '');
+    // Strip source tags [聊天]/[通话]/[约会] leaked from history context — replace with newline to preserve intended splits
+    cleaned = cleaned.replace(/\s*\[(?:聊天|通话|约会)\]\s*/g, '\n');
+    cleaned = cleaned.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
+    return cleaned;
+};
+
+
+// Resolve XHS config: per-character override
 function resolveXhsConfig(char: CharacterProfile, realtimeConfig?: RealtimeConfig): {
     enabled: boolean; mcpUrl: string; loggedInUserId?: string; loggedInNickname?: string;
 } {
@@ -24,7 +38,7 @@ function resolveXhsConfig(char: CharacterProfile, realtimeConfig?: RealtimeConfi
     return { enabled: !!(realtimeConfig?.xhsEnabled) && mcpAvailable, mcpUrl, loggedInUserId, loggedInNickname };
 }
 
-// XHS helpers — MCP only
+// XHS helpers — via xhs-bridge
 async function xhsSearch(conf: { mcpUrl: string }, keyword: string): Promise<{ success: boolean; notes: XhsNote[]; message?: string }> {
     const r = await XhsMcpClient.search(conf.mcpUrl, keyword);
     if (!r.success) return { success: false, notes: [], message: r.error };
@@ -257,9 +271,7 @@ export const useChatAI = ({
 
             // 4. Initial Cleanup
             let aiContent = data.choices?.[0]?.message?.content || '';
-            aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
-            aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, ''); 
-            aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
+            aiContent = normalizeAiContent(aiContent);
 
             // 5. Handle Recall (Loop if needed)
             const recallMatch = aiContent.match(/\[\[RECALL:\s*(\d{4})[-/年](\d{1,2})\]\]/);
@@ -301,9 +313,7 @@ export const useChatAI = ({
                             updateTokenUsage(data, historyMsgCount, 'recall');
                             aiContent = data.choices?.[0]?.message?.content || '';
                             // Re-clean
-                            aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
-                            aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, '');
-                            aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
+                            aiContent = normalizeAiContent(aiContent);
                             addToast(`已调用 ${year}-${month} 详细记忆`, 'info');
                         } catch (recallErr: any) {
                             console.error('Recall API failed:', recallErr.message);
@@ -348,9 +358,7 @@ export const useChatAI = ({
                         aiContent = data.choices?.[0]?.message?.content || '';
                         console.log('🔍 [Search] AI基于搜索结果生成的新回复:', aiContent.slice(0, 100) + '...');
                         // Re-clean
-                        aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
-                        aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, '');
-                        aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
+                        aiContent = normalizeAiContent(aiContent);
                         addToast(`🔍 搜索完成: ${searchQuery}`, 'success');
                     } else {
                         console.log('🔍 [Search] 搜索失败或无结果:', searchResult.message);
@@ -472,9 +480,7 @@ export const useChatAI = ({
                     });
                     updateTokenUsage(data, historyMsgCount, 'diary-fallback');
                     aiContent = data.choices?.[0]?.message?.content || '';
-                    aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
-                    aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, '');
-                    aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
+                    aiContent = normalizeAiContent(aiContent);
                 } catch (fallbackErr) {
                     console.error('📖 [Diary Fallback] 也失败了:', fallbackErr);
                     aiContent = aiContent.replace(tagPattern, '').trim();
@@ -546,9 +552,7 @@ export const useChatAI = ({
                                     });
                                     updateTokenUsage(data, historyMsgCount, 'read-diary-notion');
                                     aiContent = data.choices?.[0]?.message?.content || '';
-                                    aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
-                                    aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, '');
-                                    aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
+                                    aiContent = normalizeAiContent(aiContent);
                                     addToast(`📖 ${char.name}翻阅了${targetDate}的日记`, 'info');
                                 } else {
                                     console.log('📖 [ReadDiary] 日记内容为空');
@@ -570,9 +574,7 @@ export const useChatAI = ({
                                 });
                                 updateTokenUsage(data, historyMsgCount, 'no-diary-notion');
                                 aiContent = data.choices?.[0]?.message?.content || '';
-                                aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
-                                aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, '');
-                                aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
+                                aiContent = normalizeAiContent(aiContent);
                             }
                         } catch (e) {
                             console.error('📖 [ReadDiary] 读取异常:', e);
@@ -713,9 +715,7 @@ export const useChatAI = ({
                                     });
                                     updateTokenUsage(data, historyMsgCount, 'read-diary-feishu');
                                     aiContent = data.choices?.[0]?.message?.content || '';
-                                    aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
-                                    aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, '');
-                                    aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
+                                    aiContent = normalizeAiContent(aiContent);
                                     addToast(`📖 ${char.name}翻阅了${targetDate}的飞书日记`, 'info');
                                 } else {
                                     console.log('📖 [Feishu ReadDiary] 日记内容为空');
@@ -736,9 +736,7 @@ export const useChatAI = ({
                                 });
                                 updateTokenUsage(data, historyMsgCount, 'no-diary-feishu');
                                 aiContent = data.choices?.[0]?.message?.content || '';
-                                aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
-                                aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, '');
-                                aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
+                                aiContent = normalizeAiContent(aiContent);
                             }
                         } catch (e) {
                             console.error('📖 [Feishu ReadDiary] 读取异常:', e);
@@ -807,9 +805,7 @@ export const useChatAI = ({
                                 });
                                 updateTokenUsage(data, historyMsgCount, 'read-note');
                                 aiContent = data.choices?.[0]?.message?.content || '';
-                                aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
-                                aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, '');
-                                aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
+                                aiContent = normalizeAiContent(aiContent);
                                 addToast(`📝 ${char.name}翻阅了关于"${keyword}"的笔记`, 'info');
                             } else {
                                 console.log('📝 [ReadNote] 笔记内容为空');
@@ -831,9 +827,7 @@ export const useChatAI = ({
                             });
                             updateTokenUsage(data, historyMsgCount, 'read-note-empty');
                             aiContent = data.choices?.[0]?.message?.content || '';
-                            aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
-                            aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, '');
-                            aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
+                            aiContent = normalizeAiContent(aiContent);
                         }
                     } catch (e) {
                         console.error('📝 [ReadNote] 读取异常:', e);
@@ -884,9 +878,7 @@ export const useChatAI = ({
                         });
                         updateTokenUsage(data, historyMsgCount, 'xhs-search');
                         aiContent = data.choices?.[0]?.message?.content || '';
-                        aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
-                        aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, '');
-                        aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
+                        aiContent = normalizeAiContent(aiContent);
                         await DB.saveMessage({
                             charId: char.id,
                             role: 'system',
@@ -938,9 +930,7 @@ export const useChatAI = ({
                         });
                         updateTokenUsage(data, historyMsgCount, 'xhs-browse');
                         aiContent = data.choices?.[0]?.message?.content || '';
-                        aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
-                        aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, '');
-                        aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
+                        aiContent = normalizeAiContent(aiContent);
                         addToast(`📕 ${char.name}刷了会儿小红书`, 'info');
                     } else {
                         aiContent = aiContent.replace(xhsBrowseMatch[0], '').trim();
@@ -1062,14 +1052,15 @@ export const useChatAI = ({
                     const commentUserId = commentUserIdCacheRef.current.get(commentId);
                     const commentAuthorName = commentAuthorNameCacheRef.current.get(commentId);
                     const parentCommentId = commentParentIdCacheRef.current.get(commentId);
-                    if (xsecToken && replyContent) {
+                    if (replyContent) {
                         console.log(`📕 [XHS] AI要回复评论:`, noteId, commentId, replyContent.slice(0, 30),
+                            xsecToken ? '(有xsecToken)' : '(bridge自动获取)',
                             commentUserId ? `(userId=${commentUserId})` : '(无userId)',
                             commentAuthorName ? `(author=${commentAuthorName})` : '',
                             parentCommentId ? `(parentId=${parentCommentId})` : '(顶级评论)');
                         setXhsStatus('正在回复评论...');
                         try {
-                            let result = await xhsReplyComment(xhsConf, noteId, xsecToken, replyContent, commentId, commentUserId, parentCommentId);
+                            let result = await xhsReplyComment(xhsConf, noteId, xsecToken || '', replyContent, commentId, commentUserId, parentCommentId);
                             // "未找到评论" = MCP 服务端 DOM 选择器对不上小红书页面结构（已知 bug），重试无意义
                             const selectorBroken = !result.success && result.message?.includes('未找到评论');
                             if (selectorBroken) {
@@ -1116,24 +1107,21 @@ export const useChatAI = ({
             aiContent = aiContent.replace(/\[\[XHS_REPLY:.*?\]\]/g, '').trim();
 
             // [[XHS_LIKE: noteId]] - 点赞笔记
+            // Bridge 会自动获取缺失的 xsecToken，前端不再阻止
             const xhsLikeMatches = aiContent.matchAll(/\[\[XHS_LIKE:\s*(.+?)\]\]/g);
             for (const xhsLikeMatch of xhsLikeMatches) {
                 if (xhsConf.enabled) {
                     const noteId = xhsLikeMatch[1].trim();
                     const xsecToken = findXsecToken(noteId, lastXhsNotes);
-                    if (xsecToken) {
-                        console.log(`📕 [XHS] AI要点赞笔记:`, noteId);
-                        try {
-                            const result = await xhsLike(xhsConf, noteId, xsecToken);
-                            if (result.success) {
-                                addToast(`📕 ${char.name}点赞了一条笔记`, 'success');
-                            } else {
-                                console.warn('📕 [XHS] 点赞失败:', result.message);
-                            }
-                        } catch (e) { console.error('📕 [XHS] 点赞异常:', e); }
-                    } else {
-                        console.warn('📕 [XHS] 点赞缺少 xsecToken, noteId:', noteId);
-                    }
+                    console.log(`📕 [XHS] AI要点赞笔记:`, noteId, xsecToken ? '(有xsecToken)' : '(bridge自动获取)');
+                    try {
+                        const result = await xhsLike(xhsConf, noteId, xsecToken || '');
+                        if (result.success) {
+                            addToast(`📕 ${char.name}点赞了一条笔记`, 'success');
+                        } else {
+                            console.warn('📕 [XHS] 点赞失败:', result.message);
+                        }
+                    } catch (e) { console.error('📕 [XHS] 点赞异常:', e); }
                 }
             }
             aiContent = aiContent.replace(/\[\[XHS_LIKE:.*?\]\]/g, '').trim();
@@ -1144,19 +1132,15 @@ export const useChatAI = ({
                 if (xhsConf.enabled) {
                     const noteId = xhsFavMatch[1].trim();
                     const xsecToken = findXsecToken(noteId, lastXhsNotes);
-                    if (xsecToken) {
-                        console.log(`📕 [XHS] AI要收藏笔记:`, noteId);
-                        try {
-                            const result = await xhsFavorite(xhsConf, noteId, xsecToken);
-                            if (result.success) {
-                                addToast(`📕 ${char.name}收藏了一条笔记`, 'success');
-                            } else {
-                                console.warn('📕 [XHS] 收藏失败:', result.message);
-                            }
-                        } catch (e) { console.error('📕 [XHS] 收藏异常:', e); }
-                    } else {
-                        console.warn('📕 [XHS] 收藏缺少 xsecToken, noteId:', noteId);
-                    }
+                    console.log(`📕 [XHS] AI要收藏笔记:`, noteId, xsecToken ? '(有xsecToken)' : '(bridge自动获取)');
+                    try {
+                        const result = await xhsFavorite(xhsConf, noteId, xsecToken || '');
+                        if (result.success) {
+                            addToast(`📕 ${char.name}收藏了一条笔记`, 'success');
+                        } else {
+                            console.warn('📕 [XHS] 收藏失败:', result.message);
+                        }
+                    } catch (e) { console.error('📕 [XHS] 收藏异常:', e); }
                 }
             }
             aiContent = aiContent.replace(/\[\[XHS_FAV:.*?\]\]/g, '').trim();
@@ -1187,17 +1171,42 @@ export const useChatAI = ({
                                     profileStr = d.slice(0, 3000);
                                     gotProfile = true;
                                 } else {
-                                    profileStr = JSON.stringify(d, null, 2).slice(0, 3000);
+                                    // 只用 basic_info 作为 profileStr，避免整个 JSON 被截断
+                                    const basicInfo = d.data?.basic_info || d.basic_info;
+                                    if (basicInfo) {
+                                        profileStr = JSON.stringify(basicInfo, null, 2).slice(0, 2000);
+                                    } else {
+                                        // basicInfo 为空时，只提取非笔记字段，避免把 notes 数组塞进 profileStr
+                                        const { notes: _n, ...rest } = (d.data && typeof d.data === 'object' ? d.data : d) as any;
+                                        profileStr = Object.keys(rest).length > 0
+                                            ? JSON.stringify(rest, null, 2).slice(0, 2000)
+                                            : '（主页基本信息暂时无法获取）';
+                                    }
                                     gotProfile = true;
                                     // 尝试从 profile 结果中提取笔记列表
-                                    const notes = extractNotesFromMcpData(d);
+                                    // Bridge 模式返回 { code: 0, data: { notes, basic_info } }，需要解包
+                                    const unwrapped = d.data && typeof d.data === 'object' && !Array.isArray(d.data) ? d.data : d;
+                                    console.log(`📕 [XHS] profile unwrapped keys:`, Object.keys(unwrapped), 'notes isArray:', Array.isArray(unwrapped.notes), 'notes length:', unwrapped.notes?.length);
+                                    const notes = extractNotesFromMcpData(unwrapped);
+                                    console.log(`📕 [XHS] extractNotesFromMcpData 返回 ${notes.length} 条笔记`);
                                     if (notes.length > 0) {
+                                        // 打印第一条笔记的原始结构帮助调试
+                                        console.log(`📕 [XHS] 第一条笔记原始 keys:`, Object.keys(notes[0]), 'noteCard?', !!notes[0].noteCard, 'id?', notes[0].id || notes[0].noteId);
                                         const normalized = notes.map(n => normalizeNote(n) as XhsNote);
-                                        lastXhsNotes = normalized;
-                                        cacheXsecTokens(normalized);
-                                        feedsStr = normalized.slice(0, 8).map((n, i) =>
-                                            `${i + 1}. [noteId=${n.noteId}]「${n.title}」by ${n.author} (${n.likes}赞)\n   ${n.desc || '（无描述）'}`
+                                        console.log(`📕 [XHS] 归一化后第一条:`, JSON.stringify(normalized[0]).slice(0, 300));
+                                        // 检查归一化结果是否有效（noteId 非空）
+                                        const validNotes = normalized.filter(n => n.noteId);
+                                        if (validNotes.length === 0) {
+                                            console.warn(`📕 [XHS] ⚠️ 所有笔记归一化后 noteId 为空！原始数据:`, JSON.stringify(notes[0]).slice(0, 500));
+                                        }
+                                        lastXhsNotes = validNotes.length > 0 ? validNotes : normalized;
+                                        cacheXsecTokens(lastXhsNotes);
+                                        feedsStr = lastXhsNotes.slice(0, 8).map((n, i) =>
+                                            `${i + 1}. [noteId=${n.noteId}]「${n.title || '无标题'}」by ${n.author || '未知'} (${n.likes || 0}赞)\n   ${n.desc || '（无描述）'}`
                                         ).join('\n\n');
+                                        console.log(`📕 [XHS] feedsStr 预览:`, feedsStr.slice(0, 300));
+                                    } else {
+                                        console.warn(`📕 [XHS] ⚠️ extractNotesFromMcpData 返回空数组! unwrapped:`, JSON.stringify(unwrapped).slice(0, 500));
                                     }
                                 }
                                 console.log(`📕 [XHS] getUserProfile 成功，数据长度: ${profileStr.length}`);
@@ -1225,7 +1234,7 @@ export const useChatAI = ({
 
                     if (!nickname && !userId) {
                         console.warn('📕 [XHS] 无昵称也无userId，无法查看主页。请在设置中填写。');
-                        feedsStr = '（无法获取主页：请在设置-小红书MCP中填写你的昵称或用户ID）';
+                        feedsStr = '（无法获取主页：请在设置-小红书中填写你的昵称或用户ID）';
                     }
 
                     const profileSection = gotProfile
@@ -1245,9 +1254,7 @@ export const useChatAI = ({
                     });
                     updateTokenUsage(data, historyMsgCount, 'xhs-profile');
                     aiContent = data.choices?.[0]?.message?.content || '';
-                    aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
-                    aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, '');
-                    aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
+                    aiContent = normalizeAiContent(aiContent);
                     addToast(`📕 ${char.name}看了看自己的小红书`, 'info');
                 } catch (e) {
                     console.error('📕 [XHS] 查看主页异常:', e);
@@ -1298,6 +1305,17 @@ export const useChatAI = ({
                         }
                     }
 
+                    // 从 detail 数据中缓存 xsecToken（CDP fallback 的 noteDetailMap 里含有 xsecToken）
+                    if (result.success && result.data && typeof result.data === 'object') {
+                        const d = result.data;
+                        const noteObj = d.note || d;
+                        const detailToken = noteObj?.xsecToken || noteObj?.xsec_token || d?.xsecToken;
+                        if (detailToken && noteId) {
+                            xsecTokenCacheRef.current.set(noteId, detailToken);
+                            console.log(`📕 [XHS] 从 detail 缓存 xsecToken: ${noteId}`);
+                        }
+                    }
+
                     // 从 detail 数据中缓存 commentId → userId/authorName/parentId，供 reply_comment 使用
                     if (result.success && result.data && typeof result.data === 'object') {
                         const cacheComments = (comments: any[], parentId?: string) => {
@@ -1320,10 +1338,15 @@ export const useChatAI = ({
                             }
                         };
                         const d = result.data;
-                        const commentList = d.data?.comments?.list || d.comments?.list || d.data?.comments || d.comments;
+                        // 兼容多种评论数据路径：顶层 comments / note.comments / 嵌套 data.comments
+                        const commentList = d.data?.comments?.list || d.comments?.list
+                            || d.data?.comments || d.comments
+                            || d.note?.comments?.list || d.note?.comments;
                         if (Array.isArray(commentList)) {
                             cacheComments(commentList);
                             console.log(`📕 [XHS] 缓存了 ${commentUserIdCacheRef.current.size} 条评论的 userId, ${commentAuthorNameCacheRef.current.size} 条 authorName`);
+                        } else {
+                            console.warn(`📕 [XHS] 未找到评论数组, d keys:`, Object.keys(d), 'd.note keys:', d.note ? Object.keys(d.note) : 'N/A');
                         }
                     }
 
@@ -1332,14 +1355,56 @@ export const useChatAI = ({
                     let detailStr: string;
                     if (detailData) {
                         if (typeof detailData === 'string') {
-                            // 检查是否是错误消息（如 "获取Feed详情失败: feed xxx not found in noteDetailMap"）
                             if (detailData.includes('失败') || detailData.includes('not found')) {
                                 detailStr = `[加载失败: ${detailData.slice(0, 200)}]`;
                             } else {
-                                detailStr = detailData.slice(0, 3000);
+                                detailStr = detailData.slice(0, 5000);
                             }
                         } else {
-                            detailStr = JSON.stringify(detailData, null, 2).slice(0, 3000);
+                            // 智能格式化：笔记摘要 + 完整评论区，避免被截断
+                            const note = (detailData as any).note || detailData;
+                            const noteTitle = note.title || note.displayTitle || note.display_title || '';
+                            const noteDesc = (note.desc || note.description || note.content || '').slice(0, 1500);
+                            const noteAuthor = note.user?.nickname || note.author || '';
+                            const noteLikes = note.interactInfo?.likedCount || note.likes || 0;
+                            const noteCollects = note.interactInfo?.collectedCount || note.collects || 0;
+                            const noteShareCount = note.interactInfo?.shareCount || 0;
+                            const noteCommentCount = note.interactInfo?.commentCount || 0;
+                            const noteTime = note.time ? new Date(note.time).toLocaleString('zh-CN') : '';
+                            const noteIp = note.ipLocation || '';
+
+                            let noteSection = `📝 笔记详情:\n标题: ${noteTitle}\n作者: ${noteAuthor}`;
+                            if (noteTime) noteSection += `\n发布时间: ${noteTime}`;
+                            if (noteIp) noteSection += `\n IP: ${noteIp}`;
+                            noteSection += `\n互动: ${noteLikes}赞 ${noteCollects}收藏 ${noteCommentCount}评论 ${noteShareCount}分享`;
+                            noteSection += `\n\n正文:\n${noteDesc}`;
+
+                            // 提取评论（兼容多种路径）
+                            const rawComments = (detailData as any).comments?.list || (detailData as any).comments
+                                || note.comments?.list || note.comments || [];
+                            const commentArr = Array.isArray(rawComments) ? rawComments : [];
+
+                            let commentsSection = '';
+                            if (commentArr.length > 0) {
+                                const formatComment = (c: any, indent = '') => {
+                                    const name = c.userInfo?.nickname || c.nickname || c.userName || '匿名';
+                                    const content = c.content || '';
+                                    const likes = c.likeCount || c.like_count || c.likes || 0;
+                                    const cid = c.id || c.commentId || c.comment_id || '';
+                                    let line = `${indent}${name}: ${content} (${likes}赞) [commentId=${cid}]`;
+                                    const subs = c.subComments || c.sub_comments || [];
+                                    if (Array.isArray(subs) && subs.length > 0) {
+                                        line += '\n' + subs.slice(0, 10).map((s: any) => formatComment(s, indent + '  ↳ ')).join('\n');
+                                    }
+                                    return line;
+                                };
+                                commentsSection = `\n\n💬 评论区 (${commentArr.length}条):\n` +
+                                    commentArr.slice(0, 30).map((c: any) => formatComment(c)).join('\n');
+                            } else {
+                                commentsSection = '\n\n💬 评论区: （暂无评论）';
+                            }
+
+                            detailStr = (noteSection + commentsSection).slice(0, 8000);
                         }
                     } else {
                         detailStr = `[加载失败: ${result.error || '无法获取笔记详情，可能需要先在搜索/浏览结果中看到这条笔记'}]`;
@@ -1361,9 +1426,7 @@ export const useChatAI = ({
                     });
                     updateTokenUsage(data, historyMsgCount, 'xhs-detail');
                     aiContent = data.choices?.[0]?.message?.content || '';
-                    aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
-                    aiContent = aiContent.replace(/^[\w\u4e00-\u9fa5]+:\s*/, '');
-                    aiContent = aiContent.replace(/\[(?:你|User|用户|System)\s*发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
+                    aiContent = normalizeAiContent(aiContent);
                     addToast(`📕 ${char.name}${detailFailed ? '尝试查看一条笔记（加载失败）' : '看了一条笔记的详情'}`, 'info');
                 } catch (e) {
                     console.error('📕 [XHS] 查看详情异常:', e);
@@ -1426,14 +1489,15 @@ export const useChatAI = ({
                     const commentUserId = commentUserIdCacheRef.current.get(commentId);
                     const commentAuthorName = commentAuthorNameCacheRef.current.get(commentId);
                     const parentCommentId = commentParentIdCacheRef.current.get(commentId);
-                    if (xsecToken && replyContent) {
+                    if (replyContent) {
                         console.log(`📕 [XHS] AI要回复评论(detail后):`, noteId, commentId, replyContent.slice(0, 30),
                             commentUserId ? `(userId=${commentUserId})` : '(无userId)',
                             commentAuthorName ? `(author=${commentAuthorName})` : '',
-                            parentCommentId ? `(parentId=${parentCommentId})` : '(顶级评论)');
+                            parentCommentId ? `(parentId=${parentCommentId})` : '(顶级评论)',
+                            xsecToken ? '(有xsecToken)' : '(bridge自动获取)');
                         setXhsStatus('正在回复评论...');
                         try {
-                            let result = await xhsReplyComment(xhsConf, noteId, xsecToken, replyContent, commentId, commentUserId, parentCommentId);
+                            let result = await xhsReplyComment(xhsConf, noteId, xsecToken || '', replyContent, commentId, commentUserId, parentCommentId);
                             // "未找到评论" = MCP 服务端 DOM 选择器对不上小红书页面结构（已知 bug），重试无意义
                             const selectorBroken = !result.success && result.message?.includes('未找到评论');
                             if (selectorBroken) {
@@ -1444,7 +1508,7 @@ export const useChatAI = ({
                                 for (let i = 0; i < replyRetries.length && !result.success; i++) {
                                     console.warn(`📕 [XHS] 回复失败(detail后)(${i+1}/${replyRetries.length})，${replyRetries[i]/1000}秒后重试:`, result.message);
                                     await new Promise(r => setTimeout(r, replyRetries[i]));
-                                    result = await xhsReplyComment(xhsConf, noteId, xsecToken, replyContent, commentId, commentUserId, parentCommentId);
+                                    result = await xhsReplyComment(xhsConf, noteId, xsecToken || '', replyContent, commentId, commentUserId, parentCommentId);
                                 }
                             }
                             if (result.success) {
@@ -1455,7 +1519,7 @@ export const useChatAI = ({
                                 const fallbackContent = commentAuthorName
                                     ? `@${commentAuthorName} ${replyContent}`
                                     : replyContent;
-                                let fallback = await xhsComment(xhsConf, noteId, fallbackContent, xsecToken);
+                                let fallback = await xhsComment(xhsConf, noteId, fallbackContent, xsecToken || '');
                                 if (!fallback.success) {
                                     console.warn(`📕 [XHS] 顶级评论也失败(detail后)，3秒后重试:`, fallback.message);
                                     await new Promise(r => setTimeout(r, 3000));
@@ -1477,24 +1541,21 @@ export const useChatAI = ({
             aiContent = aiContent.replace(/\[\[XHS_REPLY:.*?\]\]/g, '').trim();
 
             // [[XHS_LIKE: noteId]] (second round)
+            // Bridge 会自动获取缺失的 xsecToken，前端不再阻止
             const xhsLikeMatches2 = aiContent.matchAll(/\[\[XHS_LIKE:\s*(.+?)\]\]/g);
             for (const xhsLikeMatch of xhsLikeMatches2) {
                 if (xhsConf.enabled) {
                     const noteId = xhsLikeMatch[1].trim();
                     const xsecToken = findXsecToken(noteId, lastXhsNotes);
-                    if (xsecToken) {
-                        console.log(`📕 [XHS] AI要点赞笔记(detail后):`, noteId);
-                        try {
-                            const result = await xhsLike(xhsConf, noteId, xsecToken);
-                            if (result.success) {
-                                addToast(`📕 ${char.name}点赞了一条笔记`, 'success');
-                            } else {
-                                console.warn('📕 [XHS] 点赞失败(detail后):', result.message);
-                            }
-                        } catch (e) { console.error('📕 [XHS] 点赞异常(detail后):', e); }
-                    } else {
-                        console.warn('📕 [XHS] 点赞缺少 xsecToken(detail后), noteId:', noteId);
-                    }
+                    console.log(`📕 [XHS] AI要点赞笔记(detail后):`, noteId, xsecToken ? '(有xsecToken)' : '(bridge自动获取)');
+                    try {
+                        const result = await xhsLike(xhsConf, noteId, xsecToken || '');
+                        if (result.success) {
+                            addToast(`📕 ${char.name}点赞了一条笔记`, 'success');
+                        } else {
+                            console.warn('📕 [XHS] 点赞失败(detail后):', result.message);
+                        }
+                    } catch (e) { console.error('📕 [XHS] 点赞异常(detail后):', e); }
                 }
             }
             aiContent = aiContent.replace(/\[\[XHS_LIKE:.*?\]\]/g, '').trim();
@@ -1505,19 +1566,15 @@ export const useChatAI = ({
                 if (xhsConf.enabled) {
                     const noteId = xhsFavMatch[1].trim();
                     const xsecToken = findXsecToken(noteId, lastXhsNotes);
-                    if (xsecToken) {
-                        console.log(`📕 [XHS] AI要收藏笔记(detail后):`, noteId);
-                        try {
-                            const result = await xhsFavorite(xhsConf, noteId, xsecToken);
-                            if (result.success) {
-                                addToast(`📕 ${char.name}收藏了一条笔记`, 'success');
-                            } else {
-                                console.warn('📕 [XHS] 收藏失败(detail后):', result.message);
-                            }
-                        } catch (e) { console.error('📕 [XHS] 收藏异常(detail后):', e); }
-                    } else {
-                        console.warn('📕 [XHS] 收藏缺少 xsecToken(detail后), noteId:', noteId);
-                    }
+                    console.log(`📕 [XHS] AI要收藏笔记(detail后):`, noteId, xsecToken ? '(有xsecToken)' : '(bridge自动获取)');
+                    try {
+                        const result = await xhsFavorite(xhsConf, noteId, xsecToken || '');
+                        if (result.success) {
+                            addToast(`📕 ${char.name}收藏了一条笔记`, 'success');
+                        } else {
+                            console.warn('📕 [XHS] 收藏失败(detail后):', result.message);
+                        }
+                    } catch (e) { console.error('📕 [XHS] 收藏异常(detail后):', e); }
                 }
             }
             aiContent = aiContent.replace(/\[\[XHS_FAV:.*?\]\]/g, '').trim();

@@ -5,7 +5,7 @@
  * 流程:
  * 1. 构建角色上下文（身份、最近聊天摘要、上次活动记录）
  * 2. 调用 LLM 让角色决策（我想做什么）
- * 3. 根据决策调用 XHS MCP Client 执行
+ * 3. 根据决策调用 XHS Client (xiaohongshu-skills) 执行
  * 4. 把结果交给 LLM 让角色反应 / 选择保留的话题
  * 5. 返回完整的活动记录
  */
@@ -568,11 +568,34 @@ export const XhsFreeRoamEngine = {
                 }
             }
             else if (decision.action === 'check_profile') {
-                // 查看自己的主页：通过搜索自己名字来找自己发过的帖子
-                // （getUserProfile 需要 xsec_token，MCP 服务器要求必填但我们没有，所以统一用搜索）
-                callbacks.onStatus(`${char.name}在搜索自己的帖子...`);
-                const searchResult = await XhsMcpClient.search(mcpUrl, char.name);
-                const rawNotes = searchResult.success ? extractNotesFromMcpData(searchResult.data) : [];
+                // 查看自己的主页
+                // 方法1: getUserProfile（Bridge 已用 CDP 直连，不需要 xsec_token）
+                // 方法2: 降级到搜索昵称
+                callbacks.onStatus(`${char.name}在查看自己的主页...`);
+                const loggedInUserId = realtimeConfig.xhsMcpConfig?.loggedInUserId;
+                let rawNotes: any[] = [];
+
+                if (loggedInUserId) {
+                    console.log(`[FreeRoam] check_profile: 用 getUserProfile(${loggedInUserId})...`);
+                    try {
+                        const profileResult = await XhsMcpClient.getUserProfile(mcpUrl, loggedInUserId);
+                        if (profileResult.success && profileResult.data) {
+                            rawNotes = extractNotesFromMcpData(profileResult.data);
+                            console.log(`[FreeRoam] check_profile: getUserProfile 提取到 ${rawNotes.length} 条笔记`);
+                        }
+                    } catch (e: any) {
+                        console.warn(`[FreeRoam] check_profile: getUserProfile 失败:`, e.message);
+                    }
+                }
+
+                // 降级: getUserProfile 没拿到数据时用搜索
+                if (rawNotes.length === 0) {
+                    console.log(`[FreeRoam] check_profile: 降级到搜索「${char.name}」...`);
+                    callbacks.onStatus(`${char.name}在搜索自己的帖子...`);
+                    const searchResult = await XhsMcpClient.search(mcpUrl, char.name);
+                    rawNotes = searchResult.success ? extractNotesFromMcpData(searchResult.data) : [];
+                }
+
                 const notes = rawNotes.map(normalizeNote);
 
                 const profileRecord: XhsActivityRecord = {

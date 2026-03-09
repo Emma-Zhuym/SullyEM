@@ -29,6 +29,7 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [editMemory, setEditMemory] = useState<MemoryFragment | null>(null);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [expandedMemoryIds, setExpandedMemoryIds] = useState<Set<string>>(new Set());
 
     // Core Memory Edit State
     const [editingCore, setEditingCore] = useState<{year: string, month: string, content: string} | null>(null);
@@ -78,7 +79,10 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
     }, [memories]);
 
     const handleYearClick = (year: string) => setViewState({ level: 'year', selectedYear: year, selectedMonth: null });
-    const handleMonthClick = (month: string) => setViewState(prev => ({ ...prev, level: 'month', selectedMonth: month }));
+    const handleMonthClick = (month: string) => {
+        setExpandedMemoryIds(new Set());
+        setViewState(prev => ({ ...prev, level: 'month', selectedMonth: month }));
+    };
     const handleBack = () => {
         if (viewState.level === 'month') setViewState(prev => ({ ...prev, level: 'year', selectedMonth: null }));
         else if (viewState.level === 'year') setViewState({ level: 'root', selectedYear: null, selectedMonth: null });
@@ -112,6 +116,16 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
         setSelectedIds(next);
     };
 
+
+
+    const toggleMemoryExpanded = (id: string) => {
+        setExpandedMemoryIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
     const requestDelete = () => { if (selectedIds.size > 0) setShowDeleteConfirm(true); };
     const performDelete = () => { onDeleteMemories(Array.from(selectedIds)); setSelectedIds(new Set()); setIsManageMode(false); setShowDeleteConfirm(false); };
 
@@ -263,7 +277,7 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                                         onClick={() => { if (isManageMode) toggleSelection(mem.id); }}
                                     >
                                         {isManageMode && <div className={`absolute -left-[38px] top-1/2 -translate-y-1/2 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors z-20 ${selectedIds.has(mem.id) ? 'bg-primary border-primary' : 'bg-white border-slate-300'}`}>{selectedIds.has(mem.id) && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}</div>}
-                                        <div className={`bg-white p-4 rounded-xl rounded-tl-none border border-slate-100 shadow-sm hover:shadow-md hover:border-primary/20 transition-all relative ${isManageMode && selectedIds.has(mem.id) ? 'ring-2 ring-primary ring-offset-2' : ''}`}>
+                                        <div className={`bg-white p-4 rounded-xl rounded-tl-none border border-slate-100 shadow-sm hover:shadow-md hover:border-primary/20 transition-all relative ${isManageMode && selectedIds.has(mem.id) ? 'ring-2 ring-primary ring-offset-2' : ''}`} onClick={(e) => { if (!isManageMode) { e.stopPropagation(); toggleMemoryExpanded(mem.id); } }}>
                                             
                                             {/* Explicit Edit Button - Visible always on desktop, touchable on mobile */}
                                             {!isManageMode && (
@@ -279,7 +293,8 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                                             )}
 
                                             {mem.mood && <div className="mb-1 pr-6"><span className="text-[10px] px-1.5 py-0.5 bg-primary/5 text-primary rounded-md font-medium">#{mem.mood}</span></div>}
-                                            <p className="text-sm text-slate-700 leading-relaxed text-justify whitespace-pre-wrap">{mem.summary}</p>
+                                            <p className="text-sm text-slate-700 leading-relaxed text-justify whitespace-pre-wrap">{expandedMemoryIds.has(mem.id) ? mem.summary : (mem.summary.length > 120 ? `${mem.summary.slice(0, 120)}...` : mem.summary)}</p>
+                                            {!isManageMode && mem.summary.length > 120 && <div className="mt-2 text-[10px] text-slate-400">{expandedMemoryIds.has(mem.id) ? '点击收起' : '点击展开'}</div>}
                                         </div>
                                     </div>
                                 ))}
