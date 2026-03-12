@@ -731,7 +731,26 @@ const Chat: React.FC = () => {
 
             for (const dateStr of datesToProcess) {
                 const dayMsgs = msgsByDate[dateStr];
-                const rawLog = dayMsgs.map(m => `[${formatTime(m.timestamp)}] ${m.role === 'user' ? userProfile.name : char.name}: ${m.type === 'image' ? '[Image]' : m.content}`).join('\n');
+                const rawLog = dayMsgs.map(m => {
+                    const sender = m.role === 'user' ? userProfile.name : (m.role === 'system' ? '[系统]' : char.name);
+                    let content = m.content;
+                    if (m.type === 'image') content = '[Image]';
+                    else if (m.type === 'emoji') content = `[表情包]`;
+                    else if ((m.type as string) === 'score_card') {
+                        try {
+                            const card = m.metadata?.scoreCard || JSON.parse(m.content);
+                            if (card?.type === 'guidebook_card') {
+                                const diff = (card.finalAffinity ?? 0) - (card.initialAffinity ?? 0);
+                                content = `[攻略本游戏结算] ${char.name}和${userProfile.name}玩了一局"攻略本"恋爱小游戏（${card.rounds || '?'}回合）。结局：「${card.title || '???'}」 好感度变化：${card.initialAffinity} → ${card.finalAffinity}（${diff >= 0 ? '+' : ''}${diff}） ${char.name}的评语：${card.charVerdict || '无'} ${char.name}对${userProfile.name}的新发现：${card.charNewInsight || '无'}`;
+                            } else {
+                                content = `[系统卡片] ${m.content.slice(0, 200)}`;
+                            }
+                        } catch { content = '[系统卡片]'; }
+                    }
+                    else if (m.type === 'interaction') content = `[系统: ${userProfile.name}戳了${char.name}一下]`;
+                    else if (m.type === 'transfer') content = `[系统: ${userProfile.name}转账 ${m.metadata?.amount}]`;
+                    return `[${formatTime(m.timestamp)}] ${sender}: ${content}`;
+                }).join('\n');
                 
                 let prompt = template;
                 prompt = prompt.replace(/\$\{dateStr\}/g, dateStr);
