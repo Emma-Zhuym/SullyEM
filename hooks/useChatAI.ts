@@ -24,18 +24,19 @@ const normalizeAiContent = (raw: string): string => {
 
 // Resolve XHS config: per-character override
 function resolveXhsConfig(char: CharacterProfile, realtimeConfig?: RealtimeConfig): {
-    enabled: boolean; mcpUrl: string; loggedInUserId?: string; loggedInNickname?: string;
+    enabled: boolean; mcpUrl: string; loggedInUserId?: string; loggedInNickname?: string; userXsecToken?: string;
 } {
     const mcpConfig = realtimeConfig?.xhsMcpConfig;
     const mcpAvailable = !!(mcpConfig?.enabled && mcpConfig?.serverUrl);
     const mcpUrl = mcpConfig?.serverUrl || '';
     const loggedInUserId = mcpConfig?.loggedInUserId;
     const loggedInNickname = mcpConfig?.loggedInNickname;
+    const userXsecToken = mcpConfig?.userXsecToken;
 
     if (char.xhsEnabled !== undefined) {
-        return { enabled: !!char.xhsEnabled && mcpAvailable, mcpUrl, loggedInUserId, loggedInNickname };
+        return { enabled: !!char.xhsEnabled && mcpAvailable, mcpUrl, loggedInUserId, loggedInNickname, userXsecToken };
     }
-    return { enabled: !!(realtimeConfig?.xhsEnabled) && mcpAvailable, mcpUrl, loggedInUserId, loggedInNickname };
+    return { enabled: !!(realtimeConfig?.xhsEnabled) && mcpAvailable, mcpUrl, loggedInUserId, loggedInNickname, userXsecToken };
 }
 
 // XHS helpers — via xhs-bridge
@@ -49,7 +50,16 @@ async function xhsSearch(conf: { mcpUrl: string }, keyword: string): Promise<{ s
 async function xhsBrowse(conf: { mcpUrl: string }): Promise<{ success: boolean; notes: XhsNote[]; message?: string }> {
     const r = await XhsMcpClient.getRecommend(conf.mcpUrl);
     if (!r.success) return { success: false, notes: [], message: r.error };
-    const raw = extractNotesFromMcpData(r.data);
+    // MCP 可能嵌套在 data 层: { data: { items: [...] } }，先解包
+    const unwrapped = r.data?.data && typeof r.data.data === 'object' && !Array.isArray(r.data.data) ? r.data.data : r.data;
+    console.log(`📕 [XHS] getRecommend 响应类型: ${typeof r.data}, 是否有 data 嵌套: ${unwrapped !== r.data}, unwrapped keys: ${unwrapped && typeof unwrapped === 'object' ? Object.keys(unwrapped).join(',') : 'N/A'}`);
+    const raw = extractNotesFromMcpData(unwrapped);
+    if (raw.length === 0 && unwrapped !== r.data) {
+        // 如果解包后还是空，用原始数据再试一次
+        console.log(`📕 [XHS] getRecommend unwrapped 提取为空，用原始数据重试`);
+        const raw2 = extractNotesFromMcpData(r.data);
+        return { success: true, notes: raw2.map(n => normalizeNote(n) as XhsNote) };
+    }
     return { success: true, notes: raw.map(n => normalizeNote(n) as XhsNote) };
 }
 
@@ -1164,7 +1174,7 @@ export const useChatAI = ({
                         console.log(`📕 [XHS] 用 getUserProfile(${userId}) 获取主页...`);
                         setXhsStatus('正在获取主页信息...');
                         try {
-                            const profileResult = await XhsMcpClient.getUserProfile(xhsConf.mcpUrl, userId);
+                            const profileResult = await XhsMcpClient.getUserProfile(xhsConf.mcpUrl, userId, xhsConf.userXsecToken);
                             if (profileResult.success && profileResult.data) {
                                 const d = profileResult.data;
                                 if (typeof d === 'string') {
@@ -1362,7 +1372,9 @@ export const useChatAI = ({
                             }
                         } else {
                             // 智能格式化：笔记摘要 + 完整评论区，避免被截断
-                            const note = (detailData as any).note || detailData;
+                            // MCP 服务器返回数据可能嵌套在 data 层下: { data: { note: {...}, comments: { list: [...] } } }
+                            const innerData = (detailData as any).data && typeof (detailData as any).data === 'object' ? (detailData as any).data : null;
+                            const note = innerData?.note || (detailData as any).note || detailData;
                             const noteTitle = note.title || note.displayTitle || note.display_title || '';
                             const noteDesc = (note.desc || note.description || note.content || '').slice(0, 1500);
                             const noteAuthor = note.user?.nickname || note.author || '';
@@ -1379,8 +1391,9 @@ export const useChatAI = ({
                             noteSection += `\n互动: ${noteLikes}赞 ${noteCollects}收藏 ${noteCommentCount}评论 ${noteShareCount}分享`;
                             noteSection += `\n\n正文:\n${noteDesc}`;
 
-                            // 提取评论（兼容多种路径）
-                            const rawComments = (detailData as any).comments?.list || (detailData as any).comments
+                            // 提取评论（兼容多种路径，包括 MCP 服务器的 data.comments.list 嵌套）
+                            const rawComments = innerData?.comments?.list || innerData?.comments
+                                || (detailData as any).comments?.list || (detailData as any).comments
                                 || note.comments?.list || note.comments || [];
                             const commentArr = Array.isArray(rawComments) ? rawComments : [];
 

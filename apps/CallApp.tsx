@@ -373,11 +373,13 @@ const CallApp: React.FC = () => {
   const [editingText, setEditingText] = useState('');
   const [rerollingBubbleId, setRerollingBubbleId] = useState<string | null>(null);
   const [showHangupConfirm, setShowHangupConfirm] = useState(false);
+  const [deleteConfirmRecord, setDeleteConfirmRecord] = useState<CallRecord | null>(null);
   const [voiceLang, setVoiceLang] = useState('');
   const [showLangPicker, setShowLangPicker] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const currentBlobUrlRef = useRef<string | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
+  const callTouchStartPos = useRef({ x: 0, y: 0 });
   const selectedChar = useMemo(() => characters.find(c => c.id === selectedCharId) || null, [characters, selectedCharId]);
   const recordDetail = useMemo(() => callRecords.find(r => r.id === recordDetailId) || null, [callRecords, recordDetailId]);
   // 从角色聊天主题中提取强调色，用于通话界面的按钮和高亮
@@ -622,11 +624,11 @@ const CallApp: React.FC = () => {
   const handleHangup = () => {
     setShowHangupConfirm(true);
   };
-  const buildHistoryMessages = async (input: string, skipAssistantDbId?: number) => {
+  const buildHistoryMessages = async (input: string, skipDbId?: number) => {
     if (!selectedChar?.id) return [{ role: 'user', content: input }];
     const limit = selectedChar.contextLimit || 500;
     const allMsgs = await DB.getRecentMessagesByCharId(selectedChar.id, limit);
-    const filtered = allMsgs.filter(m => !(skipAssistantDbId && m.id === skipAssistantDbId));
+    const filtered = allMsgs.filter(m => !(skipDbId && m.id === skipDbId));
     const history = filtered.map(m => {
       const source = m.metadata?.source === 'call' ? '（通话记录）' : m.metadata?.source === 'date' ? '（约会记录）' : '（聊天记录）';
       const content = m.type === 'image'
@@ -641,14 +643,14 @@ const CallApp: React.FC = () => {
     const finalInput = timeGapHint ? `${input}\n\n${timeGapHint}` : input;
     return [...history, { role: 'user', content: finalInput }];
   };
-  const requestAssistantReply = async (input: string, skipAssistantDbId?: number): Promise<string> => {
+  const requestAssistantReply = async (input: string, skipDbId?: number): Promise<string> => {
     const baseUrl = apiConfig.baseUrl?.replace(/\/+$/, '');
     if (!baseUrl) throw new Error('请先在设置里配置聊天 API URL');
     const userName = userProfile?.name?.trim() || '用户';
     const systemPrompt = selectedChar
       ? buildCallPrompt(userName, selectedChar.name, ContextBuilder.buildCoreContext(selectedChar, userProfile, true), voiceLang || undefined)
       : buildCallPrompt(userName, selectedChar?.name, undefined, voiceLang || undefined);
-    const messages = await buildHistoryMessages(input, skipAssistantDbId);
+    const messages = await buildHistoryMessages(input, skipDbId);
     const chatData = await safeFetchJson(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey || 'sk-none'}` },
@@ -706,7 +708,7 @@ const CallApp: React.FC = () => {
     let assistantText = '';
     try {
       setCallState('thinking');
-      assistantText = sanitizeAssistantOutput(await requestAssistantReply(input));
+      assistantText = sanitizeAssistantOutput(await requestAssistantReply(input, userDbId));
     } catch (err: any) {
       setErrorMessage(err?.message || '文本回复失败');
       setCallState('error');
@@ -870,7 +872,13 @@ const CallApp: React.FC = () => {
     loadCallRecords(selectedCharId);
   }, [selectedCharId]);
   const handleDeleteRecord = async (record: CallRecord) => {
-    if (!window.confirm('删除这条通话记录？')) return;
+    setDeleteConfirmRecord(record);
+  };
+
+  const confirmDeleteRecord = async () => {
+    const record = deleteConfirmRecord;
+    if (!record) return;
+    setDeleteConfirmRecord(null);
     const all = await DB.getMessagesByCharId(record.characterId);
     // 删除通话消息 + 聊天页的通话总结卡片
     const ids = all.filter(m => {
@@ -1039,6 +1047,20 @@ const CallApp: React.FC = () => {
             </button>
           );})}
         </div>
+
+        {/* Delete confirm overlay */}
+        {deleteConfirmRecord && (
+          <div className="absolute inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center px-6">
+            <div className="w-full max-w-sm rounded-3xl border border-white/20 bg-gradient-to-b from-slate-900 to-slate-950 p-5 shadow-2xl">
+              <div className="text-base font-semibold text-white">删除通话记录？</div>
+              <p className="mt-2 text-sm text-slate-400 leading-relaxed">和 {deleteConfirmRecord.characterName} 的这通通话将被永久删除。</p>
+              <div className="mt-5 grid grid-cols-2 gap-2">
+                <button onClick={() => setDeleteConfirmRecord(null)} className="py-2.5 rounded-2xl border border-white/20 text-slate-200 transition active:scale-[0.97]">取消</button>
+                <button onClick={confirmDeleteRecord} className="py-2.5 rounded-2xl bg-rose-500/80 text-white font-semibold transition active:scale-[0.97]">删除</button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -1142,12 +1164,22 @@ const CallApp: React.FC = () => {
               e.preventDefault();
               startEditBubble(bubble);
             }}
-            onTouchStart={() => {
+            onTouchStart={(e) => {
               if (bubble.role !== 'user') return;
+              callTouchStartPos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
               longPressTimerRef.current = window.setTimeout(() => startEditBubble(bubble), 450);
             }}
+            onTouchMove={(e) => {
+              if (!longPressTimerRef.current) return;
+              const dx = Math.abs(e.touches[0].clientX - callTouchStartPos.current.x);
+              const dy = Math.abs(e.touches[0].clientY - callTouchStartPos.current.y);
+              if (dx > 10 || dy > 10) {
+                window.clearTimeout(longPressTimerRef.current);
+                longPressTimerRef.current = null;
+              }
+            }}
             onTouchEnd={() => {
-              if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
+              if (longPressTimerRef.current) { window.clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
             }}
             style={{ opacity }}
             className={`px-1 py-1 ${bubble.role === 'user' ? 'text-right' : ''}`}

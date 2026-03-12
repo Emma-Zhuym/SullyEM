@@ -293,7 +293,7 @@ const Chat: React.FC = () => {
             const chatScopeMsgs = allMsgs
                 .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
                 .filter(m => !currentChar?.hideBeforeMessageId || m.id >= currentChar.hideBeforeMessageId)
-                .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system'));
+                .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
 
             setTotalMsgCount(chatScopeMsgs.length);
             setMessages(chatScopeMsgs.slice(-requestedVisibleCount));
@@ -309,7 +309,7 @@ const Chat: React.FC = () => {
                 const chatScopeMsgs = retryMsgs
                     .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
                     .filter(m => !currentChar?.hideBeforeMessageId || m.id >= currentChar.hideBeforeMessageId)
-                    .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system'));
+                    .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
                 setTotalMsgCount(chatScopeMsgs.length);
                 setMessages(chatScopeMsgs.slice(-requestedVisibleCount));
             } catch { /* give up silently */ }
@@ -321,6 +321,10 @@ const Chat: React.FC = () => {
             // Update ref BEFORE any async work so stale reloadMessages calls
             // from a previous character can detect the switch and bail out.
             activeCharIdRef.current = activeCharacterId;
+
+            // Clear messages immediately to prevent showing stale chat from previous character
+            setMessages([]);
+            setTotalMsgCount(0);
 
             reloadMessages(LOAD_BATCH_SIZE);
             loadEmojiData();
@@ -353,7 +357,7 @@ const Chat: React.FC = () => {
             DB.getMessagesByCharId(activeCharacterId).then(allMsgs => {
                 const filtered = allMsgs
                     .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
-                    .filter(m => !(char?.hideSystemLogs && m.role === 'system'));
+                    .filter(m => !(char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
                 setAllHistoryMessages(filtered);
             });
         }
@@ -377,6 +381,7 @@ const Chat: React.FC = () => {
             reloadMessages(visibleCountRef.current);
             clearUnread(activeCharacterId);
         }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- clearUnread is stable (useCallback with []), omit to prevent stale-dep lint noise
     }, [lastMsgTimestamp, activeCharacterId, reloadMessages, clearUnread]);
 
     useEffect(() => {
@@ -917,7 +922,7 @@ const Chat: React.FC = () => {
     const displayMessages = useMemo(() => messages
         .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
         .filter(m => !char?.hideBeforeMessageId || m.id >= char.hideBeforeMessageId)
-        .filter(m => { if (char?.hideSystemLogs && m.role === 'system') return false; return true; })
+        .filter(m => { if (char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card') return false; return true; })
         .slice(-visibleCount),
         [messages, char?.id, char?.hideBeforeMessageId, char?.hideSystemLogs, visibleCount]);
 

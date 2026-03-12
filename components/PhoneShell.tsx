@@ -31,6 +31,7 @@ import BrowserApp from '../apps/BrowserApp';
 import SongwritingApp from '../apps/SongwritingApp';
 import CallApp from '../apps/CallApp';
 import VoiceDesignerApp from '../apps/VoiceDesignerApp';
+import GuidebookApp from '../apps/GuidebookApp';
 import { SpecialMomentsApp, ValentineController, shouldShowValentinePopup } from './ValentineEvent';
 import { AppID } from '../types';
 import { App as CapApp } from '@capacitor/app';
@@ -317,6 +318,7 @@ const PhoneShell: React.FC = () => {
       case AppID.Songwriting: return <SongwritingApp />;
       case AppID.Call: return <CallApp />;
       case AppID.VoiceDesigner: return <VoiceDesignerApp />;
+      case AppID.Guidebook: return <GuidebookApp />;
       case AppID.SpecialMoments: return <SpecialMomentsApp />;
       case AppID.Launcher:
       default: return <Launcher />;

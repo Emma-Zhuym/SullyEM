@@ -239,6 +239,70 @@ const MessageItem = React.memo(({
     // --- SYSTEM MESSAGE RENDERING ---
     if (isSystem) {
         const isCallSummary = m.metadata?.source === 'call-end-popup';
+
+        // Guidebook end card — rendered as pretty card, not ugly system pill
+        if (m.type === 'score_card') {
+            let scoreData: any = null;
+            try { scoreData = m.metadata?.scoreCard || JSON.parse(m.content); } catch {}
+            if (scoreData?.type === 'guidebook_card') {
+                const diff = (scoreData.finalAffinity ?? 0) - (scoreData.initialAffinity ?? 0);
+                const isPositive = diff > 0;
+                return (
+                    <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`}>
+                        {selectionMode && (
+                            <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
+                                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
+                                    {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
+                                </div>
+                            </div>
+                        )}
+                        <div className="w-full px-4 my-3" {...interactionProps}>
+                            <div className="w-72 mx-auto rounded-2xl overflow-hidden shadow-md" style={{ border: '1.5px solid rgba(200,185,190,0.4)', background: 'linear-gradient(180deg, #f0ebe8 0%, #fff 25%, #ece6e9 100%)' }}>
+                                {/* Header */}
+                                <div className="px-4 pt-3 pb-2 flex items-center gap-2.5" style={{ borderBottom: '1px solid rgba(200,185,190,0.2)', background: 'linear-gradient(135deg, rgba(200,185,190,0.2), rgba(190,175,195,0.15))' }}>
+                                    {scoreData.charAvatar ? (
+                                        <img src={scoreData.charAvatar} className="w-9 h-9 rounded-xl object-cover shadow-sm shrink-0" style={{ boxShadow: '0 0 0 2px rgba(180,165,170,0.4)' }} />
+                                    ) : (
+                                        <div className="w-9 h-9 rounded-xl flex items-center justify-center text-white text-sm font-bold shrink-0" style={{ background: 'linear-gradient(135deg, #b8909a, #a07880)' }}>{scoreData.charName?.[0] || '?'}</div>
+                                    )}
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-[9px] font-bold tracking-widest uppercase" style={{ color: '#9b8a8e' }}>攻略本 · 结算报告</div>
+                                        <div className="text-xs font-bold truncate" style={{ color: '#5a4a50' }}>「{scoreData.title}」</div>
+                                    </div>
+                                    <div className={`text-lg font-black shrink-0 ${isPositive ? 'text-emerald-500' : diff < 0 ? 'text-red-400' : 'text-slate-400'}`}>
+                                        {isPositive ? '+' : ''}{diff}
+                                    </div>
+                                </div>
+                                {/* Body */}
+                                <div className="px-4 py-3 space-y-2.5">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[9px] font-bold shrink-0" style={{ color: '#9b8a8e' }}>好感度</span>
+                                        <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(230,220,225,0.6)' }}>
+                                            <div className="h-full rounded-full" style={{ width: `${Math.min(Math.max((scoreData.finalAffinity + 100) / 200 * 100, 2), 100)}%`, background: isPositive ? 'linear-gradient(90deg, #c9b1bd, #b8909a)' : 'linear-gradient(90deg, #c8a0a8, #b87880)' }} />
+                                        </div>
+                                        <span className="text-[9px] font-mono font-bold shrink-0" style={{ color: '#8b7a7e' }}>{scoreData.finalAffinity}</span>
+                                    </div>
+                                    {scoreData.charVerdict && (
+                                        <div className="text-xs leading-relaxed italic" style={{ color: '#5a4a50' }}>"{scoreData.charVerdict}"</div>
+                                    )}
+                                    {scoreData.charNewInsight && (
+                                        <div className="rounded-xl px-3 py-2" style={{ background: 'linear-gradient(135deg, rgba(215,230,248,0.6), rgba(200,220,245,0.45))', border: '1px solid rgba(150,185,225,0.35)' }}>
+                                            <div className="text-[9px] font-bold mb-1" style={{ color: '#4a6a92' }}>◆ 这局游戏让我发现的你</div>
+                                            <div className="text-xs leading-relaxed italic" style={{ color: '#2a4a68' }}>{scoreData.charNewInsight}</div>
+                                        </div>
+                                    )}
+                                    <div className="flex items-center justify-between pt-1" style={{ borderTop: '1px solid rgba(200,185,190,0.15)' }}>
+                                        <span className="text-[9px]" style={{ color: '#c0b0b5' }}>{scoreData.rounds} 回合</span>
+                                        <span className="text-[9px] font-bold" style={{ color: '#9b8a8e' }}>攻略本 ♥</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+        }
+
         // Clean up text: remove [System:] or [系统:] prefix for display
         const displayText = m.content.replace(/^\[(System|系统|System Log|系统记录)\s*[:：]?\s*/i, '').replace(/\]$/, '').trim();
 
@@ -465,6 +529,68 @@ const MessageItem = React.memo(({
     if (m.type === 'score_card') {
         let scoreData: any = null;
         try { scoreData = m.metadata?.scoreCard || JSON.parse(m.content); } catch {}
+
+        // Guidebook End Card
+        if (scoreData?.type === 'guidebook_card') {
+            const diff = scoreData.finalAffinity - scoreData.initialAffinity;
+            const isPositive = diff > 0;
+            return commonLayout(
+                <div className="w-72 rounded-2xl overflow-hidden shadow-md" style={{ border: '1.5px solid rgba(200,185,190,0.4)', background: 'linear-gradient(180deg, #f0ebe8 0%, #fff 25%, #ece6e9 100%)' }} {...interactionProps}>
+                    {/* Header bar */}
+                    <div className="px-4 pt-3 pb-2 flex items-center gap-2.5" style={{ borderBottom: '1px solid rgba(200,185,190,0.2)', background: 'linear-gradient(135deg, rgba(200,185,190,0.2), rgba(190,175,195,0.15))' }}>
+                        {scoreData.charAvatar ? (
+                            <img src={scoreData.charAvatar} className="w-9 h-9 rounded-xl object-cover shadow-sm shrink-0" style={{ boxShadow: '0 0 0 2px rgba(180,165,170,0.4)' }} />
+                        ) : (
+                            <div className="w-9 h-9 rounded-xl flex items-center justify-center text-white text-sm font-bold shrink-0" style={{ background: 'linear-gradient(135deg, #b8909a, #a07880)' }}>{scoreData.charName?.[0] || '?'}</div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                            <div className="text-[9px] font-bold tracking-widest uppercase" style={{ color: '#9b8a8e' }}>攻略本 · 结算报告</div>
+                            <div className="text-xs font-bold truncate" style={{ color: '#5a4a50' }}>「{scoreData.title}」</div>
+                        </div>
+                        <div className={`text-lg font-black shrink-0 ${isPositive ? 'text-emerald-500' : diff < 0 ? 'text-red-400' : 'text-slate-400'}`}>
+                            {isPositive ? '+' : ''}{diff}
+                        </div>
+                    </div>
+
+                    {/* Body */}
+                    <div className="px-4 py-3 space-y-2.5">
+                        {/* Affinity bar */}
+                        <div className="flex items-center gap-2">
+                            <span className="text-[9px] font-bold shrink-0" style={{ color: '#9b8a8e' }}>好感度</span>
+                            <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(230,220,225,0.6)' }}>
+                                <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(Math.max((scoreData.finalAffinity + 100) / 200 * 100, 2), 100)}%`, background: isPositive ? 'linear-gradient(90deg, #c9b1bd, #b8909a)' : 'linear-gradient(90deg, #c8a0a8, #b87880)' }} />
+                            </div>
+                            <span className="text-[9px] font-mono font-bold shrink-0" style={{ color: '#8b7a7e' }}>{scoreData.finalAffinity}</span>
+                        </div>
+
+                        {/* Verdict */}
+                        {scoreData.charVerdict && (
+                            <div className="text-xs leading-relaxed italic" style={{ color: '#5a4a50' }}>
+                                "{scoreData.charVerdict}"
+                            </div>
+                        )}
+
+                        {/* New Insight (the juicy part) */}
+                        {scoreData.charNewInsight && (
+                            <div className="rounded-xl px-3 py-2" style={{ background: 'linear-gradient(135deg, rgba(215,230,248,0.6), rgba(200,220,245,0.45))', border: '1px solid rgba(150,185,225,0.35)' }}>
+                                <div className="text-[9px] font-bold mb-1 flex items-center gap-1" style={{ color: '#4a6a92' }}>
+                                    <span>◆</span> 这局游戏让我发现的你
+                                </div>
+                                <div className="text-xs leading-relaxed italic" style={{ color: '#2a4a68' }}>
+                                    {scoreData.charNewInsight}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Rounds info */}
+                        <div className="flex items-center justify-between pt-1" style={{ borderTop: '1px solid rgba(200,185,190,0.15)' }}>
+                            <span className="text-[9px]" style={{ color: '#c0b0b5' }}>{scoreData.rounds} 回合</span>
+                            <span className="text-[9px] font-bold" style={{ color: '#9b8a8e' }}>攻略本 ♥</span>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
 
         // Quiz Card
         if (scoreData?.type === 'quiz_card') {

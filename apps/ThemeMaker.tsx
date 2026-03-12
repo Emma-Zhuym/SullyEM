@@ -542,6 +542,9 @@ const ThemeMaker: React.FC = () => {
     const [userFollowAi, setUserFollowAi] = useState(false);
     const [lastSavedTheme, setLastSavedTheme] = useState<ChatTheme>(() => cloneTheme({ ...DEFAULT_THEME, id: initialThemeId }));
     const [isDirty, setIsDirty] = useState(false);
+    const [pendingDiscardAction, setPendingDiscardAction] = useState<(() => void) | null>(null);
+    const [showLowContrastConfirm, setShowLowContrastConfirm] = useState(false);
+    const [pendingSaveExit, setPendingSaveExit] = useState(false);
     const [isAppliedToPreview, setIsAppliedToPreview] = useState(false);
     const [undoStack, setUndoStack] = useState<ChatTheme[]>([]);
     const [redoStack, setRedoStack] = useState<ChatTheme[]>([]);
@@ -592,7 +595,10 @@ const ThemeMaker: React.FC = () => {
         });
     };
 
-    const confirmDiscardUnsaved = () => !isDirty || window.confirm('你有未保存改动，确认继续吗？');
+    const withDiscardGuard = (action: () => void) => {
+        if (!isDirty) { action(); return; }
+        setPendingDiscardAction(() => action);
+    };
 
     const requestTabSwitch = (target: 'user' | 'ai' | 'css') => {
         if (target === activeTab) return;
@@ -604,10 +610,7 @@ const ThemeMaker: React.FC = () => {
         setToolSection(target);
     };
 
-    const requestClose = () => {
-        if (!confirmDiscardUnsaved()) return;
-        closeApp();
-    };
+    const requestClose = () => withDiscardGuard(() => closeApp());
 
     // Initialize padding state from CSS on load
     useEffect(() => {
@@ -677,6 +680,15 @@ const ThemeMaker: React.FC = () => {
         addToast('已应用图床图片', 'success');
     };
 
+    const doSaveTheme = (exitAfterSave: boolean) => {
+        addCustomTheme(editingTheme);
+        setLastSavedTheme(cloneTheme(editingTheme));
+        setIsDirty(false);
+        setIsAppliedToPreview(true);
+        addToast('已保存并应用到当前聊天预览', 'success');
+        if (exitAfterSave) closeApp();
+    };
+
     const saveTheme = ({ exitAfterSave }: { exitAfterSave: boolean }) => {
         if (!editingTheme.name.trim()) return;
         const renderability = runCssRenderabilityCheck(editingTheme.customCss || '', cssValidation);
@@ -685,17 +697,11 @@ const ThemeMaker: React.FC = () => {
             return;
         }
         if (overallContrastScore.ratio < CONTRAST_CRITICAL_THRESHOLD) {
-            const shouldContinue = window.confirm('当前可读性评分极低，仍要保存此样式吗？');
-            if (!shouldContinue) return;
+            setPendingSaveExit(exitAfterSave);
+            setShowLowContrastConfirm(true);
+            return;
         }
-        addCustomTheme(editingTheme);
-        setLastSavedTheme(cloneTheme(editingTheme));
-        setIsDirty(false);
-        setIsAppliedToPreview(true);
-        addToast('已保存并应用到当前聊天预览', 'success');
-        if (exitAfterSave) {
-            closeApp();
-        }
+        doSaveTheme(exitAfterSave);
     };
 
     const insertCssSnippet = (snippet: CssSnippet) => {
@@ -1322,6 +1328,55 @@ const ThemeMaker: React.FC = () => {
                                     <input type="range" min="0" max="1" step="0.05" value={activeStyle.backgroundImageOpacity ?? 0.5} onChange={(e) => updateStyle('backgroundImageOpacity', parseFloat(e.target.value))} className="w-full h-1.5 bg-slate-200 rounded-full appearance-none cursor-pointer accent-primary" />
                                 </div>
                             )}
+                            {/* Voice Bar Style */}
+                            <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
+                                <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path d="M7 4a3 3 0 0 1 6 0v6a3 3 0 1 1-6 0V4Z" /><path d="M5.5 9.643a.75.75 0 0 0-1.5 0V10c0 3.06 2.29 5.585 5.25 5.954V17.5h-1.5a.75.75 0 0 0 0 1.5h4.5a.75.75 0 0 0 0-1.5h-1.5v-1.546A6.001 6.001 0 0 0 16 10v-.357a.75.75 0 0 0-1.5 0V10a4.5 4.5 0 0 1-9 0v-.357Z" /></svg>
+                                    语音条样式
+                                </h3>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="text-[10px] text-slate-400 block mb-1">背景色</label>
+                                        <div className="flex items-center gap-2">
+                                            <input type="color" value={activeStyle.voiceBarBg || '#f1f5f9'} onChange={(e) => updateStyle('voiceBarBg', e.target.value)} className="w-7 h-7 rounded-lg border-0 cursor-pointer" />
+                                            <span className="text-[10px] text-slate-400 font-mono">{activeStyle.voiceBarBg || '默认'}</span>
+                                            {activeStyle.voiceBarBg && <button onClick={() => updateStyle('voiceBarBg', undefined)} className="text-[9px] text-red-400">重置</button>}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] text-slate-400 block mb-1">播放时背景</label>
+                                        <div className="flex items-center gap-2">
+                                            <input type="color" value={activeStyle.voiceBarActiveBg || '#d1fae5'} onChange={(e) => updateStyle('voiceBarActiveBg', e.target.value)} className="w-7 h-7 rounded-lg border-0 cursor-pointer" />
+                                            <span className="text-[10px] text-slate-400 font-mono">{activeStyle.voiceBarActiveBg || '默认'}</span>
+                                            {activeStyle.voiceBarActiveBg && <button onClick={() => updateStyle('voiceBarActiveBg', undefined)} className="text-[9px] text-red-400">重置</button>}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] text-slate-400 block mb-1">按钮颜色</label>
+                                        <div className="flex items-center gap-2">
+                                            <input type="color" value={activeStyle.voiceBarBtnColor || '#10b981'} onChange={(e) => updateStyle('voiceBarBtnColor', e.target.value)} className="w-7 h-7 rounded-lg border-0 cursor-pointer" />
+                                            <span className="text-[10px] text-slate-400 font-mono">{activeStyle.voiceBarBtnColor || '默认'}</span>
+                                            {activeStyle.voiceBarBtnColor && <button onClick={() => updateStyle('voiceBarBtnColor', undefined)} className="text-[9px] text-red-400">重置</button>}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] text-slate-400 block mb-1">波形颜色</label>
+                                        <div className="flex items-center gap-2">
+                                            <input type="color" value={activeStyle.voiceBarWaveColor || '#10b981'} onChange={(e) => updateStyle('voiceBarWaveColor', e.target.value)} className="w-7 h-7 rounded-lg border-0 cursor-pointer" />
+                                            <span className="text-[10px] text-slate-400 font-mono">{activeStyle.voiceBarWaveColor || '默认'}</span>
+                                            {activeStyle.voiceBarWaveColor && <button onClick={() => updateStyle('voiceBarWaveColor', undefined)} className="text-[9px] text-red-400">重置</button>}
+                                        </div>
+                                    </div>
+                                    <div className="col-span-2">
+                                        <label className="text-[10px] text-slate-400 block mb-1">文字颜色</label>
+                                        <div className="flex items-center gap-2">
+                                            <input type="color" value={activeStyle.voiceBarTextColor || '#475569'} onChange={(e) => updateStyle('voiceBarTextColor', e.target.value)} className="w-7 h-7 rounded-lg border-0 cursor-pointer" />
+                                            <span className="text-[10px] text-slate-400 font-mono">{activeStyle.voiceBarTextColor || '默认'}</span>
+                                            {activeStyle.voiceBarTextColor && <button onClick={() => updateStyle('voiceBarTextColor', undefined)} className="text-[9px] text-red-400">重置</button>}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     )}
 
@@ -1411,58 +1466,36 @@ const ThemeMaker: React.FC = () => {
                         </div>
                     )}
 
-                    {/* Voice Bar Style */}
-                    <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
-                        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4"><path d="M7 4a3 3 0 0 1 6 0v6a3 3 0 1 1-6 0V4Z" /><path d="M5.5 9.643a.75.75 0 0 0-1.5 0V10c0 3.06 2.29 5.585 5.25 5.954V17.5h-1.5a.75.75 0 0 0 0 1.5h4.5a.75.75 0 0 0 0-1.5h-1.5v-1.546A6.001 6.001 0 0 0 16 10v-.357a.75.75 0 0 0-1.5 0V10a4.5 4.5 0 0 1-9 0v-.357Z" /></svg>
-                            语音条样式
-                        </h3>
-                        <div className="grid grid-cols-2 gap-3">
-                            <div>
-                                <label className="text-[10px] text-slate-400 block mb-1">背景色</label>
-                                <div className="flex items-center gap-2">
-                                    <input type="color" value={activeStyle.voiceBarBg || '#f1f5f9'} onChange={(e) => updateStyle('voiceBarBg', e.target.value)} className="w-7 h-7 rounded-lg border-0 cursor-pointer" />
-                                    <span className="text-[10px] text-slate-400 font-mono">{activeStyle.voiceBarBg || '默认'}</span>
-                                    {activeStyle.voiceBarBg && <button onClick={() => updateStyle('voiceBarBg', undefined)} className="text-[9px] text-red-400">重置</button>}
-                                </div>
-                            </div>
-                            <div>
-                                <label className="text-[10px] text-slate-400 block mb-1">播放时背景</label>
-                                <div className="flex items-center gap-2">
-                                    <input type="color" value={activeStyle.voiceBarActiveBg || '#d1fae5'} onChange={(e) => updateStyle('voiceBarActiveBg', e.target.value)} className="w-7 h-7 rounded-lg border-0 cursor-pointer" />
-                                    <span className="text-[10px] text-slate-400 font-mono">{activeStyle.voiceBarActiveBg || '默认'}</span>
-                                    {activeStyle.voiceBarActiveBg && <button onClick={() => updateStyle('voiceBarActiveBg', undefined)} className="text-[9px] text-red-400">重置</button>}
-                                </div>
-                            </div>
-                            <div>
-                                <label className="text-[10px] text-slate-400 block mb-1">按钮颜色</label>
-                                <div className="flex items-center gap-2">
-                                    <input type="color" value={activeStyle.voiceBarBtnColor || '#10b981'} onChange={(e) => updateStyle('voiceBarBtnColor', e.target.value)} className="w-7 h-7 rounded-lg border-0 cursor-pointer" />
-                                    <span className="text-[10px] text-slate-400 font-mono">{activeStyle.voiceBarBtnColor || '默认'}</span>
-                                    {activeStyle.voiceBarBtnColor && <button onClick={() => updateStyle('voiceBarBtnColor', undefined)} className="text-[9px] text-red-400">重置</button>}
-                                </div>
-                            </div>
-                            <div>
-                                <label className="text-[10px] text-slate-400 block mb-1">波形颜色</label>
-                                <div className="flex items-center gap-2">
-                                    <input type="color" value={activeStyle.voiceBarWaveColor || '#10b981'} onChange={(e) => updateStyle('voiceBarWaveColor', e.target.value)} className="w-7 h-7 rounded-lg border-0 cursor-pointer" />
-                                    <span className="text-[10px] text-slate-400 font-mono">{activeStyle.voiceBarWaveColor || '默认'}</span>
-                                    {activeStyle.voiceBarWaveColor && <button onClick={() => updateStyle('voiceBarWaveColor', undefined)} className="text-[9px] text-red-400">重置</button>}
-                                </div>
-                            </div>
-                            <div className="col-span-2">
-                                <label className="text-[10px] text-slate-400 block mb-1">文字颜色</label>
-                                <div className="flex items-center gap-2">
-                                    <input type="color" value={activeStyle.voiceBarTextColor || '#475569'} onChange={(e) => updateStyle('voiceBarTextColor', e.target.value)} className="w-7 h-7 rounded-lg border-0 cursor-pointer" />
-                                    <span className="text-[10px] text-slate-400 font-mono">{activeStyle.voiceBarTextColor || '默认'}</span>
-                                    {activeStyle.voiceBarTextColor && <button onClick={() => updateStyle('voiceBarTextColor', undefined)} className="text-[9px] text-red-400">重置</button>}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
                 </div>
             </div>
+            )}
+
+            {/* Discard unsaved changes confirm */}
+            {pendingDiscardAction && (
+                <div className="absolute inset-0 z-[999] bg-black/40 backdrop-blur-sm flex items-center justify-center px-6">
+                    <div className="w-full max-w-sm bg-white rounded-3xl p-5 shadow-2xl">
+                        <div className="text-base font-bold text-slate-700">有未保存的改动</div>
+                        <p className="mt-2 text-sm text-slate-500">继续操作将丢失当前未保存的改动。</p>
+                        <div className="mt-5 flex gap-3">
+                            <button onClick={() => setPendingDiscardAction(null)} className="flex-1 py-2.5 rounded-2xl bg-slate-100 text-slate-600 font-bold">取消</button>
+                            <button onClick={() => { const action = pendingDiscardAction; setPendingDiscardAction(null); action(); }} className="flex-1 py-2.5 rounded-2xl bg-red-500 text-white font-bold">放弃改动</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Low contrast confirm */}
+            {showLowContrastConfirm && (
+                <div className="absolute inset-0 z-[999] bg-black/40 backdrop-blur-sm flex items-center justify-center px-6">
+                    <div className="w-full max-w-sm bg-white rounded-3xl p-5 shadow-2xl">
+                        <div className="text-base font-bold text-slate-700">可读性评分极低</div>
+                        <p className="mt-2 text-sm text-slate-500">当前文字与背景的对比度过低，可能导致聊天内容难以辨认。仍要保存此样式吗？</p>
+                        <div className="mt-5 flex gap-3">
+                            <button onClick={() => setShowLowContrastConfirm(false)} className="flex-1 py-2.5 rounded-2xl bg-slate-100 text-slate-600 font-bold">再调整一下</button>
+                            <button onClick={() => { setShowLowContrastConfirm(false); doSaveTheme(pendingSaveExit); }} className="flex-1 py-2.5 rounded-2xl bg-amber-500 text-white font-bold">仍然保存</button>
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );

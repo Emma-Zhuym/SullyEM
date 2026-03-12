@@ -227,6 +227,7 @@ const Settings: React.FC = () => {
               serverUrl: rtXhsMcpUrl,
               loggedInNickname: rtXhsNickname || undefined,
               loggedInUserId: rtXhsUserId || undefined,
+              userXsecToken: realtimeConfig.xhsMcpConfig?.userXsecToken, // 保留自动获取的 token
           }
       });
       addToast('实时感知配置已保存', 'success');
@@ -290,15 +291,17 @@ const Settings: React.FC = () => {
           setRtTestStatus('请填写 Bridge Server URL');
           return;
       }
-      setRtTestStatus('正在连接 Bridge Server...');
+      setRtTestStatus('正在连接 MCP Server...');
       try {
           const result = await XhsMcpClient.testConnection(rtXhsMcpUrl);
           if (result.connected) {
               const toolCount = result.tools?.length || 0;
+              const tokenInfo = result.xsecToken ? ' | xsecToken 已获取' : '';
               const loginInfo = result.loggedIn
-                  ? ` | ${result.nickname ? `账号: ${result.nickname}` : '已登录'}${result.userId ? ` (ID: ${result.userId})` : ''}`
+                  ? ` | ${result.nickname ? `账号: ${result.nickname}` : '已登录'}${result.userId ? ` (ID: ${result.userId})` : ''}${tokenInfo}`
                   : ' | ⚠️ 未登录，请先在浏览器中登录小红书';
               setRtTestStatus(`✅ 连接成功! ${toolCount} 个功能可用${loginInfo}`);
+              // 自动填充：只在用户未手动填写时覆盖
               if (result.nickname && !rtXhsNickname) setRtXhsNickname(result.nickname);
               if (result.userId && !rtXhsUserId) setRtXhsUserId(result.userId);
               updateRealtimeConfig({
@@ -307,6 +310,7 @@ const Settings: React.FC = () => {
                       serverUrl: rtXhsMcpUrl,
                       loggedInNickname: rtXhsNickname || result.nickname,
                       loggedInUserId: rtXhsUserId || result.userId,
+                      userXsecToken: result.xsecToken,
                   }
               });
           } else {

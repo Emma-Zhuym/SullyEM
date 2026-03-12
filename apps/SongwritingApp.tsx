@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { SongSheet, SongLine, SongComment, SongMood, SongGenre } from '../types';
 import { SONG_GENRES, SONG_MOODS, SECTION_LABELS, COVER_STYLES, SongPrompts } from '../utils/songPrompts';
@@ -62,6 +62,35 @@ const SongwritingApp: React.FC = () => {
     const [shareTargetCharId, setShareTargetCharId] = useState('');
 
     const scrollRef = useRef<HTMLDivElement>(null);
+
+    // Long press for mobile delete
+    const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const touchStartPos = useRef({ x: 0, y: 0 });
+    const [longPressLineId, setLongPressLineId] = useState<string | null>(null);
+
+    const handleLineTouchStart = useCallback((e: React.TouchEvent, lineId: string) => {
+        touchStartPos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        longPressTimerRef.current = setTimeout(() => {
+            setLongPressLineId(lineId);
+        }, 500);
+    }, []);
+
+    const handleLineTouchMove = useCallback((e: React.TouchEvent) => {
+        if (!longPressTimerRef.current) return;
+        const dx = Math.abs(e.touches[0].clientX - touchStartPos.current.x);
+        const dy = Math.abs(e.touches[0].clientY - touchStartPos.current.y);
+        if (dx > 10 || dy > 10) {
+            clearTimeout(longPressTimerRef.current);
+            longPressTimerRef.current = null;
+        }
+    }, []);
+
+    const handleLineTouchEnd = useCallback(() => {
+        if (longPressTimerRef.current) {
+            clearTimeout(longPressTimerRef.current);
+            longPressTimerRef.current = null;
+        }
+    }, []);
 
     // Computed
     const collaborator = useMemo(() => {
@@ -941,7 +970,7 @@ const SongwritingApp: React.FC = () => {
                 )}
 
                 {/* Timeline Content */}
-                <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3 no-scrollbar pb-48 relative z-10" ref={scrollRef}>
+                <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3 no-scrollbar pb-48 relative z-10" ref={scrollRef} onClick={() => longPressLineId && setLongPressLineId(null)}>
                     {timeline.length === 0 && (
                         <div className="text-center py-20">
                             <div className="w-12 h-[1px] bg-stone-300 mx-auto mb-6" />
@@ -974,7 +1003,12 @@ const SongwritingApp: React.FC = () => {
                             }
 
                             return (
-                                <div key={line.id} className="group relative">
+                                <div key={line.id} className="group relative"
+                                    onTouchStart={(e) => handleLineTouchStart(e, line.id)}
+                                    onTouchMove={handleLineTouchMove}
+                                    onTouchEnd={handleLineTouchEnd}
+                                    onContextMenu={(e) => { e.preventDefault(); setLongPressLineId(line.id); }}
+                                >
                                     <div className={`p-3 rounded-lg ${isUser ? 'bg-white border border-stone-200' : 'bg-amber-50/50 border border-amber-100/80'}`}>
                                         <div className="flex items-center gap-2 mb-1.5">
                                             <SectionBadge section={line.section} small />
@@ -987,11 +1021,18 @@ const SongwritingApp: React.FC = () => {
                                         </div>
                                         <p className="text-sm text-stone-600 leading-relaxed" style={{ fontFamily: 'Georgia, "Noto Serif SC", serif' }}>{line.content}</p>
                                     </div>
-                                    {/* Hover actions */}
+                                    {/* Hover actions (desktop) */}
                                     <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 flex gap-0.5 transition-opacity">
                                         <button onClick={() => startEditLine(line)} className="p-1 bg-white rounded text-stone-400 hover:text-stone-600 text-[10px] border border-stone-200">✏</button>
                                         <button onClick={() => handleDeleteLine(line.id)} className="p-1 bg-white rounded text-stone-400 hover:text-red-400 text-[10px] border border-stone-200">×</button>
                                     </div>
+                                    {/* Long press context menu (mobile) */}
+                                    {longPressLineId === line.id && (
+                                        <div className="absolute top-0 right-0 z-20 bg-white rounded-lg shadow-lg border border-stone-200 py-1 min-w-[100px]">
+                                            <button onClick={() => { startEditLine(line); setLongPressLineId(null); }} className="w-full text-left px-3 py-2 text-xs text-stone-600 hover:bg-stone-50 active:bg-stone-100">编辑</button>
+                                            <button onClick={() => { handleDeleteLine(line.id); setLongPressLineId(null); }} className="w-full text-left px-3 py-2 text-xs text-red-500 hover:bg-red-50 active:bg-red-100">删除</button>
+                                        </div>
+                                    )}
                                 </div>
                             );
                         }

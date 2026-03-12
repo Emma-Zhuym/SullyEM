@@ -5,7 +5,7 @@ import { CharacterProfile, APIConfig } from '../types';
 import { resolveMiniMaxApiKey } from './minimaxApiKey';
 import { minimaxFetch } from './minimaxEndpoint';
 
-const DEFAULT_MODEL = 'speech-02-hd';
+const DEFAULT_MODEL = 'speech-2.8-hd';
 
 // MiniMax 支持的语气标签 — 这些在 TTS 中会被正确演绎，必须保留
 const VALID_INTERJECTION_TAGS = new Set([
@@ -260,7 +260,14 @@ export async function synthesizeSpeech(
 
   let blob: Blob;
   if (/^https?:\/\//i.test(audio.trim())) {
-    blob = await fetchRemoteAudioBlob(audio.trim());
+    try {
+      blob = await fetchRemoteAudioBlob(audio.trim());
+    } catch (e) {
+      // fetch() may fail due to CORS when hitting MiniMax CDN directly;
+      // return the raw URL so <audio src=...> can load it without CORS.
+      console.warn('[TTS] fetchRemoteAudioBlob failed, returning remote URL directly', (e as any)?.message || e);
+      return audio.trim();
+    }
   } else {
     blob = convertHexAudioToBlob(audio);
   }

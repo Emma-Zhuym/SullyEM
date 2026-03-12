@@ -37,10 +37,33 @@ const getArg = (name, fallback) => {
 };
 
 const PORT = parseInt(getArg('--port', '18061'), 10);
-const SKILLS_DIR = getArg('--skills-dir', join(__dirname, '..', 'xiaohongshu-skills'));
 const CHROME_HOST = getArg('--chrome-host', '127.0.0.1');
 const CHROME_PORT = getArg('--chrome-port', '9222');
 const ACCOUNT = getArg('--account', '');
+
+// Auto-detect skills directory: try --skills-dir arg, then common folder names
+import { existsSync } from 'fs';
+function findSkillsDir() {
+    const explicit = getArg('--skills-dir', '');
+    if (explicit) return explicit;
+    // Try common folder names relative to this script's parent directory
+    const candidates = [
+        join(__dirname, '..', 'xiaohongshu-skills'),
+        join(__dirname, '..', 'xiaohongshu-skills-main'),
+        // Also try relative to cwd (for users running from toolkit directory)
+        join(process.cwd(), 'xiaohongshu-skills'),
+        join(process.cwd(), 'xiaohongshu-skills-main'),
+    ];
+    for (const dir of candidates) {
+        if (existsSync(join(dir, 'scripts', 'cli.py'))) {
+            console.log(`[bridge] Auto-detected skills dir: ${dir}`);
+            return dir;
+        }
+    }
+    // Fallback to default (will show clear error at startup)
+    return join(__dirname, '..', 'xiaohongshu-skills');
+}
+const SKILLS_DIR = findSkillsDir();
 
 const CLI_PATH = join(SKILLS_DIR, 'scripts', 'cli.py');
 
@@ -117,6 +140,39 @@ function runCli(command, cliArgs = []) {
             reject(new Error(`无法启动 CLI: ${e.message}. 请确保已安装 uv 和 xiaohongshu-skills`));
         });
     });
+}
+
+/**
+ * 带重试的 CLI 执行：专用于 comment/reply 等操作
+ * XHS 反爬机制：如果刚打开过笔记详情（get-feed-detail），再用同一 xsec_token
+ * 打开同一笔记会被临时封锁（"笔记不可访问"/"当前笔记暂时无法浏览"）。
+ * 等几秒后重试通常可以成功。
+ */
+async function runCliWithRetry(command, cliArgs, maxRetries = 2) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+            const result = await runCli(command, cliArgs);
+            // Check if the result indicates note is temporarily blocked
+            const errMsg = result.data?.error || '';
+            if (errMsg.includes('不可访问') || errMsg.includes('无法浏览') || errMsg.includes('暂时无法')) {
+                if (attempt < maxRetries) {
+                    const waitSec = 5 + attempt * 3; // 5s, 8s
+                    console.log(`[bridge] ${command}: 笔记暂时不可访问，等 ${waitSec}s 后重试 (${attempt + 1}/${maxRetries})...`);
+                    await sleep(waitSec * 1000);
+                    continue;
+                }
+            }
+            return result;
+        } catch (e) {
+            if (attempt < maxRetries && (e.message.includes('不可访问') || e.message.includes('无法浏览'))) {
+                const waitSec = 5 + attempt * 3;
+                console.log(`[bridge] ${command}: 异常 - 笔记不可访问，等 ${waitSec}s 后重试 (${attempt + 1}/${maxRetries})...`);
+                await sleep(waitSec * 1000);
+                continue;
+            }
+            throw e;
+        }
+    }
 }
 
 /**
@@ -787,11 +843,79 @@ function isEmptyProfileResult(data) {
     if (typeof data === 'string') return true; // CLI 输出纯文本 = 失败
     if (data.error) return true;
     if (data.empty) return true;
-    if (data.notes && Array.isArray(data.notes) && data.notes.length === 0) return true;
-    if (data.notes_count === 0) return true;
-    // 没有 notes 字段也算空
-    if (!data.notes && !data.basic_info) return true;
-    return false;
+    // CLI returns basicInfo (camelCase), CDP returns basic_info (snake_case)
+    // Either one means we have valid profile data
+    if (data.basicInfo || data.basic_info) return false;
+    if (data.notes && Array.isArray(data.notes) && data.notes.length > 0) return false;
+    if (data.notes_count > 0) return false;
+    return true;
+}
+
+/**
+ * CLI user-profile 返回的是原始 __INITIAL_STATE__.user.userPageData，
+ * 结构为 { basicInfo, interactions, tabPublic: { notes: [...] }, ... }
+ * 标准化为 { basic_info, notes, notes_count } 以便前端一致处理
+ */
+function normalizeCliProfileData(raw) {
+    if (!raw || typeof raw !== 'object') return { basic_info: null, notes: [], notes_count: 0 };
+
+    // Extract basic_info (CLI uses camelCase, CDP uses snake_case)
+    const basicInfo = raw.basicInfo || raw.basic_info || null;
+
+    // Find notes from various possible locations in CLI output
+    let notes = [];
+    // Direct notes array
+    if (Array.isArray(raw.notes) && raw.notes.length > 0) {
+        notes = raw.notes;
+    }
+    // tabPublic.notes (common XHS structure)
+    else if (raw.tabPublic?.notes && Array.isArray(raw.tabPublic.notes)) {
+        notes = raw.tabPublic.notes;
+    }
+    // tab_public.notes
+    else if (raw.tab_public?.notes && Array.isArray(raw.tab_public.notes)) {
+        notes = raw.tab_public.notes;
+    }
+    // noteList
+    else if (Array.isArray(raw.noteList)) {
+        notes = raw.noteList;
+    }
+    // Search through all values for arrays that look like notes (have noteId or id + title)
+    else {
+        for (const [key, val] of Object.entries(raw)) {
+            if (key === 'interactions') continue; // Skip interactions (follows/fans)
+            if (Array.isArray(val) && val.length > 0) {
+                const first = val[0];
+                if (first && typeof first === 'object' &&
+                    (first.noteId || first.note_id || first.id || first.noteCard || first.displayTitle || first.title)) {
+                    notes = val;
+                    console.log(`[bridge] normalizeCliProfileData: found notes under key "${key}" (${val.length} items)`);
+                    break;
+                }
+            }
+            // Check nested objects (e.g., tabPublic: { notes: [...] })
+            if (val && typeof val === 'object' && !Array.isArray(val)) {
+                for (const [subKey, subVal] of Object.entries(val)) {
+                    if (Array.isArray(subVal) && subVal.length > 0) {
+                        const first = subVal[0];
+                        if (first && typeof first === 'object' &&
+                            (first.noteId || first.note_id || first.id || first.noteCard || first.displayTitle)) {
+                            notes = subVal;
+                            console.log(`[bridge] normalizeCliProfileData: found notes under "${key}.${subKey}" (${subVal.length} items)`);
+                            break;
+                        }
+                    }
+                }
+                if (notes.length > 0) break;
+            }
+        }
+    }
+
+    return {
+        basic_info: basicInfo,
+        notes,
+        notes_count: notes.length,
+    };
 }
 
 // ==================== Route Handlers ====================
@@ -969,17 +1093,19 @@ const handlers = {
         return { code: 0, data: { error: '无法获取笔记详情（缺少 xsec_token 且 CDP 提取失败）' } };
     },
 
-    // 发表评论（自动补充 xsecToken）
+    // 发表评论（自动补充 xsecToken + 重试）
+    // XHS 反爬: 如果刚看过 feed-detail，同 xsec_token 再次打开笔记可能被临时封锁
+    // 遇到 "笔记不可访问" 时等几秒重试
     'post-comment': async (body) => {
         const xsecToken = await ensureXsecToken(body.feed_id, body.xsec_token);
         if (!xsecToken) {
             return { code: 1, data: { error: '无法获取 xsecToken，评论失败' } };
         }
         const cliArgs = ['--feed-id', body.feed_id, '--xsec-token', xsecToken, '--content', body.content];
-        return runCli('post-comment', cliArgs);
+        return runCliWithRetry('post-comment', cliArgs);
     },
 
-    // 回复评论（自动补充 xsecToken）
+    // 回复评论（自动补充 xsecToken + 重试）
     'reply-comment': async (body) => {
         const xsecToken = await ensureXsecToken(body.feed_id, body.xsec_token);
         if (!xsecToken) {
@@ -988,7 +1114,7 @@ const handlers = {
         const cliArgs = ['--feed-id', body.feed_id, '--xsec-token', xsecToken, '--content', body.content];
         if (body.comment_id) cliArgs.push('--comment-id', body.comment_id);
         if (body.user_id) cliArgs.push('--user-id', body.user_id);
-        return runCli('reply-comment', cliArgs);
+        return runCliWithRetry('reply-comment', cliArgs);
     },
 
     // 点赞（自动补充 xsecToken）
@@ -1029,20 +1155,22 @@ const handlers = {
             return { code: 0, data: cdpResult };
         }
 
-        // 方法2: 如果 CDP 失败且有 xsec_token，尝试 CLI
-        if (xsecToken) {
-            console.log('[bridge] user-profile: CDP 失败，尝试 CLI...');
-            try {
-                const result = await runCli('user-profile', [
-                    '--user-id', userId,
-                    '--xsec-token', xsecToken,
-                ]);
-                if (!isEmptyProfileResult(result.data)) {
-                    return result;
-                }
-            } catch (e) {
-                console.warn('[bridge] user-profile CLI 也失败:', e.message);
+        // 方法2: CLI fallback（不要求 xsec_token，CLI 会自己启动 Chrome）
+        console.log('[bridge] user-profile: CDP 失败，尝试 CLI...');
+        try {
+            const cliArgs = ['--user-id', userId];
+            if (xsecToken) cliArgs.push('--xsec-token', xsecToken);
+            const result = await runCli('user-profile', cliArgs);
+            if (!isEmptyProfileResult(result.data)) {
+                // CLI returns raw userPageData: { basicInfo, interactions, tabPublic, ... }
+                // Normalize to { basic_info, notes, notes_count } for frontend consistency
+                const raw = result.data;
+                const normalized = normalizeCliProfileData(raw);
+                console.log(`[bridge] user-profile: CLI 成功, notes=${normalized.notes.length}`);
+                return { code: 0, data: normalized };
             }
+        } catch (e) {
+            console.warn('[bridge] user-profile CLI 也失败:', e.message);
         }
 
         // 都失败了
@@ -1207,8 +1335,15 @@ createServer(async (req, res) => {
     console.log(`XHS Bridge Server started`);
     console.log(`  Listen:     http://localhost:${PORT}/api`);
     console.log(`  Skills dir: ${SKILLS_DIR}`);
+    console.log(`  CLI path:   ${CLI_PATH}`);
     console.log(`  Chrome CDP: ${CHROME_HOST}:${CHROME_PORT}`);
     console.log(`  Account:    ${ACCOUNT || '(default)'}`);
+    // Check if skills dir is valid
+    if (!existsSync(CLI_PATH)) {
+        console.error(`\n[WARNING] cli.py not found at: ${CLI_PATH}`);
+        console.error(`  The bridge will start but CLI commands will fail.`);
+        console.error(`  Please check your --skills-dir path or put xiaohongshu-skills in the parent directory.`);
+    }
     console.log(`\nAvailable endpoints:`);
     for (const cmd of Object.keys(handlers)) {
         console.log(`  POST /api/${cmd}`);

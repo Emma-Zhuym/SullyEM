@@ -56,6 +56,8 @@ const BankDollhouse: React.FC<Props> = ({
 }) => {
     const { addToast } = useOS();
     const [showUnlockConfirm, setShowUnlockConfirm] = useState<string | null>(null);
+    const [renameTarget, setRenameTarget] = useState<DollhouseRoom | null>(null);
+    const [renameValue, setRenameValue] = useState('');
     const [showDecorPanel, setShowDecorPanel] = useState(false);
     const [decorTab, setDecorTab] = useState<DecorTab>('furniture');
     const [editMode, setEditMode] = useState(false);
@@ -297,19 +299,24 @@ const BankDollhouse: React.FC<Props> = ({
         addToast(`房间已解锁！-${cost} AP`, 'success');
     };
 
-    const handleRenameRoom = async (room: DollhouseRoom) => {
+    const handleRenameRoom = (room: DollhouseRoom) => {
         if (room.id === MAIN_ROOM_ID) {
             addToast('初始房间固定为「咖啡店」', 'error');
             return;
         }
-        const nextName = window.prompt('给房间起个新名字（最多10字）', room.name);
-        if (!nextName) return;
-        const name = nextName.trim().slice(0, 10);
+        setRenameValue(room.name);
+        setRenameTarget(room);
+    };
+
+    const confirmRenameRoom = async () => {
+        if (!renameTarget) return;
+        const name = renameValue.trim().slice(0, 10);
         if (!name) return;
         await saveDollhouse(prev => ({
             ...prev,
-            rooms: prev.rooms.map(r => r.id === room.id ? { ...r, name } : r)
+            rooms: prev.rooms.map(r => r.id === renameTarget.id ? { ...r, name } : r)
         }));
+        setRenameTarget(null);
         addToast('房间名已更新', 'success');
     };
 
@@ -1639,6 +1646,29 @@ const BankDollhouse: React.FC<Props> = ({
                     </div>
                 );
             })()}
+
+            {/* Rename Room Modal */}
+            {renameTarget && (
+                <div className="absolute inset-0 z-[100] bg-black/40 flex items-center justify-center px-6">
+                    <div className="w-full max-w-sm bg-white rounded-3xl p-5 shadow-2xl">
+                        <div className="text-sm font-bold text-slate-700 mb-3">重命名房间</div>
+                        <input
+                            type="text"
+                            value={renameValue}
+                            onChange={e => setRenameValue(e.target.value)}
+                            maxLength={10}
+                            autoFocus
+                            onKeyDown={e => { if (e.key === 'Enter') confirmRenameRoom(); if (e.key === 'Escape') setRenameTarget(null); }}
+                            className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary/30 mb-4"
+                            placeholder="最多10字"
+                        />
+                        <div className="flex gap-3">
+                            <button onClick={() => setRenameTarget(null)} className="flex-1 py-2.5 rounded-2xl bg-slate-100 text-slate-600 font-bold text-sm">取消</button>
+                            <button onClick={confirmRenameRoom} className="flex-1 py-2.5 rounded-2xl bg-primary text-white font-bold text-sm shadow-lg">确认</button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

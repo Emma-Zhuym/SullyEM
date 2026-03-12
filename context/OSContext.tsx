@@ -839,13 +839,14 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       return () => { cancelled = true; if (schedulerRef.current) clearInterval(schedulerRef.current); };
   }, [isDataLoaded, characters]);
 
-  const clearUnread = (charId: string) => {
+  const clearUnread = useCallback((charId: string) => {
       setUnreadMessages(prev => {
+          if (!prev[charId]) return prev; // no change needed — avoid unnecessary re-render
           const next = { ...prev };
           delete next[charId];
           return next;
       });
-  };
+  }, []);
 
   const updateTheme = async (updates: Partial<OSTheme>) => {
     const { wallpaper, launcherWidgetImage, launcherWidgets, desktopDecorations, customFont, ...styleUpdates } = updates;
@@ -1159,7 +1160,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // 1. Define Stores to Process based on Mode
           let storesToProcess: string[] = [];
           const allStores = [
-              'characters', 'messages', 'themes', 'emojis', 'assets', 'gallery',
+              'characters', 'messages', 'themes', 'emojis', 'emoji_categories', 'assets', 'gallery',
               'user_profile', 'diaries', 'tasks', 'anniversaries', 'room_todos',
               'room_notes', 'groups', 'journal_stickers', 'social_posts', 'courses', 'games', 'worldbooks', 'novels', 'songs',
               'bank_transactions', 'bank_data',
@@ -1173,7 +1174,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               storesToProcess = allStores.filter(s => s !== 'assets'); // Exclude raw assets store
           } else if (mode === 'media_only') {
               // media_only now includes themes/assets for complete media backup
-              storesToProcess = ['gallery', 'emojis', 'journal_stickers', 'user_profile', 'characters', 'messages', 'themes', 'assets', 'bank_data'];
+              storesToProcess = ['gallery', 'emojis', 'emoji_categories', 'journal_stickers', 'user_profile', 'characters', 'messages', 'themes', 'assets', 'bank_data'];
           }
 
           // Fetch Social App & Room Assets (Optional, depends on mode)
@@ -1296,6 +1297,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   case 'messages': backupData.messages = processedData; break;
                   case 'themes': backupData.customThemes = processedData; break;
                   case 'emojis': backupData.savedEmojis = processedData; break;
+                  case 'emoji_categories': backupData.emojiCategories = processedData; break;
                   case 'assets': backupData.assets = processedData; break;
                   case 'gallery': backupData.galleryImages = processedData; break;
                   case 'user_profile': if (processedData[0]) backupData.userProfile = processedData[0]; break;

@@ -150,6 +150,7 @@ const GameApp: React.FC = () => {
 
     // UI Toggles
     const [showSystemMenu, setShowSystemMenu] = useState(false);
+    const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
     const [isArchiving, setIsArchiving] = useState(false);
     const [showTools, setShowTools] = useState(false); // Default hidden
     const [showParty, setShowParty] = useState(true);  // Default visible
@@ -773,13 +774,17 @@ Output: A concise summary in Chinese (e.g. "探索了地牢并击败了史莱姆
         }
     };
 
-    const handleDeleteGame = async (e: React.MouseEvent, id: string) => {
+    const handleDeleteGame = (e: React.MouseEvent, id: string) => {
         e.stopPropagation();
-        if (window.confirm('确定要删除这个存档吗？')) {
-            await DB.deleteGame(id);
-            setGames(prev => prev.filter(g => g.id !== id));
-            addToast('存档已删除', 'success');
-        }
+        setDeleteConfirmId(id);
+    };
+
+    const confirmDeleteGame = async () => {
+        if (!deleteConfirmId) return;
+        await DB.deleteGame(deleteConfirmId);
+        setGames(prev => prev.filter(g => g.id !== deleteConfirmId));
+        setDeleteConfirmId(null);
+        addToast('存档已删除', 'success');
     };
 
     // --- Renderers ---
@@ -1184,6 +1189,16 @@ Output: A concise summary in Chinese (e.g. "探索了地牢并击败了史莱姆
                         <span>🚪</span> 暂时离开 (不归档)
                     </button>
                 </div>
+            </Modal>
+
+            {/* Delete Save Confirm Modal */}
+            <Modal isOpen={!!deleteConfirmId} title="删除存档" onClose={() => setDeleteConfirmId(null)} footer={
+                <div className="flex gap-3 w-full">
+                    <button onClick={() => setDeleteConfirmId(null)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl">取消</button>
+                    <button onClick={confirmDeleteGame} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl shadow-lg shadow-red-200">删除</button>
+                </div>
+            }>
+                <p className="text-sm text-slate-600 text-center py-4">确定要删除这个存档吗？<br/><span className="text-xs text-red-400 mt-1 block">此操作不可恢复。</span></p>
             </Modal>
 
             {/* Archive Overlay */}

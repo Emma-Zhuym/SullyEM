@@ -27,6 +27,7 @@ import {
   GlobeSimple,
   MusicNotes,
   PhoneCall,
+  Crosshair,
 } from '@phosphor-icons/react';
 
 // SVG 图标库 - Phosphor Icons
@@ -57,6 +58,7 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
   Browser: ({ className }) => <GlobeSimple className={className} weight="bold" />,
   Songwriting: ({ className }) => <MusicNotes className={className} weight="bold" />,
   Call: ({ className }) => <PhoneCall className={className} weight="bold" />,
+  Guidebook: ({ className }) => <Crosshair className={className} weight="bold" />,
 };
 
 export const INSTALLED_APPS: AppConfig[] = [
@@ -67,12 +69,12 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.Room, name: '小小窝', icon: 'Room', color: 'rose' },
   { id: AppID.CheckPhone, name: '查手机', icon: 'CheckPhone', color: 'slate' }, 
   // { id: AppID.Browser, name: '浏览器', icon: 'Browser', color: 'blue' }, // Hidden
-  { id: AppID.Social, name: 'Spark', icon: 'Social', color: 'red' }, 
+  { id: AppID.Date, name: '见面', icon: 'Date', color: 'pink' },
   { id: AppID.User, name: '档案', icon: 'User', color: 'blue' },
   { id: AppID.Bank, name: '存钱罐', icon: 'Bank', color: 'lime' }, // Hidden
   { id: AppID.Schedule, name: '时光契约', icon: 'Schedule', color: 'cyan' },
   { id: AppID.Journal, name: '交换日记', icon: 'Journal', color: 'amber' },
-  { id: AppID.Date, name: '见面', icon: 'Date', color: 'pink' },
+  { id: AppID.Social, name: 'Spark', icon: 'Social', color: 'red' },
   { id: AppID.Study, name: '自习室', icon: 'Study', color: 'emerald' }, 
   { id: AppID.Game, name: 'TRPG', icon: 'Game', color: 'orange' },
   { id: AppID.Novel, name: '笔友会', icon: 'Novel', color: 'amber' }, 
@@ -85,6 +87,7 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.ThemeMaker, name: '气泡工坊', icon: 'ThemeMaker', color: 'purple' },
   { id: AppID.Appearance, name: '外观', icon: 'Appearance', color: 'slate' },
   { id: AppID.Settings, name: '设置', icon: 'Settings', color: 'slate' },
+  { id: AppID.Guidebook, name: '攻略本', icon: 'Guidebook', color: 'slate' },
   { id: AppID.SpecialMoments, name: '特别时光', icon: 'SpecialMoments', color: 'pink' },
 ];
 

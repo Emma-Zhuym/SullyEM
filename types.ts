@@ -29,6 +29,7 @@ export enum AppID {
   Songwriting = 'songwriting', // Songwriting / Lyric creation app
   Call = 'call', // 语音电话测试（MiniMax TTS）
   VoiceDesigner = 'voice_designer', // 捏声音 — MiniMax 音色设计器
+  Guidebook = 'guidebook', // 攻略本 — 角色攻略用户小游戏
 }
 
 export interface SystemLog {
@@ -651,6 +652,9 @@ export interface CharacterProfile {
   chatVoiceLang?: string;
   dateVoiceEnabled?: boolean;
   dateVoiceLang?: string;
+
+  // Cross-session guidebook insights: what char has discovered about user across games
+  guidebookInsights?: string[];
 }
 
 export interface GroupProfile {
@@ -977,6 +981,58 @@ export interface FullBackupData {
 
     // Quiz / Practice Book
     quizSessions?: QuizSession[];
+
+    // Guidebook (攻略本)
+    guidebookSessions?: GuidebookSession[];
+}
+
+// --- GUIDEBOOK (攻略本) APP TYPES ---
+export interface GuidebookOption {
+    text: string;
+    affinity: number;
+}
+
+export interface GuidebookRound {
+    id: string;
+    roundNumber: number;
+    scenario: string;
+    options: GuidebookOption[];
+    gmNarration: string;
+    charInnerThought: string;
+    charChoice: number;
+    charReaction: string;
+    charExploration?: string;
+    charInsight?: string;      // what user's scoring reveals about their personality
+    affinityBefore: number;
+    affinityAfter: number;
+    timestamp: number;
+}
+
+export interface GuidebookEndCard {
+    finalAffinity: number;
+    charVerdict: string;
+    title: string;
+    highlights: string[];
+    charSummary?: string;
+    charNewInsight?: string;   // the one specific thing char learned about user this session
+}
+
+export interface GuidebookSession {
+    id: string;
+    charId: string;
+    initialAffinity: number;
+    currentAffinity: number;
+    maxRounds: number;
+    currentRound: number;
+    mode: 'manual' | 'auto';
+    scenarioHint?: string;
+    recentMessageCount?: number;
+    rounds: GuidebookRound[];
+    openingSequence?: string;
+    status: 'setup' | 'opening' | 'playing' | 'ended';
+    endCard?: GuidebookEndCard;
+    createdAt: number;
+    lastPlayedAt: number;
 }
 
 // --- XHS FREE ROAM / AUTONOMOUS ACTIVITY TYPES ---

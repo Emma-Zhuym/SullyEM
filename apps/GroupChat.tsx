@@ -814,11 +814,21 @@ ${recentGroupMsgs}
                 }
 
                 // 1. Check for Emoji Commands (handle multiple emojis)
+                // Filter emojis by character visibility to prevent using hidden emoji packs
+                const charVisibleEmojis = (() => {
+                    const visibleCats = categories.filter(c => {
+                        if (!c.allowedCharacterIds || c.allowedCharacterIds.length === 0) return true;
+                        return c.allowedCharacterIds.includes(targetId);
+                    });
+                    const hiddenCatIds = new Set(categories.filter(c => !visibleCats.some(vc => vc.id === c.id)).map(c => c.id));
+                    if (hiddenCatIds.size === 0) return emojis;
+                    return emojis.filter(e => !e.categoryId || !hiddenCatIds.has(e.categoryId));
+                })();
                 const emojiRegex = /\[\[SEND_EMOJI:\s*(.*?)\]\]/g;
                 let emojiMatch;
                 while ((emojiMatch = emojiRegex.exec(action.content)) !== null) {
                     const emojiName = emojiMatch[1].trim();
-                    const foundEmoji = emojis.find(e => e.name === emojiName);
+                    const foundEmoji = charVisibleEmojis.find(e => e.name === emojiName);
                     if (foundEmoji) {
                         await DB.saveMessage({
                             charId: targetId,

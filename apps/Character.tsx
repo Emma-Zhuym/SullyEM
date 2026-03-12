@@ -664,9 +664,9 @@ ${isInitialGeneration ? `
   const handleExportCard = async () => {
       if (!formData) return;
       
-      const { 
-          id, memories, refinedMemories, activeMemoryMonths, impression, 
-          ...cardProps 
+      const {
+          id, memories, refinedMemories, activeMemoryMonths, impression, guidebookInsights,
+          ...cardProps
       } = formData;
 
       const exportData: CharacterExportData = {

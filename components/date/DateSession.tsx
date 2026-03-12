@@ -532,6 +532,8 @@ const DateSession: React.FC<DateSessionProps> = ({
     // Message Touch Logic (Robust version for scrollable lists)
     const handleMsgTouchStart = (e: React.TouchEvent | React.MouseEvent, msg: Message) => {
         if (!isNovelMode) return;
+        // If already in batch select mode, don't start a new long press timer
+        if (isBatchSelectMode) return;
         if ('touches' in e) {
             touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
         } else {
@@ -718,7 +720,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                     onMouseUp={handleMsgTouchEnd}
                                     onMouseMove={handleMsgTouchMove}
                                     onMouseLeave={handleMsgTouchEnd}
-                                    onContextMenu={(e) => { e.preventDefault(); setSelectedMessage(msg); setModalType('options'); }}
+                                    onContextMenu={(e) => { e.preventDefault(); if (!isBatchSelectMode) { setSelectedMessage(msg); setModalType('options'); } }}
                                 >
                                     {isBatchSelectMode && (
                                         <div className={`absolute left-0 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full border-2 flex items-center justify-center ${selectedMsgIds.has(msg.id) ? 'bg-primary border-primary' : 'bg-white border-stone-300'}`}>
@@ -838,6 +840,13 @@ const DateSession: React.FC<DateSessionProps> = ({
             {/* Message Options Modal */}
             <Modal isOpen={modalType === 'options'} title="操作" onClose={() => setModalType('none')}>
                 <div className="space-y-3">
+                    <button onClick={() => {
+                        if (selectedMessage) {
+                            setIsBatchSelectMode(true);
+                            setSelectedMsgIds(new Set([selectedMessage.id]));
+                        }
+                        setModalType('none');
+                    }} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl">多选</button>
                     <button onClick={() => {
                         if (selectedMessage) {
                             const clean = (selectedMessage.content || '').replace(/\[.*?\]/g, '').trim();

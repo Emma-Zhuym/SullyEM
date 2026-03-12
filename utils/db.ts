@@ -5,11 +5,11 @@ import {
     CharacterProfile, ChatTheme, Message, UserProfile,
     Task, Anniversary, DiaryEntry, RoomTodo, RoomNote,
     GalleryImage, FullBackupData, GroupProfile, SocialPost, StudyCourse, GameSession, Worldbook, NovelBook, Emoji, EmojiCategory,
-    BankTransaction, SavingsGoal, BankFullState, DollhouseState, XhsStockImage, XhsActivityRecord, SongSheet, QuizSession
+    BankTransaction, SavingsGoal, BankFullState, DollhouseState, XhsStockImage, XhsActivityRecord, SongSheet, QuizSession, GuidebookSession
 } from '../types';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 37; // Bumped for Quiz/Practice Book
+const DB_VERSION = 38; // Bumped for Guidebook (攻略本)
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -38,6 +38,7 @@ const STORE_XHS_STOCK = 'xhs_stock';
 const STORE_XHS_ACTIVITIES = 'xhs_activities';
 const STORE_SONGS = 'songs';
 const STORE_QUIZZES = 'quizzes';
+const STORE_GUIDEBOOK = 'guidebook';
 
 export interface ScheduledMessage {
     id: string;
@@ -148,6 +149,7 @@ const openDB = (): Promise<IDBDatabase> => {
 
       createStore(STORE_SONGS, { keyPath: 'id' });
       createStore(STORE_QUIZZES, { keyPath: 'id' });
+      createStore(STORE_GUIDEBOOK, { keyPath: 'id' });
     };
   });
 };
@@ -1144,6 +1146,31 @@ export const DB = {
       transaction.objectStore(STORE_SONGS).delete(id);
   },
 
+  // --- Guidebook (攻略本) ---
+  getAllGuidebookSessions: async (): Promise<GuidebookSession[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_GUIDEBOOK)) return [];
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_GUIDEBOOK, 'readonly');
+          const store = transaction.objectStore(STORE_GUIDEBOOK);
+          const request = store.getAll();
+          request.onsuccess = () => resolve(request.result || []);
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  saveGuidebookSession: async (session: GuidebookSession): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_GUIDEBOOK, 'readwrite');
+      transaction.objectStore(STORE_GUIDEBOOK).put(session);
+  },
+
+  deleteGuidebookSession: async (id: string): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_GUIDEBOOK, 'readwrite');
+      transaction.objectStore(STORE_GUIDEBOOK).delete(id);
+  },
+
   getRawStoreData: async (storeName: string): Promise<any[]> => {
       const db = await openDB();
       if (!db.objectStoreNames.contains(storeName)) return [];
@@ -1172,7 +1199,7 @@ export const DB = {
           });
       };
 
-      const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, songs, quizzes] = await Promise.all([
+      const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, songs, quizzes, guidebookSessions] = await Promise.all([
           getAllFromStore(STORE_CHARACTERS),
           getAllFromStore(STORE_MESSAGES),
           getAllFromStore(STORE_THEMES),
@@ -1199,6 +1226,7 @@ export const DB = {
           getAllFromStore(STORE_XHS_STOCK),
           getAllFromStore(STORE_SONGS),
           getAllFromStore(STORE_QUIZZES),
+          getAllFromStore(STORE_GUIDEBOOK),
       ]);
 
       const userProfile = userProfiles.length > 0 ? {
@@ -1218,7 +1246,8 @@ export const DB = {
           xhsActivities,
           xhsStockImages,
           songs,
-          quizSessions: quizzes
+          quizSessions: quizzes,
+          guidebookSessions
       };
   },
 
@@ -1232,7 +1261,8 @@ export const DB = {
           STORE_GROUPS, STORE_JOURNAL_STICKERS, STORE_SOCIAL_POSTS, STORE_COURSES, STORE_GAMES, STORE_WORLDBOOKS, STORE_NOVELS, STORE_SONGS,
           STORE_BANK_TX, STORE_BANK_DATA,
           STORE_XHS_ACTIVITIES, STORE_XHS_STOCK,
-          STORE_QUIZZES
+          STORE_QUIZZES,
+          STORE_GUIDEBOOK
       ].filter(name => db.objectStoreNames.contains(name));
 
       const tx = db.transaction(availableStores, 'readwrite');
@@ -1344,6 +1374,7 @@ export const DB = {
       if (data.novels) clearAndAdd(STORE_NOVELS, data.novels);
       if (data.songs) clearAndAdd(STORE_SONGS, data.songs);
       if (data.quizSessions) clearAndAdd(STORE_QUIZZES, data.quizSessions);
+      if (data.guidebookSessions) clearAndAdd(STORE_GUIDEBOOK, data.guidebookSessions);
       if (data.bankTransactions) clearAndAdd(STORE_BANK_TX, data.bankTransactions);
       if (data.xhsActivities) clearAndAdd(STORE_XHS_ACTIVITIES, data.xhsActivities);
       if (data.xhsStockImages) clearAndAdd(STORE_XHS_STOCK, data.xhsStockImages);

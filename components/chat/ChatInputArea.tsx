@@ -244,9 +244,12 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                             onMouseUp={handleTouchEnd}
                                             onMouseLeave={handleTouchEnd}
                                             onContextMenu={(ev) => ev.preventDefault()}
-                                            className="aspect-square bg-white rounded-2xl p-2 shadow-sm relative active:scale-95 transition-transform select-none"
+                                            className="bg-white rounded-2xl p-2 shadow-sm relative active:scale-95 transition-transform select-none flex flex-col items-center"
                                         >
-                                            <img src={e.url} className="w-full h-full object-contain pointer-events-none" />
+                                            <div className="aspect-square w-full">
+                                                <img src={e.url} className="w-full h-full object-contain pointer-events-none" />
+                                            </div>
+                                            <span className="text-[9px] text-slate-400 truncate w-full text-center mt-0.5 leading-tight pointer-events-none">{e.name}</span>
                                         </button>
                                     ))}
                                 </div>

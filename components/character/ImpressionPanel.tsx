@@ -53,7 +53,8 @@ interface ImpressionPanelProps {
 }
 
 const ImpressionPanel: React.FC<ImpressionPanelProps> = ({ impression, isGenerating, onGenerate, onUpdateImpression, onDelete }) => {
-    
+    const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
+
     const removeTag = (path: string[], tag: string) => {
         if (!impression) return;
         const newImp = JSON.parse(JSON.stringify(impression));
@@ -110,7 +111,7 @@ const ImpressionPanel: React.FC<ImpressionPanelProps> = ({ impression, isGenerat
                     <div className="text-xs text-slate-600">上次更新: {new Date(impression?.lastUpdated || Date.now()).toLocaleDateString()}</div>
                 </div>
                 <div className="flex gap-2">
-                     {onDelete && <button onClick={() => { if (window.confirm('确定要彻底删除印象档案吗？删除后可重新生成。')) onDelete(); }} className="px-3 py-1.5 text-xs font-bold text-red-400 bg-red-50 rounded-lg hover:bg-red-100">删除</button>}
+                     {onDelete && <button onClick={() => setShowDeleteConfirm(true)} className="px-3 py-1.5 text-xs font-bold text-red-400 bg-red-50 rounded-lg hover:bg-red-100">删除</button>}
                      <button onClick={() => onGenerate('initial')} className="px-3 py-1.5 text-xs font-bold text-slate-400 bg-slate-50 rounded-lg hover:bg-slate-100">重置</button>
                      <button onClick={() => onGenerate('update')} className="px-4 py-1.5 text-xs font-bold text-white bg-indigo-500 rounded-lg shadow-md shadow-indigo-200 hover:bg-indigo-600 active:scale-95 transition-all">追加/更新</button>
                 </div>
@@ -218,6 +219,20 @@ const ImpressionPanel: React.FC<ImpressionPanelProps> = ({ impression, isGenerat
                             </li>
                         ))}
                     </ul>
+                </div>
+            )}
+
+            {/* Delete impression confirm */}
+            {showDeleteConfirm && (
+                <div className="fixed inset-0 z-[999] bg-black/40 backdrop-blur-sm flex items-center justify-center px-6">
+                    <div className="w-full max-w-sm bg-white rounded-3xl p-5 shadow-2xl">
+                        <div className="text-base font-bold text-slate-700">删除印象档案？</div>
+                        <p className="mt-2 text-sm text-slate-500 leading-relaxed">这份深度分析报告将被彻底删除，删除后可重新生成。</p>
+                        <div className="mt-5 flex gap-3">
+                            <button onClick={() => setShowDeleteConfirm(false)} className="flex-1 py-2.5 rounded-2xl bg-slate-100 text-slate-600 font-bold text-sm">取消</button>
+                            <button onClick={() => { setShowDeleteConfirm(false); onDelete?.(); }} className="flex-1 py-2.5 rounded-2xl bg-red-500 text-white font-bold text-sm shadow-lg shadow-red-200">删除</button>
+                        </div>
+                    </div>
                 </div>
             )}
         </div>

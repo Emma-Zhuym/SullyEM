@@ -615,6 +615,20 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                         content = `${timeStr} [用户转发了一段聊天记录]`;
                     }
                 }
+                else if ((m.type as string) === 'score_card') {
+                    try {
+                        const card = m.metadata?.scoreCard || JSON.parse(m.content);
+                        if (card?.type === 'guidebook_card') {
+                            const diff = (card.finalAffinity ?? 0) - (card.initialAffinity ?? 0);
+                            const uName = userProfile?.name || '用户';
+                            content = `${timeStr} [攻略本游戏结算] 你和${uName}刚玩了一局"攻略本"恋爱小游戏（${card.rounds || '?'}回合）。\n结局：「${card.title || '???'}」\n好感度变化：${card.initialAffinity} → ${card.finalAffinity}（${diff >= 0 ? '+' : ''}${diff}）\n你的评语：${card.charVerdict || '无'}\n你对${uName}的新发现：${card.charNewInsight || '无'}`;
+                        } else {
+                            content = `${timeStr} [系统卡片] ${m.content.slice(0, 200)}`;
+                        }
+                    } catch {
+                        content = `${timeStr} [系统卡片]`;
+                    }
+                }
                 else content = `${timeStr} ${sourceTag} ${content}`;
                 
                 return { role: m.role, content };
