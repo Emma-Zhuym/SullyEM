@@ -145,6 +145,7 @@ const SocialApp: React.FC = () => {
 
     // Refs
     const commentsEndRef = useRef<HTMLDivElement>(null);
+    const detailScrollRef = useRef<HTMLDivElement>(null);
     const prevCommentCountRef = useRef(0); // Track comment count to prevent initial jump
 
     useEffect(() => {
@@ -235,8 +236,15 @@ const SocialApp: React.FC = () => {
         if (selectedPost) {
             const currentCount = selectedPost.comments.length;
             if (currentCount > prevCommentCountRef.current) {
-                // New comment added, safe to scroll. No timeout needed.
-                commentsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+                // New comment added: only scroll the internal detail panel.
+                // Avoid scrollIntoView(), which can scroll outer containers and shift the whole app layout.
+                const detailScroller = detailScrollRef.current;
+                if (detailScroller) {
+                    detailScroller.scrollTo({
+                        top: detailScroller.scrollHeight,
+                        behavior: 'smooth'
+                    });
+                }
             }
             prevCommentCountRef.current = currentCount;
         } else {
@@ -680,7 +688,7 @@ ${identityMap}
                     </div>
 
                     {/* Scrollable Area */}
-                    <div className="flex-1 overflow-y-auto no-scrollbar pb-24">
+                    <div ref={detailScrollRef} className="flex-1 overflow-y-auto no-scrollbar pb-24">
                         {/* Main Visual */}
                         <div className="w-full aspect-square flex items-center justify-center text-[8rem] relative overflow-hidden" style={{ background: selectedPost.bgStyle }}>
                             <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/10"></div>
