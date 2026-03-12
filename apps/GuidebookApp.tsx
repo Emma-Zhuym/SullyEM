@@ -248,6 +248,7 @@ const RoundDisplay: React.FC<{
     const chosen = round.options[round.charChoice];
     const affinityDiff = round.affinityAfter - round.affinityBefore;
     const longPressHandlers = useLongPress(() => onLongPress?.(), 500);
+    const [expanded, setExpanded] = useState(false);
 
     return (
         <div
@@ -255,8 +256,8 @@ const RoundDisplay: React.FC<{
             {...(onLongPress ? longPressHandlers : {})}
         >
             <Card className="p-3 space-y-2.5">
-                {/* Round header */}
-                <div className="flex items-center gap-2">
+                {/* Round header — tap to toggle expand */}
+                <button className="w-full flex items-center gap-2" onClick={() => setExpanded(e => !e)}>
                     <div className="w-6 h-6 rounded-lg flex items-center justify-center text-[10px] text-white font-bold shadow-sm" style={{ background: 'linear-gradient(135deg, #b8909a, #a07880)' }}>
                         {round.roundNumber}
                     </div>
@@ -266,88 +267,123 @@ const RoundDisplay: React.FC<{
                     }`}>
                         {affinityDiff >= 0 ? '+' : ''}{affinityDiff}
                     </div>
-                </div>
+                    <span className="text-[10px] shrink-0" style={{ color: 'rgba(160,145,150,0.5)' }}>{expanded ? '▲' : '▼'}</span>
+                </button>
 
-                {/* GM Narration */}
+                {/* GM Narration — always visible */}
                 <div className="rounded-lg px-2.5 py-1.5" style={{ background: 'rgba(235,232,238,0.6)', border: '1px solid rgba(180,175,195,0.2)' }}>
                     <span className="text-[9px] font-bold mr-1" style={{ color: '#7a7590' }}>GM</span>
                     <span className="text-[11px]" style={{ color: '#5a5570' }}>{round.gmNarration}</span>
                 </div>
 
-                {/* Options */}
-                <div className="space-y-1.5">
-                    {round.options.map((opt, i) => (
-                        <div key={i} className="text-xs px-2.5 py-2 rounded-xl transition-all flex items-center gap-2"
-                            style={i === round.charChoice ? {
+                {/* Collapsed summary: chosen option + reaction */}
+                {!expanded && (
+                    <div className="space-y-1.5">
+                        {/* Only show chosen option */}
+                        <div className="text-xs px-2.5 py-2 rounded-xl flex items-center gap-2"
+                            style={{
                                 background: 'linear-gradient(135deg, rgba(245,238,235,0.8), rgba(240,230,228,0.7))',
                                 border: '2px solid rgba(196,139,139,0.4)',
                                 color: '#5a4a4e',
-                            } : {
-                                background: 'rgba(255,255,255,0.5)',
-                                border: '1px solid rgba(200,185,190,0.25)',
-                                color: 'rgba(120,105,110,0.5)',
                             }}>
                             <span className="w-5 h-5 rounded-full bg-white/80 flex items-center justify-center text-[10px] font-bold shrink-0" style={{ border: '1px solid rgba(200,185,190,0.3)' }}>
-                                {String.fromCharCode(65 + i)}
+                                {String.fromCharCode(65 + round.charChoice)}
                             </span>
-                            <span className="flex-1">{opt.text}</span>
-                            {i === round.charChoice && (
-                                <span className="text-[9px] text-white px-1.5 py-0.5 rounded-full font-bold shrink-0" style={{ background: '#b8909a' }}>
-                                    ← {charName}
-                                </span>
-                            )}
-                            <span className={`text-[10px] font-mono font-bold shrink-0 ${opt.affinity >= 0 ? 'text-emerald-500' : 'text-red-400'}`}>
-                                {opt.affinity >= 0 ? '+' : ''}{opt.affinity}
+                            <span className="flex-1 truncate">{chosen?.text}</span>
+                            <span className="text-[9px] text-white px-1.5 py-0.5 rounded-full font-bold shrink-0" style={{ background: '#b8909a' }}>
+                                ← {charName}
+                            </span>
+                            <span className={`text-[10px] font-mono font-bold shrink-0 ${(chosen?.affinity || 0) >= 0 ? 'text-emerald-500' : 'text-red-400'}`}>
+                                {(chosen?.affinity || 0) >= 0 ? '+' : ''}{chosen?.affinity}
                             </span>
                         </div>
-                    ))}
-                </div>
-
-                {/* Inner Thought (now includes prediction) */}
-                <div className="rounded-lg px-2.5 py-2" style={{ background: 'rgba(230,225,238,0.5)', border: '1px solid rgba(185,175,200,0.25)' }}>
-                    <div className="text-[9px] font-bold mb-0.5" style={{ color: '#8a80a0' }}>内心 OS &amp; 预判</div>
-                    <div className="text-[11px] italic leading-relaxed" style={{ color: '#6a6080' }}>{round.charInnerThought}</div>
-                </div>
-
-                {/* Score bar */}
-                <div className="flex items-center gap-2">
-                    <span className="text-[10px]" style={{ color: 'rgba(140,125,130,0.6)' }}>好感度</span>
-                    <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'rgba(230,220,225,0.5)' }}>
-                        <div className={`h-full rounded-full transition-all duration-500 ${
-                            affinityDiff > 0 ? 'bg-gradient-to-r from-emerald-300 to-emerald-400' : affinityDiff < 0 ? 'bg-gradient-to-r from-red-300 to-red-400' : 'bg-gray-300'
-                        }`} style={{ width: `${Math.min(Math.abs(affinityDiff) * 3, 100)}%` }} />
-                    </div>
-                    <span className="text-[10px] font-mono" style={{ color: 'rgba(140,125,130,0.5)' }}>{round.affinityBefore}→{round.affinityAfter}</span>
-                </div>
-
-                {/* Reaction */}
-                <div className="rounded-lg px-2.5 py-2" style={{ background: 'linear-gradient(135deg, rgba(245,238,235,0.6), rgba(240,232,230,0.5))', border: '1px solid rgba(200,180,175,0.2)' }}>
-                    <span className="font-bold text-[11px] mr-1" style={{ color: '#9b7a7e' }}>♥ {charName}</span>
-                    <span className="text-xs" style={{ color: '#5a4a4e' }}>{round.charReaction}</span>
-                </div>
-
-                {/* Insight — char's reading of what user's scoring reveals */}
-                {round.charInsight && (
-                    <div className="rounded-xl px-3 py-2.5" style={{ background: 'linear-gradient(135deg, rgba(220,235,248,0.55), rgba(210,228,245,0.45))', border: '1px solid rgba(160,190,220,0.35)' }}>
-                        <div className="text-[9px] font-bold mb-1 flex items-center gap-1" style={{ color: '#5a7a9e' }}>
-                            <span>◆</span> 关于你的发现
-                        </div>
-                        <div className="text-xs leading-relaxed italic" style={{ color: '#3a5a78' }}>
-                            {round.charInsight}
+                        {/* Brief reaction */}
+                        <div className="rounded-lg px-2.5 py-1.5" style={{ background: 'linear-gradient(135deg, rgba(245,238,235,0.6), rgba(240,232,230,0.5))', border: '1px solid rgba(200,180,175,0.2)' }}>
+                            <span className="font-bold text-[11px] mr-1" style={{ color: '#9b7a7e' }}>♥ {charName}</span>
+                            <span className="text-xs" style={{ color: '#5a4a4e' }}>{round.charReaction}</span>
                         </div>
                     </div>
                 )}
 
-                {/* Exploration */}
-                {round.charExploration && (
-                    <div className="rounded-xl px-3 py-2.5" style={{ background: 'linear-gradient(135deg, rgba(240,235,225,0.6), rgba(238,230,218,0.5))', border: '1px solid rgba(210,195,175,0.3)' }}>
-                        <div className="text-[9px] font-bold mb-1 flex items-center gap-1" style={{ color: '#a09070' }}>
-                            <span>✦</span> 深入探讨
+                {/* Expanded: full details */}
+                {expanded && (
+                    <>
+                        {/* Options */}
+                        <div className="space-y-1.5">
+                            {round.options.map((opt, i) => (
+                                <div key={i} className="text-xs px-2.5 py-2 rounded-xl transition-all flex items-center gap-2"
+                                    style={i === round.charChoice ? {
+                                        background: 'linear-gradient(135deg, rgba(245,238,235,0.8), rgba(240,230,228,0.7))',
+                                        border: '2px solid rgba(196,139,139,0.4)',
+                                        color: '#5a4a4e',
+                                    } : {
+                                        background: 'rgba(255,255,255,0.5)',
+                                        border: '1px solid rgba(200,185,190,0.25)',
+                                        color: 'rgba(120,105,110,0.5)',
+                                    }}>
+                                    <span className="w-5 h-5 rounded-full bg-white/80 flex items-center justify-center text-[10px] font-bold shrink-0" style={{ border: '1px solid rgba(200,185,190,0.3)' }}>
+                                        {String.fromCharCode(65 + i)}
+                                    </span>
+                                    <span className="flex-1">{opt.text}</span>
+                                    {i === round.charChoice && (
+                                        <span className="text-[9px] text-white px-1.5 py-0.5 rounded-full font-bold shrink-0" style={{ background: '#b8909a' }}>
+                                            ← {charName}
+                                        </span>
+                                    )}
+                                    <span className={`text-[10px] font-mono font-bold shrink-0 ${opt.affinity >= 0 ? 'text-emerald-500' : 'text-red-400'}`}>
+                                        {opt.affinity >= 0 ? '+' : ''}{opt.affinity}
+                                    </span>
+                                </div>
+                            ))}
                         </div>
-                        <div className="text-xs leading-relaxed" style={{ color: '#6a5a45' }}>
-                            <span className="font-bold mr-1" style={{ color: '#8a7a60' }}>{charName}:</span>{round.charExploration}
+
+                        {/* Inner Thought (now includes prediction) */}
+                        <div className="rounded-lg px-2.5 py-2" style={{ background: 'rgba(230,225,238,0.5)', border: '1px solid rgba(185,175,200,0.25)' }}>
+                            <div className="text-[9px] font-bold mb-0.5" style={{ color: '#8a80a0' }}>内心 OS &amp; 预判</div>
+                            <div className="text-[11px] italic leading-relaxed" style={{ color: '#6a6080' }}>{round.charInnerThought}</div>
                         </div>
-                    </div>
+
+                        {/* Score bar */}
+                        <div className="flex items-center gap-2">
+                            <span className="text-[10px]" style={{ color: 'rgba(140,125,130,0.6)' }}>好感度</span>
+                            <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'rgba(230,220,225,0.5)' }}>
+                                <div className={`h-full rounded-full transition-all duration-500 ${
+                                    affinityDiff > 0 ? 'bg-gradient-to-r from-emerald-300 to-emerald-400' : affinityDiff < 0 ? 'bg-gradient-to-r from-red-300 to-red-400' : 'bg-gray-300'
+                                }`} style={{ width: `${Math.min(Math.abs(affinityDiff) * 3, 100)}%` }} />
+                            </div>
+                            <span className="text-[10px] font-mono" style={{ color: 'rgba(140,125,130,0.5)' }}>{round.affinityBefore}→{round.affinityAfter}</span>
+                        </div>
+
+                        {/* Reaction */}
+                        <div className="rounded-lg px-2.5 py-2" style={{ background: 'linear-gradient(135deg, rgba(245,238,235,0.6), rgba(240,232,230,0.5))', border: '1px solid rgba(200,180,175,0.2)' }}>
+                            <span className="font-bold text-[11px] mr-1" style={{ color: '#9b7a7e' }}>♥ {charName}</span>
+                            <span className="text-xs" style={{ color: '#5a4a4e' }}>{round.charReaction}</span>
+                        </div>
+
+                        {/* Insight — char's reading of what user's scoring reveals */}
+                        {round.charInsight && (
+                            <div className="rounded-xl px-3 py-2.5" style={{ background: 'linear-gradient(135deg, rgba(220,235,248,0.55), rgba(210,228,245,0.45))', border: '1px solid rgba(160,190,220,0.35)' }}>
+                                <div className="text-[9px] font-bold mb-1 flex items-center gap-1" style={{ color: '#5a7a9e' }}>
+                                    <span>◆</span> 关于你的发现
+                                </div>
+                                <div className="text-xs leading-relaxed italic" style={{ color: '#3a5a78' }}>
+                                    {round.charInsight}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Exploration */}
+                        {round.charExploration && (
+                            <div className="rounded-xl px-3 py-2.5" style={{ background: 'linear-gradient(135deg, rgba(240,235,225,0.6), rgba(238,230,218,0.5))', border: '1px solid rgba(210,195,175,0.3)' }}>
+                                <div className="text-[9px] font-bold mb-1 flex items-center gap-1" style={{ color: '#a09070' }}>
+                                    <span>✦</span> 深入探讨
+                                </div>
+                                <div className="text-xs leading-relaxed" style={{ color: '#6a5a45' }}>
+                                    <span className="font-bold mr-1" style={{ color: '#8a7a60' }}>{charName}:</span>{round.charExploration}
+                                </div>
+                            </div>
+                        )}
+                    </>
                 )}
             </Card>
         </div>
@@ -557,7 +593,7 @@ const GuidebookApp: React.FC = () => {
     // Option edit overlay (tap to expand for mobile editing)
     const [editingOptIdx, setEditingOptIdx] = useState<number | null>(null);
     const [editOptText, setEditOptText] = useState('');
-    const [editOptScore, setEditOptScore] = useState(0);
+    const [editOptScore, setEditOptScore] = useState('');
 
     // Scenario edit overlay (tap to expand)
     const [editingScenario, setEditingScenario] = useState(false);
@@ -590,6 +626,9 @@ const GuidebookApp: React.FC = () => {
 
     // Delete session confirm
     const [deleteSessionId, setDeleteSessionId] = useState<string | null>(null);
+
+    // Input area collapsed
+    const [inputCollapsed, setInputCollapsed] = useState(false);
 
     // Scroll ref
     const logsRef = useRef<HTMLDivElement>(null);
@@ -650,19 +689,46 @@ const GuidebookApp: React.FC = () => {
         try {
             const prompt = buildOpeningPrompt(char, userProfile, initialAffinity, scenarioHint, 'manual', recentMsgs, char.guidebookInsights);
             const raw = await callAPI(apiConfig, prompt);
-            const data = extractJson(raw);
+            let data = extractJson(raw);
 
-            const segments = Array.isArray(data?.segments) ? data.segments.filter((s: any) => s && typeof s.text === 'string') : null;
+            // Flexible segment extraction: try multiple paths
+            let rawSegs: any[] | null = null;
+            if (Array.isArray(data?.segments)) rawSegs = data.segments;
+            else if (Array.isArray(data)) rawSegs = data; // bare array
+            else if (data && typeof data === 'object') {
+                // Look for any array field that looks like segments
+                for (const val of Object.values(data)) {
+                    if (Array.isArray(val) && val.length >= 2 && val[0] && (val[0].text || val[0].content)) {
+                        rawSegs = val;
+                        break;
+                    }
+                }
+            }
+            // Also try re-parsing raw as array if extractJson returned object without segments
+            if (!rawSegs) {
+                try {
+                    const arrMatch = raw.match(/\[[\s\S]*\]/);
+                    if (arrMatch) {
+                        const arr = JSON.parse(arrMatch[0]);
+                        if (Array.isArray(arr) && arr.length >= 2 && arr[0]?.text) rawSegs = arr;
+                    }
+                } catch {}
+            }
+
+            const segments = rawSegs?.filter((s: any) => s && (typeof s.text === 'string' || typeof s.content === 'string'));
             if (segments && segments.length > 0) {
-                // Ensure each segment has valid speaker
-                const cleaned = segments.map((s: any) => ({ speaker: s.speaker === 'char' ? 'char' : 'gm', text: String(s.text) }));
+                // Normalize: accept text or content field, speaker/role field
+                const cleaned = segments.map((s: any) => ({
+                    speaker: (s.speaker === 'char' || s.role === 'char') ? 'char' : 'gm',
+                    text: String(s.text || s.content || ''),
+                }));
                 setOpeningSegments(cleaned);
                 const updated = { ...newSession, openingSequence: JSON.stringify(cleaned) };
                 setSession(updated);
                 await saveSession(updated);
                 setView('opening');
             } else {
-                throw new Error('AI 返回格式不正确 (缺少 segments)');
+                throw new Error('AI 返回格式不正确，请重试');
             }
         } catch (e: any) {
             setError(e.message);
@@ -697,13 +763,20 @@ const GuidebookApp: React.FC = () => {
             );
             const raw = await callAPI(apiConfig, prompt);
             const data = extractJson(raw);
-            const opts = Array.isArray(data?.options) ? data.options.slice(0, 3) : [];
-            if (opts.length >= 3 && opts.every((o: any) => o && typeof o.text === 'string')) {
-                setOptionTexts(opts.slice(0, 3).map((o: any) => String(o.text || '')));
-                setOptionScores(opts.slice(0, 3).map((o: any) => Number(o.affinity) || 0));
-                if (data.scenario) setRoundScenario(String(data.scenario));
+            // Flexible: try data.options, or any array field with 3+ items that have text
+            let opts: any[] | null = null;
+            if (Array.isArray(data?.options) && data.options.length >= 3) opts = data.options;
+            else if (data && typeof data === 'object') {
+                for (const val of Object.values(data)) {
+                    if (Array.isArray(val) && val.length >= 3 && (val as any[])[0]?.text) { opts = val as any[]; break; }
+                }
+            }
+            if (opts && opts.length >= 3 && opts.slice(0, 3).every((o: any) => o && (o.text || o.content))) {
+                setOptionTexts(opts.slice(0, 3).map((o: any) => String(o.text || o.content || '')));
+                setOptionScores(opts.slice(0, 3).map((o: any) => Number(o.affinity || o.score || o.value) || 0));
+                if (data.scenario || data.scene) setRoundScenario(String(data.scenario || data.scene));
             } else {
-                throw new Error('AI 生成的选项格式不正确');
+                throw new Error('AI 生成的选项格式不正确，请重试');
             }
         } catch (e: any) { setError(e.message); }
         finally { setIsLoading(false); }
@@ -712,8 +785,17 @@ const GuidebookApp: React.FC = () => {
     // --- Submit Round (shared logic) ---
     const processRoundResult = async (data: any, options: GuidebookOption[], roundNum: number) => {
         if (!session) return;
-        // Robust choice extraction: clamp to 0-2, handle string/float
-        const rawChoice = typeof data.choice === 'string' ? parseInt(data.choice, 10) : Number(data.choice);
+        // Robust choice extraction: handle number, string number, "A"/"B"/"C", letter in text
+        let rawChoice: number;
+        const c = data.choice;
+        if (typeof c === 'number') rawChoice = c;
+        else if (typeof c === 'string') {
+            const upper = c.trim().toUpperCase();
+            if (upper === 'A' || upper.includes('A')) rawChoice = 0;
+            else if (upper === 'B' || upper.includes('B')) rawChoice = 1;
+            else if (upper === 'C' || upper.includes('C')) rawChoice = 2;
+            else rawChoice = parseInt(c, 10);
+        } else rawChoice = 0;
         const choiceIdx = Math.min(Math.max(isNaN(rawChoice) ? 0 : Math.round(rawChoice), 0), 2);
         const affinityChange = options[choiceIdx].affinity;
         const newAffinity = session.currentAffinity + affinityChange;
@@ -745,11 +827,12 @@ const GuidebookApp: React.FC = () => {
         await saveSession(updated);
 
         // Pre-fill next round options from AI suggestions (bundled with round result)
-        const nextOpts = data.next_options?.options;
-        if (Array.isArray(nextOpts) && nextOpts.length >= 3 && nextOpts.every((o: any) => o && typeof o.text === 'string')) {
-            setOptionTexts(nextOpts.slice(0, 3).map((o: any) => String(o.text || '')));
-            setOptionScores(nextOpts.slice(0, 3).map((o: any) => Number(o.affinity) || 0));
-            if (data.next_options.scenario) setRoundScenario(String(data.next_options.scenario));
+        const nextOpts = data.next_options?.options || data.nextOptions?.options;
+        if (Array.isArray(nextOpts) && nextOpts.length >= 3 && nextOpts.slice(0, 3).every((o: any) => o && (o.text || o.content))) {
+            setOptionTexts(nextOpts.slice(0, 3).map((o: any) => String(o.text || o.content || '')));
+            setOptionScores(nextOpts.slice(0, 3).map((o: any) => Number(o.affinity || o.score || o.value) || 0));
+            const nextScenario = data.next_options?.scenario || data.nextOptions?.scenario;
+            if (nextScenario) setRoundScenario(String(nextScenario));
         } else {
             setOptionTexts(['', '', '']);
             setOptionScores([0, 0, 0]);
@@ -773,14 +856,16 @@ const GuidebookApp: React.FC = () => {
             const prompt = buildRoundPrompt(
                 selectedChar, userProfile, session.currentAffinity,
                 roundNum, session.maxRounds, options, session.rounds, session.scenarioHint || '',
-                cachedRecentMsgs, wc, nextDirectionHint || undefined
+                cachedRecentMsgs, wc, nextDirectionHint || undefined, roundScenario || undefined
             );
             const raw = await callAPI(apiConfig, prompt);
             const data = extractJson(raw);
             const choice = data?.choice;
-            if (data && (typeof choice === 'number' || (typeof choice === 'string' && !isNaN(parseInt(choice))))) {
+            // Accept number, string number, or letter A/B/C
+            const hasChoice = data && (typeof choice === 'number' || (typeof choice === 'string' && choice.trim().length > 0));
+            if (hasChoice) {
                 await processRoundResult(data, options, roundNum);
-            } else throw new Error('AI 返回格式不正确 (缺少 choice)');
+            } else throw new Error('AI 返回格式不正确，请重试');
         } catch (e: any) { setError(e.message); }
         finally { setIsLoading(false); }
     };
@@ -790,6 +875,14 @@ const GuidebookApp: React.FC = () => {
     const handleRegenerateFrom = async (roundIdx: number) => {
         if (!session || !selectedChar) return;
         setContextMenuRound(null);
+
+        // Restore input fields from the round being regenerated
+        const targetRound = session.rounds[roundIdx];
+        if (targetRound) {
+            setOptionTexts(targetRound.options.map(o => o.text));
+            setOptionScores(targetRound.options.map(o => o.affinity));
+            setRoundScenario(targetRound.scenario || '');
+        }
 
         const trimmedRounds = session.rounds.slice(0, roundIdx);
         const prevAffinity = roundIdx > 0 ? session.rounds[roundIdx - 1].affinityAfter : session.initialAffinity;
@@ -808,6 +901,15 @@ const GuidebookApp: React.FC = () => {
     const handleDeleteFrom = async (roundIdx: number) => {
         if (!session) return;
         setContextMenuRound(null);
+
+        // Restore input fields from the deleted round
+        const targetRound = session.rounds[roundIdx];
+        if (targetRound) {
+            setOptionTexts(targetRound.options.map(o => o.text));
+            setOptionScores(targetRound.options.map(o => o.affinity));
+            setRoundScenario(targetRound.scenario || '');
+        }
+
         const trimmedRounds = session.rounds.slice(0, roundIdx);
         const prevAffinity = roundIdx > 0 ? session.rounds[roundIdx - 1].affinityAfter : session.initialAffinity;
         const updated: GuidebookSession = {
@@ -1501,59 +1603,75 @@ const GuidebookApp: React.FC = () => {
 
             {/* Input Area (playing only) */}
             {!isReplay && session?.status === 'playing' && !isLoading && (
-                <div className="shrink-0 p-3 space-y-2.5"
+                <div className="shrink-0"
                     style={{ background: 'linear-gradient(0deg, rgba(240,235,232,0.95) 0%, rgba(236,230,233,0.9) 100%)', borderTop: '2px solid rgba(200,185,190,0.15)' }}>
 
-                    {/* Tappable scenario row */}
-                    <button onClick={() => { setEditingScenario(true); setEditScenarioText(roundScenario); }}
-                        className="w-full flex gap-2 items-center active:scale-[0.98] transition-transform"
-                        style={{ background: 'rgba(255,255,255,0.7)', border: '1px dashed rgba(200,185,190,0.3)', borderRadius: '12px', padding: '8px 10px' }}>
-                        <span className="w-5 h-5 rounded-md flex items-center justify-center text-[10px] shrink-0" style={{ background: 'rgba(200,185,190,0.2)', color: '#9b8a8e' }}>✿</span>
-                        <span className="flex-1 text-left text-xs truncate" style={{ color: roundScenario ? '#5a4a50' : 'rgba(160,140,145,0.5)' }}>
-                            {roundScenario || '场景描述 (可选，留空由GM发挥)'}
+                    {/* Collapse toggle bar */}
+                    <button onClick={() => setInputCollapsed(c => !c)}
+                        className="w-full flex items-center justify-center gap-1.5 py-2 active:bg-white/30 transition-colors"
+                        style={{ borderBottom: inputCollapsed ? 'none' : '1px solid rgba(200,185,190,0.1)' }}>
+                        <span className="text-[10px] font-bold" style={{ color: '#9b8a8e' }}>
+                            {inputCollapsed ? '展开编辑面板' : '收起编辑面板'}
                         </span>
-                        <span className="text-[10px] shrink-0" style={{ color: 'rgba(160,140,145,0.5)' }}>✎</span>
+                        <span className="text-[10px]" style={{ color: 'rgba(160,145,150,0.5)' }}>
+                            {inputCollapsed ? '▲' : '▼'}
+                        </span>
                     </button>
 
-                    {/* Tappable option rows */}
-                    {[0, 1, 2].map(i => (
-                        <button key={i} onClick={() => { setEditingOptIdx(i); setEditOptText(optionTexts[i]); setEditOptScore(optionScores[i]); }}
-                            className="w-full flex gap-2 items-center active:scale-[0.98] transition-transform"
-                            style={{ background: 'rgba(255,255,255,0.7)', border: '1px solid rgba(200,185,190,0.3)', borderRadius: '12px', padding: '8px 10px' }}>
-                            <span className="w-6 h-6 rounded-lg flex items-center justify-center text-[10px] text-white font-bold shrink-0 shadow-sm" style={{ background: 'linear-gradient(135deg, #b8909a, #a07880)' }}>
-                                {String.fromCharCode(65 + i)}
-                            </span>
-                            <span className="flex-1 text-left text-xs truncate" style={{ color: optionTexts[i] ? '#5a4a50' : 'rgba(160,140,145,0.5)' }}>
-                                {optionTexts[i] || `${charName}的行为${String.fromCharCode(65 + i)}...`}
-                            </span>
-                            <span className="text-[10px] font-bold shrink-0 px-1.5 py-0.5 rounded-lg" style={{ color: optionScores[i] >= 0 ? '#7a5a5e' : '#5a5a7a', background: optionScores[i] >= 0 ? 'rgba(200,170,175,0.2)' : 'rgba(170,170,200,0.2)' }}>
-                                {optionScores[i] >= 0 ? '+' : ''}{optionScores[i]}
-                            </span>
-                            <span className="text-[10px] shrink-0" style={{ color: 'rgba(160,140,145,0.5)' }}>✎</span>
-                        </button>
-                    ))}
+                    {!inputCollapsed && (
+                        <div className="p-3 pt-1.5 space-y-2.5">
+                            {/* Tappable scenario row */}
+                            <button onClick={() => { setEditingScenario(true); setEditScenarioText(roundScenario); }}
+                                className="w-full flex gap-2 items-start active:scale-[0.98] transition-transform"
+                                style={{ background: 'rgba(255,255,255,0.7)', border: '1px dashed rgba(200,185,190,0.3)', borderRadius: '12px', padding: '8px 10px' }}>
+                                <span className="w-5 h-5 rounded-md flex items-center justify-center text-[10px] shrink-0 mt-0.5" style={{ background: 'rgba(200,185,190,0.2)', color: '#9b8a8e' }}>✿</span>
+                                <span className="flex-1 text-left text-xs leading-relaxed truncate" style={{ color: roundScenario ? '#5a4a50' : 'rgba(160,140,145,0.5)' }}>
+                                    {roundScenario || '场景描述 (可选，留空由GM发挥)'}
+                                </span>
+                                <span className="text-[10px] shrink-0 mt-0.5" style={{ color: 'rgba(160,140,145,0.5)' }}>✎</span>
+                            </button>
 
-                    {/* Direction hint for GM */}
-                    <input type="text" value={nextDirectionHint} onChange={e => setNextDirectionHint(e.target.value)}
-                        placeholder="接下来对GM的剧情方向指导 (选填)"
-                        className="w-full rounded-xl px-3 py-2 text-[11px] focus:outline-none"
-                        style={{ background: 'rgba(255,255,255,0.5)', border: '1px dashed rgba(200,185,190,0.3)', color: '#5a4a50' }} />
+                            {/* Tappable option rows */}
+                            {[0, 1, 2].map(i => (
+                                <button key={i} onClick={() => { setEditingOptIdx(i); setEditOptText(optionTexts[i]); setEditOptScore(String(optionScores[i])); }}
+                                    className="w-full flex gap-2 items-start active:scale-[0.98] transition-transform"
+                                    style={{ background: 'rgba(255,255,255,0.7)', border: '1px solid rgba(200,185,190,0.3)', borderRadius: '12px', padding: '8px 10px' }}>
+                                    <span className="w-6 h-6 rounded-lg flex items-center justify-center text-[10px] text-white font-bold shrink-0 shadow-sm mt-0.5" style={{ background: 'linear-gradient(135deg, #b8909a, #a07880)' }}>
+                                        {String.fromCharCode(65 + i)}
+                                    </span>
+                                    <span className="flex-1 text-left text-xs leading-relaxed truncate" style={{ color: optionTexts[i] ? '#5a4a50' : 'rgba(160,140,145,0.5)' }}>
+                                        {optionTexts[i] || `${charName}的行为${String.fromCharCode(65 + i)}...`}
+                                    </span>
+                                    <span className="text-[10px] font-bold shrink-0 px-1.5 py-0.5 rounded-lg" style={{ color: optionScores[i] >= 0 ? '#7a5a5e' : '#5a5a7a', background: optionScores[i] >= 0 ? 'rgba(200,170,175,0.2)' : 'rgba(170,170,200,0.2)' }}>
+                                        {optionScores[i] >= 0 ? '+' : ''}{optionScores[i]}
+                                    </span>
+                                    <span className="text-[10px] shrink-0" style={{ color: 'rgba(160,140,145,0.5)' }}>✎</span>
+                                </button>
+                            ))}
 
-                    <div className="flex gap-2">
-                        <button onClick={handleAIAssist} disabled={isLoading}
-                            className="flex-1 py-2 bg-white/70 text-xs font-bold rounded-xl active:scale-95 transition-transform shadow-sm" style={{ color: '#9b8a8e', border: '1px solid rgba(200,185,190,0.3)' }}>
-                            ✦ AI 一键填入
-                        </button>
-                        <button onClick={handleSubmitRound} disabled={isLoading || optionTexts.some(t => !t.trim())}
-                            className="flex-1 py-2 text-white text-xs font-bold rounded-xl active:scale-95 transition-transform disabled:opacity-50 shadow-md" style={{ background: 'linear-gradient(135deg, #b8909a, #a07880)' }}>
-                            提交本回合
-                        </button>
-                    </div>
+                            {/* Direction hint for GM */}
+                            <input type="text" value={nextDirectionHint} onChange={e => setNextDirectionHint(e.target.value)}
+                                placeholder="接下来对GM的剧情方向指导 (选填)"
+                                className="w-full rounded-xl px-3 py-2 text-[11px] focus:outline-none"
+                                style={{ background: 'rgba(255,255,255,0.5)', border: '1px dashed rgba(200,185,190,0.3)', color: '#5a4a50' }} />
 
-                    <button onClick={handleEndGame} disabled={isLoading || !session.rounds.length}
-                        className="w-full py-2 bg-white/50 text-xs rounded-xl active:scale-95 transition-transform disabled:opacity-30" style={{ color: '#9b8a8e', border: '1px solid rgba(200,185,190,0.2)' }}>
-                        就到这吧 · 生成结算卡片
-                    </button>
+                            <div className="flex gap-2">
+                                <button onClick={handleAIAssist} disabled={isLoading}
+                                    className="flex-1 py-2 bg-white/70 text-xs font-bold rounded-xl active:scale-95 transition-transform shadow-sm" style={{ color: '#9b8a8e', border: '1px solid rgba(200,185,190,0.3)' }}>
+                                    ✦ AI 一键填入
+                                </button>
+                                <button onClick={handleSubmitRound} disabled={isLoading || optionTexts.some(t => !t.trim())}
+                                    className="flex-1 py-2 text-white text-xs font-bold rounded-xl active:scale-95 transition-transform disabled:opacity-50 shadow-md" style={{ background: 'linear-gradient(135deg, #b8909a, #a07880)' }}>
+                                    提交本回合
+                                </button>
+                            </div>
+
+                            <button onClick={handleEndGame} disabled={isLoading || !session.rounds.length}
+                                className="w-full py-2 bg-white/50 text-xs rounded-xl active:scale-95 transition-transform disabled:opacity-30" style={{ color: '#9b8a8e', border: '1px solid rgba(200,185,190,0.2)' }}>
+                                就到这吧 · 生成结算卡片
+                            </button>
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -1601,9 +1719,9 @@ const GuidebookApp: React.FC = () => {
 
             {/* Option Edit Overlay */}
             {editingOptIdx !== null && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-5">
+                <div className="fixed inset-0 z-50 flex items-end justify-center p-3 pb-4">
                     <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setEditingOptIdx(null)} />
-                    <div className="relative w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl" style={{ background: 'linear-gradient(160deg, #f5f0ee 0%, #ece6e9 100%)', border: '1px solid rgba(200,185,190,0.3)' }}>
+                    <div className="relative w-full max-w-md rounded-3xl overflow-hidden shadow-2xl max-h-[85vh] overflow-y-auto" style={{ background: 'linear-gradient(160deg, #f5f0ee 0%, #ece6e9 100%)', border: '1px solid rgba(200,185,190,0.3)' }}>
                         <div className="px-5 pt-5 pb-3" style={{ borderBottom: '1px solid rgba(200,185,190,0.15)' }}>
                             <div className="flex items-center gap-2">
                                 <span className="w-7 h-7 rounded-xl flex items-center justify-center text-sm text-white font-bold shadow-sm" style={{ background: 'linear-gradient(135deg, #b8909a, #a07880)' }}>
@@ -1619,18 +1737,23 @@ const GuidebookApp: React.FC = () => {
                                     autoFocus
                                     value={editOptText}
                                     onChange={e => setEditOptText(e.target.value)}
-                                    rows={3}
+                                    rows={8}
                                     placeholder={`${charName}的行为...`}
-                                    className="w-full rounded-2xl px-3 py-2.5 text-sm focus:outline-none resize-none"
-                                    style={{ background: 'rgba(255,255,255,0.8)', border: '1.5px solid rgba(200,185,190,0.4)', color: '#5a4a50' }}
+                                    className="w-full rounded-2xl px-3.5 py-3 text-sm focus:outline-none resize-none"
+                                    style={{ background: 'rgba(255,255,255,0.8)', border: '1.5px solid rgba(200,185,190,0.4)', color: '#5a4a50', lineHeight: '1.8' }}
                                 />
                             </div>
                             <div>
                                 <div className="text-[10px] font-bold mb-1.5" style={{ color: '#9b8a8e' }}>好感度变化（支持负数）</div>
                                 <input
-                                    type="number"
+                                    type="text" inputMode="numeric"
                                     value={editOptScore}
-                                    onChange={e => setEditOptScore(Number(e.target.value) || 0)}
+                                    onChange={e => {
+                                        const v = e.target.value;
+                                        // Allow empty, minus sign, or valid number input
+                                        if (v === '' || v === '-' || /^-?\d*$/.test(v)) setEditOptScore(v);
+                                    }}
+                                    placeholder="0"
                                     className="w-full rounded-2xl px-3 py-2.5 text-sm text-center font-bold focus:outline-none"
                                     style={{ background: 'rgba(255,255,255,0.8)', border: '1.5px solid rgba(200,185,190,0.4)', color: '#5a4a50' }}
                                 />
@@ -1644,7 +1767,7 @@ const GuidebookApp: React.FC = () => {
                             <button onClick={() => {
                                 if (editingOptIdx === null) return;
                                 const t = [...optionTexts]; t[editingOptIdx] = editOptText; setOptionTexts(t);
-                                const s = [...optionScores]; s[editingOptIdx] = editOptScore; setOptionScores(s);
+                                const s = [...optionScores]; s[editingOptIdx] = Number(editOptScore) || 0; setOptionScores(s);
                                 setEditingOptIdx(null);
                             }}
                                 className="flex-1 py-2.5 text-white text-xs font-bold rounded-2xl active:scale-95 transition-transform shadow-md" style={{ background: 'linear-gradient(135deg, #b8909a, #a07880)' }}>
@@ -1657,9 +1780,9 @@ const GuidebookApp: React.FC = () => {
 
             {/* Scenario Edit Overlay */}
             {editingScenario && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-5">
+                <div className="fixed inset-0 z-50 flex items-end justify-center p-3 pb-4">
                     <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setEditingScenario(false)} />
-                    <div className="relative w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl" style={{ background: 'linear-gradient(160deg, #f5f0ee 0%, #ece6e9 100%)', border: '1px solid rgba(200,185,190,0.3)' }}>
+                    <div className="relative w-full max-w-md rounded-3xl overflow-hidden shadow-2xl max-h-[85vh] overflow-y-auto" style={{ background: 'linear-gradient(160deg, #f5f0ee 0%, #ece6e9 100%)', border: '1px solid rgba(200,185,190,0.3)' }}>
                         <div className="px-5 pt-5 pb-3" style={{ borderBottom: '1px solid rgba(200,185,190,0.15)' }}>
                             <div className="flex items-center gap-2">
                                 <span className="w-6 h-6 rounded-lg flex items-center justify-center text-[10px] shrink-0" style={{ background: 'rgba(200,185,190,0.2)', color: '#9b8a8e' }}>✿</span>
@@ -1672,10 +1795,10 @@ const GuidebookApp: React.FC = () => {
                                 autoFocus
                                 value={editScenarioText}
                                 onChange={e => setEditScenarioText(e.target.value)}
-                                rows={4}
+                                rows={10}
                                 placeholder="比如: 雨天在咖啡馆偶遇 / 一起被困在电梯里 / 在图书馆发现对方的秘密日记..."
-                                className="w-full rounded-2xl px-3 py-2.5 text-sm focus:outline-none resize-none"
-                                style={{ background: 'rgba(255,255,255,0.8)', border: '1.5px solid rgba(200,185,190,0.4)', color: '#5a4a50' }}
+                                className="w-full rounded-2xl px-3.5 py-3 text-sm focus:outline-none resize-none"
+                                style={{ background: 'rgba(255,255,255,0.8)', border: '1.5px solid rgba(200,185,190,0.4)', color: '#5a4a50', lineHeight: '1.8' }}
                             />
                         </div>
                         <div className="flex gap-2 px-5 pb-5">
