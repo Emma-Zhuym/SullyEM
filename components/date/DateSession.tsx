@@ -541,14 +541,8 @@ const DateSession: React.FC<DateSessionProps> = ({
         }
 
         longPressTimer.current = setTimeout(() => {
-            if (char.dateLightReading) {
-                setIsBatchSelectMode(true);
-                setSelectedMsgIds(new Set([msg.id]));
-                addToast('已进入多选模式', 'info');
-            } else {
-                setSelectedMessage(msg);
-                setModalType('options');
-            }
+              setSelectedMessage(msg);
+            setModalType('options');
         }, 600);
     };
 
