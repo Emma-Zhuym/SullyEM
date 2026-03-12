@@ -422,11 +422,25 @@ const Character: React.FC = () => {
                 const dayMsgs = msgsByDate[date];
                 const rawLog = dayMsgs.map(m => {
                     const time = new Date(m.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', hour12: false});
+                    const sender = m.role === 'user' ? userProfile.name : (m.role === 'system' ? '[系统]' : formData.name);
                     let content = m.content;
                     if (m.type === 'image') content = '[图片/Image]';
-                    if (m.type === 'emoji') content = `[表情包: ${m.content.split('/').pop() || 'sticker'}]`;
-                    
-                    return `[${time}] ${m.role === 'user' ? userProfile.name : formData.name}: ${content}`;
+                    else if (m.type === 'emoji') content = `[表情包: ${m.content.split('/').pop() || 'sticker'}]`;
+                    else if ((m.type as string) === 'score_card') {
+                        try {
+                            const card = m.metadata?.scoreCard || JSON.parse(m.content);
+                            if (card?.type === 'guidebook_card') {
+                                const diff = (card.finalAffinity ?? 0) - (card.initialAffinity ?? 0);
+                                content = `[攻略本游戏结算] ${formData.name}和${userProfile.name}玩了一局"攻略本"恋爱小游戏（${card.rounds || '?'}回合）。结局：「${card.title || '???'}」 好感度变化：${card.initialAffinity} → ${card.finalAffinity}（${diff >= 0 ? '+' : ''}${diff}） ${formData.name}的评语：${card.charVerdict || '无'} ${formData.name}对${userProfile.name}的新发现：${card.charNewInsight || '无'}`;
+                            } else {
+                                content = `[系统卡片] ${m.content.slice(0, 200)}`;
+                            }
+                        } catch { content = '[系统卡片]'; }
+                    }
+                    else if (m.type === 'interaction') content = `[系统: ${userProfile.name}戳了${formData.name}一下]`;
+                    else if (m.type === 'transfer') content = `[系统: ${userProfile.name}转账 ${m.metadata?.amount}]`;
+
+                    return `[${time}] ${sender}: ${content}`;
                 }).join('\n');
 
                 // Use selected template (same as ChatApp) with variable substitution
