@@ -52,7 +52,13 @@ export interface RealtimeConfig {
 
     // 小红书配置 (xiaohongshu-skills)
     xhsEnabled?: boolean;
-    xhsMcpConfig?: { enabled: boolean; serverUrl: string };
+    xhsMcpConfig?: {
+        enabled: boolean;
+        serverUrl: string;
+        loggedInNickname?: string;
+        loggedInUserId?: string;
+        userXsecToken?: string; // 从 feed 列表自动获取，用于 getUserProfile 等
+    };
 
     // 缓存配置
     cacheMinutes: number;   // 缓存时长（分钟）
@@ -69,7 +75,7 @@ export const defaultRealtimeConfig: RealtimeConfig = {
     notionApiKey: '',
     notionDatabaseId: '',
     xhsEnabled: false,
-    xhsMcpConfig: { enabled: false, serverUrl: 'http://localhost:18060/mcp' },
+    xhsMcpConfig: { enabled: false, serverUrl: 'http://localhost:18060/mcp', loggedInNickname: undefined, loggedInUserId: undefined, userXsecToken: undefined },
     cacheMinutes: 30
 };
 

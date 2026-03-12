@@ -170,6 +170,16 @@ export function extractJson(raw: string): any | null {
         }
     }
 
+    // 7. AI sometimes wraps the expected JSON in a wrapper object like {"result": {...}}
+    // Try to find the first nested object value and return it
+    for (const m of allObjects) {
+        try {
+            const parsed = JSON.parse(m[0].replace(/,\s*([}\]])/g, '$1'));
+            const vals = Object.values(parsed);
+            if (vals.length === 1 && typeof vals[0] === 'object' && vals[0] !== null) return vals[0];
+        } catch {}
+    }
+
     console.error('[extractJson] All attempts failed. Raw:', raw.slice(0, 300));
     return null;
 }

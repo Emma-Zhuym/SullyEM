@@ -259,7 +259,14 @@ const mcpCallTool = async (serverUrl: string, toolName: string, args: Record<str
             const textParts = result.content.filter((c: any) => c.type === 'text').map((c: any) => c.text);
             const fullText = textParts.join('\n');
             if (result.isError) return { success: false, error: fullText || 'MCP 工具执行失败' };
-            try { return { success: true, data: JSON.parse(fullText) }; } catch { return { success: true, data: fullText }; }
+            try {
+                const parsed = JSON.parse(fullText);
+                console.log(`[MCP] 工具 ${toolName} 返回 JSON, 顶层 keys: ${typeof parsed === 'object' && parsed ? Object.keys(parsed).join(',') : typeof parsed}`);
+                return { success: true, data: parsed };
+            } catch {
+                console.log(`[MCP] 工具 ${toolName} 返回纯文本 (${fullText.length} chars)`);
+                return { success: true, data: fullText };
+            }
         }
         return { success: true, data: result };
     } catch (e: any) {
@@ -283,6 +290,55 @@ const extractXsecTokenFromUrl = (url: string): string | undefined => {
     }
 };
 
+// ==================== Auto-extract helpers ====================
+
+/**
+ * 从 feed/recommend 响应中提取第一个可用的 xsec_token
+ * 支持多种嵌套格式: [{ xsec_token }], { data: [{ xsec_token }] }, { items: [...] }, 纯文本等
+ */
+const extractFirstXsecToken = (data: any): string | undefined => {
+    if (!data) return undefined;
+
+    // 从数组中找第一个有 xsec_token 的
+    const scanArray = (arr: any[]): string | undefined => {
+        for (const item of arr) {
+            const token = item?.xsec_token || item?.xsecToken
+                || item?.noteCard?.xsec_token || item?.noteCard?.xsecToken;
+            if (token) return token;
+        }
+        return undefined;
+    };
+
+    if (Array.isArray(data)) return scanArray(data);
+
+    // 在常见 key 下查找数组
+    for (const key of ['items', 'notes', 'feeds', 'data', 'list', 'results', 'note_list', 'noteList']) {
+        if (Array.isArray(data[key])) {
+            const token = scanArray(data[key]);
+            if (token) return token;
+        }
+    }
+
+    // 解包一层 data: { data: { items: [...] } }
+    if (data.data && typeof data.data === 'object' && !Array.isArray(data.data)) {
+        for (const key of ['items', 'notes', 'feeds', 'list', 'results', 'note_list', 'noteList']) {
+            if (Array.isArray(data.data[key])) {
+                const token = scanArray(data.data[key]);
+                if (token) return token;
+            }
+        }
+        if (Array.isArray(data.data)) return scanArray(data.data);
+    }
+
+    // 纯文本中正则匹配
+    if (typeof data === 'string') {
+        const match = data.match(/xsec_token[=:]["']?\s*([A-Za-z0-9+/=]+)/);
+        if (match) return match[1];
+    }
+
+    return undefined;
+};
+
 // ==================== Public API (双模式) ====================
 
 export const XhsMcpClient = {
@@ -294,7 +350,7 @@ export const XhsMcpClient = {
         mcpDiscoveredTools = [];
     },
 
-    testConnection: async (serverUrl: string): Promise<{ connected: boolean; tools?: string[]; error?: string; nickname?: string; userId?: string; loggedIn?: boolean }> => {
+    testConnection: async (serverUrl: string): Promise<{ connected: boolean; tools?: string[]; error?: string; nickname?: string; userId?: string; loggedIn?: boolean; xsecToken?: string }> => {
         const mode = detectMode(serverUrl);
 
         if (mode === 'bridge') {
@@ -320,7 +376,15 @@ export const XhsMcpClient = {
                         userId = d.user_id || d.userId || d.id || d.red_id || undefined;
                     }
                 }
-                return { connected: true, tools, nickname, userId, loggedIn };
+                // 自动获取 xsecToken：从首页推荐中提取
+                let xsecToken: string | undefined;
+                if (loggedIn) {
+                    try {
+                        const feedResult = await bridgePost(serverUrl, 'list-feeds');
+                        if (feedResult.success) xsecToken = extractFirstXsecToken(feedResult.data);
+                    } catch { /* 非关键，静默忽略 */ }
+                }
+                return { connected: true, tools, nickname, userId, loggedIn, xsecToken };
             } catch (e: any) {
                 return { connected: false, error: e.message };
             }
@@ -351,7 +415,21 @@ export const XhsMcpClient = {
             } catch (e) {
                 console.warn('[MCP] 获取登录状态失败，跳过:', e);
             }
-            return { connected: true, tools, nickname, userId, loggedIn };
+            // 自动获取 xsecToken：从首页推荐中提取（同时验证 get_recommend 工具可用性）
+            let xsecToken: string | undefined;
+            if (loggedIn) {
+                try {
+                    console.log('[MCP] 自动获取 xsecToken: 调用 get_recommend...');
+                    const feedResult = await mcpCallTool(serverUrl, 'get_recommend');
+                    if (feedResult.success) {
+                        xsecToken = extractFirstXsecToken(feedResult.data);
+                        console.log(`[MCP] 自动获取 xsecToken: ${xsecToken ? '成功' : '未找到'}`);
+                    }
+                } catch (e) {
+                    console.warn('[MCP] 自动获取 xsecToken 失败（不影响连接）:', e);
+                }
+            }
+            return { connected: true, tools, nickname, userId, loggedIn, xsecToken };
         } catch (e: any) {
             return { connected: false, error: e.message };
         }
@@ -533,10 +611,19 @@ export const extractNotesFromMcpData = (data: any): any[] => {
         }
     }
     if (typeof data === 'object') {
-        for (const val of Object.values(data)) {
+        // Skip keys that are definitely not notes
+        const skipKeys = new Set(['interactions', 'tags', 'images', 'comments', 'replies']);
+        for (const [key, val] of Object.entries(data)) {
+            if (skipKeys.has(key)) continue;
             if (Array.isArray(val) && (val as any[]).length > 0) {
-                console.log(`[XHS] extractNotes: 在 key 中找到数组, length=${(val as any[]).length}`);
-                return val as any[];
+                // Verify the first element looks like a note (has note-like fields)
+                const first = (val as any[])[0];
+                if (first && typeof first === 'object' &&
+                    (first.noteId || first.note_id || first.id || first.noteCard ||
+                     first.displayTitle || first.title || first.desc || first.cover)) {
+                    console.log(`[XHS] extractNotes: 在 key "${key}" 中找到笔记数组, length=${(val as any[]).length}`);
+                    return val as any[];
+                }
             }
         }
     }

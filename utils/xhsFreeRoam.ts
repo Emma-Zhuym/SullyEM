@@ -309,10 +309,15 @@ const handleViewDetail = async (
     if (typeof data === 'string') {
         noteContent = data.slice(0, 1000);
     } else if (data) {
-        noteContent = data.content || data.desc || data.note?.content || data.note?.desc || '';
-        // 兼容多种 MCP 返回格式（与 chat 模式 useChatAI.ts:1188 对齐）
-        comments = data.data?.comments?.list || data.comments?.list || data.data?.comments || data.comments || data.comment_list || data.commentList || [];
-        if (data.note?.comments) comments = data.note.comments;
+        // MCP 服务器返回数据可能嵌套在 data 层: { data: { note: {...}, comments: { list: [...] } } }
+        const innerData = data.data && typeof data.data === 'object' ? data.data : null;
+        const noteObj = innerData?.note || data.note;
+        noteContent = innerData?.note?.content || innerData?.note?.desc || data.content || data.desc || data.note?.content || data.note?.desc || '';
+        // 兼容多种 MCP 返回格式（包括 MCP 服务器的 data.comments.list 嵌套）
+        comments = innerData?.comments?.list || innerData?.comments
+            || data.comments?.list || data.comments
+            || data.comment_list || data.commentList
+            || noteObj?.comments?.list || noteObj?.comments || [];
         if (!Array.isArray(comments)) comments = [];
     }
 
@@ -344,6 +349,11 @@ const handleViewDetail = async (
 
     // If character wants to reply to a comment
     if (reaction?.wantToReply?.commentId && reaction.wantToReply.reply) {
+        // XHS 反爬: get-feed-detail 刚用过 xsec_token 打开笔记页，
+        // 紧接着 post-comment 再次打开同一页面会被临时封锁("笔记不可访问")。
+        // 等几秒让 xsec_token 冷却，避免触发反爬。
+        callbacks.onStatus(`${char.name}在思考回复...`);
+        await new Promise(r => setTimeout(r, 5000));
         callbacks.onStatus(`${char.name}在回复评论...`);
         const replyResult = await XhsMcpClient.replyComment(
             mcpUrl, noteId, xsecToken || '',
@@ -370,6 +380,9 @@ const handleViewDetail = async (
 
     // If character wants to leave a new comment on the note
     if (reaction?.wantToComment?.comment) {
+        // 同上: 避免 xsec_token 重复访问触发反爬
+        callbacks.onStatus(`${char.name}在想怎么评论...`);
+        await new Promise(r => setTimeout(r, 5000));
         callbacks.onStatus(`${char.name}在评论帖子...`);
         const commentResult = await XhsMcpClient.comment(mcpUrl, noteId, reaction.wantToComment.comment, xsecToken);
 
@@ -573,18 +586,24 @@ export const XhsFreeRoamEngine = {
                 // 方法2: 降级到搜索昵称
                 callbacks.onStatus(`${char.name}在查看自己的主页...`);
                 const loggedInUserId = realtimeConfig.xhsMcpConfig?.loggedInUserId;
+                const userXsecToken = realtimeConfig.xhsMcpConfig?.userXsecToken;
                 let rawNotes: any[] = [];
+                let profileSuccess = false;
+                let profileError = '';
 
                 if (loggedInUserId) {
                     console.log(`[FreeRoam] check_profile: 用 getUserProfile(${loggedInUserId})...`);
                     try {
-                        const profileResult = await XhsMcpClient.getUserProfile(mcpUrl, loggedInUserId);
+                        const profileResult = await XhsMcpClient.getUserProfile(mcpUrl, loggedInUserId, userXsecToken);
                         if (profileResult.success && profileResult.data) {
                             rawNotes = extractNotesFromMcpData(profileResult.data);
                             console.log(`[FreeRoam] check_profile: getUserProfile 提取到 ${rawNotes.length} 条笔记`);
+                            if (rawNotes.length > 0) profileSuccess = true;
                         }
+                        if (!profileResult.success) profileError = profileResult.error || '';
                     } catch (e: any) {
                         console.warn(`[FreeRoam] check_profile: getUserProfile 失败:`, e.message);
+                        profileError = e.message;
                     }
                 }
 
@@ -593,7 +612,12 @@ export const XhsFreeRoamEngine = {
                     console.log(`[FreeRoam] check_profile: 降级到搜索「${char.name}」...`);
                     callbacks.onStatus(`${char.name}在搜索自己的帖子...`);
                     const searchResult = await XhsMcpClient.search(mcpUrl, char.name);
-                    rawNotes = searchResult.success ? extractNotesFromMcpData(searchResult.data) : [];
+                    if (searchResult.success) {
+                        rawNotes = extractNotesFromMcpData(searchResult.data);
+                        profileSuccess = true;
+                    } else {
+                        profileError = searchResult.error || '搜索失败';
+                    }
                 }
 
                 const notes = rawNotes.map(normalizeNote);
@@ -604,12 +628,12 @@ export const XhsFreeRoamEngine = {
                     timestamp: Date.now(),
                     actionType: 'browse',
                     content: {
-                        keyword: `查看主页（搜索: ${char.name}）`,
+                        keyword: `查看主页（${char.name}）`,
                         notesViewed: notes.slice(0, 8),
                     },
                     thinking: decision.thinking,
-                    result: searchResult.success ? 'success' : 'failed',
-                    resultMessage: searchResult.success ? `搜索到 ${notes.length} 条相关帖子` : (searchResult.error || '搜索失败'),
+                    result: profileSuccess ? 'success' : 'failed',
+                    resultMessage: profileSuccess ? `查看主页，找到 ${notes.length} 条帖子` : (profileError || '查看主页失败'),
                 };
                 session.activities.push(profileRecord);
                 callbacks.onActivity(profileRecord);
