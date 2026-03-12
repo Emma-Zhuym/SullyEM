@@ -110,7 +110,8 @@ export function buildRoundPrompt(
     scenarioHint: string,
     recentMessages?: string,
     worldContext?: string,
-    directionHint?: string
+    directionHint?: string,
+    roundScenario?: string
 ): string {
     const coreContext = ContextBuilder.buildCoreContext(char, user, true);
     const chatBlock = buildRecentChatBlock(recentMessages)?.replace('{user}', user.name);
@@ -128,6 +129,10 @@ export function buildRoundPrompt(
         `${String.fromCharCode(65 + i)}. ${o.text}`
     ).join('\n');
 
+    const scoreReveal = options.map((o, i) =>
+        `${String.fromCharCode(65 + i)}: ${o.affinity >= 0 ? '+' : ''}${o.affinity}`
+    ).join('  |  ');
+
     const isLateGame = roundNumber >= maxRounds - 1;
 
     // Build world context block from opening narrative
@@ -138,6 +143,7 @@ ${worldContext}
 ` : '';
 
     const directionBlock = directionHint ? `\n用户希望剧情往这个方向发展: ${directionHint}` : '';
+    const roundScenarioBlock = roundScenario ? `\n### 本回合场景设定（${user.name}指定的）\n${roundScenario}\nGM 请在这个场景基础上展开叙事！` : '';
 
     return `${coreContext}
 ${chatBlock}
@@ -150,11 +156,15 @@ ${worldBlock}
 当前好感度: **${currentAffinity}**
 ${scenarioHint ? `场景世界观: ${scenarioHint}` : ''}${directionBlock}
 ${roundHistory}
+${roundScenarioBlock}
 
 ### 本回合选项
-${user.name}给你出了以下选项（你不知道每个选项对应多少分）：
+${user.name}给你出了以下选项：
 
 ${optionsList}
+
+### 分数揭晓（选完之后才能看到的真实分数，你在 inner_thought 里先预测，选完再看）
+${scoreReveal}
 
 ### 输出格式
 严格使用以下 JSON 格式输出：
@@ -162,10 +172,10 @@ ${optionsList}
 \`\`\`json
 {
   "gm_narration": "（重要！3-5句 galgame 风格的剧情推进——描写场景变化、角色间的互动画面、氛围转换。要接续上一回合的剧情发展，像在写一个连续的视觉小说。${isLateGame ? '这是后期回合，剧情要走向高潮或转折！' : ''}）",
-  "inner_thought": "（2-3句你的内心活动，包含两层：①你打算选哪个、为什么；②你预测${user.name}会把哪个选项分数设最高——这个预测要体现你对TA的了解，比如'TA应该会把A设最高，因为TA在意的是X而不是Y'）",
+  "inner_thought": "（2-3句你的内心活动，包含两层：①你打算选哪个、为什么；②你预测${user.name}会把哪个选项分数设最高——这个预测要体现你对TA的了解，比如'TA应该会把A设最高，因为TA在意的是X而不是Y'。注意：此时你还不知道上面的真实分数）",
   "choice": 0,
-  "reaction": "（看到实际分数后的情绪反应，1-2句，融入当前剧情场景）",
-  "char_insight": "（重要！从${user.name}的打分方式本身推断出TA的一个具体特质。2-3句，可以深刻也可以搞笑——不只是一个调调。允许的写法包括：①认真的人格洞察（'你把反套路选项设最高，说明你骨子里抵抗讨好型行为'）；②轻松的吐槽式洞察（'好家伙你给这个选项+15，一定程度上说明你就是那种看别人出洋相会笑的人对吧'）；③猜错后的自嘲崩溃（'我以为我了解你，结果这分数让我觉得自己像个傻瓜，需要重新建档'）；④怀疑游戏本身的meta吐槽（'我开始怀疑你设分数就是在故意整我'）。根据剧情气氛选择合适的基调，不要每次都上价值。如果预测猜错了，要有recalibration反应。）",
+  "reaction": "（看到上面揭晓的真实分数后的情绪反应，1-2句，融入当前剧情场景。注意：要基于真实分数来反应，不要凭空想象分数）",
+  "char_insight": "（重要！基于上面揭晓的真实分数，从${user.name}的打分方式推断出TA的一个具体特质。2-3句，可以深刻也可以搞笑——不只是一个调调。允许的写法包括：①认真的人格洞察（'你把反套路选项设最高，说明你骨子里抵抗讨好型行为'）；②轻松的吐槽式洞察（'好家伙你给这个选项+15，一定程度上说明你就是那种看别人出洋相会笑的人对吧'）；③猜错后的自嘲崩溃（'我以为我了解你，结果这分数让我觉得自己像个傻瓜，需要重新建档'）；④怀疑游戏本身的meta吐槽（'我开始怀疑你设分数就是在故意整我'）。根据剧情气氛选择合适的基调，不要每次都上价值。如果你的预测和真实分数不符，要有recalibration反应。）",
   "exploration": "（可选，约35%概率出现。融入剧情场景，基于char_insight延伸——可以是认真追问，也可以是恼羞成怒地反问、或者提出一个荒谬的测试计划、或者嘴上说'随便'其实明显在意）",
   "next_options": {
     "scenario": "为下一回合建议的场景发展方向（要承接当前剧情，推进故事往前走）",
@@ -181,7 +191,7 @@ ${optionsList}
 ### 要求
 1. **gm_narration 是叙事核心！** 场景描写、氛围营造、剧情推进，要像在写视觉小说，不要干巴巴播报
 2. **char_insight 是情感核心！** 每一回合都要留下一个真实的推断或反应——可以深刻，也可以搞笑崩溃。不能泛泛。要有具体性和意外感。**不要一昧升华**，游戏的乐趣感同样重要
-3. **inner_thought 里必须有预测**：你在看到分数之前，脑子里是怎么猜${user.name}会怎么设分的——把这个猜测写出来
+3. **inner_thought 里必须有预测**：你在看到分数之前，脑子里是怎么猜${user.name}会怎么设分的——把这个猜测写出来。然后在 reaction 和 char_insight 里，对照"分数揭晓"里的真实分数来反应
 4. **⚠️ 世界观必须延续！** 开场时 GM 建立的世界观、场景设定必须保持，不能突然回到现实
 5. **剧情连续性**：每回合承接上一回合，构成完整叙事弧
 6. **choice** 是索引（0=A, 1=B, 2=C），根据你的性格选，不要每次都选最"安全"的
