@@ -1022,10 +1022,11 @@ ${answerSummary}
         const rect = canvasRef.current.getBoundingClientRect();
         const dx = (e.clientX - dragStateRef.current.startX) / rect.width * 100;
         const dy = (e.clientY - dragStateRef.current.startY) / rect.height * 100;
+        const { imgX, imgY } = dragStateRef.current;
         setCustomImage(prev => prev ? {
             ...prev,
-            x: Math.max(0, Math.min(100, dragStateRef.current!.imgX + dx)),
-            y: Math.max(0, Math.min(100, dragStateRef.current!.imgY + dy)),
+            x: Math.max(0, Math.min(100, imgX + dx)),
+            y: Math.max(0, Math.min(100, imgY + dy)),
         } : prev);
     };
 
@@ -2059,8 +2060,37 @@ ${answerSummary}
                         </div>
                     )}
 
-                    {/* 重新开始 */}
-                    <div className="w-full max-w-[320px] mx-auto mt-2">
+                    {/* 重新装饰 / 重新开始 */}
+                    <div className="w-full max-w-[320px] mx-auto mt-2 flex flex-col gap-2">
+                        <button
+                            onClick={() => {
+                                // 把已存的 quiz/review 数据加载回 state，直接跳到装饰阶段
+                                if (savedQuizData) setQuizData(savedQuizData);
+                                if (savedReviewData) setReviewData(savedReviewData);
+                                setUserAnswers(savedAnswers);
+                                setCustomImage(null);
+                                setCommentLines([]);
+                                setExportedBase64('');
+                                setErrorMsg('');
+                                // 清除旧明信片记录，但保留 quiz 内容，等重新导出时再写回
+                                if (char) {
+                                    const prev = char.specialMomentRecords || {};
+                                    updateCharacter(char.id, {
+                                        specialMomentRecords: {
+                                            ...prev,
+                                            [WHITEDAY_RECORD_KEY]: {
+                                                ...prev[WHITEDAY_RECORD_KEY],
+                                                image: '',
+                                            },
+                                        },
+                                    });
+                                }
+                                setPhase('decorate');
+                            }}
+                            className="w-full py-3 rounded-2xl bg-rose-500 text-white font-bold text-sm shadow-md active:scale-95 transition-transform"
+                        >
+                            重新装饰图片
+                        </button>
                         <button
                             onClick={() => {
                                 setUserAnswers([]);
