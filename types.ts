@@ -343,6 +343,7 @@ export interface SongLine {
     section: 'intro' | 'verse' | 'pre-chorus' | 'chorus' | 'bridge' | 'outro' | 'free';
     annotation?: string; // AI guidance note on this line
     timestamp: number;
+    isDraft?: boolean; // true = not selected as final lyrics, kept as draft record
 }
 
 export interface SongComment {
@@ -426,6 +427,7 @@ export interface DateState {
 
 export interface SpecialMomentRecord {
     content: string;
+    image?: string; // base64 PNG (stored separately so export tools can handle it)
     timestamp: number;
     source?: 'generated' | 'migrated';
 }
@@ -624,6 +626,8 @@ export interface CharacterProfile {
       floorRepeat?: boolean;
   };
   
+  // deprecated: per-character assets migrated to global room_custom_assets_list with assignedCharIds
+
   lastRoomDate?: string;
   savedRoomState?: RoomGeneratedState;
 
@@ -947,7 +951,7 @@ export interface FullBackupData {
     courses?: StudyCourse[]; 
     games?: GameSession[];
     worldbooks?: Worldbook[]; 
-    roomCustomAssets?: {name: string, image: string, defaultScale: number, description?: string}[]; 
+    roomCustomAssets?: { id?: string; name: string; image: string; defaultScale: number; description?: string; visibility?: 'public' | 'character'; assignedCharIds?: string[] }[]; 
     
     novels?: NovelBook[];
     songs?: SongSheet[]; // Songwriting app data

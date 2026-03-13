@@ -541,7 +541,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         }
 
         longPressTimer.current = setTimeout(() => {
-              setSelectedMessage(msg);
+                setSelectedMessage(msg);
             setModalType('options');
         }, 600);
     };

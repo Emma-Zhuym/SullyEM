@@ -592,6 +592,68 @@ const MessageItem = React.memo(({
             );
         }
 
+        // White Day Quiz Card
+        if (scoreData?.type === 'whiteday_card') {
+            const passed = scoreData.passed;
+            return commonLayout(
+                <div className="w-72 rounded-2xl overflow-hidden shadow-md" style={{ background: 'linear-gradient(180deg, #fff8f0 0%, #fff 30%, #fdf3e8 100%)', border: '1.5px solid rgba(251,191,110,0.4)' }} {...interactionProps}>
+                    {/* Header */}
+                    <div className="px-4 pt-3 pb-2.5 flex items-center gap-2.5" style={{ background: 'linear-gradient(135deg, rgba(251,191,110,0.25), rgba(249,168,96,0.15))', borderBottom: '1px solid rgba(251,191,110,0.2)' }}>
+                        {scoreData.charAvatar ? (
+                            <img src={scoreData.charAvatar} className="w-9 h-9 rounded-xl object-cover shadow-sm shrink-0" style={{ boxShadow: '0 0 0 2px rgba(251,191,110,0.4)' }} />
+                        ) : (
+                            <div className="w-9 h-9 rounded-xl flex items-center justify-center text-white text-sm font-bold shrink-0" style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}>{scoreData.charName?.[0] || '?'}</div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                            <div className="text-[9px] font-bold tracking-widest" style={{ color: '#b45309' }}>白色情人节 · 默契测验</div>
+                            <div className="text-xs font-bold truncate" style={{ color: '#78350f' }}>{scoreData.charName}</div>
+                        </div>
+                        <div className="shrink-0 text-right">
+                            <div className={`text-lg font-black ${passed ? 'text-amber-500' : 'text-slate-400'}`}>
+                                {scoreData.score}<span className="text-xs opacity-60">/{scoreData.total}</span>
+                            </div>
+                            <div className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${passed ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-500'}`}>
+                                {passed ? '解锁 🍫' : '未达标'}
+                            </div>
+                        </div>
+                    </div>
+                    {/* Questions list */}
+                    <div className="px-3 py-2.5 flex flex-col gap-2">
+                        {scoreData.questions?.map((q: any, i: number) => (
+                            <div key={i} className="flex items-start gap-2">
+                                <span className={`text-xs font-bold shrink-0 mt-0.5 ${q.isCorrect ? 'text-emerald-500' : 'text-red-400'}`}>
+                                    {q.isCorrect ? '✓' : '✗'}
+                                </span>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-[11px] font-medium leading-tight" style={{ color: '#4a3520' }}>{q.question}</p>
+                                    <p className="text-[10px] mt-0.5" style={{ color: q.isCorrect ? '#6b7280' : '#dc2626' }}>
+                                        你选：{q.userAnswer}
+                                    </p>
+                                    {!q.isCorrect && (
+                                        <p className="text-[10px]" style={{ color: '#059669' }}>正确：{q.correctAnswer}</p>
+                                    )}
+                                    {q.review && (
+                                        <p className="text-[10px] italic mt-0.5" style={{ color: '#92400e' }}>「{q.review}」</p>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                    {/* Final dialogue */}
+                    {scoreData.finalDialogue && (
+                        <div className="px-3 pb-3">
+                            <div className="text-[11px] rounded-xl px-3 py-2 leading-relaxed" style={{ background: passed ? 'rgba(251,191,110,0.15)' : 'rgba(0,0,0,0.04)', color: '#78350f', border: '1px solid rgba(251,191,110,0.2)' }}>
+                                {scoreData.finalDialogue}
+                            </div>
+                        </div>
+                    )}
+                    <div className="px-3 pb-2.5 flex justify-end">
+                        <span className="text-[9px]" style={{ color: '#d97706' }}>2026.3.14 白色情人节 🍫</span>
+                    </div>
+                </div>
+            );
+        }
+
         // Quiz Card
         if (scoreData?.type === 'quiz_card') {
             const pct = scoreData.scorePercent || 0;

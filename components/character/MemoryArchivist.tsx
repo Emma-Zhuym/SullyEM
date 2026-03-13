@@ -103,7 +103,7 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                 .replace(/\$\{dateStr\}/g, dateStr)
                 .replace(/\$\{char\.name\}/g, charName)
                 .replace(/\$\{userProfile\.name\}/g, userName)
-                .replace(/\$\{rawLog.*?\}/g, combinedText.substring(0, 10000));
+                .replace(/\$\{rawLog.*?\}/g, combinedText);
             formattedPrompt = `[角色记忆精炼: ${charName} - ${dateStr}]\n${formattedPrompt}`;
         }
 

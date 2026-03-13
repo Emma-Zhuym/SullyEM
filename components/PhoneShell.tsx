@@ -33,6 +33,7 @@ import CallApp from '../apps/CallApp';
 import VoiceDesignerApp from '../apps/VoiceDesignerApp';
 import GuidebookApp from '../apps/GuidebookApp';
 import { SpecialMomentsApp, ValentineController, shouldShowValentinePopup } from './ValentineEvent';
+import { WhiteDayController, shouldShowWhiteDayPopup, isWhiteDay } from './WhiteDayEvent';
 import { AppID } from '../types';
 import { App as CapApp } from '@capacitor/app';
 import { StatusBar as CapStatusBar, Style as StatusBarStyle } from '@capacitor/status-bar';
@@ -176,6 +177,22 @@ const PhoneShell: React.FC = () => {
     }
   }, [showDisclaimer]);
 
+  // White Day popup (only on 2026-03-14, first visit)
+  const [showWhiteDay, setShowWhiteDay] = useState(() => {
+    try {
+      return !!(localStorage.getItem(DISCLAIMER_KEY)) && shouldShowWhiteDayPopup();
+    } catch { return false; }
+  });
+
+  // Re-check after disclaimer
+  useEffect(() => {
+    if (!showDisclaimer && !showWhiteDay) {
+      if (shouldShowWhiteDayPopup()) {
+        setShowWhiteDay(true);
+      }
+    }
+  }, [showDisclaimer]);
+
   // Capacitor Native Handling
   useEffect(() => {
     const initNative = async () => {
@@ -189,6 +206,20 @@ const PhoneShell: React.FC = () => {
                 if (permStatus.display !== 'granted') {
                     await LocalNotifications.requestPermissions();
                 }
+
+                // 白色情人节原生推送（不依赖活动完成状态）
+                try {
+                    const now = new Date();
+                    const whiteDayDate = new Date(2026, 2, 14, 10, 0, 0);
+                    const WHITEDAY_NOTIF_ID = 31400;
+                    if (isWhiteDay() && !localStorage.getItem('sullyos_whiteday_native_notif_sent')) {
+                        await LocalNotifications.schedule({ notifications: [{ title: '白色情人节快乐 💌', body: '今天是特别的日子，有人准备了专属惊喜等你来发现...', id: WHITEDAY_NOTIF_ID, schedule: { at: new Date(Date.now() + 1000) }, smallIcon: 'ic_stat_icon_config_sample' }] });
+                        localStorage.setItem('sullyos_whiteday_native_notif_sent', '1');
+                    } else if (now < whiteDayDate && !localStorage.getItem('sullyos_whiteday_notif_scheduled')) {
+                        await LocalNotifications.schedule({ notifications: [{ title: '白色情人节快乐 💌', body: '今天是特别的日子，有人准备了专属惊喜等你来发现...', id: WHITEDAY_NOTIF_ID, schedule: { at: whiteDayDate }, smallIcon: 'ic_stat_icon_config_sample' }] });
+                        localStorage.setItem('sullyos_whiteday_notif_scheduled', '1');
+                    }
+                } catch { /* native notification skipped */ }
             } catch (e) {
                 console.error("Native init failed", e);
             }
@@ -395,6 +426,9 @@ const PhoneShell: React.FC = () => {
 
        {/* Valentine's Day popup (2026-02-14) */}
        {!showDisclaimer && showValentine && <ValentineController onClose={() => setShowValentine(false)} />}
+
+       {/* White Day popup (2026-03-14) */}
+       {!showDisclaimer && !showValentine && showWhiteDay && <WhiteDayController onClose={() => setShowWhiteDay(false)} />}
     </div>
   );
 };

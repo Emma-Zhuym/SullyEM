@@ -1462,9 +1462,14 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               if (data.socialAppData.userBg) await DB.saveAsset('spark_user_bg', data.socialAppData.userBg);
           }
           
-          // Restore Room Custom Assets to DB
+          // Restore Room Custom Assets to DB (migrate old format on import)
           if (data.roomCustomAssets) {
-              await DB.saveAsset('room_custom_assets_list', JSON.stringify(data.roomCustomAssets));
+              const migratedAssets = data.roomCustomAssets.map((a: any) => ({
+                  ...a,
+                  id: a.id || `asset_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                  visibility: a.visibility || 'public',
+              }));
+              await DB.saveAsset('room_custom_assets_list', JSON.stringify(migratedAssets));
           }
 
           const chars = await DB.getAllCharacters();
