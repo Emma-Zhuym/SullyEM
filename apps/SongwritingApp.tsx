@@ -20,10 +20,11 @@ const SectionBadge: React.FC<{ section: string; small?: boolean }> = ({ section,
     );
 };
 
-type TimelineItem = { kind: 'line'; data: SongLine } | { kind: 'feedback'; data: { id: string; timestamp: number; reaction?: SongComment; details: SongComment[] } };
+type TimelineItem = { kind: 'line'; data: SongLine } | { kind: 'feedback'; data: { id: string; timestamp: number; reaction?: SongComment; details: SongComment[] } } | { kind: 'pending'; data: SongLine };
 
 function mkLineItem(l: SongLine): TimelineItem { return { kind: 'line', data: l }; }
 function mkLineItem2(group: { id: string; timestamp: number; reaction?: SongComment; details: SongComment[] }): TimelineItem { return { kind: 'feedback', data: group }; }
+function mkPendingItem(l: SongLine): TimelineItem { return { kind: 'pending', data: l }; }
 
 // --- Main App ---
 
@@ -52,6 +53,9 @@ const SongwritingApp: React.FC = () => {
     const [lastTokenUsage, setLastTokenUsage] = useState<number | null>(null);
     const [showStructureGuide, setShowStructureGuide] = useState(false);
     const [expandedFeedbackIds, setExpandedFeedbackIds] = useState<Record<string, boolean>>({});
+
+    // Pending candidate lines (not yet committed to song)
+    const [pendingLines, setPendingLines] = useState<SongLine[]>([]);
 
     // Modals
     const [confirmDialog, setConfirmDialog] = useState<{ isOpen: boolean; title: string; message: string; variant: 'danger' | 'warning' | 'info'; confirmText?: string; onConfirm: () => void } | null>(null);
@@ -159,7 +163,7 @@ const SongwritingApp: React.FC = () => {
         if (scrollRef.current) {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
         }
-    }, [activeSong?.lines, activeSong?.comments, isTyping]);
+    }, [activeSong?.lines, activeSong?.comments, pendingLines, isTyping]);
 
     // --- CRUD ---
 
@@ -207,14 +211,14 @@ const SongwritingApp: React.FC = () => {
 
     // --- AI Interaction ---
 
-    const handleSendToAI = async (userMessage: string, addAsLine: boolean = false) => {
+    const handleSendToAI = async (userMessage: string, addAsLine: boolean = false, requestedType?: 'inspiration' | 'discussion' | 'feedback') => {
         if (!activeSong || !collaborator) return;
         setIsTyping(true);
         setLastTokenUsage(null);
 
         let updatedSong = { ...activeSong };
 
-        // If user wrote lyrics, add as a line
+        // If user wrote lyrics, add as a pending candidate (not committed yet)
         if (addAsLine && userMessage.trim()) {
             const newLine: SongLine = {
                 id: `line-${Date.now()}`,
@@ -223,9 +227,7 @@ const SongwritingApp: React.FC = () => {
                 section: currentSection,
                 timestamp: Date.now(),
             };
-            updatedSong = { ...updatedSong, lines: [...updatedSong.lines, newLine] };
-            setActiveSong(updatedSong);
-            await updateSong(updatedSong.id, { lines: updatedSong.lines });
+            setPendingLines(prev => [...prev, newLine]);
         }
 
         try {
@@ -237,7 +239,15 @@ const SongwritingApp: React.FC = () => {
             }));
 
             const systemPrompt = SongPrompts.buildMentorSystemPrompt(collaborator, userProfile, updatedSong, msgContext);
-            const userPrompt = SongPrompts.buildUserMessage(updatedSong, userMessage, currentSection);
+            let userPrompt = SongPrompts.buildUserMessage(updatedSong, userMessage, currentSection);
+            if (requestedType) {
+                const typeHints: Record<string, string> = {
+                    inspiration: '\n\n【请求类型】: inspiration — 请用 inspiration 格式回复，提供示范歌词和创作技巧解释。',
+                    discussion: '\n\n【请求类型】: discussion — 请用 discussion 格式回复，讨论创作方向和结构，不要提供示范歌词。',
+                    feedback: '\n\n【请求类型】: feedback — 请用 feedback 格式回复，评价用户写的歌词。',
+                };
+                userPrompt += typeHints[requestedType] || '';
+            }
 
             // Build messages array with recent chat context
             const apiMessages: { role: string; content: string }[] = [
@@ -266,7 +276,6 @@ const SongwritingApp: React.FC = () => {
                 const parsed = extractJson(rawContent);
 
                 const newComments: SongComment[] = [];
-                const newLines: SongLine[] = [];
                 const baseTime = Date.now();
 
                 if (parsed) {
@@ -321,8 +330,9 @@ const SongwritingApp: React.FC = () => {
                         }
                     } else if (parsed.type === 'inspiration') {
                         if (parsed.example_lines && Array.isArray(parsed.example_lines)) {
+                            const exampleCandidates: SongLine[] = [];
                             for (let i = 0; i < parsed.example_lines.length; i++) {
-                                newLines.push({
+                                exampleCandidates.push({
                                     id: `line-${baseTime}-ex${i}`,
                                     authorId: collaborator.id,
                                     content: parsed.example_lines[i],
@@ -331,6 +341,7 @@ const SongwritingApp: React.FC = () => {
                                     timestamp: baseTime + 10 + i,
                                 });
                             }
+                            setPendingLines(prev => [...prev, ...exampleCandidates]);
                         }
                         if (parsed.explanation) {
                             newComments.push({
@@ -383,11 +394,10 @@ const SongwritingApp: React.FC = () => {
 
                 const finalSong = {
                     ...updatedSong,
-                    lines: [...updatedSong.lines, ...newLines],
                     comments: [...updatedSong.comments, ...newComments],
                 };
                 setActiveSong(finalSong);
-                await updateSong(finalSong.id, { lines: finalSong.lines, comments: finalSong.comments });
+                await updateSong(finalSong.id, { comments: finalSong.comments });
             } else {
                 throw new Error(`API Error: ${response.status}`);
             }
@@ -402,21 +412,21 @@ const SongwritingApp: React.FC = () => {
         const text = inputText.trim();
         if (!text) return;
         setInputText('');
-        await handleSendToAI(text, true);
+        await handleSendToAI(text, true, 'feedback');
     };
 
     const handleAskForHelp = async () => {
         setInputText('');
-        await handleSendToAI('我不知道怎么写，能给我一些灵感和示范吗？', false);
+        await handleSendToAI('我不知道怎么写，能给我一些灵感和示范吗？', false, 'inspiration');
     };
 
     const handleDiscuss = async () => {
         const text = inputText.trim();
         if (!text) {
-            await handleSendToAI('我想讨论一下接下来怎么写，有什么建议吗？', false);
+            await handleSendToAI('我想讨论一下接下来怎么写，有什么建议吗？', false, 'discussion');
         } else {
             setInputText('');
-            await handleSendToAI(text, false);
+            await handleSendToAI(text, false, 'discussion');
         }
     };
 
@@ -424,6 +434,54 @@ const SongwritingApp: React.FC = () => {
     const handleDeleteLine = (lineId: string) => {
         if (!activeSong) return;
         const newLines = activeSong.lines.filter(l => l.id !== lineId);
+        const updated = { ...activeSong, lines: newLines };
+        setActiveSong(updated);
+        updateSong(updated.id, { lines: newLines });
+    };
+
+    // --- Delete Feedback Group (comments) ---
+    const handleDeleteFeedback = (groupId: string) => {
+        if (!activeSong) return;
+        // Remove all comments whose id starts with `cmt-{groupId}-`
+        const newComments = activeSong.comments.filter(c => {
+            const match = c.id.match(/^cmt-(\d+)-/);
+            const key = match?.[1] || c.id;
+            return key !== groupId;
+        });
+        const updated = { ...activeSong, comments: newComments };
+        setActiveSong(updated);
+        updateSong(updated.id, { comments: newComments });
+    };
+
+    // --- Accept / Dismiss Pending Lines ---
+    const handleAcceptPending = (lineId: string) => {
+        if (!activeSong) return;
+        const line = pendingLines.find(l => l.id === lineId);
+        if (!line) return;
+        const newLines = [...activeSong.lines, line];
+        const updated = { ...activeSong, lines: newLines };
+        setActiveSong(updated);
+        updateSong(updated.id, { lines: newLines });
+        setPendingLines(prev => prev.filter(l => l.id !== lineId));
+    };
+
+    const handleDismissPending = (lineId: string) => {
+        if (!activeSong) { setPendingLines(prev => prev.filter(l => l.id !== lineId)); return; }
+        const line = pendingLines.find(l => l.id === lineId);
+        if (!line) return;
+        // Save as draft instead of discarding — it stays in the record, just not as a final lyric
+        const draftLine: SongLine = { ...line, isDraft: true };
+        const newLines = [...activeSong.lines, draftLine];
+        const updated = { ...activeSong, lines: newLines };
+        setActiveSong(updated);
+        updateSong(updated.id, { lines: newLines });
+        setPendingLines(prev => prev.filter(l => l.id !== lineId));
+    };
+
+    // --- Restore Draft Line to Active ---
+    const handleRestoreDraft = (lineId: string) => {
+        if (!activeSong) return;
+        const newLines = activeSong.lines.map(l => l.id === lineId ? { ...l, isDraft: false } : l);
         const updated = { ...activeSong, lines: newLines };
         setActiveSong(updated);
         updateSong(updated.id, { lines: newLines });
@@ -450,7 +508,7 @@ const SongwritingApp: React.FC = () => {
     // --- Completion ---
     const handleComplete = async () => {
         if (!activeSong || !collaborator) return;
-        if (activeSong.lines.length === 0) { addToast('歌曲还没有任何歌词', 'error'); return; }
+        if (activeSong.lines.filter(l => !l.isDraft).length === 0) { addToast('歌曲还没有任何歌词', 'error'); return; }
 
         setIsCompleting(true);
         setShowPreviewModal(true);
@@ -505,10 +563,10 @@ const SongwritingApp: React.FC = () => {
     const handleShareToChat = async (charId: string) => {
         if (!activeSong) return;
 
-        // Build lyrics text
+        // Build lyrics text (exclude draft lines)
         let lyrics = '';
         let currentSec = '';
-        for (const line of activeSong.lines) {
+        for (const line of activeSong.lines.filter(l => !l.isDraft)) {
             if (line.section !== currentSec) {
                 currentSec = line.section;
                 const secInfo = SECTION_LABELS[currentSec];
@@ -530,7 +588,7 @@ const SongwritingApp: React.FC = () => {
             moodIcon: moodInfo?.icon || '',
             coverStyle: activeSong.coverStyle,
             lyrics: lyrics.trim(),
-            lineCount: activeSong.lines.length,
+            lineCount: activeSong.lines.filter(l => !l.isDraft).length,
             status: activeSong.status,
             completedAt: activeSong.completedAt,
         };
@@ -551,6 +609,7 @@ const SongwritingApp: React.FC = () => {
     const handlePause = () => {
         setView('shelf');
         setActiveSong(null);
+        setPendingLines([]);
     };
 
     // ==================== RENDER ====================
@@ -624,7 +683,10 @@ const SongwritingApp: React.FC = () => {
                                                     <div className="flex items-center gap-2 mt-2">
                                                         <span className="text-[10px] text-stone-400">{genreInfo?.label}</span>
                                                         <span className="text-stone-300">·</span>
-                                                        <span className="text-[10px] text-stone-400">{song.lines.length} 行</span>
+                                                        <span className="text-[10px] text-stone-400">{song.lines.filter(l => !l.isDraft).length} 行</span>
+                                                        {song.lines.some(l => l.isDraft) && (
+                                                            <span className="text-[10px] text-stone-300">{song.lines.filter(l => l.isDraft).length} 草稿</span>
+                                                        )}
                                                         {char && (
                                                             <>
                                                                 <span className="text-stone-300">·</span>
@@ -866,9 +928,9 @@ const SongwritingApp: React.FC = () => {
                     </div>
                 </div>
 
-                {/* Lyrics body — like a booklet page */}
+                {/* Lyrics body — like a booklet page (draft lines excluded) */}
                 <div className="flex-1 overflow-y-auto px-8 py-8 no-scrollbar relative z-10">
-                    {activeSong.lines.map(line => {
+                    {activeSong.lines.filter(l => !l.isDraft).map(line => {
                         const showSection = line.section !== currentSec;
                         if (showSection) currentSec = line.section;
                         return (
@@ -910,10 +972,11 @@ const SongwritingApp: React.FC = () => {
     if (view === 'write' && activeSong) {
         const genreInfo = SONG_GENRES.find(g => g.id === activeSong.genre);
 
-        // Interleave lines and feedback groups by timestamp for display
+        // Interleave lines, feedback groups, and pending candidates by timestamp for display
         const lineItems = activeSong.lines.map(mkLineItem);
         const fbItems = feedbackGroups.map(mkLineItem2);
-        const timeline = [...lineItems, ...fbItems].sort((a, b) => a.data.timestamp - b.data.timestamp);
+        const pendingItems = pendingLines.map(mkPendingItem);
+        const timeline = [...lineItems, ...fbItems, ...pendingItems].sort((a, b) => a.data.timestamp - b.data.timestamp);
 
         return (
             <div className="h-full w-full bg-[#F5F0E8] flex flex-col font-sans relative overflow-hidden">
@@ -986,6 +1049,41 @@ const SongwritingApp: React.FC = () => {
                             const isUser = line.authorId === 'user';
                             const author = isUser ? null : characters.find(c => c.id === line.authorId);
 
+                            // --- Draft line rendering ---
+                            if (line.isDraft) {
+                                return (
+                                    <div key={line.id} className="group relative opacity-60 hover:opacity-80 transition-opacity">
+                                        <div className="p-3 rounded-lg bg-stone-100/60 border border-stone-200 border-dashed">
+                                            <div className="flex items-center gap-2 mb-1.5">
+                                                <SectionBadge section={line.section} small />
+                                                <span className="text-[9px] text-stone-400 tracking-wider">
+                                                    {isUser ? '我' : author?.name}
+                                                </span>
+                                                <span className="text-[9px] bg-stone-200 text-stone-500 px-1.5 rounded">草稿</span>
+                                                {line.annotation && (
+                                                    <span className="text-[9px] bg-stone-100 text-stone-400 px-1.5 rounded">{line.annotation}</span>
+                                                )}
+                                            </div>
+                                            <p className="text-sm text-stone-400 leading-relaxed" style={{ fontFamily: 'Georgia, "Noto Serif SC", serif' }}>{line.content}</p>
+                                            <div className="flex gap-2 mt-2 pt-1.5 border-t border-stone-200/60">
+                                                <button
+                                                    onClick={() => handleRestoreDraft(line.id)}
+                                                    className="flex-1 py-1 text-[10px] text-stone-600 bg-white border border-stone-200 rounded hover:bg-stone-50 active:scale-[0.98] transition-all"
+                                                >
+                                                    恢复为歌词
+                                                </button>
+                                                <button
+                                                    onClick={() => handleDeleteLine(line.id)}
+                                                    className="px-3 py-1 text-[10px] text-stone-400 hover:text-red-400 transition-colors"
+                                                >
+                                                    删除
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            }
+
                             if (editingLineId === line.id) {
                                 return (
                                     <div key={line.id} className="bg-white p-3 rounded-lg border border-stone-300">
@@ -1037,8 +1135,46 @@ const SongwritingApp: React.FC = () => {
                             );
                         }
 
+                        // Pending candidate line
+                        if (item.kind === 'pending') {
+                            const line = item.data;
+                            const isUser = line.authorId === 'user';
+                            const author = isUser ? null : characters.find(c => c.id === line.authorId);
+
+                            return (
+                                <div key={line.id} className="relative">
+                                    <div className={`p-3 rounded-lg border-2 border-dashed ${isUser ? 'border-amber-300 bg-amber-50/30' : 'border-violet-300 bg-violet-50/30'}`}>
+                                        <div className="flex items-center gap-2 mb-1.5">
+                                            <SectionBadge section={line.section} small />
+                                            <span className="text-[9px] text-stone-400 tracking-wider">
+                                                {isUser ? '我' : author?.name}
+                                            </span>
+                                            <span className={`text-[9px] px-1.5 rounded ${isUser ? 'bg-amber-100 text-amber-600' : 'bg-violet-100 text-violet-600'}`}>
+                                                {isUser ? '待确认' : '示范参考'}
+                                            </span>
+                                        </div>
+                                        <p className="text-sm text-stone-600 leading-relaxed" style={{ fontFamily: 'Georgia, "Noto Serif SC", serif' }}>{line.content}</p>
+                                        <div className="flex gap-2 mt-2.5 pt-2 border-t border-stone-200/60">
+                                            <button
+                                                onClick={() => handleAcceptPending(line.id)}
+                                                className="flex-1 py-1.5 bg-stone-700 text-stone-50 text-xs rounded font-medium active:scale-[0.98] transition-transform"
+                                            >
+                                                收录
+                                            </button>
+                                            <button
+                                                onClick={() => handleDismissPending(line.id)}
+                                                className="flex-1 py-1.5 bg-stone-100 text-stone-500 text-xs rounded active:scale-[0.98] transition-transform"
+                                            >
+                                                不要
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        }
+
                         // Feedback Card
-                        const feedback = item.data;
+                        const feedback = item.data as { id: string; timestamp: number; reaction?: SongComment; details: SongComment[] };
                         const lead = feedback.reaction || feedback.details[0];
                         const commentAuthor = characters.find(c => c.id === lead?.authorId);
                         const isExpanded = !!expandedFeedbackIds[feedback.id];
@@ -1050,7 +1186,7 @@ const SongwritingApp: React.FC = () => {
                         };
 
                         return (
-                            <div key={feedback.id} className="mx-2">
+                            <div key={feedback.id} className="mx-2 group/fb relative">
                                 <div className="rounded-lg bg-white border border-stone-200 p-3.5">
                                     <div className="flex items-start gap-2.5">
                                         {commentAuthor && <img src={commentAuthor.avatar} className="w-7 h-7 rounded-full object-cover shrink-0" />}
@@ -1059,6 +1195,12 @@ const SongwritingApp: React.FC = () => {
                                             <p className="text-sm text-stone-600 leading-relaxed whitespace-pre-wrap">{lead?.content || '我在这里，陪你一起把下一句写出来。'}</p>
                                         </div>
                                     </div>
+                                    {/* Delete feedback button */}
+                                    <button
+                                        onClick={() => handleDeleteFeedback(feedback.id)}
+                                        className="absolute top-2 right-2 opacity-0 group-hover/fb:opacity-100 p-1 bg-white rounded text-stone-400 hover:text-red-400 text-[10px] border border-stone-200 transition-opacity"
+                                        title="删除这条反馈"
+                                    >×</button>
                                     {feedback.details.length > 0 && (
                                         <div className="mt-3">
                                             <button onClick={() => toggleFeedback(feedback.id)} className="text-[10px] text-stone-400 border border-stone-200 px-2.5 py-0.5 rounded hover:bg-stone-50 transition-colors">
@@ -1108,13 +1250,21 @@ const SongwritingApp: React.FC = () => {
                     </div>
 
                     {/* Quick Actions */}
-                    <div className="flex gap-2 px-4 py-1.5 border-b border-stone-200/60">
+                    <div className="flex gap-2 px-4 py-1.5 border-b border-stone-200/60 items-center">
                         <button onClick={handleAskForHelp} disabled={isTyping} className="px-2.5 py-1 rounded text-[10px] text-stone-500 hover:bg-stone-200/50 disabled:opacity-40 transition-colors">
                             求灵感
                         </button>
-                        <button onClick={handleDiscuss} disabled={isTyping} className="px-2.5 py-1 rounded text-[10px] text-stone-500 hover:bg-stone-200/50 disabled:opacity-40 transition-colors">
-                            讨论
+                        <button
+                            onClick={handleDiscuss}
+                            disabled={isTyping}
+                            className={`px-2.5 py-1 rounded text-[10px] disabled:opacity-40 transition-all ${inputText.trim() ? 'text-blue-600 bg-blue-50 hover:bg-blue-100 font-medium' : 'text-stone-500 hover:bg-stone-200/50'}`}
+                            title={inputText.trim() ? '把输入框的内容作为讨论发送（不计入歌词）' : '开始讨论创作方向'}
+                        >
+                            {inputText.trim() ? '仅聊聊' : '聊聊'}
                         </button>
+                        {inputText.trim() && (
+                            <span className="text-[9px] text-stone-400 ml-auto pr-1">发送→歌词 · 仅聊聊→讨论</span>
+                        )}
                     </div>
 
                     {/* Text Input */}
@@ -1122,7 +1272,7 @@ const SongwritingApp: React.FC = () => {
                         <textarea
                             value={inputText}
                             onChange={e => setInputText(e.target.value)}
-                            placeholder="写下一句词……"
+                            placeholder="写下一句词，或直接点「聊聊」聊创作……"
                             className="flex-1 bg-white border border-stone-200 rounded-lg px-4 py-3 text-sm text-stone-700 outline-none resize-none max-h-32 placeholder:text-stone-300 focus:border-stone-400 transition-colors"
                             rows={1}
                             style={{ minHeight: '44px', fontFamily: 'Georgia, "Noto Serif SC", serif' }}
@@ -1137,6 +1287,7 @@ const SongwritingApp: React.FC = () => {
                             onClick={handleSend}
                             disabled={isTyping || !inputText.trim()}
                             className={`w-10 h-10 rounded-lg flex items-center justify-center active:scale-95 transition-all shrink-0 ${inputText.trim() ? 'bg-stone-700 text-stone-50' : 'bg-stone-200 text-stone-400'}`}
+                            title="发送为歌词"
                         >
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path d="M3.478 2.404a.75.75 0 0 0-.926.941l2.432 7.905H13.5a.75.75 0 0 1 0 1.5H4.984l-2.432 7.905a.75.75 0 0 0 .926.94 60.519 60.519 0 0 0 18.445-8.986.75.75 0 0 0 0-1.218A60.517 60.517 0 0 0 3.478 2.404Z" /></svg>
                         </button>

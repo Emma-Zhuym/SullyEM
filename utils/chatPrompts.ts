@@ -622,6 +622,13 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                             const diff = (card.finalAffinity ?? 0) - (card.initialAffinity ?? 0);
                             const uName = userProfile?.name || '用户';
                             content = `${timeStr} [攻略本游戏结算] 你和${uName}刚玩了一局"攻略本"恋爱小游戏（${card.rounds || '?'}回合）。\n结局：「${card.title || '???'}」\n好感度变化：${card.initialAffinity} → ${card.finalAffinity}（${diff >= 0 ? '+' : ''}${diff}）\n你的评语：${card.charVerdict || '无'}\n你对${uName}的新发现：${card.charNewInsight || '无'}`;
+                        } else if (card?.type === 'whiteday_card') {
+                            const uName = userProfile?.name || '用户';
+                            const passedStr = card.passed ? `通过了测验，解锁了DIY巧克力环节` : `未通过测验（${card.score}/${card.total}）`;
+                            const questionsText = (card.questions as any[])?.map((q: any, i: number) =>
+                                `第${i + 1}题：${q.question}\n${uName}选择了"${q.userAnswer}"（${q.isCorrect ? '✓ 正确' : `✗ 错误，正确答案：${q.correctAnswer}`}）${q.review ? `\n你的评语：${q.review}` : ''}`
+                            ).join('\n') || '';
+                            content = `${timeStr} [白色情人节默契测验结果] ${uName}完成了你出的白色情人节小测验，答对了 ${card.score}/${card.total} 题，${passedStr}。\n${questionsText}\n你的最终评价：${card.finalDialogue || '无'}`;
                         } else {
                             content = `${timeStr} [系统卡片] ${m.content.slice(0, 200)}`;
                         }

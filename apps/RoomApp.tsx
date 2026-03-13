@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { RoomItem, CharacterProfile, RoomTodo, RoomNote } from '../types';
@@ -276,19 +276,29 @@ const RoomApp: React.FC = () => {
     const actorInputRef = useRef<HTMLInputElement>(null); 
     const customItemInputRef = useRef<HTMLInputElement>(null);
 
-    // Custom Item Library State
-    const [customAssets, setCustomAssets] = useState<{name: string, image: string, defaultScale: number, description?: string}[]>([]);
+    const char = characters.find(c => c.id === activeCharacterId);
+
+    // Custom Item Library State (new: unified with visibility)
+    type CustomAsset = { id: string; name: string; image: string; defaultScale: number; description?: string; visibility: 'public' | 'character'; assignedCharIds?: string[] };
+    const [allCustomAssets, setAllCustomAssets] = useState<CustomAsset[]>([]);
+    const customAssets = useMemo(() => {
+        if (!char) return allCustomAssets.filter(a => a.visibility === 'public');
+        return allCustomAssets.filter(a => a.visibility === 'public' || (a.assignedCharIds && a.assignedCharIds.includes(char.id)));
+    }, [allCustomAssets, char?.id]);
     const [showCustomModal, setShowCustomModal] = useState(false);
     const [customItemName, setCustomItemName] = useState('');
     const [customItemImage, setCustomItemImage] = useState('');
-    const [customItemUrl, setCustomItemUrl] = useState(''); // New: Support URL input
-    const [customItemDescription, setCustomItemDescription] = useState(''); // New: Description input
+    const [customItemUrl, setCustomItemUrl] = useState('');
+    const [customItemDescription, setCustomItemDescription] = useState('');
 
-    // Deletion State
-    const [deletingAsset, setDeletingAsset] = useState<{name: string, image: string} | null>(null);
+    // Asset Edit Modal State
+    const [editingAsset, setEditingAsset] = useState<CustomAsset | null>(null);
+    const [editName, setEditName] = useState('');
+    const [editDescription, setEditDescription] = useState('');
+    const [editImage, setEditImage] = useState('');
+    const [editVisibility, setEditVisibility] = useState<'public' | 'character'>('public');
+    const [editAssignedCharIds, setEditAssignedCharIds] = useState<string[]>([]);
     const assetLongPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-    const char = characters.find(c => c.id === activeCharacterId);
 
     // PERF: Cleanup rAF and debounce timers on unmount
     useEffect(() => {
@@ -298,23 +308,30 @@ const RoomApp: React.FC = () => {
         };
     }, []);
 
-    // Load custom assets on mount (Migrate from LocalStorage if needed)
+    // Load custom assets from global DB (with migration from old format)
     useEffect(() => {
         const loadAssets = async () => {
             const dbData = await DB.getAsset('room_custom_assets_list');
             const lsData = localStorage.getItem('room_custom_assets');
-            
+            let assets: any[] = [];
             if (dbData) {
-                try { setCustomAssets(JSON.parse(dbData)); } catch(e) {}
+                try { assets = JSON.parse(dbData); } catch {}
             } else if (lsData) {
-                // Legacy Migration
-                try {
-                    const parsed = JSON.parse(lsData);
-                    setCustomAssets(parsed);
-                    await DB.saveAsset('room_custom_assets_list', lsData);
-                    localStorage.removeItem('room_custom_assets');
-                } catch(e) {}
+                try { assets = JSON.parse(lsData); localStorage.removeItem('room_custom_assets'); } catch {}
             }
+            // 迁移旧格式：没有 id/visibility 的旧资产标记为公共
+            let needsSave = false;
+            const migrated = assets.map((a: any) => {
+                if (!a.id || !a.visibility) {
+                    needsSave = true;
+                    return { ...a, id: a.id || `asset_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, visibility: a.visibility || 'public' };
+                }
+                return a;
+            });
+            if (needsSave && migrated.length > 0) {
+                await DB.saveAsset('room_custom_assets_list', JSON.stringify(migrated));
+            }
+            setAllCustomAssets(migrated);
         };
         loadAssets();
     }, []);
@@ -805,41 +822,49 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
     };
     
     // Custom Item Save
-    const saveCustomItem = async () => { 
+    // Helper: persist allCustomAssets to DB
+    const persistAssets = async (assets: CustomAsset[]) => {
+        setAllCustomAssets(assets);
+        await DB.saveAsset('room_custom_assets_list', JSON.stringify(assets));
+    };
+
+    const saveCustomItem = async () => {
         const imageToUse = customItemUrl || customItemImage;
-        if(!customItemName.trim() || !imageToUse) { addToast('请填写完整信息', 'error'); return; } 
-        
-        // 1. Add to Room (as current logic)
-        addItem({ 
-            name: customItemName, 
-            image: imageToUse, 
+        if(!customItemName.trim() || !imageToUse) { addToast('请填写完整信息', 'error'); return; }
+
+        addItem({
+            name: customItemName,
+            image: imageToUse,
             defaultScale: 1.0,
             description: customItemDescription || undefined
         }, 'furniture');
-        
-        // 2. Add to Custom Asset Library and Persist
-        const newAsset = { 
-            name: customItemName, 
-            image: imageToUse, 
+
+        const newAsset: CustomAsset = {
+            id: `asset_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            name: customItemName,
+            image: imageToUse,
             defaultScale: 1.0,
-            description: customItemDescription || undefined
+            description: customItemDescription || undefined,
+            visibility: 'public',
         };
-        const updatedLibrary = [...customAssets, newAsset];
-        setCustomAssets(updatedLibrary);
-        // Persist to DB Assets (Migration)
-        await DB.saveAsset('room_custom_assets_list', JSON.stringify(updatedLibrary));
-        
-        setShowCustomModal(false); 
-        setCustomItemName(''); 
-        setCustomItemImage(''); 
+        await persistAssets([...allCustomAssets, newAsset]);
+
+        setShowCustomModal(false);
+        setCustomItemName('');
+        setCustomItemImage('');
         setCustomItemUrl('');
         setCustomItemDescription('');
     };
 
-    // New Handlers for Deleting Custom Assets
-    const handleAssetTouchStart = (asset: {name: string, image: string, defaultScale: number}) => {
+    // Long-press on custom asset → open edit modal
+    const handleAssetTouchStart = (asset: CustomAsset) => {
         assetLongPressTimer.current = setTimeout(() => {
-            setDeletingAsset(asset);
+            setEditingAsset(asset);
+            setEditName(asset.name);
+            setEditDescription(asset.description || '');
+            setEditImage(asset.image);
+            setEditVisibility(asset.visibility);
+            setEditAssignedCharIds(asset.assignedCharIds || []);
         }, 600);
     };
 
@@ -850,14 +875,26 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
         }
     };
 
-    const confirmDeleteAsset = async () => {
-        if (!deletingAsset) return;
-        const newAssets = customAssets.filter(a => a.name !== deletingAsset.name || a.image !== deletingAsset.image);
-        setCustomAssets(newAssets);
-        // Update DB
-        await DB.saveAsset('room_custom_assets_list', JSON.stringify(newAssets));
-        
-        setDeletingAsset(null);
+    const saveEditingAsset = async () => {
+        if (!editingAsset) return;
+        const updated = allCustomAssets.map(a => a.id === editingAsset.id ? {
+            ...a,
+            name: editName.trim() || a.name,
+            description: editDescription || undefined,
+            image: editImage || a.image,
+            visibility: editVisibility,
+            assignedCharIds: editVisibility === 'character' ? editAssignedCharIds : undefined,
+        } : a);
+        await persistAssets(updated);
+        setEditingAsset(null);
+        addToast('素材已更新', 'success');
+    };
+
+    const deleteEditingAsset = async () => {
+        if (!editingAsset) return;
+        const filtered = allCustomAssets.filter(a => a.id !== editingAsset.id);
+        await persistAssets(filtered);
+        setEditingAsset(null);
         addToast('素材已删除', 'success');
     };
 
@@ -1040,7 +1077,7 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
     const floorStyle = getBgStyle(char?.roomConfig?.floorImage, char?.roomConfig?.floorScale, char?.roomConfig?.floorRepeat) || FLOOR_PRESETS[0].value;
 
     // Merge Asset Libraries for Modal
-    const displayLibrary = {
+    const displayLibrary: Record<string, any[]> = {
         ...ASSET_LIBRARY,
         custom: customAssets
     };
@@ -1219,7 +1256,7 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                                     <span className="text-[9px] bg-slate-100 px-2 rounded-full">{assets.length}</span>
                                 </h4>
                                 <div className="grid grid-cols-4 gap-4">
-                                    {assets.map((asset, i) => {
+                                    {assets.map((asset: any, i: number) => {
                                         const isCustom = category === 'custom';
                                         const handlers = isCustom ? {
                                             onTouchStart: () => handleAssetTouchStart(asset),
@@ -1227,19 +1264,19 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                                             onMouseDown: () => handleAssetTouchStart(asset),
                                             onMouseUp: handleAssetTouchEnd,
                                             onMouseLeave: handleAssetTouchEnd,
-                                            onContextMenu: (e: React.MouseEvent) => { e.preventDefault(); setDeletingAsset(asset); }
+                                            onContextMenu: (e: React.MouseEvent) => { e.preventDefault(); handleAssetTouchStart(asset); assetLongPressTimer.current && clearTimeout(assetLongPressTimer.current); setEditingAsset(asset); setEditName(asset.name); setEditDescription(asset.description || ''); setEditImage(asset.image); setEditVisibility(asset.visibility || 'public'); setEditAssignedCharIds(asset.assignedCharIds || []); }
                                         } : {};
 
                                         return (
-                                            <button 
-                                                key={i} 
-                                                onClick={() => addItem(asset, category === 'custom' || category === 'sully_special' ? 'furniture' : category as any)} 
+                                            <button
+                                                key={asset.id || i}
+                                                onClick={() => addItem(asset, category === 'custom' || category === 'sully_special' ? 'furniture' : category as any)}
                                                 className="flex flex-col items-center gap-2 group relative active:scale-95 transition-transform"
                                                 {...handlers}
                                             >
                                                 <div className="w-14 h-14 bg-slate-50 rounded-xl flex items-center justify-center border border-slate-100 group-hover:border-blue-300 transition-colors overflow-hidden relative">
                                                     <img src={asset.image} className="w-full h-full object-contain" />
-                                                    {isCustom && <div className="absolute inset-0 bg-red-500/10 opacity-0 group-active:opacity-100 transition-opacity"></div>}
+                                                    {isCustom && asset.visibility === 'character' && <div className="absolute top-0 right-0 w-3 h-3 bg-blue-400 rounded-bl-lg" title="角色专属"></div>}
                                                 </div>
                                                 <span className="text-[10px] text-slate-500 truncate w-full text-center">{asset.name}</span>
                                             </button>
@@ -1252,15 +1289,53 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                 </div>
             </Modal>
 
-            {/* Custom Asset Delete Confirmation Modal */}
-            <Modal 
-                isOpen={!!deletingAsset} title="删除自定义家具" onClose={() => setDeletingAsset(null)}
-                footer={<div className="flex gap-2 w-full"><button onClick={() => setDeletingAsset(null)} className="flex-1 py-3 bg-slate-100 text-slate-500 rounded-2xl font-bold">取消</button><button onClick={confirmDeleteAsset} className="flex-1 py-3 bg-red-500 text-white rounded-2xl font-bold">删除</button></div>}
+            {/* Custom Asset Edit Modal */}
+            <Modal isOpen={!!editingAsset} title="编辑家具" onClose={() => setEditingAsset(null)}
+                footer={<div className="flex gap-2 w-full"><button onClick={deleteEditingAsset} className="px-4 py-3 bg-red-50 text-red-500 rounded-2xl font-bold text-xs">删除</button><button onClick={saveEditingAsset} className="flex-1 py-3 bg-blue-500 text-white rounded-2xl font-bold text-xs">保存</button></div>}
             >
-                <div className="flex flex-col items-center gap-3 py-2">
-                    {deletingAsset && <img src={deletingAsset.image} className="w-16 h-16 object-contain rounded-lg bg-slate-100 border" />}
-                    <p className="text-sm text-slate-600 text-center">确定要从库中永久删除 <br/><span className="font-bold">"{deletingAsset?.name}"</span> 吗？<br/><span className="text-[10px] text-slate-400">(房间里已摆放的不受影响)</span></p>
-                </div>
+                {editingAsset && (
+                    <div className="space-y-3">
+                        <div className="flex gap-3 items-start">
+                            <img src={editImage} className="w-14 h-14 object-contain rounded-lg bg-slate-100 border shrink-0" />
+                            <div className="flex-1 space-y-2">
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-400 block mb-1">名称</label>
+                                    <input value={editName} onChange={e => setEditName(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold focus:outline-blue-500" />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-400 block mb-1">图片 URL</label>
+                                    <input value={editImage} onChange={e => setEditImage(e.target.value)} placeholder="https://..." className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-blue-500" />
+                                </div>
+                            </div>
+                        </div>
+                        <div>
+                            <label className="text-[10px] font-bold text-slate-400 block mb-1">描述</label>
+                            <input value={editDescription} onChange={e => setEditDescription(e.target.value)} placeholder="物品描述..." className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-blue-500" />
+                        </div>
+                        <div>
+                            <label className="text-[10px] font-bold text-slate-400 block mb-1">分类</label>
+                            <div className="flex gap-2">
+                                <button onClick={() => setEditVisibility('public')} className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-colors ${editVisibility === 'public' ? 'bg-green-50 border-green-300 text-green-600' : 'bg-slate-50 border-slate-200 text-slate-400'}`}>公共</button>
+                                <button onClick={() => setEditVisibility('character')} className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-colors ${editVisibility === 'character' ? 'bg-blue-50 border-blue-300 text-blue-600' : 'bg-slate-50 border-slate-200 text-slate-400'}`}>角色专属</button>
+                            </div>
+                        </div>
+                        {editVisibility === 'character' && (
+                            <div>
+                                <label className="text-[10px] font-bold text-slate-400 block mb-1">指定角色（可多选）</label>
+                                <div className="flex flex-wrap gap-2">
+                                    {characters.map(c => (
+                                        <button key={c.id} onClick={() => setEditAssignedCharIds(prev => prev.includes(c.id) ? prev.filter(id => id !== c.id) : [...prev, c.id])}
+                                            className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${editAssignedCharIds.includes(c.id) ? 'bg-blue-100 border-blue-300 text-blue-600' : 'bg-slate-50 border-slate-200 text-slate-400'}`}
+                                        >
+                                            {c.name}
+                                        </button>
+                                    ))}
+                                </div>
+                                {editAssignedCharIds.length === 0 && <p className="text-[9px] text-amber-500 mt-1">请至少选择一个角色</p>}
+                            </div>
+                        )}
+                    </div>
+                )}
             </Modal>
 
             {/* Custom Item Modal */}

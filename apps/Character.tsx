@@ -295,7 +295,7 @@ const Character: React.FC = () => {
       if (userProfile.bio) identityContext += ` (${userProfile.bio})`;
       identityContext += '\n\n';
 
-      const prompt = identityContext + (formattedPrompt || `Task: Summarize the following logs (${year}-${month}) into a concise memory. Language: Same as logs (Chinese). ${rawText.substring(0, 5000)}`);
+      const prompt = identityContext + (formattedPrompt || `Task: Summarize the following logs (${year}-${month}) into a concise memory. Language: Same as logs (Chinese). ${rawText}`);
 
       try {
           const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -432,8 +432,14 @@ const Character: React.FC = () => {
                             if (card?.type === 'guidebook_card') {
                                 const diff = (card.finalAffinity ?? 0) - (card.initialAffinity ?? 0);
                                 content = `[攻略本游戏结算] ${formData.name}和${userProfile.name}玩了一局"攻略本"恋爱小游戏（${card.rounds || '?'}回合）。结局：「${card.title || '???'}」 好感度变化：${card.initialAffinity} → ${card.finalAffinity}（${diff >= 0 ? '+' : ''}${diff}） ${formData.name}的评语：${card.charVerdict || '无'} ${formData.name}对${userProfile.name}的新发现：${card.charNewInsight || '无'}`;
+                            } else if (card?.type === 'whiteday_card') {
+                                const passedStr = card.passed ? `通过测验，解锁了DIY巧克力` : `未通过测验`;
+                                const questionsText = (card.questions as any[])?.map((q: any, i: number) =>
+                                    `第${i + 1}题"${q.question}"：${userProfile.name}选"${q.userAnswer}"（${q.isCorrect ? '✓' : '✗'}）${q.review ? `，${formData.name}评语：${q.review}` : ''}`
+                                ).join('；') || '';
+                                content = `[白色情人节默契测验] ${userProfile.name}完成了${formData.name}出的白色情人节测验，答对${card.score}/${card.total}题，${passedStr}。${questionsText}${card.finalDialogue ? `。${formData.name}最终评价：${card.finalDialogue}` : ''}`;
                             } else {
-                                content = `[系统卡片] ${m.content.slice(0, 200)}`;
+                                content = '[系统卡片]';
                             }
                         } catch { content = '[系统卡片]'; }
                     }
@@ -537,6 +543,22 @@ const Character: React.FC = () => {
           const msgText = recentMsgs.map(m => {
               let content = m.content;
               if (m.type === 'image') content = '[图片]';
+              else if (m.type === 'emoji') content = '[表情包]';
+              else if (m.type === 'interaction') content = `[戳了一下]`;
+              else if (m.type === 'transfer') content = `[转账 ${m.metadata?.amount ?? ''}]`;
+              else if ((m.type as string) === 'score_card') {
+                  try {
+                      const card = m.metadata?.scoreCard || JSON.parse(m.content);
+                      if (card?.type === 'guidebook_card') {
+                          const diff = (card.finalAffinity ?? 0) - (card.initialAffinity ?? 0);
+                          content = `[攻略本结算] 结局「${card.title || '???'}」好感${diff >= 0 ? '+' : ''}${diff}`;
+                      } else if (card?.type === 'whiteday_card') {
+                          content = `[白色情人节测验] 答对${card.score}/${card.total}题${card.passed ? '，解锁DIY巧克力' : ''}`;
+                      } else {
+                          content = '[系统卡片]';
+                      }
+                  } catch { content = '[系统卡片]'; }
+              }
               return `${m.role === 'user' ? boundUser.name : charName}: ${content}`;
           }).join('\n');
 
@@ -697,10 +719,10 @@ ${isInitialGeneration ? `
       }
 
       const json = JSON.stringify(exportData, null, 2);
+      const fileName = `${formData.name || 'Character'}_Card.json`;
       
       if (Capacitor.isNativePlatform()) {
           try {
-              const fileName = `${formData.name || 'Character'}_Card.json`;
               await Filesystem.writeFile({
                   path: fileName,
                   data: json,
@@ -716,23 +738,47 @@ ${isInitialGeneration ? `
                   files: [uriResult.uri],
               });
               addToast('已调起分享', 'success');
+              return;
           } catch (e: any) {
               console.error("Native Export Error", e);
-              addToast('导出失败，请检查权限', 'error');
+              addToast('原生分享失败，尝试浏览器分享/下载', 'info');
           }
-      } else {
+      }
+
+      try {
+          // Align with Settings export fallback logic for wrapped webviews:
+          // try Web Share first, then fallback to download.
+          const file = new File([json], fileName, { type: 'application/json' });
+          const canShareFile = typeof navigator !== 'undefined'
+              && typeof navigator.share === 'function'
+              && (typeof navigator.canShare !== 'function' || navigator.canShare({ files: [file] }));
+
+          if (canShareFile) {
+              await navigator.share({
+                  title: '导出角色卡',
+                  files: [file],
+              });
+              addToast('已调起分享', 'success');
+              return;
+          }
+      } catch (e: any) {
+          // User cancellation and unsupported cases should continue to download fallback.
+          if (e?.name !== 'AbortError') {
+              console.error('Web Share Export Error', e);
+          }
+      }
+
           const blob = new Blob([json], { type: 'application/json' });
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
-          a.download = `${formData.name}_Card.json`;
+          a.download = fileName;
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
           URL.revokeObjectURL(url);
           
           addToast('角色卡已生成并下载', 'success');
-      }
   };
 
   const handleImportCard = (e: React.ChangeEvent<HTMLInputElement>) => {
