@@ -1,0 +1,153 @@
+/**
+ * NPCGrid — 都市居民卡片 (retro OS window style)
+ * Compact cards, collapsible details, pixel-art inspired
+ */
+
+import React, { useState } from 'react';
+import { LifeSimState, SimNPC } from '../../types';
+import { getMoodLabel, getProfessionInfo, getGenderLabel } from '../../utils/lifeSimEngine';
+import { NPCAvatar, IconFlame, IconCrush } from '../../utils/styledIcons';
+
+const MOOD_COLORS = (norm: number) =>
+    norm > 60 ? '#5b9b6b' : norm > 30 ? '#b89840' : '#b85050';
+
+const NPCCard: React.FC<{ npc: SimNPC; gameState: LifeSimState }> = ({ npc, gameState }) => {
+    const [expanded, setExpanded] = useState(false);
+    const profInfo = getProfessionInfo(npc.profession ?? 'freelancer');
+    const mood = npc.mood;
+    const { label: moodLabel } = getMoodLabel(mood);
+    const family = gameState.families.find(f => f.id === npc.familyId);
+    const moodNorm = (mood + 100) / 2;
+    const grudges = npc.grudges ?? [];
+    const crushes = npc.crushes ?? [];
+    const genderSymbol = getGenderLabel(npc.gender);
+
+    return (
+        <div className="retro-window cursor-pointer" style={{ marginBottom: 0 }}
+            onClick={() => setExpanded(!expanded)}>
+            {/* Mini titlebar with name */}
+            <div className="retro-titlebar" style={{ padding: '2px 6px', fontSize: 9 }}>
+                <span className="truncate">{npc.name}{genderSymbol ? ` ${genderSymbol}` : ''}</span>
+                <span style={{ fontSize: 8, opacity: 0.7 }}>{expanded ? '▼' : '▶'}</span>
+            </div>
+
+            <div style={{ padding: '6px 8px' }}>
+                {/* Compact row: avatar + profession + mood */}
+                <div className="flex items-center gap-2">
+                    <div className="flex-shrink-0" style={{
+                        width: 28, height: 28, borderRadius: 4,
+                        border: `1px solid ${profInfo.color}40`,
+                        overflow: 'hidden',
+                    }}>
+                        <NPCAvatar name={npc.name} size={28} className="rounded" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1">
+                            <span style={{
+                                fontSize: 9, fontWeight: 600, color: profInfo.color,
+                                background: `${profInfo.color}15`, padding: '0 4px', borderRadius: 2,
+                                border: `1px solid ${profInfo.color}25`,
+                            }}>{profInfo.zh}</span>
+                            {family && (
+                                <span style={{ fontSize: 8, color: '#888', fontWeight: 500 }}>
+                                    {family.name}
+                                </span>
+                            )}
+                        </div>
+                        {/* Mood bar */}
+                        <div className="flex items-center gap-1 mt-1">
+                            <div className="flex-1 h-1.5 rounded-sm overflow-hidden" style={{
+                                background: 'rgba(0,0,0,0.06)',
+                                border: '1px solid rgba(0,0,0,0.08)',
+                            }}>
+                                <div className="h-full rounded-sm transition-all duration-500" style={{
+                                    width: `${moodNorm}%`,
+                                    background: MOOD_COLORS(moodNorm),
+                                }} />
+                            </div>
+                            <span style={{ fontSize: 8, color: MOOD_COLORS(moodNorm), fontWeight: 600 }}>{moodLabel}</span>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Personality tags (always visible, compact) */}
+                <div className="flex flex-wrap gap-0.5 mt-1.5">
+                    {npc.personality.slice(0, 3).map(p => (
+                        <span key={p} className="retro-tag">{p}</span>
+                    ))}
+                </div>
+
+                {/* Grudges/crushes indicators */}
+                {(grudges.length > 0 || crushes.length > 0) && (
+                    <div className="flex gap-1 mt-1 flex-wrap">
+                        {grudges.map(gid => {
+                            const target = gameState.npcs.find(n => n.id === gid);
+                            return target ? (
+                                <span key={`g-${gid}`} style={{
+                                    fontSize: 8, fontWeight: 600,
+                                    background: 'rgba(200,60,60,0.1)', color: '#b85050',
+                                    border: '1px solid rgba(200,60,60,0.2)',
+                                    borderRadius: 3, padding: '0 4px',
+                                    display: 'inline-flex', alignItems: 'center', gap: 2,
+                                }}>
+                                    <IconFlame size={7} />{target.name}
+                                </span>
+                            ) : null;
+                        })}
+                        {crushes.map(cid => {
+                            const target = gameState.npcs.find(n => n.id === cid);
+                            return target ? (
+                                <span key={`c-${cid}`} style={{
+                                    fontSize: 8, fontWeight: 600,
+                                    background: 'rgba(200,100,150,0.1)', color: '#c06090',
+                                    border: '1px solid rgba(200,100,150,0.2)',
+                                    borderRadius: 3, padding: '0 4px',
+                                    display: 'inline-flex', alignItems: 'center', gap: 2,
+                                }}>
+                                    <IconCrush size={7} />{target.name}
+                                </span>
+                            ) : null;
+                        })}
+                    </div>
+                )}
+
+                {/* Expanded: bio + backstory */}
+                {expanded && (
+                    <div style={{
+                        marginTop: 6, paddingTop: 6,
+                        borderTop: '1px dashed rgba(0,0,0,0.1)',
+                    }}>
+                        {npc.bio && (
+                            <p style={{ fontSize: 9, color: '#666', lineHeight: 1.5, marginBottom: 4 }}>{npc.bio}</p>
+                        )}
+                        {npc.backstory && (
+                            <div className="retro-inset" style={{ padding: '4px 6px', marginTop: 4 }}>
+                                <p style={{ fontSize: 8, color: '#888', fontWeight: 600, marginBottom: 2 }}>背景故事</p>
+                                <p style={{ fontSize: 9, color: '#555', lineHeight: 1.5 }}>{npc.backstory}</p>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
+const NPCGrid: React.FC<{ gameState: LifeSimState }> = ({ gameState }) => {
+    const allNpcs = gameState.npcs;
+    if (allNpcs.length === 0) return (
+        <div className="flex items-center justify-center p-8" style={{ color: '#999', fontSize: 12 }}>
+            还没有居民入住
+        </div>
+    );
+
+    return (
+        <div style={{ padding: 6 }} className="grid grid-cols-2 gap-1.5">
+            {allNpcs.map(npc => (
+                <NPCCard key={npc.id} npc={npc} gameState={gameState} />
+            ))}
+        </div>
+    );
+};
+
+export default NPCGrid;
