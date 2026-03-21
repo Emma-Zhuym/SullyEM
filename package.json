@@ -18,9 +18,17 @@
     "@capacitor/local-notifications": "^6.0.0",
     "@capacitor/share": "^6.0.0",
     "@capacitor/status-bar": "^6.0.0",
+    "@neondatabase/serverless": "^1.0.2",
+    "@netlify/blobs": "^10.7.4",
+    "@netlify/functions": "^5.1.5",
     "@phosphor-icons/react": "^2.1.10",
+    "@rei-standard/amsg-client": "^2.0.1",
+    "@rei-standard/amsg-server": "^2.0.1",
+    "@rei-standard/amsg-sw": "^2.0.1",
+    "pg": "^8.20.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@capacitor/cli": "^6.0.0",

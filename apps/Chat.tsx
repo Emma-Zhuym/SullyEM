@@ -14,6 +14,7 @@ import ChatModals from '../components/chat/ChatModals';
 import Modal from '../components/os/Modal';
 import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
 import EmotionSettingsModal from '../components/chat/EmotionSettingsModal';
+import ActiveMsg2SettingsModal from '../components/chat/ActiveMsg2SettingsModal';
 import { useChatAI } from '../hooks/useChatAI';
 import { synthesizeSpeech, cleanTextForTts } from '../utils/minimaxTts';
 
@@ -56,6 +57,7 @@ const Chat: React.FC = () => {
     const [editContent, setEditContent] = useState('');
     const [isSummarizing, setIsSummarizing] = useState(false);
     const [showProactiveModal, setShowProactiveModal] = useState(false);
+    const [showActiveMsg2Modal, setShowActiveMsg2Modal] = useState(false);
     const [showEmotionModal, setShowEmotionModal] = useState(false);
 
     // Archive Prompts State
@@ -558,6 +560,7 @@ const Chat: React.FC = () => {
             case 'category-options': setSelectedCategory(payload); setModalType('category-options'); break;
             case 'delete-category-req': setSelectedCategory(payload); setModalType('delete-category'); break;
             case 'proactive': setShowProactiveModal(true); break;
+            case 'proactive2': setShowActiveMsg2Modal(true); break;
             case 'emotion': setShowEmotionModal(true); break;
         }
     };
@@ -1232,6 +1235,7 @@ const Chat: React.FC = () => {
                     onReroll={handleReroll}
                     canReroll={canReroll}
                     isProactiveActive={isProactiveActive}
+                    isActiveMsg2Enabled={!!char.activeMsg2Config?.enabled}
                     isEmotionEnabled={!!char.emotionConfig?.enabled}
                     inputStyle={osTheme.chatInputStyle}
                     sendButtonStyle={osTheme.chatSendButtonStyle}
@@ -1262,6 +1266,23 @@ const Chat: React.FC = () => {
                         updateCharacter(char.id, { proactiveConfig: { ...char.proactiveConfig!, enabled: false } });
                         addToast('已停止主动消息', 'info');
                     }}
+                />
+            )}
+
+            {/* Active Message 2.0 Modal */}
+            {char && (
+                <ActiveMsg2SettingsModal
+                    isOpen={showActiveMsg2Modal}
+                    onClose={() => setShowActiveMsg2Modal(false)}
+                    char={char}
+                    apiConfig={apiConfig}
+                    userProfile={userProfile}
+                    groups={groups}
+                    realtimeConfig={realtimeConfig}
+                    onSave={(config) => {
+                        updateCharacter(char.id, { activeMsg2Config: config });
+                    }}
+                    addToast={addToast}
                 />
             )}
 

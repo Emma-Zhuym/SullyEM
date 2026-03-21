@@ -136,6 +136,60 @@ export interface APIConfig {
   model: string;
 }
 
+export type ActiveMsg2DbDriver = 'pg' | 'neon';
+export type ActiveMsg2Mode = 'fixed' | 'auto' | 'prompted';
+export type ActiveMsg2Recurrence = 'none' | 'daily' | 'weekly';
+
+export interface ActiveMsg2ApiConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+export interface ActiveMsg2GlobalConfig {
+  userId: string;
+  driver: ActiveMsg2DbDriver;
+  databaseUrl: string;
+  initSecret?: string;
+  tenantId?: string;
+  tenantToken?: string;
+  cronToken?: string;
+  cronWebhookUrl?: string;
+  masterKeyFingerprint?: string;
+  initializedAt?: number;
+  updatedAt?: number;
+}
+
+export interface ActiveMsg2CharacterConfig {
+  enabled: boolean;
+  mode: ActiveMsg2Mode;
+  firstSendTime: string;
+  recurrenceType: ActiveMsg2Recurrence;
+  userMessage?: string;
+  promptHint?: string;
+  maxTokens?: number;
+  taskUuid?: string;
+  remoteStatus?: 'idle' | 'scheduled' | 'sent' | 'error';
+  useSecondaryApi?: boolean;
+  secondaryApi?: ActiveMsg2ApiConfig;
+  lastSyncedAt?: number;
+  lastError?: string;
+}
+
+export interface ActiveMsg2InboxMessage {
+  messageId: string;
+  charId: string;
+  charName: string;
+  body: string;
+  avatarUrl?: string;
+  source?: string;
+  messageType?: string;
+  messageSubtype?: string;
+  taskId?: string | null;
+  metadata?: Record<string, any>;
+  receivedAt: number;
+}
+
 export interface ApiPreset {
   id: string;
   name: string;
@@ -724,6 +778,7 @@ export interface CharacterProfile {
   };
 
   // 情绪Buff系统
+  activeMsg2Config?: ActiveMsg2CharacterConfig;
   activeBuffs?: CharacterBuff[];
   buffInjection?: string;   // 注入到systemPrompt的叙事型情绪底色描述
   emotionConfig?: {

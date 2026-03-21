@@ -954,6 +954,64 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   // ─── Global Proactive Message Handler ───
   // Registered at OS level so it works even when Chat is not open.
+  useEffect(() => {
+      let awayActiveMsgCount = 0;
+
+      const handler = (e: Event) => {
+          const { charId, charName, body } = (e as CustomEvent).detail as { charId: string; charName: string; body?: string };
+          setLastMsgTimestamp(Date.now());
+
+          const isChattingWithThisChar = activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId;
+          if (!isChattingWithThisChar) {
+              const isVisible = document.visibilityState === 'visible';
+              if (isVisible) {
+                  addToast(`${charName} 发来了一条主动消息 2.0`, 'success');
+              } else {
+                  awayActiveMsgCount += 1;
+              }
+              setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
+              const preview = (body || `${charName} sent an active message`).replace(/\s+/g, ' ').trim() || `${charName} sent an active message`;
+              void sendProactiveNativeNotification(charId, charName, preview);
+
+              if (!Capacitor.isNativePlatform() && window.Notification && Notification.permission === 'granted') {
+                  const char = characters.find(c => c.id === charId);
+                  try {
+                      const notif = new Notification(charName, {
+                          body: preview,
+                          icon: char?.avatar,
+                          silent: false
+                      });
+                      notif.onclick = () => { window.focus(); setActiveApp(AppID.Chat); setActiveCharacterId(charId); };
+                  } catch (e) { /* notification failed */ }
+              }
+          }
+      };
+
+      const openHandler = (e: Event) => {
+          const { charId } = (e as CustomEvent).detail as { charId?: string };
+          if (!charId) return;
+          setActiveApp(AppID.Chat);
+          setActiveCharacterId(charId);
+      };
+
+      const onVisible = () => {
+          if (document.visibilityState !== 'visible') return;
+          if (awayActiveMsgCount > 0) {
+              addToast(`你离开期间收到 ${awayActiveMsgCount} 条主动消息 2.0`, 'success');
+              awayActiveMsgCount = 0;
+          }
+      };
+
+      window.addEventListener('active-msg-received', handler);
+      window.addEventListener('active-msg-open', openHandler);
+      document.addEventListener('visibilitychange', onVisible);
+      return () => {
+          window.removeEventListener('active-msg-received', handler);
+          window.removeEventListener('active-msg-open', openHandler);
+          document.removeEventListener('visibilitychange', onVisible);
+      };
+  }, [characters, sendProactiveNativeNotification]);
+
   const proactiveRunningRef = useRef(false);
   const proactiveQueueRef = useRef<string[]>([]);
   useEffect(() => {
