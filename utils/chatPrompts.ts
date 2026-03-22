@@ -107,14 +107,18 @@ export const ChatPrompts = {
         try {
             const memberGroups = groups.filter(g => g.members.includes(char.id));
             if (memberGroups.length > 0) {
+                const groupCtxN = getGroupContextLimitForPrivateChat();
                 let allGroupMsgs: (Message & { groupName: string })[] = [];
+                
+                // 每个群只取最近 groupCtxN 条（避免多群时全量读取）
                 for (const g of memberGroups) {
-                    const gMsgs = await DB.getGroupMessages(g.id);
+                    const { messages: gMsgs } = await DB.getRecentGroupMessagesWithCount(g.id, groupCtxN);
                     const enriched = gMsgs.map(m => ({ ...m, groupName: g.name }));
                     allGroupMsgs = [...allGroupMsgs, ...enriched];
                 }
+                
+                // 合并后按时间倒序，取全局最近 groupCtxN 条
                 allGroupMsgs.sort((a, b) => b.timestamp - a.timestamp);
-                const groupCtxN = getGroupContextLimitForPrivateChat();
                 const recentGroupMsgs = allGroupMsgs.slice(0, groupCtxN).reverse();
 
                 if (recentGroupMsgs.length > 0) {

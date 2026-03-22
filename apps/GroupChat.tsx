@@ -633,11 +633,16 @@ ${logText.substring(0, 10000)}
         setIsTyping(true);
 
         try {
+            // 从 DB 取最近 contextLimit 条群消息作为导演上下文。
+            // 注意：界面 messages 可能只分页加载了 30 条，不能直接用内存数组，否则「AI 上下文条数」再大也无效。
+            const { messages: dbRecent } = await DB.getRecentGroupMessagesWithCount(activeGroup.id, contextLimit);
+            const historyForPrompt = dbRecent.length > 0 ? dbRecent : currentMsgs.slice(-contextLimit);
+
             // 1. Prepare Group Context
             const groupMembers = characters.filter(c => activeGroup.members.includes(c.id));
             
             // Calculate Time Context
-            const lastMsg = currentMsgs[currentMsgs.length - 1];
+            const lastMsg = historyForPrompt[historyForPrompt.length - 1];
             const timeGapInfo = lastMsg ? getTimeGapHint(lastMsg.timestamp) : "这是群聊的第一条消息。";
             const currentTimeStr = `${virtualTime.hours.toString().padStart(2, '0')}:${virtualTime.minutes.toString().padStart(2, '0')}`;
 
@@ -676,7 +681,7 @@ ${recentPrivate || '(暂无私聊)'}
             }
 
             // 3. Group History (uses configurable context limit)
-            const recentGroupMsgs = currentMsgs.slice(-contextLimit).map(m => {
+            const recentGroupMsgs = historyForPrompt.map(m => {
                 let name = '用户';
                 if (m.role === 'assistant') {
                     name = characters.find(c => c.id === m.charId)?.name || '未知';
@@ -856,15 +861,17 @@ ${recentGroupMsgs}
                 
                 if (textContent) {
                     // Primary: split on line breaks
-                    let chunks = textContent.split(/(?:\r\n|\r|\n|\u2028|\u2029)+/)
-.map(c => c.trim())
-                        .filter(c => c.length > 0);
+                    let chunks = textContent
+                        .split(/(?:\r\n|\r|\n|\u2028|\u2029)+/)
+                        .map((c: string) => c.trim())
+                        .filter((c: string) => c.length > 0);
 
                     // Fallback: split on spaces between CJK characters (中文里空格=AI想换行)
                     if (chunks.length <= 1 && textContent.trim().length > 50) {
-                        chunks = textContent.split(/(?<=[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef\u2000-\u206f\u2e80-\u2eff\u3001-\u3003\u2018-\u201f\u300a-\u300f\uff01-\uff0f\uff1a-\uff20])\s+(?=[\u4e00-\u9fff\u3400-\u4dbf])/)
-.map(c => c.trim())
-                            .filter(c => c.length > 0);
+                        chunks = textContent
+                            .split(/(?<=[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef\u2000-\u206f\u2e80-\u2eff\u3001-\u3003\u2018-\u201f\u300a-\u300f\uff01-\uff0f\uff1a-\uff20])\s+(?=[\u4e00-\u9fff\u3400-\u4dbf])/)
+                            .map((c: string) => c.trim())
+                            .filter((c: string) => c.length > 0);
                     }
 
                     if (chunks.length === 0) chunks.push(textContent); // Fallback

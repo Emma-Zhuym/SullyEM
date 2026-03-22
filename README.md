@@ -4,6 +4,13 @@
 <img width="800" alt="banner" src="https://sharkpan.xyz/f/ylWpfN/sDN.png" />
 </div>
 
+## 更新记录
+
+### 2026-03-16
+
+- **群聊上下文：** 群聊 App「AI 上下文条数」与私聊系统提示中的群聊摘要共用同一配置（`localStorage`：`groupchat_context_limit`）；默认 **500** 条，可调 **20～5000**；多群消息合并后按时间取最近 **N** 条（非每群各 N 条）。
+- **私聊 ⚡ 面板：** 顶栏 **⚡** 可点开查看本次请求的 Token 拆分与字符级上下文构成（核心人设 / 系统附加 / 双语 / 历史条数与约字 / 含图条数 / `contextLimit` 等）。
+
 ---
 
 本仓库是在两个开源项目基础上做的**个人二改整合**：
@@ -158,7 +165,7 @@
 3. 执行：`npm run dev`，按终端提示在浏览器打开地址。
 4. **大模型 API**（地址、密钥、模型名）在 App 内 **「设置」** 里配置；若你有 `.env.local` 可按需填写。
 
-部署到公网可参考：Vercel / GitHub Pages 等静态托管（构建命令一般为 `npm run build`，输出目录 `dist`）。
+部署到公网可参考：**Vercel** 或 **GitHub Pages** 等静态托管（构建命令一般为 `npm run build`，输出目录 `dist`）。若仓库里带有 **GitHub Actions** 的 Pages 部署流程，需在 GitHub **Settings → Pages** 中启用 Pages 并选择通过 Actions 部署；**仅使用 Vercel 时**，即使 Pages 相关检查失败也不影响线上站点。
 
 ---
 
