@@ -52,7 +52,7 @@ const CharacterCard: React.FC<{
 );
 
 const Character: React.FC = () => {
-  const { closeApp, openApp, characters, activeCharacterId, setActiveCharacterId, addCharacter, updateCharacter, deleteCharacter, apiConfig, addToast, userProfile, customThemes, addCustomTheme, worldbooks } = useOS();
+    const { closeApp, openApp, characters, activeCharacterId, setActiveCharacterId, addCharacter, updateCharacter, deleteCharacter, apiConfig, addToast, userProfile, customThemes, addCustomTheme, worldbooks, setMessageSubView } = useOS();
   const [view, setView] = useState<'list' | 'detail'>('list');
   const [detailTab, setDetailTab] = useState<'identity' | 'memory' | 'impression'>('identity');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -443,6 +443,7 @@ const Character: React.FC = () => {
                             }
                         } catch { content = '[系统卡片]'; }
                     }
+                    else if (m.type === 'interaction' && m.metadata?.kind === 'notion_diary_nudge') content = `[快捷: ${userProfile.name}提醒${formData.name}写Notion日记]`;
                     else if (m.type === 'interaction') content = `[系统: ${userProfile.name}戳了${formData.name}一下]`;
                     else if (m.type === 'transfer') content = `[系统: ${userProfile.name}转账 ${m.metadata?.amount}]`;
 
@@ -544,6 +545,7 @@ const Character: React.FC = () => {
               let content = m.content;
               if (m.type === 'image') content = '[图片]';
               else if (m.type === 'emoji') content = '[表情包]';
+              else if (m.type === 'interaction' && m.metadata?.kind === 'notion_diary_nudge') content = `[提醒写Notion日记]`;
               else if (m.type === 'interaction') content = `[戳了一下]`;
               else if (m.type === 'transfer') content = `[转账 ${m.metadata?.amount ?? ''}]`;
               else if ((m.type as string) === 'score_card') {
@@ -868,7 +870,7 @@ ${isInitialGeneration ? `
                <div className="h-32 bg-gradient-to-b from-white/90 to-transparent backdrop-blur-sm flex flex-col justify-end px-5 pb-2 shrink-0 z-40 sticky top-0">
                    <div className="flex justify-between items-center mb-3">
                        <button onClick={handleBack} className="p-2 -ml-2 rounded-full hover:bg-white/60 flex items-center gap-1 text-slate-600"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg><span className="text-sm font-medium">列表</span></button>
-                       <button onClick={() => { setActiveCharacterId(formData.id); openApp(AppID.Chat); }} className="text-xs px-3 py-1.5 bg-primary text-white rounded-full font-bold shadow-sm shadow-primary/30 flex items-center gap-1 active:scale-95 transition-transform"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M3.105 2.288a.75.75 0 0 0-.826.95l1.414 4.926H16.5a.75.75 0 0 1 0 1.5H3.693l-1.414 4.926a.75.75 0 0 0 .826.95 28.897 28.897 0 0 0 15.293-7.155.75.75 0 0 0 0-1.114A28.897 28.897 0 0 0 3.105 2.288Z" /></svg>发消息</button>
+                       <button onClick={() => { setActiveCharacterId(formData.id); setMessageSubView('chat'); openApp(AppID.Chat); }} className="text-xs px-3 py-1.5 bg-primary text-white rounded-full font-bold shadow-sm shadow-primary/30 flex items-center gap-1 active:scale-95 transition-transform"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M3.105 2.288a.75.75 0 0 0-.826.95l1.414 4.926H16.5a.75.75 0 0 1 0 1.5H3.693l-1.414 4.926a.75.75 0 0 0 .826.95 28.897 28.897 0 0 0 15.293-7.155.75.75 0 0 0 0-1.114A28.897 28.897 0 0 0 3.105 2.288Z" /></svg>发消息</button>
                    </div>
                    <div className="flex gap-6 text-sm font-medium text-slate-400 pl-1">
                        <button onClick={() => setDetailTab('identity')} className={`pb-2 transition-colors relative ${detailTab === 'identity' ? 'text-slate-800' : ''}`}>设定{detailTab === 'identity' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-full"></div>}</button>

@@ -3,13 +3,14 @@
 
 import {
     CharacterProfile, ChatTheme, Message, UserProfile,
-    Task, Anniversary, DiaryEntry, RoomTodo, RoomNote,
+    Task, Anniversary, AgendaItem, DiaryEntry, RoomTodo, RoomNote,
     GalleryImage, FullBackupData, GroupProfile, SocialPost, StudyCourse, GameSession, Worldbook, NovelBook, Emoji, EmojiCategory,
-    BankTransaction, SavingsGoal, BankFullState, DollhouseState, XhsStockImage, XhsActivityRecord, SongSheet, QuizSession, GuidebookSession
+    BankTransaction, SavingsGoal, BankFullState, DollhouseState, XhsStockImage, XhsActivityRecord, SongSheet, QuizSession, GuidebookSession,
+    LifeSimState
 } from '../types';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 38; // Bumped for Guidebook (攻略本)
+const DB_VERSION = 40; // LifeSim (都市人生)
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -39,6 +40,8 @@ const STORE_XHS_ACTIVITIES = 'xhs_activities';
 const STORE_SONGS = 'songs';
 const STORE_QUIZZES = 'quizzes';
 const STORE_GUIDEBOOK = 'guidebook';
+const STORE_AGENDA = 'agenda';
+const STORE_LIFE_SIM = 'life_sim';
 
 export interface ScheduledMessage {
     id: string;
@@ -150,6 +153,8 @@ const openDB = (): Promise<IDBDatabase> => {
       createStore(STORE_SONGS, { keyPath: 'id' });
       createStore(STORE_QUIZZES, { keyPath: 'id' });
       createStore(STORE_GUIDEBOOK, { keyPath: 'id' });
+      createStore(STORE_AGENDA, { keyPath: 'id' });
+      createStore(STORE_LIFE_SIM, { keyPath: 'id' });
     };
   });
 };
@@ -281,12 +286,14 @@ export const DB = {
     });
   },
 
-  saveMessage: async (msg: Omit<Message, 'id' | 'timestamp'>): Promise<number> => {
+  /** 可传 `timestamp` 覆盖写入时间（如主动消息多分条错开毫秒序）；不传则 `Date.now()` */
+  saveMessage: async (msg: Omit<Message, 'id' | 'timestamp'> & { timestamp?: number }): Promise<number> => {
     const db = await openDB();
     return new Promise((resolve, reject) => {
         const transaction = db.transaction(STORE_MESSAGES, 'readwrite');
         const store = transaction.objectStore(STORE_MESSAGES);
-        const request = store.add({ ...msg, timestamp: Date.now() });
+        const { timestamp, ...rest } = msg;
+        const request = store.add({ ...rest, timestamp: timestamp ?? Date.now() });
         request.onsuccess = () => resolve(request.result as number);
         request.onerror = () => reject(request.error);
     });
@@ -883,6 +890,30 @@ export const DB = {
       transaction.objectStore(STORE_ANNIVERSARIES).delete(id);
   },
 
+  getAllAgenda: async (): Promise<AgendaItem[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_AGENDA)) return [];
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_AGENDA, 'readonly');
+          const store = transaction.objectStore(STORE_AGENDA);
+          const request = store.getAll();
+          request.onsuccess = () => resolve(request.result || []);
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  saveAgenda: async (item: AgendaItem): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_AGENDA, 'readwrite');
+      transaction.objectStore(STORE_AGENDA).put(item);
+  },
+
+  deleteAgenda: async (id: string): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_AGENDA, 'readwrite');
+      transaction.objectStore(STORE_AGENDA).delete(id);
+  },
+
   getRoomTodo: async (charId: string, date: string): Promise<RoomTodo | null> => {
       const db = await openDB();
       const id = `${charId}_${date}`;
@@ -1171,6 +1202,34 @@ export const DB = {
       transaction.objectStore(STORE_GUIDEBOOK).delete(id);
   },
 
+  // ── LifeSim (都市人生) ────────────────────────────────────
+  getLifeSimState: async (): Promise<LifeSimState | null> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_LIFE_SIM)) return null;
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_LIFE_SIM, 'readonly');
+          const request = transaction.objectStore(STORE_LIFE_SIM).get('main');
+          request.onsuccess = () => resolve(request.result || null);
+          request.onerror = () => reject(request.error);
+      });
+  },
+
+  saveLifeSimState: async (state: LifeSimState): Promise<void> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_LIFE_SIM, 'readwrite');
+          transaction.objectStore(STORE_LIFE_SIM).put({ ...state, id: 'main' });
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+      });
+  },
+
+  clearLifeSimState: async (): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_LIFE_SIM, 'readwrite');
+      transaction.objectStore(STORE_LIFE_SIM).clear();
+  },
+
   getRawStoreData: async (storeName: string): Promise<any[]> => {
       const db = await openDB();
       if (!db.objectStoreNames.contains(storeName)) return [];
@@ -1199,7 +1258,7 @@ export const DB = {
           });
       };
 
-      const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, songs, quizzes, guidebookSessions] = await Promise.all([
+      const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, songs, quizzes, guidebookSessions, lifeSimStates] = await Promise.all([
           getAllFromStore(STORE_CHARACTERS),
           getAllFromStore(STORE_MESSAGES),
           getAllFromStore(STORE_THEMES),
@@ -1227,6 +1286,7 @@ export const DB = {
           getAllFromStore(STORE_SONGS),
           getAllFromStore(STORE_QUIZZES),
           getAllFromStore(STORE_GUIDEBOOK),
+          getAllFromStore(STORE_LIFE_SIM),
       ]);
 
       const userProfile = userProfiles.length > 0 ? {
@@ -1247,7 +1307,8 @@ export const DB = {
           xhsStockImages,
           songs,
           quizSessions: quizzes,
-          guidebookSessions
+          guidebookSessions,
+          lifeSimState: lifeSimStates[0] || null
       };
   },
 
@@ -1262,7 +1323,8 @@ export const DB = {
           STORE_BANK_TX, STORE_BANK_DATA,
           STORE_XHS_ACTIVITIES, STORE_XHS_STOCK,
           STORE_QUIZZES,
-          STORE_GUIDEBOOK
+          STORE_GUIDEBOOK,
+          STORE_LIFE_SIM
       ].filter(name => db.objectStoreNames.contains(name));
 
       const tx = db.transaction(availableStores, 'readwrite');
@@ -1375,6 +1437,13 @@ export const DB = {
       if (data.songs) clearAndAdd(STORE_SONGS, data.songs);
       if (data.quizSessions) clearAndAdd(STORE_QUIZZES, data.quizSessions);
       if (data.guidebookSessions) clearAndAdd(STORE_GUIDEBOOK, data.guidebookSessions);
+      if (data.lifeSimState !== undefined && availableStores.includes(STORE_LIFE_SIM)) {
+          const store = tx.objectStore(STORE_LIFE_SIM);
+          store.clear();
+          if (data.lifeSimState) {
+              store.put({ ...data.lifeSimState, id: 'main' });
+          }
+      }
       if (data.bankTransactions) clearAndAdd(STORE_BANK_TX, data.bankTransactions);
       if (data.xhsActivities) clearAndAdd(STORE_XHS_ACTIVITIES, data.xhsActivities);
       if (data.xhsStockImages) clearAndAdd(STORE_XHS_STOCK, data.xhsStockImages);

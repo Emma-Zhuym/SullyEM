@@ -3,10 +3,18 @@ import { useState, useRef } from 'react';
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig } from '../types';
 import { DB } from '../utils/db';
 import { ChatPrompts } from '../utils/chatPrompts';
+import { ContextBuilder } from '../utils/context';
 import { ChatParser } from '../utils/chatParser';
 import { RealtimeContextManager, NotionManager, FeishuManager, XhsNote } from '../utils/realtimeContext';
+import {
+    NOTION_USER_NOTES_TAG,
+    normalizeNotionExtraTag,
+    resolveNotionNotesDatabaseId,
+    sortExtraDatabasesForProcessing,
+} from '../utils/notionExtraConfig';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeNote } from '../utils/xhsMcpClient';
 import { safeFetchJson, safeResponseJson } from '../utils/safeApi';
+import { ProactiveChat } from '../utils/proactiveChat';
 
 const normalizeAiContent = (raw: string): string => {
     let cleaned = raw || '';
@@ -105,6 +113,20 @@ async function xhsReplyComment(conf: { mcpUrl: string }, feedId: string, xsecTok
     return { success: r.success, message: r.error || (r.success ? '回复成功' : '回复失败') };
 }
 
+/** 主聊天每次请求前估算的上下文构成（字符级，便于对比不同 char；与 API prompt_tokens 为近似关系） */
+export interface ContextComposition {
+    coreContextChars: number;
+    /** buildSystemPrompt 在核心人设之外注入的部分：实时信息、群聊摘要、日记/笔记标题、纪念日、聊天规范与全量表情名、小红书/搜索等长规则、语音说明等 */
+    systemInjectedChars: number;
+    bilingualAddonChars: number;
+    systemTotalChars: number;
+    historyMessageCount: number;
+    historyCharsApprox: number;
+    /** 多模态消息条数（含 image_url，vision 模型会显著增加 prompt_tokens） */
+    historyImageTurns: number;
+    contextLimit: number;
+}
+
 interface UseChatAIProps {
     char: CharacterProfile | undefined;
     userProfile: UserProfile;
@@ -138,6 +160,7 @@ export const useChatAI = ({
     const [xhsStatus, setXhsStatus] = useState<string>('');
     const [lastTokenUsage, setLastTokenUsage] = useState<number | null>(null);
     const [tokenBreakdown, setTokenBreakdown] = useState<{ prompt: number; completion: number; total: number; msgCount: number; pass: string } | null>(null);
+    const [contextComposition, setContextComposition] = useState<ContextComposition | null>(null);
 
     // 跨消息持久化的 noteId→xsecToken 缓存，避免 lastXhsNotes 局部变量每次 triggerAI 都重置
     const xsecTokenCacheRef = useRef<Map<string, string>>(new Map());
@@ -197,6 +220,8 @@ export const useChatAI = ({
 
             // 1. Build System Prompt (包含实时世界信息)
             let systemPrompt = await ChatPrompts.buildSystemPrompt(char, userProfile, groups, emojis, categories, currentMsgs, realtimeConfig);
+            const systemCharsBeforeBilingual = systemPrompt.length;
+            const coreContextChars = ContextBuilder.buildCoreContext(char, userProfile).length;
 
             // 1.5 Inject bilingual output instruction when translation is enabled
             const bilingualActive = translationConfig?.enabled && translationConfig.sourceLang && translationConfig.targetLang;
@@ -224,6 +249,7 @@ export const useChatAI = ({
 <译文>今天做什么？</译文>
 </翻译>`;
             }
+            const bilingualAddonChars = systemPrompt.length - systemCharsBeforeBilingual;
 
             // 2. Build Message History
             // CRITICAL: Load full message history from DB up to contextLimit,
@@ -261,11 +287,49 @@ export const useChatAI = ({
 
             const fullMessages = [{ role: 'system', content: systemPrompt }, ...cleanedApiMessages];
 
-            // Debug: Log context composition
+            // Debug: Log context composition（字符级；API 的 prompt_tokens 还与分词、多模态计价有关）
             const systemPromptLength = systemPrompt.length;
             const historyMsgCount = cleanedApiMessages.length;
-            const historyTotalChars = cleanedApiMessages.reduce((sum: number, m: any) => sum + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length), 0);
+            let historyImageTurns = 0;
+            const historyTotalChars = cleanedApiMessages.reduce((sum: number, m: any) => {
+                const c = m.content;
+                if (Array.isArray(c)) {
+                    historyImageTurns += c.some((p: any) => p?.type === 'image_url') ? 1 : 0;
+                    return sum + c.reduce((s: number, p: any) => s + (p?.type === 'text' && typeof p.text === 'string' ? p.text.length : 0), 0);
+                }
+                return sum + (typeof c === 'string' ? c.length : JSON.stringify(c).length);
+            }, 0);
+            const composition: ContextComposition = {
+                coreContextChars,
+                systemInjectedChars: Math.max(0, systemCharsBeforeBilingual - coreContextChars),
+                bilingualAddonChars,
+                systemTotalChars: systemPromptLength,
+                historyMessageCount: historyMsgCount,
+                historyCharsApprox: historyTotalChars,
+                historyImageTurns,
+                contextLimit: limit
+            };
+            setContextComposition(composition);
             console.log(`📊 [Context Debug] system_prompt_chars=${systemPromptLength} | history_msgs=${historyMsgCount} | history_chars=${historyTotalChars} | total_msgs_in_array=${fullMessages.length} | contextLimit=${limit}`);
+            console.log('📊 [Context Breakdown]', {
+                char: char.name,
+                核心人设_coreContext: composition.coreContextChars,
+                系统附加_injected: composition.systemInjectedChars,
+                双语附加_bilingual: composition.bilingualAddonChars,
+                历史条数: composition.historyMessageCount,
+                历史文本约_字符: composition.historyCharsApprox,
+                历史含图消息条数: composition.historyImageTurns,
+                contextLimit: limit,
+                hint: 'systemInjected 含：实时/群聊/日记笔记标题/纪念日/整段聊天规范与全部表情名/Notion&小红书等长说明/语音规则等。差异大的 char 常因：世界书、refinedMemories、activeMemoryMonths 详细日志、群成员、contextLimit、历史里图片条数。'
+            });
+            try {
+                if (typeof localStorage !== 'undefined' && localStorage.getItem('sullyos_debug_llm_context') === '1') {
+                    console.log('🧪 [sullyos_debug_llm_context] full system prompt length=', systemPromptLength, 'preview core vs full:', {
+                        corePreview: ContextBuilder.buildCoreContext(char, userProfile).slice(0, 400) + '…',
+                        systemTailPreview: systemPrompt.slice(-600)
+                    });
+                }
+            } catch { /* ignore */ }
 
             // 2.6 Reinforce bilingual instruction at the end of messages for stronger compliance
             if (bilingualActive) {
@@ -439,7 +503,8 @@ export const useChatAI = ({
                     const result = await NotionManager.createDiaryPage(
                         realtimeConfig.notionApiKey,
                         realtimeConfig.notionDatabaseId,
-                        { title, content, mood: mood || undefined, characterName: char.name }
+                        { title, content, mood: mood || undefined, characterName: (char.name || '').trim() || undefined },
+                        realtimeConfig.notionDiaryExtraProperties
                     );
 
                     if (result.success) {
@@ -450,7 +515,8 @@ export const useChatAI = ({
                             type: 'text',
                             content: `📔 ${char.name}写了一篇日记「${title}」`
                         });
-                        addToast(`📔 ${char.name}写了一篇日记!`, 'success');
+                        const extraHint = result.appliedExtrasHint ? ` ${result.appliedExtrasHint}` : '';
+                        addToast(`📔 ${char.name}写了一篇日记!${extraHint}`, 'success');
                     } else {
                         console.error('📔 [Diary] 写入失败:', result.message);
                         addToast(`日记写入失败: ${result.message}`, 'error');
@@ -767,92 +833,228 @@ export const useChatAI = ({
             // 清理残留的飞书读日记标记
             aiContent = aiContent.replace(/\[\[FS_READ_DIARY:.*?\]\]/g, '').trim();
 
-            // 5.9b Handle Read User Note (翻阅用户笔记)
-            const readNoteMatch = aiContent.match(/\[\[READ_NOTE:\s*(.+?)\]\]/);
-            if (readNoteMatch) {
-                const keyword = readNoteMatch[1].trim();
-                console.log('📝 [ReadNote] AI想翻阅用户笔记:', keyword);
-
-                if (realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionNotesDatabaseId) {
-                    try {
-                        setDiaryStatus(`正在翻阅笔记: ${keyword}...`);
-
-                        const findResult = await NotionManager.searchUserNotes(
-                            realtimeConfig.notionApiKey,
-                            realtimeConfig.notionNotesDatabaseId,
-                            keyword,
-                            3
-                        );
-
-                        if (findResult.success && findResult.entries.length > 0) {
-                            setDiaryStatus(`找到 ${findResult.entries.length} 篇笔记，正在阅读...`);
-                            const noteContents: string[] = [];
-                            for (const entry of findResult.entries) {
-                                const readResult = await NotionManager.readNoteContent(
-                                    realtimeConfig.notionApiKey,
-                                    entry.id
-                                );
-                                if (readResult.success) {
-                                    noteContents.push(`📝「${entry.title}」(${entry.date})\n${readResult.content}`);
-                                }
-                            }
-
-                            if (noteContents.length > 0) {
-                                const noteText = noteContents.join('\n\n---\n\n');
-                                console.log('📝 [ReadNote] 成功读取', findResult.entries.length, '篇笔记');
-                                setDiaryStatus('正在整理笔记内容...');
-
-                                const cleanedForNote = aiContent.replace(/\[\[READ_NOTE:.*?\]\]/g, '').trim() || '让我看看...';
-                                const noteMessages = [
-                                    ...fullMessages,
-                                    { role: 'assistant', content: cleanedForNote },
-                                    { role: 'user', content: `[系统: 你翻阅了${userProfile.name}的笔记，以下是内容:\n\n${noteText}\n\n请你：\n1. 先正常回应用户刚才说的话\n2. 自然地提到你看到的笔记内容，语气温馨，像不经意间看到的\n3. 可以对内容表示好奇、关心或共鸣\n4. 用多条消息回复，保持对话自然\n5. 严禁再输出[[READ_NOTE:...]]标记]` }
-                                ];
-
-                                data = await safeFetchJson(`${baseUrl}/chat/completions`, {
-                                    method: 'POST', headers,
-                                    body: JSON.stringify({ model: apiConfig.model, messages: noteMessages, temperature: 0.8, stream: false })
-                                });
-                                updateTokenUsage(data, historyMsgCount, 'read-note');
-                                aiContent = data.choices?.[0]?.message?.content || '';
-                                aiContent = normalizeAiContent(aiContent);
-                                addToast(`📝 ${char.name}翻阅了关于"${keyword}"的笔记`, 'info');
-                            } else {
-                                console.log('📝 [ReadNote] 笔记内容为空');
-                                await diaryFallbackCall('你翻阅了笔记但内容是空的', /\[\[READ_NOTE:.*?\]\]/g);
-                            }
-                        } else {
-                            console.log('📝 [ReadNote] 没有找到匹配的笔记:', keyword);
-                            setDiaryStatus(`没有找到关于"${keyword}"的笔记...`);
-                            const cleanedForNoNote = aiContent.replace(/\[\[READ_NOTE:.*?\]\]/g, '').trim() || '让我看看...';
-                            const nonoteMessages = [
-                                ...fullMessages,
-                                { role: 'assistant', content: cleanedForNoNote },
-                                { role: 'user', content: `[系统: 你想看${userProfile.name}关于"${keyword}"的笔记，但没有找到。请你：\n1. 先正常回应用户刚才说的话\n2. 可以自然地提一下，比如"嗯，好像没找到那篇笔记"\n3. 继续正常聊天\n4. 严禁再输出[[READ_NOTE:...]]标记]` }
-                            ];
-
-                            data = await safeFetchJson(`${baseUrl}/chat/completions`, {
-                                method: 'POST', headers,
-                                body: JSON.stringify({ model: apiConfig.model, messages: nonoteMessages, temperature: 0.8, stream: false })
-                            });
-                            updateTokenUsage(data, historyMsgCount, 'read-note-empty');
-                            aiContent = data.choices?.[0]?.message?.content || '';
-                            aiContent = normalizeAiContent(aiContent);
-                        }
-                    } catch (e) {
-                        console.error('📝 [ReadNote] 读取异常:', e);
-                        setDiaryStatus('笔记读取失败，继续对话...');
-                        await diaryFallbackCall('你想翻阅笔记但读取出了问题（可能是网络问题）', /\[\[READ_NOTE:.*?\]\]/g);
-                    }
-                } else {
-                    console.log('📝 [ReadNote] 检测到读笔记意图但未配置笔记数据库');
-                    await diaryFallbackCall('你想翻阅笔记但笔记功能暂时不可用', /\[\[READ_NOTE:.*?\]\]/g);
-                }
+            // 5.9b / 5.9c 额外 Notion 数据库 [[TAG: 关键词]]；TAG=READ_NOTE 时走「标题搜索 + 正文 blocks」（原「用户笔记库」）
+            const notesDbResolved = resolveNotionNotesDatabaseId(realtimeConfig || ({} as RealtimeConfig));
+            const readNoteIntent = aiContent.match(/\[\[READ_NOTE:\s*(.+?)\]\]/);
+            if (readNoteIntent && (!realtimeConfig?.notionEnabled || !realtimeConfig?.notionApiKey || !notesDbResolved)) {
+                console.log('📝 [ReadNote] 检测到读笔记意图但未配置笔记库');
+                await diaryFallbackCall('你想翻阅笔记但笔记功能暂时不可用', /\[\[READ_NOTE:.*?\]\]/g);
+                aiContent = aiContent.replace(/\[\[READ_NOTE:.*?\]\]/g, '').trim();
                 setDiaryStatus('');
             }
 
-            // 清理残留的读笔记标记
-            aiContent = aiContent.replace(/\[\[READ_NOTE:.*?\]\]/g, '').trim();
+            const extraRaw = (realtimeConfig?.notionExtraDatabases || []).filter((d) => d?.databaseId?.trim() && d?.tag?.trim());
+            const hasReadNoteRow = extraRaw.some((d) => normalizeNotionExtraTag(d.tag) === NOTION_USER_NOTES_TAG);
+            let extraDbs = extraRaw;
+            if (notesDbResolved && !hasReadNoteRow) {
+                extraDbs = [
+                    {
+                        id: '_legacy_notes',
+                        name: '用户笔记',
+                        tag: NOTION_USER_NOTES_TAG,
+                        databaseId: notesDbResolved,
+                    },
+                    ...extraRaw,
+                ];
+            }
+            extraDbs = sortExtraDatabasesForProcessing(extraDbs);
+            if (extraDbs.length > 0 && realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey) {
+                for (const ex of extraDbs) {
+                    const tag = normalizeNotionExtraTag(ex.tag);
+                    if (!tag) continue;
+                    const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    const tagRe = new RegExp(`\\[\\[${escaped}:\\s*(.+?)\\]\\]`, 'i');
+                    const readExtraMatch = aiContent.match(tagRe);
+                    if (!readExtraMatch) continue;
+
+                    const keyword = readExtraMatch[1].trim();
+                    const dbLabel = (ex.name || tag).trim();
+                    const stripRe = new RegExp(`\\[\\[${escaped}:\\s*.+?\\]\\]`, 'g');
+                    console.log(`📚 [NotionExtra] [[${tag}: ${keyword}]]`, ex.databaseId);
+
+                    if (!realtimeConfig.notionApiKey || !ex.databaseId.trim()) {
+                        await diaryFallbackCall('Notion 额外库暂时不可用', stripRe);
+                        break;
+                    }
+
+                    // READ_NOTE：沿用 searchUserNotes + readNoteContent（全文）
+                    if (tag === NOTION_USER_NOTES_TAG) {
+                        try {
+                            setDiaryStatus(`正在翻阅笔记: ${keyword}...`);
+                            const findResult = await NotionManager.searchUserNotes(
+                                realtimeConfig.notionApiKey,
+                                ex.databaseId.trim(),
+                                keyword,
+                                3
+                            );
+
+                            if (findResult.success && findResult.entries.length > 0) {
+                                setDiaryStatus(`找到 ${findResult.entries.length} 篇笔记，正在阅读...`);
+                                const noteContents: string[] = [];
+                                for (const entry of findResult.entries) {
+                                    const readResult = await NotionManager.readNoteContent(
+                                        realtimeConfig.notionApiKey,
+                                        entry.id
+                                    );
+                                    if (readResult.success) {
+                                        noteContents.push(`📝「${entry.title}」(${entry.date})\n${readResult.content}`);
+                                    }
+                                }
+
+                                if (noteContents.length > 0) {
+                                    const noteText = noteContents.join('\n\n---\n\n');
+                                    console.log('📝 [ReadNote] 成功读取', findResult.entries.length, '篇笔记');
+                                    setDiaryStatus('正在整理笔记内容...');
+
+                                    const cleanedForNote = aiContent.replace(stripRe, '').trim() || '让我看看...';
+                                    const noteMessages = [
+                                        ...fullMessages,
+                                        { role: 'assistant', content: cleanedForNote },
+                                        {
+                                            role: 'user',
+                                            content: `[系统: 你翻阅了${userProfile.name}的笔记，以下是内容:\n\n${noteText}\n\n请你：\n1. 先正常回应用户刚才说的话\n2. 自然地提到你看到的笔记内容，语气温馨，像不经意间看到的\n3. 可以对内容表示好奇、关心或共鸣\n4. 用多条消息回复，保持对话自然\n5. 严禁再输出[[READ_NOTE:...]]标记]`,
+                                        },
+                                    ];
+
+                                    data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                                        method: 'POST',
+                                        headers,
+                                        body: JSON.stringify({
+                                            model: apiConfig.model,
+                                            messages: noteMessages,
+                                            temperature: 0.8,
+                                            stream: false,
+                                        }),
+                                    });
+                                    updateTokenUsage(data, historyMsgCount, 'read-note');
+                                    aiContent = data.choices?.[0]?.message?.content || '';
+                                    aiContent = normalizeAiContent(aiContent);
+                                    addToast(`📝 ${char.name}翻阅了关于"${keyword}"的笔记`, 'info');
+                                } else {
+                                    console.log('📝 [ReadNote] 笔记内容为空');
+                                    await diaryFallbackCall('你翻阅了笔记但内容是空的', stripRe);
+                                }
+                            } else {
+                                console.log('📝 [ReadNote] 没有找到匹配的笔记:', keyword);
+                                setDiaryStatus(`没有找到关于"${keyword}"的笔记...`);
+                                const cleanedForNoNote = aiContent.replace(stripRe, '').trim() || '让我看看...';
+                                const nonoteMessages = [
+                                    ...fullMessages,
+                                    { role: 'assistant', content: cleanedForNoNote },
+                                    {
+                                        role: 'user',
+                                        content: `[系统: 你想看${userProfile.name}关于"${keyword}"的笔记，但没有找到。请你：\n1. 先正常回应用户刚才说的话\n2. 可以自然地提一下，比如"嗯，好像没找到那篇笔记"\n3. 继续正常聊天\n4. 严禁再输出[[READ_NOTE:...]]标记]`,
+                                    },
+                                ];
+
+                                data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                                    method: 'POST',
+                                    headers,
+                                    body: JSON.stringify({
+                                        model: apiConfig.model,
+                                        messages: nonoteMessages,
+                                        temperature: 0.8,
+                                        stream: false,
+                                    }),
+                                });
+                                updateTokenUsage(data, historyMsgCount, 'read-note-empty');
+                                aiContent = data.choices?.[0]?.message?.content || '';
+                                aiContent = normalizeAiContent(aiContent);
+                            }
+                        } catch (e) {
+                            console.error('📝 [ReadNote] 读取异常:', e);
+                            setDiaryStatus('笔记读取失败，继续对话...');
+                            await diaryFallbackCall('你想翻阅笔记但读取出了问题（可能是网络问题）', stripRe);
+                        }
+                        setDiaryStatus('');
+                        break;
+                    }
+
+                    try {
+                        setDiaryStatus(`正在查询「${dbLabel}」...`);
+                        const result = await NotionManager.queryExtraDatabaseRead(
+                            realtimeConfig.notionApiKey,
+                            ex.databaseId.trim(),
+                            keyword,
+                            { limit: 10, maxPropsPerEntry: 24, maxCharsPerValue: 220, maxTotalChars: 12000 }
+                        );
+
+                        if (result.success && result.entries.length > 0) {
+                            const blocks = result.entries
+                                .map(
+                                    (e, i) =>
+                                        `--- 条目 ${i + 1}: ${e.title} ---\n${e.propertiesText || '（无属性）'}\n链接: ${e.url || '无'}`
+                                )
+                                .join('\n\n');
+                            setDiaryStatus('正在整理查询结果...');
+                            const cleanedExtra = aiContent.replace(stripRe, '').trim() || `让我查查${dbLabel}里的信息…`;
+                            const extraReadMessages = [
+                                ...fullMessages,
+                                { role: 'assistant', content: cleanedExtra },
+                                {
+                                    role: 'user',
+                                    content: `[系统: 你查询了 Notion 数据库「${dbLabel}」（指令 [[${tag}: ${keyword || '（空）'}]]）。以下是匹配条目的各列摘要（只读）：\n\n${blocks}\n\n请你：\n1. 先正常回应用户刚才说的话\n2. 根据上述信息自然回答，可引用列名与内容\n3. 用多条消息回复\n4. 严禁再输出 [[${tag}:...]] 或类似标记]`
+                                }
+                            ];
+
+                            data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                                method: 'POST',
+                                headers,
+                                body: JSON.stringify({
+                                    model: apiConfig.model,
+                                    messages: extraReadMessages,
+                                    temperature: 0.8,
+                                    stream: false
+                                })
+                            });
+                            updateTokenUsage(data, historyMsgCount, 'read-notion-extra');
+                            aiContent = data.choices?.[0]?.message?.content || '';
+                            aiContent = normalizeAiContent(aiContent);
+                            addToast(`📚 已查询「${dbLabel}」`, 'info');
+                        } else if (result.success) {
+                            setDiaryStatus('');
+                            const cleanedNo = aiContent.replace(stripRe, '').trim() || '让我看看…';
+                            const noExtraMessages = [
+                                ...fullMessages,
+                                { role: 'assistant', content: cleanedNo },
+                                {
+                                    role: 'user',
+                                    content: `[系统: 你查询了「${dbLabel}」[[${tag}: ${keyword || '（空）'}]]，但没有找到匹配条目。请你：\n1. 先正常回应用户\n2. 可自然提到没找到或换个说法\n3. 严禁再输出 [[${tag}:...]] 标记]`
+                                }
+                            ];
+                            data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                                method: 'POST',
+                                headers,
+                                body: JSON.stringify({
+                                    model: apiConfig.model,
+                                    messages: noExtraMessages,
+                                    temperature: 0.8,
+                                    stream: false
+                                })
+                            });
+                            updateTokenUsage(data, historyMsgCount, 'read-notion-extra-empty');
+                            aiContent = data.choices?.[0]?.message?.content || '';
+                            aiContent = normalizeAiContent(aiContent);
+                        } else {
+                            setDiaryStatus('');
+                            await diaryFallbackCall(`查询「${dbLabel}」失败：${result.message}`, stripRe);
+                        }
+                    } catch (e) {
+                        console.error('📚 [NotionExtra] 读取异常:', e);
+                        setDiaryStatus('');
+                        await diaryFallbackCall('查询 Notion 额外库时出错（可能是网络问题）', stripRe);
+                    }
+                    setDiaryStatus('');
+                    break;
+                }
+            }
+
+            for (const ex of extraDbs) {
+                const tag = String(ex.tag || '').trim().toUpperCase().replace(/[^A-Z0-9_]/g, '');
+                if (!tag) continue;
+                const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                aiContent = aiContent.replace(new RegExp(`\\[\\[${escaped}:\\s*.+?\\]\\]`, 'g'), '').trim();
+            }
 
             // 5.10 Handle XHS (小红书) Actions
             // Resolve per-character XHS config
@@ -978,10 +1180,10 @@ export const useChatAI = ({
             const xhsPostMatch = aiContent.match(/\[\[XHS_POST:\s*(.+?)\]\]/s);
             if (xhsPostMatch && xhsConf.enabled) {
                 const postRaw = xhsPostMatch[1].trim();
-                const parts = postRaw.split('|').map(p => p.trim());
+                const parts = postRaw.split('|').map((p: string) => p.trim());
                 const postTitle = parts[0] || '';
                 const postContent = parts[1] || '';
-                const postTags = (parts[2] || '').match(/#(\S+)/g)?.map(t => t.replace('#', '')) || [];
+                const postTags = (parts[2] || '').match(/#(\S+)/g)?.map((t: string) => t.replace('#', '')) || [];
 
                 console.log(`📕 [XHS] AI要发小红书:`, postTitle);
                 setXhsStatus(`正在发布小红书: ${postTitle}...`);
@@ -1054,7 +1256,7 @@ export const useChatAI = ({
             // 改变 MCP 浏览器状态，导致 reply_comment_in_feed 找不到评论
             const xhsReplyMatch = aiContent.match(/\[\[XHS_REPLY:\s*(.+?)\]\]/);
             if (xhsReplyMatch && xhsConf.enabled) {
-                const parts = xhsReplyMatch[1].split('|').map(s => s.trim());
+                const parts = xhsReplyMatch[1].split('|').map((s: string) => s.trim());
                 if (parts.length >= 3) {
                     const [noteId, commentId, ...replyParts] = parts;
                     const replyContent = replyParts.join('|').trim();
@@ -1081,7 +1283,7 @@ export const useChatAI = ({
                                 for (let i = 0; i < replyRetries.length && !result.success; i++) {
                                     console.warn(`📕 [XHS] 回复失败(${i+1}/${replyRetries.length})，${replyRetries[i]/1000}秒后重试:`, result.message);
                                     await new Promise(r => setTimeout(r, replyRetries[i]));
-                                    result = await xhsReplyComment(xhsConf, noteId, xsecToken, replyContent, commentId, commentUserId, parentCommentId);
+                                    result = await xhsReplyComment(xhsConf, noteId, xsecToken || '', replyContent, commentId, commentUserId, parentCommentId);
                                 }
                             }
                             if (result.success) {
@@ -1494,7 +1696,7 @@ export const useChatAI = ({
             // 改变 MCP 浏览器状态，导致 reply_comment_in_feed 找不到评论
             const xhsReplyMatch2 = aiContent.match(/\[\[XHS_REPLY:\s*(.+?)\]\]/);
             if (xhsReplyMatch2 && xhsConf.enabled) {
-                const parts = xhsReplyMatch2[1].split('|').map(s => s.trim());
+                const parts = xhsReplyMatch2[1].split('|').map((s: string) => s.trim());
                 if (parts.length >= 3) {
                     const [noteId, commentId, ...replyParts] = parts;
                     const replyContent = replyParts.join('|').trim();
@@ -1596,10 +1798,10 @@ export const useChatAI = ({
             const xhsPostMatch2 = aiContent.match(/\[\[XHS_POST:\s*(.+?)\]\]/s);
             if (xhsPostMatch2 && xhsConf.enabled) {
                 const postRaw = xhsPostMatch2[1].trim();
-                const parts = postRaw.split('|').map(p => p.trim());
+                const parts = postRaw.split('|').map((p: string) => p.trim());
                 const postTitle = parts[0] || '';
                 const postContent = parts[1] || '';
-                const postTags = (parts[2] || '').match(/#(\S+)/g)?.map(t => t.replace('#', '')) || [];
+                const postTags = (parts[2] || '').match(/#(\S+)/g)?.map((t: string) => t.replace('#', '')) || [];
                 console.log(`📕 [XHS] AI要发小红书(profile后):`, postTitle);
                 setXhsStatus(`正在发布小红书: ${postTitle}...`);
                 try {
@@ -1822,6 +2024,14 @@ export const useChatAI = ({
         }
     };
 
+    const startProactiveChat = (intervalMinutes: number) => {
+        if (char?.id) ProactiveChat.start(char.id, intervalMinutes);
+    };
+    const stopProactiveChat = () => {
+        if (char?.id) ProactiveChat.stop(char.id);
+    };
+    const isProactiveActive = char ? ProactiveChat.isActiveFor(char.id) : false;
+
     return {
         isTyping,
         recallStatus,
@@ -1830,7 +2040,11 @@ export const useChatAI = ({
         xhsStatus,
         lastTokenUsage,
         tokenBreakdown,
+        contextComposition,
         setLastTokenUsage, // Allow manual reset if needed
-        triggerAI
+        triggerAI,
+        startProactiveChat,
+        stopProactiveChat,
+        isProactiveActive,
     };
 };

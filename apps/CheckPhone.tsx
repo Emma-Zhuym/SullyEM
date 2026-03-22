@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { CharacterProfile, PhoneEvidence, PhoneCustomApp } from '../types';
+import { CharacterProfile, PhoneEvidence, PhoneCustomApp, PhoneContact } from '../types';
 import { ContextBuilder } from '../utils/context';
 import Modal from '../components/os/Modal';
 import { safeResponseJson } from '../utils/safeApi';
@@ -57,12 +57,20 @@ const CheckPhone: React.FC = () => {
     const [newAppColor, setNewAppColor] = useState('#3b82f6');
     const [newAppPrompt, setNewAppPrompt] = useState('');
 
+    // Contacts State
+    const [showContactModal, setShowContactModal] = useState(false);
+    const [editingContact, setEditingContact] = useState<PhoneContact | null>(null);
+    const [contactName, setContactName] = useState('');
+    const [contactNote, setContactNote] = useState('');
+    const [contactLinkedCharId, setContactLinkedCharId] = useState<string>('');
+
     // Debug Toggle
     const [showDebug, setShowDebug] = useState(false);
 
     // Derived state for evidence records
     const records = targetChar?.phoneState?.records || [];
     const customApps = targetChar?.phoneState?.customApps || [];
+    const fixedContacts = targetChar?.phoneState?.fixedContacts || [];
 
     useEffect(() => {
         if (targetChar) {
@@ -112,7 +120,7 @@ const CheckPhone: React.FC = () => {
         
         const newRecords = (targetChar.phoneState?.records || []).filter(r => r.id !== record.id);
         updateCharacter(targetChar.id, { 
-            phoneState: { ...targetChar.phoneState, records: newRecords } 
+            phoneState: { ...(targetChar.phoneState ?? { records: [] }), records: newRecords } 
         });
 
         if (record.systemMessageId) {
@@ -131,7 +139,7 @@ const CheckPhone: React.FC = () => {
         if (!targetChar) return;
         const newApps = (targetChar.phoneState?.customApps || []).filter(a => a.id !== appId);
         updateCharacter(targetChar.id, {
-            phoneState: { ...targetChar.phoneState, customApps: newApps }
+            phoneState: { ...(targetChar.phoneState ?? { records: [] }), customApps: newApps }
         });
         addToast('App 已卸载', 'success');
     };
@@ -149,13 +157,85 @@ const CheckPhone: React.FC = () => {
 
         const currentApps = targetChar.phoneState?.customApps || [];
         updateCharacter(targetChar.id, {
-            phoneState: { ...targetChar.phoneState, customApps: [...currentApps, newApp] }
+            phoneState: { ...(targetChar.phoneState ?? { records: [] }), customApps: [...currentApps, newApp] }
         });
 
         setShowCreateModal(false);
         setNewAppName('');
         setNewAppPrompt('');
         addToast(`已安装 ${newAppName}`, 'success');
+    };
+
+    // --- Contacts CRUD ---
+
+    /** 把 char1 视角的 detail 翻转成 char2 视角。
+     *  - 「我:」→「对方:」（char1 发言变成对方）
+     *  - 「对方:」或「char2名:」→「我:」（char2 发言变成我）
+     *  - 其他说话人（如「我妈:」）保持原样，走对方气泡。
+     *  char2Name 用于兼容模型用角色真名代替「对方」的情况。 */
+    const flipDetailPerspective = (detail: string, char2Name?: string): string => {
+        const char2Re = char2Name
+            ? new RegExp(`^${char2Name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[:：]`)
+            : null;
+        return detail.split('\n').map(line => {
+            if (/^我[:：]/.test(line))    return line.replace(/^我[:：]\s*/, '对方：');
+            if (/^对方[:：]/.test(line))  return line.replace(/^对方[:：]\s*/, '我：');
+            if (char2Re && char2Re.test(line)) return line.replace(/^[^:：]+[:：]\s*/, '我：');
+            return line;
+        }).join('\n');
+    };
+
+    const handleSaveContact = () => {
+        if (!targetChar || !contactName.trim()) return;
+        const ps = targetChar.phoneState ?? { records: [] };
+        const currentContacts = ps.fixedContacts || [];
+
+        if (editingContact) {
+            const updated = currentContacts.map(c =>
+                c.id === editingContact.id ? { ...c, name: contactName.trim(), note: contactNote.trim() || undefined, linkedCharId: contactLinkedCharId || undefined } : c
+            );
+            updateCharacter(targetChar.id, { phoneState: { ...ps, fixedContacts: updated } });
+            addToast('联系人已更新', 'success');
+        } else {
+            const newContact: PhoneContact = {
+                id: `contact-${Date.now()}`,
+                name: contactName.trim(),
+                note: contactNote.trim() || undefined,
+                linkedCharId: contactLinkedCharId || undefined,
+            };
+            updateCharacter(targetChar.id, { phoneState: { ...ps, fixedContacts: [...currentContacts, newContact] } });
+            addToast(`已添加 ${newContact.name}`, 'success');
+        }
+
+        setShowContactModal(false);
+        setEditingContact(null);
+        setContactName('');
+        setContactNote('');
+        setContactLinkedCharId('');
+    };
+
+    const handleDeleteContact = (contactId: string) => {
+        if (!targetChar) return;
+        const ps = targetChar.phoneState ?? { records: [] };
+        const updated = (ps.fixedContacts || []).filter(c => c.id !== contactId);
+        updateCharacter(targetChar.id, { phoneState: { ...ps, fixedContacts: updated } });
+        addToast('联系人已删除', 'success');
+    };
+
+    const openEditContact = (contact: PhoneContact) => {
+        setEditingContact(contact);
+        setContactName(contact.name);
+        setContactNote(contact.note || '');
+        setContactLinkedCharId(contact.linkedCharId || '');
+        setShowContactModal(true);
+    };
+
+    const openAddContact = () => {
+        setEditingContact(null);
+        setContactName('');
+        setContactNote('');
+        setContactLinkedCharId('');
+        setShowContactModal(true);
     };
 
     // Calculate Time Gap - Duplicated logic from other apps for consistent experience
@@ -209,12 +289,52 @@ const CheckPhone: React.FC = () => {
                 logPrefix = customApp ? customApp.name : type;
             } else {
                 if (type === 'chat') {
-                    promptInstruction = `生成 3 个该角色手机聊天软件(Message/Line)中的**对话片段**。
-    要求：
-    1. **自动匹配角色**: 根据人设，虚构 3 个合理的联系人（如：如果是学生，联系人可以是“辅导员”、“社团学长”；如果是杀手，联系人可以是“中间人”）。不要使用“User”作为联系人。
+                    const totalCount = 3;
+                    // 每轮随机选 1～min(3, 固定联系人总数) 个固定联系人参与生成，避免总是同一批
+                    const numFixedThisRound = fixedContacts.length === 0
+                        ? 0
+                        : 1 + Math.floor(Math.random() * Math.min(3, fixedContacts.length));
+                    const selectedFixed = numFixedThisRound <= 0
+                        ? []
+                        : [...fixedContacts]
+                            .sort(() => Math.random() - 0.5)
+                            .slice(0, numFixedThisRound);
+                    const fixedList = selectedFixed.map(c => c.note ? `${c.name}（${c.note}）` : c.name).join('、');
+                    const fixedSection = selectedFixed.length > 0
+                        ? `\n本轮请为以下 ${selectedFixed.length} 个固定联系人各生成一段对话：${fixedList}。\ntitle 必须使用上面给出的「名字（备注）」格式，不要改名或换备注。\n其余 ${totalCount - selectedFixed.length} 条可以是其他合理的联系人（根据人设虚构）。`
+                        : `\n根据人设，虚构 ${totalCount} 个合理的联系人（如：如果是学生，联系人可以是“辅导员”、“社团学长”；如果是杀手，联系人可以是“中间人”）。`;
+
+                    // 有 linkedCharId 的联系人：注入 char2 人设 + 与 char1 相关的记忆片段
+                    const linkedCharBlocks = selectedFixed
+                        .filter(c => !!c.linkedCharId)
+                        .map(c => {
+                            const char2 = characters.find(ch => ch.id === c.linkedCharId);
+                            if (!char2) return null;
+                            const contactLabel = c.note ? `${c.name}（${c.note}）` : c.name;
+                            const personaSnippet = (char2.systemPrompt || '').slice(0, 500);
+                            const relatedMemories = Object.values(char2.refinedMemories || {})
+                                .filter(text => text.includes(targetChar.name))
+                                .join('\n')
+                                .slice(0, 600);
+                            let block = `▸ 联系人「${contactLabel}」对应角色：${char2.name}\n  人设摘要：${personaSnippet}`;
+                            if (relatedMemories) {
+                                block += `\n  与${targetChar.name}相关的记忆：${relatedMemories}`;
+                            }
+                            return block;
+                        })
+                        .filter((b): b is string => b !== null)
+                        .join('\n\n');
+
+                    const linkedCharSection = linkedCharBlocks
+                        ? `\n\n【关联角色人设参考（生成对应联系人的台词时须符合以下人设与记忆，不串台、不编造与记忆明显矛盾的内容）】\n${linkedCharBlocks}`
+                        : '';
+
+                    promptInstruction = `生成 ${totalCount} 个该角色手机聊天软件(Message/Line)中的**对话片段**。
+    要求：${fixedSection}
+    1. 不要使用"User"作为联系人。
     2. **对话感**: 内容必须是有来有回的对话脚本（3-4句），体现他们之间的关系。
     3. **格式**: 必须严格使用 "我:..." 代表主角(你)，"对方:..." 或 "人名:..." 代表联系人。
-    格式JSON数组: [{ "title": "联系人名称 (身份)", "detail": "对方: 最近怎么样？\\n我: 还活着。\\n对方: 那就好。" }, ...]`;
+    格式JSON数组: [{ "title": "联系人名称 (身份)", "detail": "对方: 最近怎么样？\\n我: 还活着。\\n对方: 那就好。" }, ...]${linkedCharSection}`;
                     logPrefix = "聊天软件";
                 } else if (type === 'call') {
                     promptInstruction = `生成 3 条该角色的近期**通话记录**。
@@ -297,9 +417,57 @@ const CheckPhone: React.FC = () => {
             }
 
             const existingRecords = targetChar.phoneState?.records || [];
+            // Archive any existing active chat records whose title matches a newly generated one
+            const newTitles = new Set(newRecordsToAdd.map(r => r.title));
+            const archivedExisting = existingRecords.map(r =>
+                r.type === 'chat' && newTitles.has(r.title) && !r.isArchived
+                    ? { ...r, isArchived: true }
+                    : r
+            );
             updateCharacter(targetChar.id, {
-                phoneState: { ...targetChar.phoneState, records: [...existingRecords, ...newRecordsToAdd] }
+                phoneState: { ...(targetChar.phoneState ?? { records: [] }), records: [...archivedExisting, ...newRecordsToAdd] }
             });
+
+            // 同步到 char2：对每条有 linkedCharId 的联系人记录，翻转视角后写入 char2 的 phoneState
+            const contactsThisRound = fixedContacts.filter((c: PhoneContact) => !!c.linkedCharId);
+            for (const contact of contactsThisRound) {
+                const char2 = characters.find(ch => ch.id === contact.linkedCharId);
+                if (!char2) continue;
+
+                // 找到本轮这个 title 对应的新记录
+                const recordForContact = newRecordsToAdd.find(r => r.title === (contact.note ? `${contact.name}（${contact.note}）` : contact.name) || r.title.startsWith(contact.name));
+                if (!recordForContact) continue;
+
+                const flippedDetail = flipDetailPerspective(recordForContact.detail, char2.name);
+                const char2Title = targetChar.name;  // char2 视角下，对方就是 char1
+
+                const char2Ps = char2.phoneState ?? { records: [] };
+                const char2Existing = char2Ps.records || [];
+                // 归档 char2 里同 title 的旧话题
+                const char2Archived = char2Existing.map(r =>
+                    r.type === 'chat' && r.title === char2Title && !r.isArchived
+                        ? { ...r, isArchived: true }
+                        : r
+                );
+                const char2NewRecord: PhoneEvidence = {
+                    id: `rec-${Date.now()}-${Math.random()}-c2`,
+                    type: 'chat',
+                    title: char2Title,
+                    detail: flippedDetail,
+                    timestamp: recordForContact.timestamp,
+                };
+                updateCharacter(char2.id, {
+                    phoneState: { ...char2Ps, records: [...char2Archived, char2NewRecord] }
+                });
+                // 写入 char2 私聊消息库，便于「手动归档记忆」等与 char1 同链路读到
+                const char2SysContent = `[系统: ${char2.name} 与 "${targetChar.name}" 的聊天记录-内容涉及: ${flippedDetail.replace(/\n/g, ' ')}]`;
+                await DB.saveMessage({
+                    charId: char2.id,
+                    role: 'system',
+                    type: 'text',
+                    content: char2SysContent
+                });
+            }
 
             addToast(`已刷新 ${newRecordsToAdd.length} 条数据`, 'success');
 
@@ -364,11 +532,57 @@ Format:
                 const allRecords = targetChar.phoneState?.records || [];
                 const updatedRecords = allRecords.map(r => r.id === updatedRecord.id ? updatedRecord : r);
                 updateCharacter(targetChar.id, {
-                    phoneState: { ...targetChar.phoneState, records: updatedRecords }
+                    phoneState: { ...(targetChar.phoneState ?? { records: [] }), records: updatedRecords }
                 });
-                
-                // Note: We deliberately do NOT add a system message to the main chat context here.
-                // This is "pure viewing" mode.
+
+                // 同步续写内容到 char2（若该联系人有 linkedCharId）
+                const linkedContact = fixedContacts.find(c =>
+                    c.linkedCharId && (
+                        selectedChatRecord.title === (c.note ? `${c.name}（${c.note}）` : c.name) ||
+                        selectedChatRecord.title.startsWith(c.name)
+                    )
+                );
+                if (linkedContact?.linkedCharId) {
+                    const char2 = characters.find(ch => ch.id === linkedContact.linkedCharId);
+                    if (char2) {
+                        const char2Title = targetChar.name;
+                        const char2Ps = char2.phoneState ?? { records: [] };
+                        const char2Records = char2Ps.records || [];
+                        // 找到 char2 里对应 title 的未归档记录，append 翻转后的新内容
+                        const flippedNewLines = flipDetailPerspective(newLines, char2.name);
+                        const char2Updated = char2Records.map(r =>
+                            r.type === 'chat' && r.title === char2Title && !r.isArchived
+                                ? { ...r, detail: `${r.detail}\n${flippedNewLines}` }
+                                : r
+                        );
+                        // 如果 char2 里还没有这条记录（首次续写前没刷新过 char2），新建一条
+                        const hasExisting = char2Records.some(r => r.type === 'chat' && r.title === char2Title && !r.isArchived);
+                        const finalChar2Records = hasExisting ? char2Updated : [
+                            ...char2Records,
+                            {
+                                id: `rec-${Date.now()}-${Math.random()}-c2`,
+                                type: 'chat' as const,
+                                title: char2Title,
+                                detail: flipDetailPerspective(updatedDetail, char2.name),
+                                timestamp: Date.now(),
+                            }
+                        ];
+                        updateCharacter(char2.id, {
+                            phoneState: { ...char2Ps, records: finalChar2Records }
+                        });
+                        const cont = flippedNewLines.replace(/\n/g, ' ').trim();
+                        if (cont) {
+                            await DB.saveMessage({
+                                charId: char2.id,
+                                role: 'system',
+                                type: 'text',
+                                content: `[系统: ${char2.name} 与 "${targetChar.name}" 的聊天记录（续）-内容涉及: ${cont}]`
+                            });
+                        }
+                    }
+                }
+
+                // char1 偷看不写私聊 system（纯查看）；若联系人有 linkedCharId，char2 侧已同步 phoneState 并写 system 供归档记忆读取。
             }
 
         } catch (e) {
@@ -394,35 +608,62 @@ Format:
     );
 
     const renderChatList = () => {
-        const list = records.filter(r => r.type === 'chat').sort((a,b) => b.timestamp - a.timestamp);
+        // Group by title: one card per contact, showing the most recent active record
+        const allChat = records.filter(r => r.type === 'chat');
+        const byTitle = new Map<string, PhoneEvidence>();
+        allChat
+            .slice()
+            .sort((a, b) => b.timestamp - a.timestamp)
+            .forEach(r => {
+                if (!byTitle.has(r.title)) {
+                    byTitle.set(r.title, r);
+                } else if (!r.isArchived && byTitle.get(r.title)?.isArchived) {
+                    byTitle.set(r.title, r);
+                }
+            });
+        const list = Array.from(byTitle.values()).sort((a, b) => b.timestamp - a.timestamp);
+
         return (
             <div className="absolute inset-0 w-full h-full flex flex-col bg-slate-50 z-10">
                 {renderHeader('Message', () => setActiveAppId('home'))}
                 <div className="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar pb-24 overscroll-contain">
                     {list.length === 0 && <div className="text-center text-slate-400 mt-20 text-xs">暂无聊天记录</div>}
-                    {list.map(r => (
-                        <div 
-                            key={r.id} 
-                            onClick={() => { setSelectedChatRecord(r); setActiveAppId('chat_detail'); }}
-                            className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 relative group animate-slide-up active:scale-98 transition-transform cursor-pointer"
-                        >
-                            <div className="flex items-center gap-3">
-                                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-100 to-indigo-100 flex items-center justify-center text-xl shadow-inner shrink-0">
-                                    👤
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                    <div className="flex justify-between items-baseline mb-1">
-                                        <div className="font-bold text-slate-700 text-sm truncate">{r.title}</div>
-                                        <div className="text-[10px] text-slate-400">{new Date(r.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
+                    {list.map(r => {
+                        // Find the current active record for this title
+                        const activeRecord = allChat
+                            .filter(x => x.title === r.title && !x.isArchived)
+                            .sort((a, b) => b.timestamp - a.timestamp)[0] || r;
+                        const hasHistory = allChat.some(x => x.title === r.title && x.isArchived);
+                        // 使用联系人标题中的第一个有效字符作为头像首字（优先汉字/字母/数字）
+                        const initialMatch = r.title.match(/[\u4e00-\u9fa5A-Za-z0-9]/);
+                        const initial = initialMatch ? initialMatch[0] : (r.title[0] || '聊');
+                        return (
+                            <div
+                                key={r.title}
+                                onClick={() => { setSelectedChatRecord(activeRecord); setActiveAppId('chat_detail'); }}
+                                className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 relative group animate-slide-up active:scale-98 transition-transform cursor-pointer"
+                            >
+                                <div className="flex items-center gap-3">
+                                    <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-100 to-indigo-100 flex items-center justify-center text-base font-semibold text-slate-700 shadow-inner shrink-0">
+                                        {initial}
                                     </div>
-                                    <div className="text-xs text-slate-500 truncate">
-                                        {r.detail.split('\n').pop() || '...'}
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex justify-between items-baseline mb-1">
+                                            <div className="font-bold text-slate-700 text-sm truncate">{r.title}</div>
+                                            <div className="text-[10px] text-slate-400 flex items-center gap-1">
+                                                {hasHistory && <span className="text-indigo-300">有历史</span>}
+                                                <span>{new Date(activeRecord.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
+                                            </div>
+                                        </div>
+                                        <div className="text-xs text-slate-500 truncate">
+                                            {activeRecord.detail.split('\n').filter(l => l.trim()).pop() || '...'}
+                                        </div>
                                     </div>
                                 </div>
+                                <button onClick={(e) => { e.stopPropagation(); handleDeleteRecord(r); }} className="absolute top-2 right-2 w-6 h-6 bg-red-100 text-red-500 rounded-full flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity z-10">×</button>
                             </div>
-                            <button onClick={(e) => { e.stopPropagation(); handleDeleteRecord(r); }} className="absolute top-2 right-2 w-6 h-6 bg-red-100 text-red-500 rounded-full flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity z-10">×</button>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
                 <div className="absolute bottom-8 w-full flex justify-center pointer-events-none z-30">
                     <button disabled={isLoading} onClick={() => handleGenerate('chat')} className="pointer-events-auto bg-green-500 text-white px-6 py-2.5 rounded-full shadow-xl font-bold text-xs flex items-center gap-2 active:scale-95 transition-transform">
@@ -436,38 +677,78 @@ Format:
   const renderChatDetail = () => {
     if (!selectedChatRecord || !targetChar) return null;
 
-    // Parse logic: look for "Me:" or "我:" vs others
-    const lines = selectedChatRecord.detail.split('\n').filter(l => l.trim());
-    const parsedLines = lines.map(line => {
-        const isMe = line.startsWith('我') || line.startsWith('Me') || line.startsWith('Me:') || line.startsWith('我:');
-        const content = line.replace(/^(我|Me|对方|Them|[\w\u4e00-\u9fa5]+)[:：]\s*/, '');
-        return { isMe, content };
-    });
+    // Collect archived records for this title (as read-only history)
+    const archivedForTitle = records
+        .filter(r => r.type === 'chat' && r.title === selectedChatRecord.title && r.isArchived)
+        .sort((a, b) => a.timestamp - b.timestamp);
+
+    const isCurrentActive = !selectedChatRecord.isArchived;
+
+    /** 解析「说话人: 内容」；不能用 startsWith('我')，否则「我妈:」「我们:」会误判成机主 */
+    const parseLines = (detail: string) =>
+        detail.split('\n').filter(l => l.trim()).map(line => {
+            const trimLine = line.trim();
+            const m = trimLine.match(/^(.+?)[:：]\s*(.*)$/);
+            if (m) {
+                const speaker = m[1].trim();
+                const body = m[2];
+                const isMe = speaker === '我' || /^me$/i.test(speaker);
+                return { isMe, content: body };
+            }
+            return { isMe: false, content: trimLine };
+        });
+
+    const renderBubbles = (parsedLines: { isMe: boolean; content: string }[], dimmed = false) =>
+        parsedLines.map((msg, idx) => (
+            <div key={idx} className={`flex ${msg.isMe ? 'justify-end' : 'justify-start'} ${dimmed ? 'opacity-60' : ''}`}>
+                {!msg.isMe && (
+                    <div className="w-9 h-9 rounded-md bg-gray-300 flex items-center justify-center text-xs text-gray-500 mr-2 shrink-0">
+                        {selectedChatRecord.title[0]}
+                    </div>
+                )}
+                <div className={`px-3 py-2 rounded-lg max-w-[75%] text-sm leading-relaxed shadow-sm break-words relative ${msg.isMe ? 'bg-[#95ec69] text-black' : 'bg-white text-black'}`}>
+                    {msg.isMe && <div className="absolute top-2 -right-1.5 w-3 h-3 bg-[#95ec69] rotate-45"></div>}
+                    {!msg.isMe && <div className="absolute top-3 -left-1 w-2.5 h-2.5 bg-white rotate-45"></div>}
+                    <span className="relative z-10">{msg.content}</span>
+                </div>
+                {msg.isMe && (
+                    <img src={targetChar.avatar} className="w-9 h-9 rounded-md object-cover ml-2 shrink-0 shadow-sm" />
+                )}
+            </div>
+        ));
 
     return (
-        // 关键修复：添加不透明背景色，确保完全覆盖
       <div className="absolute inset-0 w-full h-full flex flex-col bg-[#f2f2f2] z-[100] overflow-hidden">
             {renderHeader(selectedChatRecord.title, () => setActiveAppId('chat'))}
-            
-            {/* 聊天内容区域 */}
+
             <div className="flex-1 overflow-y-auto p-4 space-y-3 no-scrollbar overscroll-contain min-h-0">
-                {parsedLines.map((msg, idx) => (
-                    <div key={idx} className={`flex ${msg.isMe ? 'justify-end' : 'justify-start'}`}>
-                        {!msg.isMe && (
-                            <div className="w-9 h-9 rounded-md bg-gray-300 flex items-center justify-center text-xs text-gray-500 mr-2 shrink-0">
-                                {selectedChatRecord.title[0]}
-                            </div>
-                        )}
-                        <div className={`px-3 py-2 rounded-lg max-w-[75%] text-sm leading-relaxed shadow-sm break-words relative ${msg.isMe ? 'bg-[#95ec69] text-black' : 'bg-white text-black'}`}>
-                            {msg.isMe && <div className="absolute top-2 -right-1.5 w-3 h-3 bg-[#95ec69] rotate-45"></div>}
-                            {!msg.isMe && <div className="absolute top-3 -left-1 w-2.5 h-2.5 bg-white rotate-45"></div>}
-                            <span className="relative z-10">{msg.content}</span>
+
+                {/* ── 历史对话区（只读，置灰） ── */}
+                {archivedForTitle.map((archived, i) => (
+                    <div key={archived.id}>
+                        <div className="flex items-center gap-2 my-3">
+                            <div className="flex-1 h-px bg-slate-200"></div>
+                            <span className="text-[10px] text-slate-400 whitespace-nowrap">
+                                {new Date(archived.timestamp).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · 已结束
+                            </span>
+                            <div className="flex-1 h-px bg-slate-200"></div>
                         </div>
-                        {msg.isMe && (
-                            <img src={targetChar.avatar} className="w-9 h-9 rounded-md object-cover ml-2 shrink-0 shadow-sm" />
-                        )}
+                        {renderBubbles(parseLines(archived.detail), true)}
                     </div>
                 ))}
+
+                {/* ── 当前话题分隔线 ── */}
+                {archivedForTitle.length > 0 && isCurrentActive && (
+                    <div className="flex items-center gap-2 my-3">
+                        <div className="flex-1 h-px bg-indigo-200"></div>
+                        <span className="text-[10px] text-indigo-400 whitespace-nowrap">当前话题</span>
+                        <div className="flex-1 h-px bg-indigo-200"></div>
+                    </div>
+                )}
+
+                {/* ── 当前话题消息 ── */}
+                {renderBubbles(parseLines(selectedChatRecord.detail))}
+
                 {isLoading && (
                     <div className="flex justify-center py-4">
                         <div className="flex gap-1">
@@ -480,19 +761,69 @@ Format:
                 <div ref={chatEndRef} />
             </div>
 
-            {/* 底部按钮 - 关键修复：移除复杂的 env() 计算，使用固定 padding */}
+            {/* ── 底部按钮：只有当前活跃话题才能偷看 ── */}
             <div className="shrink-0 w-full p-4 bg-[#f7f7f7] border-t border-gray-200">
-                <button 
-                    onClick={handleContinueChat} 
-                    disabled={isLoading}
-                    className="w-full py-3 bg-white border border-gray-300 rounded-xl text-sm font-bold text-slate-600 shadow-sm active:bg-gray-50 transition-colors flex items-center justify-center gap-2"
-                >
-                    {isLoading ? '对方正在输入...' : '👀 偷看后续 / 拱火'}
-                </button>
+                {isCurrentActive ? (
+                    <button
+                        onClick={handleContinueChat}
+                        disabled={isLoading}
+                        className="w-full py-3 bg-white border border-gray-300 rounded-xl text-sm font-bold text-slate-600 shadow-sm active:bg-gray-50 transition-colors flex items-center justify-center gap-2"
+                    >
+                        {isLoading ? '对方正在输入...' : '👀 偷看后续 / 拱火'}
+                    </button>
+                ) : (
+                    <div className="text-center text-xs text-slate-400 py-2">此对话已归档，刷新消息列表开启新话题</div>
+                )}
             </div>
         </div>
     );
 };
+
+    const renderContacts = () => {
+        const displayName = (c: PhoneContact) => c.note ? `${c.name}（${c.note}）` : c.name;
+        return (
+            <div className="absolute inset-0 w-full h-full flex flex-col bg-slate-50 z-10">
+                {renderHeader('通讯录', () => setActiveAppId('home'))}
+                <div className="flex-1 overflow-y-auto no-scrollbar pb-24 overscroll-contain">
+                    {fixedContacts.length === 0 && (
+                        <div className="flex flex-col items-center justify-center h-64 text-slate-400 gap-2">
+                            <span className="text-4xl opacity-20">👤</span>
+                            <span className="text-xs">暂无固定联系人</span>
+                            <span className="text-[10px] text-slate-300">添加后，刷新消息列表时会优先生成这些人的对话</span>
+                        </div>
+                    )}
+                    {fixedContacts.map(c => {
+                        const linkedChar = c.linkedCharId ? characters.find(ch => ch.id === c.linkedCharId) : undefined;
+                        return (
+                        <div key={c.id} className="flex items-center gap-4 px-6 py-4 border-b border-slate-100 relative group animate-fade-in hover:bg-white transition-colors">
+                            <div className="w-11 h-11 rounded-full bg-gradient-to-br from-blue-100 to-indigo-100 flex items-center justify-center text-lg shadow-inner shrink-0">
+                                {c.name[0]}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <div className="font-bold text-slate-700 text-sm">{c.name}</div>
+                                {c.note && <div className="text-[11px] text-slate-400">{c.note}</div>}
+                                {linkedChar && (
+                                    <div className="mt-0.5 inline-flex items-center gap-1 px-1.5 py-0.5 bg-violet-50 border border-violet-200 rounded text-[10px] text-violet-600 font-medium">
+                                        <span>🔗</span><span>{linkedChar.name}</span>
+                                    </div>
+                                )}
+                            </div>
+                            <div className="flex gap-1">
+                                <button onClick={() => openEditContact(c)} className="w-7 h-7 bg-slate-100 text-slate-500 rounded-full flex items-center justify-center text-xs hover:bg-blue-100 hover:text-blue-600 transition-colors">✏️</button>
+                                <button onClick={() => handleDeleteContact(c.id)} className="w-7 h-7 bg-slate-100 text-slate-500 rounded-full flex items-center justify-center text-xs hover:bg-red-100 hover:text-red-500 transition-colors">×</button>
+                            </div>
+                        </div>
+                        );
+                    })}
+                </div>
+                <div className="absolute bottom-8 w-full flex justify-center pointer-events-none z-30">
+                    <button onClick={openAddContact} className="pointer-events-auto bg-blue-500 text-white px-6 py-2.5 rounded-full shadow-xl font-bold text-xs flex items-center gap-2 active:scale-95 transition-transform">
+                        + 添加联系人
+                    </button>
+                </div>
+            </div>
+        );
+    };
 
     const renderCallList = () => {
         const list = records.filter(r => r.type === 'call').sort((a,b) => b.timestamp - a.timestamp);
@@ -653,7 +984,7 @@ Format:
 
                 <div className="p-4 z-20">
                     <div className="bg-white/20 backdrop-blur-xl rounded-[2rem] p-3 flex justify-around items-center border border-white/10 shadow-lg">
-                        <button onClick={() => {}} className="p-2 rounded-xl active:bg-white/20 transition-colors"><div className="w-12 h-12 bg-green-500 rounded-xl flex items-center justify-center text-2xl shadow-sm">📞</div></button>
+                        <button onClick={() => setActiveAppId('contacts')} className="p-2 rounded-xl active:bg-white/20 transition-colors"><div className="w-12 h-12 bg-green-500 rounded-xl flex items-center justify-center text-2xl shadow-sm">📞</div></button>
                         <button onClick={() => setActiveAppId('chat')} className="p-2 rounded-xl active:bg-white/20 transition-colors"><div className="w-12 h-12 bg-blue-500 rounded-xl flex items-center justify-center text-2xl shadow-sm">💬</div></button>
                         <button onClick={() => {}} className="p-2 rounded-xl active:bg-white/20 transition-colors"><div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center text-2xl shadow-sm">🧭</div></button>
                         <button onClick={() => {}} className="p-2 rounded-xl active:bg-white/20 transition-colors"><div className="w-12 h-12 bg-slate-800 rounded-xl flex items-center justify-center text-2xl shadow-sm">⚙️</div></button>
@@ -699,6 +1030,7 @@ Format:
             {showDebug && <LayoutInspector />}
             {activeAppId === 'home' ? renderDesktop() : (
                 <>
+                    {activeAppId === 'contacts' && renderContacts()}
                     {activeAppId === 'chat' && renderChatList()}
                     {activeAppId === 'chat_detail' && renderChatDetail()}
                     {activeAppId === 'taobao' && renderGenericList('order', 'Taobao')}
@@ -714,6 +1046,38 @@ Format:
                     )}
                 </>
             )}
+
+            {/* Contact Modal */}
+            <Modal isOpen={showContactModal} title={editingContact ? '编辑联系人' : '添加联系人'} onClose={() => { setShowContactModal(false); setEditingContact(null); }} footer={<button onClick={handleSaveContact} className="w-full py-3 bg-blue-500 text-white font-bold rounded-2xl">{editingContact ? '保存' : '添加'}</button>}>
+                <div className="space-y-3">
+                    <div>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">姓名</label>
+                        <input value={contactName} onChange={e => setContactName(e.target.value)} placeholder="如：林落然" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+                    </div>
+                    <div>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">备注 / 身份（可选）</label>
+                        <input value={contactNote} onChange={e => setContactNote(e.target.value)} placeholder="如：妻子、贴身助理、父亲" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+                    </div>
+                    <div>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">关联角色（可选）</label>
+                        <select
+                            value={contactLinkedCharId}
+                            onChange={e => setContactLinkedCharId(e.target.value)}
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm"
+                        >
+                            <option value="">— 不关联 —</option>
+                            {characters
+                                .filter(ch => ch.id !== targetChar?.id)
+                                .map(ch => (
+                                    <option key={ch.id} value={ch.id}>{ch.name}</option>
+                                ))
+                            }
+                        </select>
+                        <p className="text-[9px] text-slate-400 mt-1">绑定后，生成对话时可注入该角色的人设与记忆（prompt 支持待开发）。</p>
+                    </div>
+                    <p className="text-[9px] text-slate-400">固定联系人会在「刷新消息列表」时优先出现，AI 不会再随机起名。</p>
+                </div>
+            </Modal>
 
             {/* Create App Modal */}
             <Modal isOpen={showCreateModal} title="安装自定义 App" onClose={() => setShowCreateModal(false)} footer={<button onClick={handleCreateCustomApp} className="w-full py-3 bg-blue-500 text-white font-bold rounded-2xl">安装到桌面</button>}>

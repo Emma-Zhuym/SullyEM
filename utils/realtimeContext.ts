@@ -5,6 +5,7 @@
 
 import { safeResponseJson } from './safeApi';
 import { DB } from './db';
+import type { NotionDiaryExtraProperty, NotionExtraDatabase } from '../types';
 
 export interface WeatherData {
     temp: number;
@@ -42,6 +43,8 @@ export interface RealtimeConfig {
     notionApiKey: string;   // Notion Integration Token
     notionDatabaseId: string; // 日记数据库ID
     notionNotesDatabaseId?: string; // 用户笔记数据库ID（可选）
+    notionDiaryExtraProperties?: NotionDiaryExtraProperty[];
+    notionExtraDatabases?: NotionExtraDatabase[];
 
     // 飞书配置
     feishuEnabled?: boolean;
@@ -74,6 +77,8 @@ export const defaultRealtimeConfig: RealtimeConfig = {
     notionEnabled: false,
     notionApiKey: '',
     notionDatabaseId: '',
+    notionDiaryExtraProperties: [],
+    notionExtraDatabases: [],
     xhsEnabled: false,
     xhsMcpConfig: { enabled: false, serverUrl: 'http://localhost:18060/mcp', loggedInNickname: undefined, loggedInUserId: undefined, userXsecToken: undefined },
     cacheMinutes: 30
@@ -499,6 +504,130 @@ export interface NotionDiaryEntry {
     characterName?: string;  // 角色名，用于区分不同角色的日记
 }
 
+function normOptName(s: string): string {
+    return (s || '').normalize('NFKC').replace(/\u200b/g, '').trim();
+}
+
+/** 角色名：优先 entry.characterName；为空时从标题前缀 [xxx] 解析 */
+function effectiveCharacterName(entry: NotionDiaryEntry): string {
+    const n = (entry.characterName || '').replace(/\u200b/g, '').trim();
+    if (n) return n;
+    const title = (entry.title || '').trim();
+    const m = title.match(/^\[([^\]]+?)\]\s*/);
+    return m ? m[1].replace(/\u200b/g, '').trim() : '';
+}
+
+/** 设置里的属性名 → Notion 数据库真实 property key */
+function resolveCanonicalPropertyKey(props: Record<string, unknown>, userKey: string): string | null {
+    const t = (userKey || '').trim();
+    if (!t || !props || typeof props !== 'object') return null;
+    if (Object.prototype.hasOwnProperty.call(props, t)) return t;
+    const normUser = normOptName(t);
+    for (const k of Object.keys(props)) {
+        if (normOptName(k) === normUser) return k;
+    }
+    const lower = t.toLowerCase();
+    for (const k of Object.keys(props)) {
+        if (k.toLowerCase() === lower) return k;
+    }
+    return null;
+}
+
+type NotionOption = { id?: string; name?: string };
+
+function findBestSelectOption(opts: NotionOption[] | undefined, wantRaw: string): NotionOption | null {
+    if (!opts?.length) return null;
+    const want = normOptName(wantRaw);
+    if (!want) return null;
+    let opt = opts.find(o => normOptName(o.name || '') === want);
+    if (opt) return opt;
+    const wantSp = want.replace(/\s+/g, ' ');
+    opt = opts.find(o => normOptName(o.name || '').replace(/\s+/g, ' ') === wantSp);
+    if (opt) return opt;
+    const partial = opts.filter(o => {
+        const n = normOptName(o.name || '');
+        if (n.length < 2 || want.length < 2) return false;
+        return n.includes(want) || want.includes(n);
+    });
+    const only = partial.length === 1 ? partial[0] : undefined;
+    return only ?? null;
+}
+
+/** 将设置里的额外属性模板转为 Notion API properties 片段（不含 Name/Date） */
+function buildNotionDiaryExtraPropertiesApi(
+    defs: NotionDiaryExtraProperty[] | undefined,
+    entry: NotionDiaryEntry,
+    dateStr: string,
+    schema: Record<string, unknown> | null
+): Record<string, unknown> {
+    if (!defs?.length) return {};
+    const charName = effectiveCharacterName(entry);
+    const applyTpl = (tpl: string) =>
+        (tpl || '')
+            .replace(/\$\{char\}/g, charName)
+            .replace(/\$\{date\}/g, dateStr)
+            .replace(/\$\{mood\}/g, (entry.mood || '').trim())
+            .replace(/\$\{title\}/g, (entry.title || '').trim());
+    const propsSchema = (schema?.properties || {}) as Record<string, { type?: string; select?: { options?: NotionOption[] }; status?: { options?: NotionOption[] }; multi_select?: { options?: NotionOption[] } }>;
+    const hasSchema = Object.keys(propsSchema).length > 0;
+    const out: Record<string, unknown> = {};
+    for (const d of defs) {
+        const key = (d.propertyName || '').trim();
+        if (!key || key === 'Name' || key === 'Date') continue;
+        const canonicalKey = hasSchema ? resolveCanonicalPropertyKey(propsSchema as Record<string, unknown>, key) ?? key : key;
+        const raw = applyTpl(d.valueTemplate).replace(/\u200b/g, '').trim(); // 去零宽字符
+        const want = normOptName(raw);
+        const t = String(d.notionType || 'rich_text').toLowerCase() as NotionDiaryExtraProperty['notionType'];
+        const propMeta = propsSchema[canonicalKey];
+
+        // 有数据库 schema 时：按 Notion 里真实列类型写，Select/Status/Multi 优先用选项 id（比只传 name 稳）
+        if (want && propMeta?.type === 'select') {
+            const opts = propMeta.select?.options || [];
+            const opt = findBestSelectOption(opts, raw);
+            out[canonicalKey] = opt?.id ? { select: { id: opt.id } } : { select: { name: raw.slice(0, 100) } };
+            continue;
+        }
+        if (want && propMeta?.type === 'status') {
+            const opts = propMeta.status?.options || [];
+            const opt = findBestSelectOption(opts, raw);
+            out[canonicalKey] = opt?.id ? { status: { id: opt.id } } : { status: { name: raw.slice(0, 100) } };
+            continue;
+        }
+        if (want && propMeta?.type === 'multi_select') {
+            const opts = propMeta.multi_select?.options || [];
+            const opt = findBestSelectOption(opts, raw);
+            out[canonicalKey] = opt?.id ? { multi_select: [{ id: opt.id }] } : { multi_select: [{ name: raw.slice(0, 100) }] };
+            continue;
+        }
+
+        switch (t) {
+            case 'rich_text':
+                out[canonicalKey] = { rich_text: [{ text: { content: raw.slice(0, 2000) } }] };
+                break;
+            case 'select':
+                out[canonicalKey] = raw ? { select: { name: raw.slice(0, 100) } } : { select: null };
+                break;
+            case 'status':
+                out[canonicalKey] = raw ? { status: { name: raw.slice(0, 100) } } : { status: null };
+                break;
+            case 'multi_select':
+                out[canonicalKey] = raw ? { multi_select: [{ name: raw.slice(0, 100) }] } : { multi_select: [] };
+                break;
+            case 'number': {
+                const n = parseFloat(raw.replace(/,/g, ''));
+                out[canonicalKey] = { number: Number.isFinite(n) ? n : 0 };
+                break;
+            }
+            case 'checkbox':
+                out[canonicalKey] = { checkbox: /^(1|true|yes|是|on)$/i.test(raw) };
+                break;
+            default:
+                break;
+        }
+    }
+    return out;
+}
+
 export interface DiaryPreview {
     id: string;
     title: string;
@@ -545,15 +674,29 @@ export const NotionManager = {
         }
     },
 
+    /** 拉取数据库 JSON（含 properties 与各列选项 id），供写入时对齐 Select */
+    fetchDatabaseJson: async (apiKey: string, databaseId: string): Promise<Record<string, unknown> | null> => {
+        try {
+            const response = await fetch(`${NotionManager.WORKER_URL}/notion/database/${databaseId}`, {
+                method: 'GET',
+                headers: { 'X-Notion-API-Key': apiKey }
+            });
+            if (!response.ok) return null;
+            return (await response.json()) as Record<string, unknown>;
+        } catch {
+            return null;
+        }
+    },
+
     /**
-     * 创建日记页面（通过 Worker 代理）- 花里胡哨美化版 ✨
-     * 支持 Markdown 格式的日记内容，自动转换为丰富的 Notion blocks
+     * 创建日记页面（通过 Worker 代理）；支持 Markdown 转 blocks；附加列会先拉库 schema，Select 等尽量用选项 id。
      */
     createDiaryPage: async (
         apiKey: string,
         databaseId: string,
-        entry: NotionDiaryEntry
-    ): Promise<{ success: boolean; pageId?: string; url?: string; message: string }> => {
+        entry: NotionDiaryEntry,
+        extraPropertyDefs?: NotionDiaryExtraProperty[]
+    ): Promise<{ success: boolean; pageId?: string; url?: string; message: string; appliedExtrasHint?: string }> => {
         try {
             const now = new Date();
             const dateStr = entry.date || now.toISOString().split('T')[0];
@@ -564,6 +707,12 @@ export const NotionManager = {
             // 构建页面数据，标题包含角色名便于筛选
             const titlePrefix = entry.characterName ? `[${entry.characterName}] ` : '';
             const moodEmoji = getMoodEmoji(entry.mood || '平静');
+            let dbSchema: Record<string, unknown> | null = null;
+            if (extraPropertyDefs?.length) {
+                dbSchema = await NotionManager.fetchDatabaseJson(apiKey, databaseId);
+            }
+            const extraProps = buildNotionDiaryExtraPropertiesApi(extraPropertyDefs, entry, dateStr, dbSchema);
+            // Name/Date 在前，附加属性在后，避免任意合并顺序导致附加列未生效的边界情况
             const pageData = {
                 parent: { database_id: databaseId },
                 icon: { emoji: moodEmoji },
@@ -573,10 +722,40 @@ export const NotionManager = {
                     },
                     'Date': {
                         date: { start: dateStr }
-                    }
+                    },
+                    ...extraProps
                 },
                 children
             };
+            const extraKeys = Object.keys(extraProps);
+            let appliedExtrasHint: string | undefined;
+            if (extraKeys.length > 0) {
+                const propsRaw = (dbSchema?.properties || {}) as Record<string, unknown>;
+                const hasSch = Object.keys(propsRaw).length > 0;
+                const charForTpl = effectiveCharacterName(entry);
+                const parts: string[] = [];
+                for (const d of extraPropertyDefs || []) {
+                    const rawKey = (d.propertyName || '').trim();
+                    if (!rawKey) continue;
+                    const canon = hasSch ? resolveCanonicalPropertyKey(propsRaw, rawKey) ?? rawKey : rawKey;
+                    if (!Object.prototype.hasOwnProperty.call(extraProps, canon)) continue;
+                    const tplVal = (d.valueTemplate || '')
+                        .replace(/\$\{char\}/g, charForTpl)
+                        .replace(/\$\{date\}/g, dateStr)
+                        .replace(/\$\{mood\}/g, (entry.mood || '').trim())
+                        .replace(/\$\{title\}/g, (entry.title || '').trim())
+                        .replace(/\u200b/g, '')
+                        .trim();
+                    parts.push(tplVal ? `${canon}=${tplVal.slice(0, 32)}` : canon);
+                }
+                appliedExtrasHint =
+                    parts.length > 0
+                        ? `附加列: ${parts.join('、')}${dbSchema ? '' : '（未拉到库结构）'}`
+                        : `附加列: ${extraKeys.join('、')}${dbSchema ? '' : '（未拉到库结构，已按名称写入）'}`;
+            }
+            if (extraKeys.length > 0) {
+                console.debug('[Notion createDiaryPage] extra properties:', JSON.stringify(extraProps));
+            }
 
             const response = await fetch(`${NotionManager.WORKER_URL}/notion/pages`, {
                 method: 'POST',
@@ -591,8 +770,9 @@ export const NotionManager = {
 
             if (!response.ok) {
                 try {
-                    const errJson = JSON.parse(text);
-                    return { success: false, message: `写入失败: ${errJson.error || errJson.message || response.status}` };
+                    const errJson = JSON.parse(text) as { message?: string; error?: string; code?: string };
+                    const detail = errJson.message || errJson.error || text.slice(0, 280);
+                    return { success: false, message: `写入失败: ${detail}` };
                 } catch {
                     return { success: false, message: `写入失败: ${response.status}` };
                 }
@@ -604,7 +784,8 @@ export const NotionManager = {
                     success: true,
                     pageId: data.id,
                     url: data.url,
-                    message: '日记已写入Notion!'
+                    message: '日记已写入Notion!',
+                    appliedExtrasHint
                 };
             } catch {
                 return { success: false, message: '返回格式错误' };
@@ -914,8 +1095,242 @@ export const NotionManager = {
             console.error('Search user notes failed:', e);
             return { success: false, entries: [], message: `搜索失败: ${e.message}` };
         }
+    },
+
+    /**
+     * 额外数据库只读查询：返回条目的标题 + 所有 property 的纯文本（用于 [[READ_TAG: 关键词]]）
+     */
+    queryExtraDatabaseRead: async (
+        apiKey: string,
+        databaseId: string,
+        keyword: string,
+        options?: { limit?: number; maxPropsPerEntry?: number; maxCharsPerValue?: number; maxTotalChars?: number }
+    ): Promise<{
+        success: boolean;
+        entries: { id: string; title: string; url: string; propertiesText: string }[];
+        message: string;
+    }> => {
+        const limit = Math.min(15, Math.max(1, options?.limit ?? 10));
+        const maxProps = options?.maxPropsPerEntry ?? 24;
+        const maxVal = options?.maxCharsPerValue ?? 220;
+        const maxTotal = options?.maxTotalChars ?? 12000;
+
+        try {
+            const dbJson = await NotionManager.fetchDatabaseJson(apiKey, databaseId);
+            const propsSchema = (dbJson?.properties || {}) as Record<string, { type?: string }>;
+            const titleKey = findNotionTitlePropertyKey(propsSchema);
+
+            const body: Record<string, unknown> = {
+                database_id: databaseId,
+                sorts: [{ timestamp: 'last_edited_time', direction: 'descending' }],
+                page_size: limit
+            };
+            const kw = (keyword || '').trim();
+            if (kw && titleKey) {
+                body.filter = {
+                    property: titleKey,
+                    title: { contains: kw }
+                };
+            }
+
+            const response = await fetch(`${NotionManager.WORKER_URL}/notion/query`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Notion-API-Key': apiKey
+                },
+                body: JSON.stringify(body)
+            });
+            const text = await response.text();
+            if (!response.ok) {
+                let msg = `查询失败: ${response.status}`;
+                try {
+                    const err = JSON.parse(text) as { message?: string };
+                    if (err.message) msg = err.message;
+                } catch { /* ignore */ }
+                return { success: false, entries: [], message: msg };
+            }
+            const data = JSON.parse(text) as { results?: any[] };
+            const results = data.results || [];
+            if (results.length === 0) {
+                return {
+                    success: true,
+                    entries: [],
+                    message: kw ? `没有找到包含「${kw}」的条目` : '数据库暂无条目'
+                };
+            }
+
+            const entries: { id: string; title: string; url: string; propertiesText: string }[] = [];
+            let totalChars = 0;
+            for (const page of results) {
+                const props = page.properties as Record<string, unknown> | undefined;
+                const title = extractNotionPageTitle(props, titleKey);
+                const skipKey = titleKey || undefined;
+                let block = notionPropertiesToText(props, {
+                    maxProps,
+                    maxValChars: maxVal,
+                    skipTitleKey: skipKey
+                });
+                if (block.length > maxTotal - totalChars - 200) {
+                    block = block.slice(0, Math.max(0, maxTotal - totalChars - 200)) + '\n…(截断)';
+                }
+                const piece = `■ ${title}\n${block}`;
+                totalChars += piece.length;
+                entries.push({
+                    id: page.id,
+                    title,
+                    url: page.url || '',
+                    propertiesText: block
+                });
+                if (totalChars >= maxTotal) break;
+            }
+
+            return {
+                success: true,
+                entries,
+                message: `找到 ${entries.length} 条`
+            };
+        } catch (e: any) {
+            console.error('queryExtraDatabaseRead failed:', e);
+            return { success: false, entries: [], message: `查询失败: ${e.message}` };
+        }
     }
 };
+
+/** 从数据库 schema 找 title 类型列名 */
+function findNotionTitlePropertyKey(schema: Record<string, { type?: string }>): string | null {
+    for (const [k, v] of Object.entries(schema)) {
+        if (v?.type === 'title') return k;
+    }
+    return null;
+}
+
+function extractNotionPageTitle(properties: Record<string, unknown> | undefined, titleKey: string | null): string {
+    if (!properties) return '（无标题）';
+    if (titleKey && properties[titleKey]) {
+        const t = (properties[titleKey] as { type?: string; title?: any[] })?.title;
+        const plain = richTextToPlain(t);
+        if (plain) return plain;
+    }
+    for (const val of Object.values(properties)) {
+        const p = val as { type?: string; title?: any[] };
+        if (p?.type === 'title' && Array.isArray(p.title)) {
+            const plain = richTextToPlain(p.title);
+            if (plain) return plain;
+        }
+    }
+    return '（无标题）';
+}
+
+function richTextToPlain(blocks: any[] | undefined): string {
+    if (!Array.isArray(blocks)) return '';
+    return blocks.map((b: any) => b.plain_text || b.text?.content || '').join('').trim();
+}
+
+function truncate(s: string, max: number): string {
+    if (!s) return '';
+    const t = s.replace(/\s+/g, ' ').trim();
+    return t.length <= max ? t : `${t.slice(0, max)}…`;
+}
+
+/**
+ * 将 Notion page.properties 转为多行可读文本（通用，用于额外库只读）
+ */
+export function notionPropertiesToText(
+    properties: Record<string, unknown> | undefined,
+    opts?: { maxProps?: number; maxValChars?: number; skipTitleKey?: string }
+): string {
+    if (!properties || typeof properties !== 'object') return '';
+    const maxProps = opts?.maxProps ?? 24;
+    const maxVal = opts?.maxValChars ?? 220;
+    const skip = opts?.skipTitleKey;
+    const lines: string[] = [];
+    let n = 0;
+    for (const [key, raw] of Object.entries(properties)) {
+        if (skip && key === skip) continue;
+        if (n >= maxProps) break;
+        const line = formatNotionPropertyLine(key, raw, maxVal);
+        if (line) {
+            lines.push(line);
+            n++;
+        }
+    }
+    return lines.join('\n');
+}
+
+function formatNotionPropertyLine(name: string, raw: unknown, maxVal: number): string {
+    if (!raw || typeof raw !== 'object') return '';
+    const prop = raw as Record<string, unknown>;
+    const t = prop.type as string;
+    switch (t) {
+        case 'title': {
+            const text = richTextToPlain(prop.title as any[]);
+            return text ? `【${name}】${truncate(text, maxVal)}` : '';
+        }
+        case 'rich_text': {
+            const text = richTextToPlain(prop.rich_text as any[]);
+            return text ? `【${name}】${truncate(text, maxVal)}` : '';
+        }
+        case 'number': {
+            const num = prop.number;
+            return `【${name}】${num !== null && num !== undefined ? String(num) : ''}`;
+        }
+        case 'select': {
+            const nm = (prop.select as { name?: string } | null)?.name;
+            return nm ? `【${name}】${nm}` : '';
+        }
+        case 'status': {
+            const nm = (prop.status as { name?: string } | null)?.name;
+            return nm ? `【${name}】${nm}` : '';
+        }
+        case 'multi_select': {
+            const arr = (prop.multi_select as { name?: string }[]) || [];
+            const s = arr.map((x) => x.name).filter(Boolean).join('、');
+            return s ? `【${name}】${truncate(s, maxVal)}` : '';
+        }
+        case 'date': {
+            const d = prop.date as { start?: string; end?: string } | null;
+            const s = d?.end ? `${d.start || ''} ~ ${d.end}` : d?.start || '';
+            return s ? `【${name}】${s}` : '';
+        }
+        case 'checkbox':
+            return `【${name}】${prop.checkbox ? '是' : '否'}`;
+        case 'url':
+            return prop.url ? `【${name}】${truncate(String(prop.url), maxVal)}` : '';
+        case 'email':
+            return prop.email ? `【${name}】${String(prop.email)}` : '';
+        case 'phone_number':
+            return prop.phone_number ? `【${name}】${String(prop.phone_number)}` : '';
+        case 'formula': {
+            const f = prop.formula as Record<string, unknown> | undefined;
+            if (!f?.type) return '';
+            const ft = f.type as string;
+            if (ft === 'string') return `【${name}】${truncate(String(f.string || ''), maxVal)}`;
+            if (ft === 'number') return `【${name}】${f.number ?? ''}`;
+            if (ft === 'boolean') return `【${name}】${f.boolean ? '是' : '否'}`;
+            if (ft === 'date') {
+                const d = f.date as { start?: string } | undefined;
+                return d?.start ? `【${name}】${d.start}` : '';
+            }
+            return '';
+        }
+        case 'relation': {
+            const rel = prop.relation as { id?: string }[];
+            return rel?.length ? `【${name}】${rel.length} 条关联` : '';
+        }
+        case 'rollup':
+            return `【${name}】(rollup)`;
+        case 'people': {
+            const pe = prop.people as { name?: string }[];
+            const s = pe?.map((p) => p.name || '用户').join('、') || '';
+            return s ? `【${name}】${truncate(s, maxVal)}` : '';
+        }
+        case 'files':
+            return `【${name}】${((prop.files as any[]) || []).length} 个文件`;
+        default:
+            return '';
+    }
+}
 
 // 心情对应的 Emoji
 function getMoodEmoji(mood: string): string {

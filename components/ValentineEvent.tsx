@@ -19,7 +19,15 @@ import { CharacterProfile, SpecialMomentRecord } from '../types';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
-import { WhiteDaySession, isWhiteDayEventAvailable, WHITEDAY_RECORD_KEY } from './WhiteDayEvent';
+import { WhiteDaySession } from './WhiteDayEvent';
+import { isWhiteDayEventAvailable, WHITEDAY_RECORD_KEY } from '../utils/whiteDayEventUtils';
+import {
+    VALENTINE_DISMISSED_KEY,
+    VALENTINE_COMPLETED_KEY,
+    VALENTINE_RECORD_KEY,
+    isValentineEventAvailable,
+    isValentinePast,
+} from '../utils/valentineEventUtils';
 
 // ============================================================
 // 情人节立绘 Sprite 映射 (占位 emoji，等图片整理好后替换为图床URL)
@@ -31,43 +39,6 @@ const VALENTINE_SPRITES: Record<string, string> = {
     angry:   'https://sharkpan.xyz/f/NdlVfv/VAn.png',
     shy:     'https://sharkpan.xyz/f/VyontY/Vshy.png',
     love:    'https://sharkpan.xyz/f/xl8muX/VBl.png',
-};
-
-// localStorage keys
-const VALENTINE_DISMISSED_KEY = 'sullyos_valentine_2026_dismissed';
-const VALENTINE_COMPLETED_KEY = 'sullyos_valentine_2026_completed';
-const VALENTINE_RECORD_KEY = 'valentine_2026';
-
-// ============================================================
-// 工具函数
-// ============================================================
-
-/** 判断今天是否是情人节 (2026-02-14) */
-const isValentineDay = (): boolean => {
-    const now = new Date();
-    return now.getFullYear() === 2026 && now.getMonth() === 1 && now.getDate() === 14;
-};
-
-/** 判断是否应该显示弹窗 */
-export const shouldShowValentinePopup = (): boolean => {
-    if (!isValentineDay()) return false;
-    try {
-        if (localStorage.getItem(VALENTINE_DISMISSED_KEY)) return false;
-        if (localStorage.getItem(VALENTINE_COMPLETED_KEY)) return false;
-    } catch { /* ignore */ }
-    return true;
-};
-
-/** 判断情人节活动是否当前可用（2026年2月） */
-export const isValentineEventAvailable = (): boolean => {
-    const now = new Date();
-    return now.getFullYear() === 2026 && now.getMonth() === 1;
-};
-
-/** 判断情人节活动是否已过期（2026年2月之后，永久可回看） */
-export const isValentinePast = (): boolean => {
-    const now = new Date();
-    return now.getFullYear() > 2026 || (now.getFullYear() === 2026 && now.getMonth() > 1);
 };
 
 // ============================================================

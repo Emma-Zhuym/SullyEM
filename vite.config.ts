@@ -14,6 +14,7 @@ export default defineConfig({
   ],
   base: './', // 关键配置：使用相对路径，确保在 GitHub Pages 子目录下能找到资源
   server: {
+    host: true, // 允许局域网内的手机访问
     proxy: {
       '/api/minimax/t2a': {
         target: 'https://api.minimaxi.com',

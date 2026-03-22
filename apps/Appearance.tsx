@@ -1,13 +1,187 @@
 
 import React, { useState, useRef, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
-import { OSTheme, DesktopDecoration } from '../types';
+import { OSTheme, DesktopDecoration, AppearancePreset, Toast } from '../types';
 import { INSTALLED_APPS, Icons } from '../constants';
 import { processImage } from '../utils/file';
+import { ChatAppearanceEditor } from '../components/appearance/ChatAppearanceEditor';
+import { Sparkle } from '@phosphor-icons/react';
+
+interface PresetManagerProps {
+    presets: AppearancePreset[];
+    onSave: (name: string) => void;
+    onApply: (id: string) => void;
+    onDelete: (id: string) => void;
+    onRename: (id: string, name: string) => void;
+    onExport: (id: string) => Promise<Blob>;
+    onImport: (file: File) => Promise<void>;
+    addToast: (msg: string, type?: Toast['type']) => void;
+    currentTheme: OSTheme;
+}
+
+const PresetManager: React.FC<PresetManagerProps> = ({ presets, onSave, onApply, onDelete, onRename, onExport, onImport, addToast, currentTheme }) => {
+    const [newName, setNewName] = useState('');
+    const [editingId, setEditingId] = useState<string | null>(null);
+    const [editName, setEditName] = useState('');
+    const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+    const importRef = useRef<HTMLInputElement>(null);
+
+    const handleSave = () => {
+        const name = newName.trim() || `预设 ${new Date().toLocaleDateString('zh-CN')}`;
+        onSave(name);
+        setNewName('');
+    };
+
+    const handleExport = async (id: string) => {
+        try {
+            const blob = await onExport(id);
+            const preset = presets.find(p => p.id === id);
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `appearance_${preset?.name || 'preset'}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+            addToast('预设已导出', 'success');
+        } catch (e: any) {
+            addToast(e.message || '导出失败', 'error');
+        }
+    };
+
+    const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        try {
+            await onImport(file);
+        } catch (err: any) {
+            addToast(err.message || '导入失败', 'error');
+        }
+        if (importRef.current) importRef.current.value = '';
+    };
+
+    const handleRename = (id: string) => {
+        if (editName.trim()) {
+            onRename(id, editName.trim());
+        }
+        setEditingId(null);
+        setEditName('');
+    };
+
+    return (
+        <div className="space-y-5">
+            <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+                <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">保存当前外观</h2>
+                <p className="text-[10px] text-slate-400 mb-3">将当前的主题色、壁纸、字体、图标、装饰等完整外观保存为预设，方便随时切换。</p>
+                <div className="flex gap-2">
+                    <input
+                        value={newName}
+                        onChange={e => setNewName(e.target.value)}
+                        placeholder="预设名称（可选）"
+                        className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs outline-none focus:border-primary transition-all"
+                        onKeyDown={e => e.key === 'Enter' && handleSave()}
+                    />
+                    <button onClick={handleSave}
+                        className="px-5 py-2.5 bg-primary text-white font-bold text-xs rounded-xl shadow-md active:scale-95 transition-transform shrink-0">
+                        保存
+                    </button>
+                </div>
+            </section>
+
+            <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+                <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">导入外观预设</h2>
+                <p className="text-[10px] text-slate-400 mb-3">从 .json 文件导入他人分享的外观预设。</p>
+                <input type="file" ref={importRef} className="hidden" accept=".json" onChange={handleImport} />
+                <button onClick={() => importRef.current?.click()}
+                    className="w-full py-2.5 bg-gradient-to-r from-blue-50 to-cyan-50 text-blue-500 font-bold text-xs rounded-xl border border-blue-200 active:scale-95 transition-transform flex items-center justify-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+                    选择文件导入
+                </button>
+            </section>
+
+            <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+                <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">已保存预设 ({presets.length})</h2>
+                {presets.length === 0 ? (
+                    <div className="text-center py-8">
+                        <Sparkle size={48} weight="fill" className="mx-auto text-slate-300 mb-2" />
+                        <p className="text-xs text-slate-400">还没有外观预设</p>
+                        <p className="text-[10px] text-slate-300 mt-1">保存当前外观或导入预设文件开始使用</p>
+                    </div>
+                ) : (
+                    <div className="space-y-3">
+                        {presets.map(preset => (
+                            <div key={preset.id} className="bg-slate-50 rounded-2xl border border-slate-100 overflow-hidden">
+                                <div className="h-14 relative overflow-hidden"
+                                    style={{
+                                        background: preset.theme.wallpaper && preset.theme.wallpaper.startsWith('data:')
+                                            ? `url(${preset.theme.wallpaper}) center/cover`
+                                            : preset.theme.wallpaper && preset.theme.wallpaper.startsWith('linear')
+                                            ? preset.theme.wallpaper
+                                            : `linear-gradient(135deg, hsl(${preset.theme.hue}, ${preset.theme.saturation}%, ${preset.theme.lightness}%), hsl(${preset.theme.hue + 30}, ${preset.theme.saturation}%, ${Math.max(preset.theme.lightness - 15, 10)}%))`,
+                                    }}>
+                                    <div className="absolute inset-0 bg-black/10" />
+                                    <div className="absolute bottom-1.5 left-3 flex gap-1">
+                                        <div className="w-4 h-4 rounded-full" style={{ backgroundColor: `hsl(${preset.theme.hue}, ${preset.theme.saturation}%, ${preset.theme.lightness}%)` }} />
+                                        <div className="w-4 h-4 rounded-full" style={{ backgroundColor: preset.theme.contentColor || '#fff' }} />
+                                    </div>
+                                    {preset.theme.desktopDecorations && preset.theme.desktopDecorations.length > 0 && (
+                                        <div className="absolute bottom-1.5 right-3 text-[8px] text-white/80 bg-black/30 px-1.5 py-0.5 rounded-full backdrop-blur-sm">
+                                            {preset.theme.desktopDecorations.length} 装饰
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="p-3">
+                                    {editingId === preset.id ? (
+                                        <div className="flex gap-2 mb-2">
+                                            <input
+                                                value={editName}
+                                                onChange={e => setEditName(e.target.value)}
+                                                className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-primary"
+                                                autoFocus
+                                                onKeyDown={e => { if (e.key === 'Enter') handleRename(preset.id); if (e.key === 'Escape') setEditingId(null); }}
+                                            />
+                                            <button onClick={() => handleRename(preset.id)} className="px-3 py-1.5 bg-primary text-white text-[10px] font-bold rounded-lg">确定</button>
+                                            <button onClick={() => setEditingId(null)} className="px-3 py-1.5 bg-slate-100 text-slate-500 text-[10px] font-bold rounded-lg">取消</button>
+                                        </div>
+                                    ) : (
+                                        <div className="flex items-center justify-between mb-2">
+                                            <div>
+                                                <div className="text-xs font-bold text-slate-700">{preset.name}</div>
+                                                <div className="text-[9px] text-slate-400">{new Date(preset.createdAt).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
+                                            </div>
+                                        </div>
+                                    )}
+                                    <div className="flex gap-1.5 flex-wrap">
+                                        <button onClick={() => onApply(preset.id)}
+                                            className="px-3 py-1.5 bg-primary text-white text-[10px] font-bold rounded-lg active:scale-95 transition-transform shadow-sm">应用</button>
+                                        <button onClick={() => handleExport(preset.id)}
+                                            className="px-3 py-1.5 bg-green-50 text-green-600 text-[10px] font-bold rounded-lg border border-green-200 active:scale-95 transition-transform">导出</button>
+                                        <button onClick={() => { setEditingId(preset.id); setEditName(preset.name); }}
+                                            className="px-3 py-1.5 bg-slate-100 text-slate-500 text-[10px] font-bold rounded-lg border border-slate-200 active:scale-95 transition-transform">重命名</button>
+                                        {confirmDeleteId === preset.id ? (
+                                            <div className="flex gap-1">
+                                                <button onClick={() => { onDelete(preset.id); setConfirmDeleteId(null); }}
+                                                    className="px-3 py-1.5 bg-red-500 text-white text-[10px] font-bold rounded-lg active:scale-95 transition-transform">确认删除</button>
+                                                <button onClick={() => setConfirmDeleteId(null)}
+                                                    className="px-3 py-1.5 bg-slate-100 text-slate-500 text-[10px] font-bold rounded-lg active:scale-95 transition-transform">取消</button>
+                                            </div>
+                                        ) : (
+                                            <button onClick={() => setConfirmDeleteId(preset.id)}
+                                                className="px-3 py-1.5 bg-red-50 text-red-400 text-[10px] font-bold rounded-lg border border-red-200 active:scale-95 transition-transform">删除</button>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </section>
+        </div>
+    );
+};
 
 const Appearance: React.FC = () => {
-  const { theme, updateTheme, closeApp, setCustomIcon, customIcons, addToast } = useOS();
-  const [activeTab, setActiveTab] = useState<'theme' | 'icons'>('theme');
+  const { theme, updateTheme, closeApp, setCustomIcon, customIcons, addToast, appearancePresets, saveAppearancePreset, applyAppearancePreset, deleteAppearancePreset, renameAppearancePreset, exportAppearancePreset, importAppearancePreset } = useOS();
+  const [activeTab, setActiveTab] = useState<'theme' | 'icons' | 'presets' | 'chat'>('theme');
   const wallpaperInputRef = useRef<HTMLInputElement>(null);
   const widgetInputRef = useRef<HTMLInputElement>(null);
   const [activeWidgetSlot, setActiveWidgetSlot] = useState<string | null>(null);
@@ -199,6 +373,8 @@ const Appearance: React.FC = () => {
       <div className="flex border-b border-slate-200 bg-white sticky top-0 z-20">
           <button onClick={() => setActiveTab('theme')} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'theme' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>系统主题</button>
           <button onClick={() => setActiveTab('icons')} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'icons' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>应用图标</button>
+          <button onClick={() => setActiveTab('presets')} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'presets' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>外观预设</button>
+          <button onClick={() => setActiveTab('chat')} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'chat' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>聊天界面</button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-5 space-y-6 no-scrollbar">
@@ -639,6 +815,20 @@ const Appearance: React.FC = () => {
                     <div className="text-[10px] text-slate-400 mt-3 px-1">提示: 装饰会叠加显示在桌面第二页上，可自由调节每个装饰的位置、大小、旋转和透明度。支持上传自定义图片或使用预设贴纸。</div>
                 </section>
             </>
+        ) : activeTab === 'presets' ? (
+            <PresetManager
+                presets={appearancePresets}
+                onSave={saveAppearancePreset}
+                onApply={applyAppearancePreset}
+                onDelete={deleteAppearancePreset}
+                onRename={renameAppearancePreset}
+                onExport={exportAppearancePreset}
+                onImport={importAppearancePreset}
+                addToast={addToast}
+                currentTheme={theme}
+            />
+        ) : activeTab === 'chat' ? (
+            <ChatAppearanceEditor theme={theme} updateTheme={updateTheme} />
         ) : (
             <div className="grid grid-cols-3 gap-4">
                 {INSTALLED_APPS.map(app => {

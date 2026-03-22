@@ -3,6 +3,24 @@ import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProf
 import { ContextBuilder } from './context';
 import { DB } from './db';
 import { RealtimeContextManager, NotionManager, FeishuManager, defaultRealtimeConfig } from './realtimeContext';
+import {
+    NOTION_USER_NOTES_TAG,
+    normalizeNotionExtraTag,
+    type NotionNotesConfigSlice,
+    resolveNotionNotesDatabaseId,
+} from './notionExtraConfig';
+import { DEFAULT_GROUPCHAT_CONTEXT_LIMIT, GROUPCHAT_CONTEXT_LIMIT_KEY } from '../components/chat/ChatConstants';
+import { formatLifeSimResetCardForContext } from './lifeSimChatCard';
+
+function getGroupContextLimitForPrivateChat(): number {
+    if (typeof localStorage === 'undefined') return DEFAULT_GROUPCHAT_CONTEXT_LIMIT;
+    try {
+        const raw = localStorage.getItem(GROUPCHAT_CONTEXT_LIMIT_KEY);
+        const v = parseInt(raw || String(DEFAULT_GROUPCHAT_CONTEXT_LIMIT), 10);
+        if (Number.isFinite(v)) return Math.min(5000, Math.max(20, v));
+    } catch { /* ignore */ }
+    return DEFAULT_GROUPCHAT_CONTEXT_LIMIT;
+}
 
 export const ChatPrompts = {
     // 格式化时间戳
@@ -94,7 +112,8 @@ export const ChatPrompts = {
                     allGroupMsgs = [...allGroupMsgs, ...enriched];
                 }
                 allGroupMsgs.sort((a, b) => b.timestamp - a.timestamp);
-                const recentGroupMsgs = allGroupMsgs.slice(0, 200).reverse();
+                const groupCtxN = getGroupContextLimitForPrivateChat();
+                const recentGroupMsgs = allGroupMsgs.slice(0, groupCtxN).reverse();
 
                 if (recentGroupMsgs.length > 0) {
                     // 这里简化了 UserProfile 查找，假设非 User 即 Member
@@ -158,10 +177,11 @@ export const ChatPrompts = {
         // 注入用户笔记标题（让角色知道用户最近在写什么）- Notion 笔记数据库
         try {
             const config = realtimeConfig || defaultRealtimeConfig;
-            if (config.notionEnabled && config.notionApiKey && config.notionNotesDatabaseId) {
+            const notesDbId = resolveNotionNotesDatabaseId(config as NotionNotesConfigSlice);
+            if (config.notionEnabled && config.notionApiKey && notesDbId) {
                 const notesResult = await NotionManager.getUserNotes(
                     config.notionApiKey,
-                    config.notionNotesDatabaseId,
+                    notesDbId,
                     5
                 );
                 if (notesResult.success && notesResult.entries.length > 0) {
@@ -177,10 +197,50 @@ export const ChatPrompts = {
             console.error('Failed to inject user notes context:', e);
         }
 
+        // 注入今日纪念日（让 char 自然知道今天是特殊的日子）
+        try {
+            const allAnniversaries = await DB.getAllAnniversaries();
+            const todayMD = (() => {
+                const d = new Date();
+                return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            })();
+            const todayAnniversaries = allAnniversaries.filter(a => {
+                if (a.charId !== char.id) return false;
+                if (a.charAware === false) return false;   // 用户主动关闭感知
+                const dateParts = a.date.split('-'); // YYYY-MM-DD
+                if (dateParts.length < 3) return false;
+                return `${dateParts[1]}-${dateParts[2]}` === todayMD;
+            });
+            if (todayAnniversaries.length > 0) {
+                const thisYear = new Date().getFullYear();
+                baseSystemPrompt += `\n### 🗓【今日纪念日】\n`;
+                baseSystemPrompt += `（提示：以下是你们之间今天的纪念日。你知道这一天对你们来说有特殊意义。可以在合适时机自然地提到，不必刻意或强调。）\n`;
+                todayAnniversaries.forEach(a => {
+                    const originYear = parseInt(a.date.split('-')[0]);
+                    const yearsAgo = thisYear - originYear;
+                    const yearLabel = yearsAgo === 0 ? '今年刚开始' : yearsAgo === 1 ? '一周年' : `${yearsAgo} 周年`;
+                    baseSystemPrompt += `- 「${a.title}」（${yearLabel}）\n`;
+                });
+                baseSystemPrompt += `\n`;
+            }
+        } catch (e) {
+            console.error('Failed to inject anniversary context:', e);
+        }
+
         const emojiContextStr = ChatPrompts.buildEmojiContext(emojis, categories);
         const searchEnabled = !!(realtimeConfig?.newsEnabled && realtimeConfig?.newsApiKey);
         const notionEnabled = !!(realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionDatabaseId);
-        const notionNotesEnabled = !!(realtimeConfig?.notionEnabled && realtimeConfig?.notionApiKey && realtimeConfig?.notionNotesDatabaseId);
+        const cfg = realtimeConfig || defaultRealtimeConfig;
+        const notionNotesEnabled = !!(
+            cfg.notionEnabled &&
+            cfg.notionApiKey &&
+            resolveNotionNotesDatabaseId(cfg as NotionNotesConfigSlice)
+        );
+        const notionExtraReads = (cfg.notionExtraDatabases || []).filter((d) => d?.databaseId?.trim() && d?.tag?.trim());
+        const notionExtraReadsNoNote = notionExtraReads.filter(
+            (d) => normalizeNotionExtraTag(d.tag) !== NOTION_USER_NOTES_TAG
+        );
+        const notionExtraReadsEnabled = !!(cfg.notionEnabled && cfg.notionApiKey && notionExtraReadsNoNote.length > 0);
         const feishuEnabled = !!(realtimeConfig?.feishuEnabled && realtimeConfig?.feishuAppId && realtimeConfig?.feishuAppSecret && realtimeConfig?.feishuBaseId && realtimeConfig?.feishuTableId);
         // Per-character XHS override: MCP-only
         const mcpXhsAvailable = !!(realtimeConfig?.xhsMcpConfig?.enabled && realtimeConfig?.xhsMcpConfig?.serverUrl);
@@ -212,7 +272,10 @@ export const ChatPrompts = {
    - **定时发送消息**: 如果你想在未来某个时间主动发消息（比如晚安、早安或提醒），请单独起一行输出: \`[schedule_message | YYYY-MM-DD HH:MM:SS | fixed | 消息内容]\`，分行可以多输出很多该类消息。
 ${notionEnabled ? `   - **翻阅日记(Notion)**: 当聊天涉及过去的事情、回忆、或你想查看之前写过的日记时，**必须**使用: \`[[READ_DIARY: 日期]]\`。支持格式: \`昨天\`、\`前天\`、\`3天前\`、\`1月15日\`、\`2024-01-15\`。` : ''}${feishuEnabled ? `
    - **翻阅日记(飞书)**: 当聊天涉及过去的事情时，使用: \`[[FS_READ_DIARY: 日期]]\`。支持格式同上。` : ''}${notionNotesEnabled ? `
-   - **翻阅用户笔记**: 当你想看${userProfile.name}写的某篇笔记的详细内容时，使用: \`[[READ_NOTE: 标题关键词]]\`。系统会搜索匹配的笔记并返回内容给你。` : ''}
+   - **翻阅用户笔记**: 当你想看${userProfile.name}写的某篇笔记的详细内容时，使用: \`[[READ_NOTE: 标题关键词]]\`。系统会搜索匹配的笔记并返回内容给你。` : ''}${notionExtraReadsEnabled ? notionExtraReadsNoNote.map((d) => {
+            const tag = String(d.tag || '').trim().toUpperCase().replace(/[^A-Z0-9_]/g, '');
+            return tag ? `\n   - **${d.name || tag}（Notion 库）**: 在回复中单独一行输出 \`[[${tag}: 关键词]]\`，系统会按标题搜索该库并返回条目的各列信息。` : '';
+        }).join('') : ''}
 ${searchEnabled ? `7. **🔍 主动搜索能力** (非常重要！):
    你拥有实时搜索互联网的能力！每次对话时，你可以自己决定是否需要搜索。
    - **使用方式**: 当你想搜索某个话题时，在回复开头单独一行输出: \`[[SEARCH: 搜索关键词]]\`
@@ -388,7 +451,16 @@ ${notionNotesEnabled ? `${[notionEnabled, feishuEnabled].filter(Boolean).length 
    - ${userProfile.name}心情不好时，可以借笔记关心ta
    - 笔记标题和当前话题相关时
 ` : ''}
-${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Boolean).length + 8}. **📕 小红书（你的社交账号）**:
+${notionExtraReadsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Boolean).length + 8}. **📚 额外 Notion 数据库（只读查询）**:
+   用户配置了以下数据库，你可以按关键词搜索**标题**匹配的条目，系统会返回该条目的各列属性（纯文本摘要）。
+${notionExtraReadsNoNote.map((d) => {
+            const tag = String(d.tag || '').trim().toUpperCase().replace(/[^A-Z0-9_]/g, '');
+            const nm = (d.name || tag || '库').trim();
+            return tag ? `   - **${nm}**：单独一行输出 \`[[${tag}: 关键词]]\`（关键词用于匹配数据库**标题列**）。` : '';
+        }).join('\n')}
+   **注意**：TAG 必须大写且与配置一致；关键词尽量具体；若不确定用户指哪个库，可先问一句或选最相关的一个。
+` : ''}
+${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled, notionExtraReadsEnabled].filter(Boolean).length + 8}. **📕 小红书（你的社交账号）**:
    你有一个属于自己的小红书账号！你可以自由地搜索、浏览、发帖、评论。这是你的社交生活的一部分。
 
    **🔍 搜索小红书:**
@@ -586,7 +658,9 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                 
                 if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') content = `${content}\n\n${timeGapHint}`; 
                 
-                if (m.type === 'interaction') content = `${timeStr} [系统: 用户戳了你一下]`; 
+                if (m.type === 'interaction' && m.metadata?.kind === 'notion_diary_nudge') {
+                    content = `${timeStr} [系统: 用户通过快捷操作希望你立刻写一篇 Notion 私人日记，存档此刻对话里对你重要或值得留下的想法、情绪或决定。请使用你已知的日记格式（推荐 [[DIARY_START: 标题 | 心情]] ... 正文 ... [[DIARY_END]]，也可用简短 [[DIARY: 标题 | 内容]]）。写完后在聊天里简短说一句即可，不要把整篇日记贴在对话框里。]`;
+                } else if (m.type === 'interaction') content = `${timeStr} [系统: 用户戳了你一下]`; 
                 else if (m.type === 'transfer') content = `${timeStr} [系统: 用户转账 ${m.metadata?.amount}]`;
                 else if (m.type === 'social_card') {
                     const post = m.metadata?.post || {};
@@ -618,7 +692,9 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                 else if ((m.type as string) === 'score_card') {
                     try {
                         const card = m.metadata?.scoreCard || JSON.parse(m.content);
-                        if (card?.type === 'guidebook_card') {
+                        if (card?.type === 'lifesim_reset_card') {
+                            content = `${timeStr} ${formatLifeSimResetCardForContext(card, char?.name)}`;
+                        } else if (card?.type === 'guidebook_card') {
                             const diff = (card.finalAffinity ?? 0) - (card.initialAffinity ?? 0);
                             const uName = userProfile?.name || '用户';
                             content = `${timeStr} [攻略本游戏结算] 你和${uName}刚玩了一局"攻略本"恋爱小游戏（${card.rounds || '?'}回合）。\n结局：「${card.title || '???'}」\n好感度变化：${card.initialAffinity} → ${card.finalAffinity}（${diff >= 0 ? '+' : ''}${diff}）\n你的评语：${card.charVerdict || '无'}\n你对${uName}的新发现：${card.charNewInsight || '无'}`;

@@ -10,6 +10,7 @@ import { PRESET_THEMES, DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatC
 import ChatHeader from '../components/chat/ChatHeader';
 import ChatInputArea from '../components/chat/ChatInputArea';
 import ChatModals from '../components/chat/ChatModals';
+import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
 import Modal from '../components/os/Modal';
 import { useChatAI } from '../hooks/useChatAI';
 import { synthesizeSpeech, cleanTextForTts } from '../utils/minimaxTts';
@@ -17,7 +18,7 @@ import { synthesizeSpeech, cleanTextForTts } from '../utils/minimaxTts';
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 
 const Chat: React.FC = () => {
-    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig } = useOS();
+    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, setMessageSubView } = useOS();
     const [messages, setMessages] = useState<Message[]>([]);
     const [totalMsgCount, setTotalMsgCount] = useState(0);
     const [visibleCount, setVisibleCount] = useState(30);
@@ -41,6 +42,7 @@ const Chat: React.FC = () => {
     const [replyTarget, setReplyTarget] = useState<Message | null>(null);
 
     const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility'>('none');
+    const [showProactiveModal, setShowProactiveModal] = useState(false);
     const [allHistoryMessages, setAllHistoryMessages] = useState<Message[]>([]);
     const [transferAmt, setTransferAmt] = useState('');
     const [emojiImportText, setEmojiImportText] = useState('');
@@ -93,11 +95,8 @@ const Chat: React.FC = () => {
         return emojis.filter(e => !e.categoryId || !hiddenIds.has(e.categoryId));
     }, [emojis, categories, visibleCategories]);
 
-
-
-
     // --- Initialize Hook ---
-    const { isTyping, recallStatus, searchStatus, diaryStatus, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI } = useChatAI({
+    const { isTyping, recallStatus, searchStatus, diaryStatus, lastTokenUsage, tokenBreakdown, contextComposition, setLastTokenUsage, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
         char,
         userProfile,
         apiConfig,
@@ -111,6 +110,42 @@ const Chat: React.FC = () => {
             ? { enabled: true, sourceLang: translateSourceLang, targetLang: translateTargetLang }
             : undefined
     });
+
+    const handleNotionDiaryQuick = useCallback(async () => {
+        if (!char) return;
+        if (isTyping) {
+            addToast('请等当前回复结束后再试', 'info');
+            return;
+        }
+        const rc = realtimeConfig;
+        if (!rc?.notionEnabled || !String(rc?.notionApiKey || '').trim() || !String(rc?.notionDatabaseId || '').trim()) {
+            addToast('请先在「设置 → 实时感知」里启用 Notion，并填写 API Key 与日记数据库 ID', 'info');
+            return;
+        }
+        try {
+            setShowPanel('none');
+            await DB.saveMessage({
+                charId: char.id,
+                role: 'user',
+                type: 'interaction',
+                content: '📝',
+                metadata: { kind: 'notion_diary_nudge' }
+            });
+            const allMsgs = await DB.getMessagesByCharId(char.id);
+            const currentChar = charRef.current;
+            const chatScopeMsgs = allMsgs
+                .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
+                .filter(m => !currentChar?.hideBeforeMessageId || m.id >= currentChar.hideBeforeMessageId)
+                .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'))
+                .sort((a, b) => a.id - b.id);
+            setTotalMsgCount(chatScopeMsgs.length);
+            setMessages(chatScopeMsgs.slice(-visibleCountRef.current));
+            triggerAI(chatScopeMsgs);
+            addToast('已提醒写 Notion 日记', 'info');
+        } catch (e: any) {
+            addToast(e?.message || '操作失败', 'error');
+        }
+    }, [char, isTyping, realtimeConfig, addToast, triggerAI]);
 
     // --- Voice TTS for chat messages ---
     interface VoiceData { url: string; originalText: string; spokenText?: string; lang?: string; }
@@ -524,6 +559,7 @@ const Chat: React.FC = () => {
         switch (type) {
             case 'transfer': setModalType('transfer'); break;
             case 'poke': handleSendText('[戳一戳]', 'interaction'); break;
+            case 'notion-diary-quick': void handleNotionDiaryQuick(); break;
             case 'archive': setModalType('archive-settings'); break;
             case 'settings': setModalType('chat-settings'); break;
             case 'emoji-import': setModalType('emoji-import'); break;
@@ -533,6 +569,7 @@ const Chat: React.FC = () => {
             case 'select-category': setActiveCategory(payload); break;
             case 'category-options': setSelectedCategory(payload); setModalType('category-options'); break;
             case 'delete-category-req': setSelectedCategory(payload); setModalType('delete-category'); break;
+            case 'proactive': setShowProactiveModal(true); break;
         }
     };
 
@@ -753,6 +790,7 @@ const Chat: React.FC = () => {
                             }
                         } catch { content = '[系统卡片]'; }
                     }
+                    else if (m.type === 'interaction' && m.metadata?.kind === 'notion_diary_nudge') content = `[快捷: ${userProfile.name}提醒${char.name}写Notion日记]`;
                     else if (m.type === 'interaction') content = `[系统: ${userProfile.name}戳了${char.name}一下]`;
                     else if (m.type === 'transfer') content = `[系统: ${userProfile.name}转账 ${m.metadata?.amount}]`;
                     return `[${formatTime(m.timestamp)}] ${sender}: ${content}`;
@@ -1039,9 +1077,11 @@ const Chat: React.FC = () => {
                 isSummarizing={isSummarizing}
                 lastTokenUsage={lastTokenUsage}
                 tokenBreakdown={tokenBreakdown}
-                onClose={closeApp}
+                contextComposition={contextComposition}
+                onClose={() => { setMessageSubView('chat'); closeApp(); }}
                 onTriggerAI={() => triggerAI(messages)}
                 onShowCharsPanel={() => setShowPanel('chars')}
+                onOpenContacts={() => setMessageSubView('contacts')}
              />
 
             <div ref={scrollRef} className="flex-1 overflow-y-auto pt-6 pb-6 no-scrollbar" style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}>
@@ -1139,9 +1179,32 @@ const Chat: React.FC = () => {
                     activeCategory={activeCategory}
                     onReroll={handleReroll}
                     canReroll={canReroll}
+                    isProactiveActive={isProactiveActive}
                 />
             </div>
 
+
+            {/* Proactive Message Modal */}
+            <ProactiveSettingsModal
+                isOpen={showProactiveModal}
+                onClose={() => setShowProactiveModal(false)}
+                char={char}
+                isProactiveActive={isProactiveActive}
+                onSave={(config) => {
+                    updateCharacter(char.id, { proactiveConfig: config });
+                    if (config.enabled) {
+                        startProactiveChat(config.intervalMinutes);
+                        addToast(`已启动主动消息，每 ${config.intervalMinutes >= 60 ? (config.intervalMinutes / 60) + ' 小时' : config.intervalMinutes + ' 分钟'}发送一次`, 'success');
+                    } else {
+                        stopProactiveChat();
+                    }
+                }}
+                onStop={() => {
+                    stopProactiveChat();
+                    updateCharacter(char.id, { proactiveConfig: { ...char.proactiveConfig, enabled: false, intervalMinutes: char.proactiveConfig?.intervalMinutes || 60 } });
+                    addToast('已关闭主动消息', 'info');
+                }}
+            />
 
             {/* Forward Modal */}
             <Modal isOpen={showForwardModal} title="转发聊天记录" onClose={() => setShowForwardModal(false)}>

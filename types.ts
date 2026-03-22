@@ -30,6 +30,7 @@ export enum AppID {
   Call = 'call', // 语音电话测试（MiniMax TTS）
   VoiceDesigner = 'voice_designer', // 捏声音 — MiniMax 音色设计器
   Guidebook = 'guidebook', // 攻略本 — 角色攻略用户小游戏
+  LifeSim = 'lifesim', // 模拟人生 — 都市人生
 }
 
 export interface SystemLog {
@@ -73,6 +74,31 @@ export interface OSTheme {
   desktopDecorations?: DesktopDecoration[];
   customFont?: string;
   hideStatusBar?: boolean;
+  // 聊天界面外观（外观 App 的「聊天界面」tab）
+  chatAvatarShape?: 'circle' | 'rounded' | 'square';
+  chatAvatarSize?: 'small' | 'medium' | 'large';
+  chatAvatarMode?: 'grouped' | 'every_message';
+  chatBubbleStyle?: 'modern' | 'flat' | 'outline' | 'shadow' | 'wechat' | 'ios';
+  chatMessageSpacing?: 'compact' | 'default' | 'spacious';
+  chatShowTimestamp?: 'always' | 'hover' | 'never';
+  chatHeaderStyle?: 'default' | 'minimal' | 'gradient' | 'wechat' | 'telegram' | 'discord' | 'pixel';
+  chatInputStyle?: 'default' | 'rounded' | 'flat' | 'wechat' | 'ios' | 'telegram' | 'discord' | 'pixel';
+  chatChromeStyle?: 'soft' | 'flat' | 'floating' | 'pixel';
+  chatBackgroundStyle?: 'plain' | 'grid' | 'paper' | 'mesh';
+  chatHeaderAlign?: 'left' | 'center';
+  chatHeaderDensity?: 'compact' | 'default' | 'airy';
+  chatStatusStyle?: 'subtle' | 'pill' | 'dot';
+  chatSendButtonStyle?: 'circle' | 'pill' | 'minimal';
+}
+
+/** 外观预设：保存/导入导出完整桌面+聊天外观 */
+export interface AppearancePreset {
+  id: string;
+  name: string;
+  createdAt: number;
+  theme: OSTheme;
+  customIcons?: Record<string, string>;
+  chatThemes?: ChatTheme[];
 }
 
 export interface TranslationConfig {
@@ -101,6 +127,26 @@ export interface ApiPreset {
   config: APIConfig;
 }
 
+/** 写入 Notion 日记库时额外填充的属性（数据库里须已有同名、同类型列；勿与 Name/Date 重复） */
+export interface NotionDiaryExtraProperty {
+  /** Notion 数据库中的属性名称，须完全一致（如 Character、标签） */
+  propertyName: string;
+  /** select=经典下拉；status=Notion「状态」列（新版常见）；multi_select=多选（填一个选项名即可） */
+  notionType: 'rich_text' | 'select' | 'status' | 'multi_select' | 'number' | 'checkbox';
+  /** 支持占位：${char} 角色名、${date} YYYY-MM-DD、${mood}、${title} 日记标题 */
+  valueTemplate: string;
+}
+
+/** 额外 Notion 库（仅查询，不写）；tag 用于 [[READ_TAG: 关键词]] */
+export interface NotionExtraDatabase {
+  id: string;
+  /** 展示名（给 system prompt 说明用） */
+  name: string;
+  /** 大写英文，如 PROJECT、BOOK；与指令 [[READ_TAG:…]] 一致 */
+  tag: string;
+  databaseId: string;
+}
+
 // 实时上下文配置 - 让AI角色感知真实世界
 export interface RealtimeConfig {
   // 天气配置
@@ -117,6 +163,11 @@ export interface RealtimeConfig {
   notionApiKey: string;   // Notion Integration Token
   notionDatabaseId: string; // 日记数据库ID
   notionNotesDatabaseId?: string; // 用户笔记数据库ID（可选，让角色读取用户的日常笔记）
+  /** 创建日记页时附加的 Notion 属性（可选） */
+  notionDiaryExtraProperties?: NotionDiaryExtraProperty[];
+
+  /** 额外可查询数据库（只读）；模型使用 [[READ_TAG: 关键词]]，TAG 须大写英文 */
+  notionExtraDatabases?: NotionExtraDatabase[];
 
   // 飞书配置 (中国区 Notion 替代)
   feishuEnabled: boolean;
@@ -272,6 +323,13 @@ export interface PhoneCustomApp {
     prompt: string; 
 }
 
+export interface PhoneContact {
+    id: string;
+    name: string;
+    note?: string;
+    linkedCharId?: string;
+}
+
 export interface PhoneEvidence {
     id: string;
     type: 'chat' | 'order' | 'social' | 'delivery' | string; 
@@ -279,7 +337,8 @@ export interface PhoneEvidence {
     detail: string; 
     timestamp: number;
     systemMessageId?: number; 
-    value?: string; 
+    value?: string;
+    isArchived?: boolean; // true = 已被更新一轮刷新归档，不可再续写
 }
 
 export interface Worldbook {
@@ -633,7 +692,8 @@ export interface CharacterProfile {
 
   phoneState?: {
       records: PhoneEvidence[];
-      customApps?: PhoneCustomApp[]; 
+      customApps?: PhoneCustomApp[];
+      fixedContacts?: PhoneContact[];
   };
 
   voiceProfile?: {
@@ -659,6 +719,20 @@ export interface CharacterProfile {
 
   // Cross-session guidebook insights: what char has discovered about user across games
   guidebookInsights?: string[];
+
+  // 主动发消息（1.0 本地方案）
+  proactiveConfig?: {
+    enabled: boolean;
+    intervalMinutes: number; // 15, 30, 60, 120, 240, 480, 720, 1440
+    /** 早安消息：每天 6–11 点首次打开 App 时发一条早安（需显式开启） */
+    morningGreetingEnabled?: boolean;
+    useSecondaryApi?: boolean;
+    secondaryApi?: {
+      baseUrl: string;
+      apiKey: string;
+      model: string;
+    };
+  };
 }
 
 export interface GroupProfile {
@@ -748,6 +822,9 @@ export interface Anniversary {
     title: string;
     date: string;
     charId: string;
+    charAware?: boolean;    // 是否让 char 感知这个纪念日（默认 true）
+    /** false = 仅一次的重要日子，过后不再按年出现在「即将到来」；未设置视为 true */
+    repeatYearly?: boolean;
     aiThought?: string;
     lastThoughtGeneratedAt?: number;
 }
@@ -923,6 +1000,214 @@ export interface Emoji {
     categoryId?: string; 
 }
 
+// ============================================================
+// 模拟人生 (LifeSim) Types — 都市人生
+// ============================================================
+
+export type SimActionType =
+    | 'ADD_NPC'
+    | 'MOVE_NPC'
+    | 'TRIGGER_EVENT'
+    | 'GO_SOLO'
+    | 'DO_NOTHING';
+
+export type SimEventType =
+    | 'fight'
+    | 'party'
+    | 'gossip'
+    | 'romance'
+    | 'rivalry'
+    | 'alliance';
+
+export type SimEffectCode =
+    | 'fight_break'
+    | 'mood_drop'
+    | 'relationship_change'
+    | 'revenge_plot'
+    | 'love_triangle'
+    | 'jealousy_spiral'
+    | 'family_feud'
+    | 'betrayal'
+    | 'romantic_confession'
+    | 'gossip_wildfire'
+    | 'npc_runaway'
+    | 'mood_breakdown'
+    | 'secret_alliance'
+    | 'power_shift'
+    | 'reconciliation';
+
+export type NPCDesire =
+    | { type: 'socialize'; targetNpcId: string }
+    | { type: 'revenge'; targetNpcId: string }
+    | { type: 'romance'; targetNpcId: string }
+    | { type: 'leave_family' }
+    | { type: 'recruit'; targetNpcId: string }
+    | { type: 'gossip_about'; targetNpcId: string }
+    | { type: 'start_rivalry'; targetNpcId: string };
+
+export interface CharNarrative {
+    innerThought: string;
+    dialogue: string;
+    commentOnWorld: string;
+    emotionalTone: 'vengeful' | 'romantic' | 'scheming' | 'chaotic' | 'peaceful' | 'amused' | 'anxious';
+}
+
+export type SimStoryKind = 'main_plot' | 'character_drama' | 'ambient' | 'system';
+export type SimStoryAttachmentKind = 'image' | 'item' | 'fanfic' | 'evidence';
+export type SimStoryAttachmentRarity = 'common' | 'rare' | 'epic';
+
+export interface SimStoryAttachmentDraft {
+    kind: SimStoryAttachmentKind;
+    title: string;
+    summary: string;
+    detail?: string;
+    visualPrompt?: string;
+    rarity?: SimStoryAttachmentRarity;
+}
+
+export interface SimStoryAttachment {
+    id: string;
+    kind: SimStoryAttachmentKind;
+    title: string;
+    summary: string;
+    detail?: string;
+    imageUrl?: string;
+    rarity?: SimStoryAttachmentRarity;
+}
+
+export interface SimAction {
+    id: string;
+    turnNumber: number;
+    actor: string;
+    actorAvatar: string;
+    actorId: string;
+    type: SimActionType;
+    description: string;
+    immediateResult: string;
+    reasoning?: string;
+    reactionToUser?: string;
+    narrative?: CharNarrative;
+    chainFromId?: string;
+    storyKind?: SimStoryKind;
+    headline?: string;
+    involvedNpcIds?: string[];
+    attachments?: SimStoryAttachment[];
+    timestamp: number;
+}
+
+export interface SimPendingEffect {
+    id: string;
+    triggerTurn: number;
+    npcId?: string;
+    familyId?: string;
+    description: string;
+    effectCode: SimEffectCode;
+    effectValue?: number;
+    chainFrom?: string;
+    severity?: number;
+    involvedNpcIds?: string[];
+}
+
+export interface SimNPC {
+    id: string;
+    name: string;
+    emoji: string;
+    personality: string[];
+    mood: number;
+    familyId: string | null;
+    profession?: SimProfession;
+    gold?: number;
+    gender?: SimGender;
+    bio?: string;
+    backstory?: string;
+    desires?: NPCDesire[];
+    grudges?: string[];
+    crushes?: string[];
+    energy?: number;
+    skills?: SimSkills;
+    inventory?: Record<string, number>;
+    currentActivity?: SimActivity;
+    activityResult?: string;
+}
+
+export interface SimFamily {
+    id: string;
+    name: string;
+    emoji: string;
+    memberIds: string[];
+    relationships: Record<string, Record<string, number>>;
+    homeX: number;
+    homeY: number;
+}
+
+export type SimSeason = 'spring' | 'summer' | 'fall' | 'winter';
+export type SimWeather = 'sunny' | 'cloudy' | 'rainy' | 'stormy' | 'snowy' | 'windy';
+export type SimTimeOfDay = 'dawn' | 'morning' | 'afternoon' | 'evening' | 'night';
+export type SimProfession = 'programmer' | 'designer' | 'finance' | 'influencer' | 'lawyer' | 'freelancer' | 'barista' | 'musician'
+    | 'internet_troll' | 'fanfic_writer' | 'fan_artist' | 'college_student' | 'tired_worker' | 'old_fashioned' | 'fashion_designer';
+
+export type SimGender = 'male' | 'female' | 'nonbinary';
+
+export type SimActivity = 'farming' | 'mining' | 'fishing' | 'crafting' | 'socializing' | 'resting' | 'foraging' | 'trading';
+export interface SimSkills { farming: number; mining: number; fishing: number; crafting: number; social: number; foraging: number; }
+export interface SimBuilding { id: string; type: string; name: string; x: number; y: number; level: number; familyId?: string; }
+
+export interface SimFestival {
+    name: string;
+    season: SimSeason;
+    day: number;
+    emoji: string;
+    description: string;
+    moodBonus: number;
+    relBonus: number;
+    chaosChange: number;
+}
+
+export interface OfflineRecapEvent {
+    day: number;
+    season: SimSeason;
+    timeOfDay: SimTimeOfDay;
+    headline: string;
+    description: string;
+    involvedNpcs: { name: string; emoji: string }[];
+    eventType: SimEventType | SimEffectCode;
+    moodChanges?: Record<string, number>;
+    relChanges?: { a: string; b: string; delta: number }[];
+    chaosChange?: number;
+    narrativeQuote?: string;
+}
+
+export interface LifeSimState {
+    id: string;
+    createdAt: number;
+    turnNumber: number;
+    currentActorId: string;
+    families: SimFamily[];
+    npcs: SimNPC[];
+    actionLog: SimAction[];
+    pendingEffects: SimPendingEffect[];
+    chaosLevel: number;
+    charQueue: string[];
+    replayPending: SimAction[];
+    participantCharIds?: string[];
+    useIndependentApiConfig?: boolean;
+    independentApiConfig?: Partial<APIConfig>;
+    isProcessingCharTurn: boolean;
+    gameOver: boolean;
+    gameOverReason?: string;
+    season?: SimSeason;
+    day?: number;
+    year?: number;
+    timeOfDay?: SimTimeOfDay;
+    weather?: SimWeather;
+    lastFestival?: string;
+    lastActiveTimestamp?: number;
+    offlineRecap?: OfflineRecapEvent[];
+    buildings?: SimBuilding[];
+    worldInventory?: Record<string, number>;
+    worldGold?: number;
+}
+
 export interface FullBackupData {
     timestamp: number;
     version: number;
@@ -988,6 +1273,9 @@ export interface FullBackupData {
 
     // Guidebook (攻略本)
     guidebookSessions?: GuidebookSession[];
+
+    // LifeSim (都市人生)
+    lifeSimState?: LifeSimState | null;
 }
 
 // --- GUIDEBOOK (攻略本) APP TYPES ---
@@ -1077,4 +1365,17 @@ export interface XhsMcpConfig {
     serverUrl: string;  // MCP: "http://localhost:18060/mcp" | Skills: "http://localhost:18061/api"
     loggedInUserId?: string;   // 登录用户的 user_id，连接测试成功后自动获取
     loggedInNickname?: string; // 登录用户的昵称
+    userXsecToken?: string;   // 小红书 xsec token，连接测试或 MCP 自动获取
+}
+
+// --- AGENDA / SCHEDULE EVENT ---
+
+export interface AgendaItem {
+    id: string;
+    title: string;
+    dateTime: string;       // "YYYY-MM-DDTHH:mm"（精确到分钟）
+    charId?: string;
+    reminderMinutes?: number | null;  // null = 不提醒；0 = 准时；15/30 = 提前 N 分钟
+    note?: string;
+    createdAt: number;
 }

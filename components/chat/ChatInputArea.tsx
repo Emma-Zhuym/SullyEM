@@ -1,6 +1,6 @@
 
 import React, { useRef } from 'react';
-import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise } from '@phosphor-icons/react';
+import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, NotePencil, ChatCircleDots } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 
@@ -32,6 +32,7 @@ interface ChatInputAreaProps {
     // Reroll Support
     onReroll: () => void;
     canReroll: boolean;
+    isProactiveActive?: boolean;
 }
 
 const ChatInputArea: React.FC<ChatInputAreaProps> = ({
@@ -41,7 +42,8 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     customThemes, onUpdateTheme, onRemoveTheme, activeThemeId,
     onPanelAction, onImageSelect, isSummarizing,
     categories = [], activeCategory = 'default',
-    onReroll, canReroll
+    onReroll, canReroll,
+    isProactiveActive = false
 }) => {
     const chatImageInputRef = useRef<HTMLInputElement>(null);
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -271,6 +273,13 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 <div className="w-14 h-14 bg-sky-50 rounded-2xl flex items-center justify-center shadow-sm text-2xl border border-sky-100">👉</div>
                                 <span className="text-xs font-bold">戳一戳</span>
                             </button>
+
+                            <button onClick={() => onPanelAction('proactive')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isProactiveActive ? 'text-violet-600' : 'text-slate-600'}`}>
+                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isProactiveActive ? 'bg-violet-100 text-violet-500 border-violet-200' : 'bg-amber-50 text-amber-500 border-amber-100'}`}>
+                                    <ChatCircleDots className="w-6 h-6" weight="bold" />
+                                </div>
+                                <span className="text-xs font-bold">主动消息</span>
+                            </button>
                             
                             <button onClick={() => onPanelAction('archive')} className="flex flex-col items-center gap-2 text-slate-600 active:scale-95 transition-transform">
                                 <div className="w-14 h-14 bg-indigo-50 rounded-2xl flex items-center justify-center shadow-sm text-indigo-400 border border-indigo-100">
@@ -292,6 +301,18 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 <span className="text-xs font-bold">相册</span>
                             </button>
                             <input type="file" ref={chatImageInputRef} className="hidden" accept="image/*" onChange={(e) => handleImageChange(e, 'chat')} />
+
+                            <button
+                                type="button"
+                                onClick={() => onPanelAction('notion-diary-quick')}
+                                disabled={isTyping}
+                                className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isTyping ? 'text-slate-300 opacity-50 pointer-events-none' : 'text-slate-600'}`}
+                            >
+                                <div className="w-14 h-14 bg-violet-50 rounded-2xl flex items-center justify-center shadow-sm text-violet-500 border border-violet-100">
+                                    <NotePencil className="w-6 h-6" weight="bold" />
+                                </div>
+                                <span className="text-xs font-bold">写 Notion</span>
+                            </button>
 
                             {/* Regenerate Button */}
                             <button onClick={onReroll} disabled={!canReroll} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${canReroll ? 'text-slate-600' : 'text-slate-300 opacity-50'}`}>

@@ -7,7 +7,7 @@ import { safeResponseJson } from '../utils/safeApi';
 import Modal from '../components/os/Modal';
 import { ContextBuilder } from '../utils/context';
 import { processImage } from '../utils/file';
-import { DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
+import { DEFAULT_ARCHIVE_PROMPTS, DEFAULT_GROUPCHAT_CONTEXT_LIMIT, GROUPCHAT_CONTEXT_LIMIT_KEY } from '../components/chat/ChatConstants';
 
 // 复用 Chat.tsx 的高颜值样式逻辑，但针对群聊微调
 const PRESET_THEME_GROUP: ChatTheme = {
@@ -194,7 +194,11 @@ const GroupChat: React.FC = () => {
 
     // Context limit (like Chat app's settingsContextLimit)
     const [contextLimit, setContextLimit] = useState<number>(() => {
-        try { return parseInt(localStorage.getItem('groupchat_context_limit') || '30'); } catch { return 30; }
+        try {
+            return parseInt(localStorage.getItem(GROUPCHAT_CONTEXT_LIMIT_KEY) || String(DEFAULT_GROUPCHAT_CONTEXT_LIMIT), 10);
+        } catch {
+            return DEFAULT_GROUPCHAT_CONTEXT_LIMIT;
+        }
     });
     
     // Selection Mode
@@ -849,14 +853,14 @@ ${recentGroupMsgs}
                 if (textContent) {
                     // Primary: split on line breaks
                     let chunks = textContent.split(/(?:\r\n|\r|\n|\u2028|\u2029)+/)
-                        .map(c => c.trim())
-                        .filter(c => c.length > 0);
+                        .map((c: string) => c.trim())
+                        .filter((c: string) => c.length > 0);
 
                     // Fallback: split on spaces between CJK characters (中文里空格=AI想换行)
                     if (chunks.length <= 1 && textContent.trim().length > 50) {
                         chunks = textContent.split(/(?<=[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef\u2000-\u206f\u2e80-\u2eff\u3001-\u3003\u2018-\u201f\u300a-\u300f\uff01-\uff0f\uff1a-\uff20])\s+(?=[\u4e00-\u9fff\u3400-\u4dbf])/)
-                            .map(c => c.trim())
-                            .filter(c => c.length > 0);
+                            .map((c: string) => c.trim())
+                            .filter((c: string) => c.length > 0);
                     }
 
                     if (chunks.length === 0) chunks.push(textContent); // Fallback
@@ -1159,7 +1163,7 @@ ${recentGroupMsgs}
                     {/* Context Limit */}
                     <div className="pt-2 border-t border-slate-100">
                         <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">AI 上下文条数 ({contextLimit})</label>
-                        <input type="range" min="20" max="5000" step="10" value={contextLimit} onChange={e => { const v = parseInt(e.target.value); setContextLimit(v); localStorage.setItem('groupchat_context_limit', String(v)); }} className="w-full h-2 bg-slate-200 rounded-full appearance-none accent-violet-500" />
+                        <input type="range" min="20" max="5000" step="10" value={contextLimit} onChange={e => { const v = parseInt(e.target.value); setContextLimit(v); localStorage.setItem(GROUPCHAT_CONTEXT_LIMIT_KEY, String(v)); }} className="w-full h-2 bg-slate-200 rounded-full appearance-none accent-violet-500" />
                         <div className="flex justify-between text-[10px] text-slate-400 mt-1"><span>20 (省流)</span><span>5000 (超长记忆)</span></div>
                         <p className="text-[9px] text-slate-400 mt-1 leading-tight">控制每次触发AI导演时发送的群聊历史消息数量。越多上下文越丰富，但消耗更多token。</p>
                     </div>

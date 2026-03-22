@@ -1,12 +1,19 @@
 
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
-import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig } from '../types';
+import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset } from '../types';
 import { DB } from '../utils/db';
+import { INSTALLED_APPS } from '../constants';
+import { migrateLegacyNotionNotesToExtra } from '../utils/notionExtraConfig';
+import { ProactiveChat } from '../utils/proactiveChat';
+import { ChatPrompts } from '../utils/chatPrompts';
+import { ChatParser } from '../utils/chatParser';
+import { safeFetchJson } from '../utils/safeApi';
 
 
 type JSZipLike = {
   folder: (name: string) => { file: (name: string, data: string, options?: { base64?: boolean }) => void } | null;
-  file: (name: string) => { async: (type: 'string') => Promise<string> } | null;
+  file: ((name: string) => { async: (type: string) => Promise<string> } | null) &
+        ((name: string, data: string, options?: { base64?: boolean }) => void);
   generateAsync: (options: { type: 'blob' }, onUpdate?: (metadata: { percent: number }) => void) => Promise<Blob>;
 };
 
@@ -66,17 +73,24 @@ const defaultRealtimeConfig: RealtimeConfig = {
   notionEnabled: false,
   notionApiKey: '',
   notionDatabaseId: '',
+  notionDiaryExtraProperties: [],
+  notionExtraDatabases: [],
   feishuEnabled: false,
   feishuAppId: '',
   feishuAppSecret: '',
   feishuBaseId: '',
   feishuTableId: '',
+  xhsEnabled: false,
   cacheMinutes: 30
 };
 
+/** Dock Message：通讯录列表 vs 私聊会话；持久化到 localStorage */
+export type MessageSubView = 'contacts' | 'chat';
+
 interface OSContextType {
   activeApp: AppID;
-  openApp: (appId: AppID) => void;
+  /** 打开 Message 时可选 `messageWidgetCharId`：桌面小组件直达该角色私聊 */
+  openApp: (appId: AppID, options?: { messageWidgetCharId?: string }) => void;
   closeApp: () => void;
   theme: OSTheme;
   updateTheme: (updates: Partial<OSTheme>) => void;
@@ -144,10 +158,23 @@ interface OSContextType {
   customIcons: Record<string, string>;
   setCustomIcon: (appId: string, iconUrl: string | undefined) => void;
 
+  // 外观预设（保存/导入导出）
+  appearancePresets: AppearancePreset[];
+  saveAppearancePreset: (name: string) => void;
+  applyAppearancePreset: (id: string) => void;
+  deleteAppearancePreset: (id: string) => void;
+  renameAppearancePreset: (id: string, name: string) => void;
+  exportAppearancePreset: (id: string) => Promise<Blob>;
+  importAppearancePreset: (file: File) => Promise<void>;
+
   // Global Message Signal
   lastMsgTimestamp: number; // New: Signal for Chat to refresh
   unreadMessages: Record<string, number>; // New: Track unread counts per character
   clearUnread: (charId: string) => void; // New: Method to clear unread
+
+  /** Message App：通讯录 / 私聊子视图（任务 6） */
+  messageSubView: MessageSubView;
+  setMessageSubView: (v: MessageSubView) => void;
 
   // System
   exportSystem: (mode: 'text_only' | 'media_only' | 'full') => Promise<Blob>;
@@ -168,6 +195,10 @@ interface OSContextType {
   suspendCall: (info: { charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string }) => void;
   resumeCall: () => void;
   clearSuspendedCall: () => void;
+
+  // App Icon Order
+  appOrder: string[];
+  setAppOrder: (order: string[]) => void;
 }
 
 const defaultTheme: OSTheme = {
@@ -368,6 +399,17 @@ const OSContext = createContext<OSContextType | undefined>(undefined);
 export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // ... (State declarations same as before) ...
   const [activeApp, setActiveApp] = useState<AppID>(AppID.Launcher);
+  const [appOrder, setAppOrderState] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('appOrder');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return INSTALLED_APPS.map(a => a.id);
+  });
+  const setAppOrder = useCallback((order: string[]) => {
+    setAppOrderState(order);
+    localStorage.setItem('appOrder', JSON.stringify(order));
+  }, []);
   const [theme, setTheme] = useState<OSTheme>(defaultTheme);
   const [apiConfig, setApiConfig] = useState<APIConfig>(defaultApiConfig);
   const [isLocked, setIsLocked] = useState(true);
@@ -408,10 +450,31 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [realtimeConfig, setRealtimeConfig] = useState<RealtimeConfig>(defaultRealtimeConfig);
   const [customThemes, setCustomThemes] = useState<ChatTheme[]>([]);
   const [customIcons, setCustomIcons] = useState<Record<string, string>>({});
+  const [appearancePresets, setAppearancePresets] = useState<AppearancePreset[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   
   const [lastMsgTimestamp, setLastMsgTimestamp] = useState<number>(0);
   const [unreadMessages, setUnreadMessages] = useState<Record<string, number>>({});
+
+  const MESSAGE_SUB_VIEW_KEY = 'sullyos_message_sub_view';
+  const [messageSubView, setMessageSubViewState] = useState<MessageSubView>(() => {
+    try {
+      const v = localStorage.getItem(MESSAGE_SUB_VIEW_KEY);
+      if (v === 'contacts' || v === 'chat') return v;
+      return 'contacts';
+    } catch {
+      return 'contacts';
+    }
+  });
+  const messageSubViewRef = useRef<MessageSubView>(messageSubView);
+  messageSubViewRef.current = messageSubView;
+
+  const setMessageSubView = useCallback((v: MessageSubView) => {
+    setMessageSubViewState(v);
+    try {
+      localStorage.setItem(MESSAGE_SUB_VIEW_KEY, v);
+    } catch { /* ignore */ }
+  }, []);
   
   // LOGS
   const [systemLogs, setSystemLogs] = useState<SystemLog[]>([]);
@@ -588,7 +651,19 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         const savedRealtimeConfig = localStorage.getItem('os_realtime_config');
         if (savedRealtimeConfig) {
             try {
-                setRealtimeConfig({ ...defaultRealtimeConfig, ...JSON.parse(savedRealtimeConfig) });
+                const parsed = JSON.parse(savedRealtimeConfig) as RealtimeConfig;
+                const { config: merged, migrated } = migrateLegacyNotionNotesToExtra({
+                    ...defaultRealtimeConfig,
+                    ...parsed,
+                });
+                setRealtimeConfig(merged);
+                if (migrated) {
+                    try {
+                        localStorage.setItem('os_realtime_config', JSON.stringify(merged));
+                    } catch (e) {
+                        console.error('Failed to persist migrated Notion extra config', e);
+                    }
+                }
             } catch (e) {
                 console.error('Failed to load realtime config', e);
             }
@@ -629,6 +704,19 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                 if (Object.keys(loadedWidgets).length > 0) {
                     loadedTheme.launcherWidgets = { ...(loadedTheme.launcherWidgets || {}), ...loadedWidgets };
                 }
+
+                // Load appearance presets from assets
+                const loadedPresets: AppearancePreset[] = [];
+                Object.keys(assetMap).forEach(key => {
+                    if (key.startsWith('appearance_preset_')) {
+                        try {
+                            const preset = JSON.parse(assetMap[key]);
+                            loadedPresets.push(preset);
+                        } catch {}
+                    }
+                });
+                loadedPresets.sort((a, b) => b.createdAt - a.createdAt);
+                setAppearancePresets(loadedPresets);
 
                 // Restore desktop decoration images from IndexedDB
                 if (loadedTheme.desktopDecorations && loadedTheme.desktopDecorations.length > 0) {
@@ -796,7 +884,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       if (cancelled) return;
                       hasNewMessage = true;
                       // Use refs for latest state (avoids stale closure & unnecessary deps)
-                      const isChattingWithThisChar = activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === char.id;
+                      const isChattingWithThisChar =
+                          activeAppRef.current === AppID.Chat &&
+                          messageSubViewRef.current === 'chat' &&
+                          activeCharIdScheduleRef.current === char.id;
 
                       // If not chatting specifically with this char right now, mark as unread
                       if (!isChattingWithThisChar) {
@@ -813,8 +904,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                                   });
                                   notif.onclick = () => {
                                       window.focus();
-                                      setActiveApp(AppID.Chat);
+                                      setMessageSubView('chat');
                                       setActiveCharacterId(char.id);
+                                      setActiveApp(AppID.Chat);
                                   };
                               } catch (e) { /* notification failed */ }
                           }
@@ -834,10 +926,69 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               });
           }
       };
-      schedulerRef.current = setInterval(checkAllSchedules, 5000);
+      schedulerRef.current = setInterval(checkAllSchedules, 15000);
       checkAllSchedules();
       return () => { cancelled = true; if (schedulerRef.current) clearInterval(schedulerRef.current); };
   }, [isDataLoaded, characters]);
+
+  // --- Morning Greeting: 早安消息 ---
+  // 每天首次在 6:00~11:00 打开 App 时，对开启了早安消息的角色逐个发早安，错开时间投递
+  useEffect(() => {
+      if (!isDataLoaded || characters.length === 0) return;
+
+      const now = new Date();
+      const hour = now.getHours();
+      if (hour < 6 || hour >= 11) return; // 仅在早晨窗口触发
+
+      const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      if (localStorage.getItem('morning_greeting_date') === todayStr) return;
+      localStorage.setItem('morning_greeting_date', todayStr); // 先锁住，防止并发重复
+
+      const selected = characters.filter(c => c.proactiveConfig?.morningGreetingEnabled === true);
+      if (selected.length === 0) return;
+
+      const timeStr = `${String(hour).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+      selected.forEach(async (char, i) => {
+          // 错开 5s ~ 2min 内投递，让消息不在同一秒出现
+          const delayMs = i * 15_000 + 5_000 + Math.floor(Math.random() * 10_000);
+          const dueAt = Date.now() + delayMs;
+
+          let content = `早安～`;
+          const cfg = apiConfig; // 闭包快照，避免异步时 apiConfig 变化
+          if (cfg.apiKey) {
+              try {
+                  const resp = await fetch(`${cfg.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
+                      body: JSON.stringify({
+                          model: cfg.model,
+                          messages: [
+                              { role: 'system', content: char.systemPrompt || '你是一个友善的AI伴侣。' },
+                              { role: 'user', content: `现在是早上${timeStr}，你想主动给${userProfile.name}发一条早安消息。请根据你的性格写一句（不超过25字，口语自然，不要引号，不要有角色名前缀）。` },
+                          ],
+                          temperature: 0.9,
+                          max_tokens: 80,
+                      }),
+                  });
+                  if (resp.ok) {
+                      const data = await resp.json();
+                      const text = data.choices?.[0]?.message?.content?.trim().replace(/^["'「『]|["'」』]$/g, '');
+                      if (text) content = text;
+                  }
+              } catch (e) { /* 降级用模板 */ }
+          }
+
+          await DB.saveScheduledMessage({
+              id: `morning-${char.id}-${todayStr}`,
+              charId: char.id,
+              content,
+              dueAt,
+              createdAt: Date.now(),
+          });
+      });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDataLoaded]); // 仅在数据加载完成后触发一次；date check 保证每天最多一次
 
   const clearUnread = useCallback((charId: string) => {
       setUnreadMessages(prev => {
@@ -847,6 +998,195 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           return next;
       });
   }, []);
+
+  // 主动发消息 1.0：监听 proactive-message-sent，toast + 未读红点
+  useEffect(() => {
+      let awayProactiveCount = 0;
+      const handler = (e: Event) => {
+          const { charId, charName, body } = (e as CustomEvent).detail as { charId: string; charName: string; body?: string };
+          setLastMsgTimestamp(Date.now());
+          const isChattingWithThisChar = activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId;
+          if (!isChattingWithThisChar) {
+              if (document.visibilityState === 'visible') {
+                  const toastId = Date.now().toString();
+                  setToasts(prev => [...prev, { id: toastId, message: `${charName} 主动发来了消息`, type: 'success' }]);
+                  setTimeout(() => setToasts(prev => prev.filter(t => t.id !== toastId)), 3000);
+              } else {
+                  awayProactiveCount += 1;
+              }
+              setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
+          }
+      };
+      const onVisible = () => {
+          if (document.visibilityState !== 'visible') return;
+          if (awayProactiveCount > 0) {
+              const toastId = Date.now().toString();
+              setToasts(prev => [...prev, { id: toastId, message: `你离开期间收到 ${awayProactiveCount} 条主动消息`, type: 'success' }]);
+              setTimeout(() => setToasts(prev => prev.filter(t => t.id !== toastId)), 3000);
+              awayProactiveCount = 0;
+          }
+      };
+      window.addEventListener('proactive-message-sent', handler);
+      document.addEventListener('visibilitychange', onVisible);
+      return () => {
+          window.removeEventListener('proactive-message-sent', handler);
+          document.removeEventListener('visibilitychange', onVisible);
+      };
+  }, []);
+
+  // 主动发消息 1.0：runProactive 处理 proactive-trigger
+  const proactiveRunningRef = useRef(false);
+  const proactiveQueueRef = useRef<string[]>([]);
+  useEffect(() => {
+      if (!isDataLoaded) return;
+
+      const drainQueuedProactive = () => {
+          const nextQueuedCharId = proactiveQueueRef.current.shift();
+          if (nextQueuedCharId) {
+              void runProactive(nextQueuedCharId);
+          }
+      };
+
+      const runProactive = async (charId: string) => {
+          if (proactiveRunningRef.current) {
+              if (!proactiveQueueRef.current.includes(charId)) {
+                  proactiveQueueRef.current.push(charId);
+              }
+              return;
+          }
+
+          const char = characters.find(c => c.id === charId);
+          if (!char) {
+              drainQueuedProactive();
+              return;
+          }
+
+          if (char.proactiveConfig && !char.proactiveConfig.enabled) {
+              drainQueuedProactive();
+              console.log(`🔕 [Proactive] Skipped for ${char.name}: disabled`);
+              return;
+          }
+
+          const pCfg = char.proactiveConfig;
+          const useSecondary = pCfg?.useSecondaryApi && pCfg.secondaryApi?.baseUrl;
+          const api = useSecondary ? pCfg!.secondaryApi! : apiConfig;
+          if (!api.baseUrl) {
+              drainQueuedProactive();
+              return;
+          }
+
+          proactiveRunningRef.current = true;
+          console.log(`🔔 [Proactive] Trigger for ${char.name}${useSecondary ? ' (副API)' : ''}`);
+
+          try {
+              const recentMsgs = await DB.getRecentMessagesByCharId(charId, 200);
+              const lastRealUserMsg = [...recentMsgs].reverse().find(
+                  m => m.role === 'user' && !m.metadata?.proactiveHint
+              );
+
+              const now = new Date();
+              const timeStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+
+              let timeSinceUser = '';
+              let gapMin = 0;
+              if (lastRealUserMsg) {
+                  gapMin = Math.floor((now.getTime() - lastRealUserMsg.timestamp) / 60000);
+                  if (gapMin < 60) timeSinceUser = `${gapMin}分钟`;
+                  else if (gapMin < 1440) timeSinceUser = `${Math.floor(gapMin / 60)}小时${gapMin % 60 > 0 ? gapMin % 60 + '分钟' : ''}`;
+                  else timeSinceUser = `${Math.floor(gapMin / 1440)}天${Math.floor((gapMin % 1440) / 60)}小时`;
+              }
+
+              const userName = userProfile?.name || '对方';
+              const longGapHint = timeSinceUser && gapMin > 120 ? `（${userName}挺久没找你了，你也可以表达想念、好奇${userName}在干嘛、或者小小地抱怨一下。）` : '';
+              await DB.saveMessage({
+                  charId,
+                  role: 'user',
+                  type: 'text',
+                  content: `[系统提示（非${userName}发言）: 现在是 ${timeStr}。${timeSinceUser ? `${userName}已经 ${timeSinceUser} 没有找你说话了。` : ''}这是系统给你的一次主动发消息机会——${userName}并没有在跟你说话，是你想主动找${userName}。像真人一样随意地发条消息吧，比如：随手拍了张照片想分享、刚看到个有趣的事想说、突然想到个冷知识、吐槽今天的天气/食物/见闻、或者就是单纯想找${userName}聊几句。不要刻意，不要像在"汇报近况"，就像你真的拿起手机随手发了条消息。一两句话就好。${longGapHint}]`,
+                  metadata: { proactiveHint: true, hidden: true }
+              });
+
+              const allMsgs = await DB.getRecentMessagesByCharId(charId, char.contextLimit || 500);
+              const emojis = await DB.getEmojis();
+              const categories = await DB.getEmojiCategories();
+              const systemPrompt = await ChatPrompts.buildSystemPrompt(char, userProfile, groups, emojis, categories, allMsgs, realtimeConfig);
+              const { apiMessages } = ChatPrompts.buildMessageHistory(allMsgs, char.contextLimit || 500, char, userProfile, emojis);
+              const fullMessages = [{ role: 'system', content: systemPrompt }, ...apiMessages];
+
+              const baseUrl = api.baseUrl.replace(/\/+$/, '');
+              const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${api.apiKey || 'sk-none'}` };
+              const data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                  method: 'POST', headers,
+                  body: JSON.stringify({ model: api.model, messages: fullMessages, temperature: 0.85, stream: false })
+              });
+
+              let aiContent = data.choices?.[0]?.message?.content || '';
+              aiContent = aiContent.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<think>[\s\S]*$/gi, '');
+              aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
+              aiContent = aiContent.replace(/^[\w一-龥]+:\s*/, '');
+              aiContent = aiContent.replace(/\s*\[(?:聊天|通话|约会)\]\s*/g, '\n').trim();
+
+              aiContent = ChatParser.sanitize(aiContent);
+
+              if (aiContent) {
+                  const responseParts = ChatParser.splitResponse(aiContent);
+                  const savedPreviewChunks: string[] = [];
+                  const baseTimestamp = Date.now();
+                  let offset = 0;
+
+                  for (const part of responseParts) {
+                      if (part.type === 'emoji') {
+                          await DB.saveMessage({
+                              charId,
+                              role: 'assistant',
+                              type: 'emoji',
+                              content: part.content,
+                              timestamp: baseTimestamp + offset,
+                          });
+                          offset += 1;
+                          continue;
+                      }
+
+                      const textChunks = ChatParser.chunkText(part.content)
+                          .map(chunk => ChatParser.sanitize(chunk))
+                          .filter(chunk => ChatParser.hasDisplayContent(chunk));
+
+                      for (const chunk of textChunks) {
+                          await DB.saveMessage({
+                              charId,
+                              role: 'assistant',
+                              type: 'text',
+                              content: chunk,
+                              timestamp: baseTimestamp + offset,
+                          });
+                          savedPreviewChunks.push(chunk);
+                          offset += 1;
+                      }
+                  }
+
+                  const previewSource = savedPreviewChunks.join(' ').trim();
+                  const preview = previewSource.replace(/\s+/g, ' ').trim().slice(0, 120) || `${char.name} sent a proactive message`;
+
+                  window.dispatchEvent(new CustomEvent('proactive-message-sent', {
+                      detail: { charId, charName: char.name, body: preview }
+                  }));
+              }
+          } catch (err) {
+              console.error(`[Proactive] Error for ${char.name}:`, err);
+          } finally {
+              proactiveRunningRef.current = false;
+              drainQueuedProactive();
+          }
+      };
+
+      ProactiveChat.onTrigger((charId: string) => {
+          void runProactive(charId);
+      });
+
+      return () => {
+          ProactiveChat.onTrigger(() => {});
+      };
+  }, [isDataLoaded, characters, apiConfig, userProfile, groups, realtimeConfig]);
 
   const updateTheme = async (updates: Partial<OSTheme>) => {
     const { wallpaper, launcherWidgetImage, launcherWidgets, desktopDecorations, customFont, ...styleUpdates } = updates;
@@ -1089,6 +1429,101 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const addCustomTheme = async (theme: ChatTheme) => { setCustomThemes(prev => { const exists = prev.find(t => t.id === theme.id); if (exists) return prev.map(t => t.id === theme.id ? theme : t); return [...prev, theme]; }); await DB.saveTheme(theme); };
   const removeCustomTheme = async (id: string) => { setCustomThemes(prev => prev.filter(t => t.id !== id)); await DB.deleteTheme(id); };
   const setCustomIcon = async (appId: string, iconUrl: string | undefined) => { setCustomIcons(prev => { const next = { ...prev }; if (iconUrl) next[appId] = iconUrl; else delete next[appId]; return next; }); if (iconUrl) { await DB.saveAsset(`icon_${appId}`, iconUrl); } else { await DB.deleteAsset(`icon_${appId}`); } };
+
+  // --- 外观预设 ---
+  const saveAppearancePreset = async (name: string) => {
+      const preset: AppearancePreset = {
+          id: `ap_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          name,
+          createdAt: Date.now(),
+          theme: { ...theme },
+          customIcons: Object.keys(customIcons).length > 0 ? { ...customIcons } : undefined,
+          chatThemes: customThemes.length > 0 ? [...customThemes] : undefined,
+      };
+      setAppearancePresets(prev => [preset, ...prev]);
+      await DB.saveAsset(`appearance_preset_${preset.id}`, JSON.stringify(preset));
+      addToast(`外观预设「${name}」已保存`, 'success');
+  };
+
+  const applyAppearancePreset = async (id: string) => {
+      const preset = appearancePresets.find(p => p.id === id);
+      if (!preset) return;
+      setTheme(preset.theme);
+      localStorage.setItem('os_theme', JSON.stringify(preset.theme));
+      applyCustomFont(preset.theme.customFont);
+      if (preset.customIcons) {
+          setCustomIcons(preset.customIcons);
+          for (const [appId, iconUrl] of Object.entries(preset.customIcons)) {
+              await DB.saveAsset(`icon_${appId}`, iconUrl);
+          }
+      }
+      if (preset.chatThemes) {
+          for (const ct of preset.chatThemes) {
+              await DB.saveTheme(ct);
+          }
+          setCustomThemes(prev => {
+              const merged = [...prev];
+              for (const ct of preset.chatThemes!) {
+                  const idx = merged.findIndex(t => t.id === ct.id);
+                  if (idx >= 0) merged[idx] = ct;
+                  else merged.push(ct);
+              }
+              return merged;
+          });
+      }
+      if (preset.theme.wallpaper && preset.theme.wallpaper.startsWith('data:')) {
+          await DB.saveAsset('wallpaper', preset.theme.wallpaper);
+      }
+      if (preset.theme.desktopDecorations) {
+          for (const d of preset.theme.desktopDecorations) {
+              if (d.type === 'image' && d.content) {
+                  await DB.saveAsset(`deco_${d.id}`, d.content);
+              }
+          }
+      }
+      addToast(`已应用预设「${preset.name}」`, 'success');
+  };
+
+  const deleteAppearancePreset = async (id: string) => {
+      setAppearancePresets(prev => prev.filter(p => p.id !== id));
+      await DB.deleteAsset(`appearance_preset_${id}`);
+      addToast('预设已删除', 'info');
+  };
+
+  const renameAppearancePreset = async (id: string, name: string) => {
+      setAppearancePresets(prev => prev.map(p => {
+          if (p.id !== id) return p;
+          const updated = { ...p, name };
+          DB.saveAsset(`appearance_preset_${id}`, JSON.stringify(updated));
+          return updated;
+      }));
+      addToast('预设已重命名', 'success');
+  };
+
+  const exportAppearancePreset = async (id: string): Promise<Blob> => {
+      const preset = appearancePresets.find(p => p.id === id);
+      if (!preset) throw new Error('预设不存在');
+      const data = JSON.stringify({ type: 'sully_appearance_preset', version: 1, ...preset }, null, 2);
+      return new Blob([data], { type: 'application/json' });
+  };
+
+  const importAppearancePreset = async (file: File): Promise<void> => {
+      const text = await file.text();
+      const raw = JSON.parse(text);
+      if (raw.type !== 'sully_appearance_preset') throw new Error('无效的外观预设文件');
+      const preset: AppearancePreset = {
+          id: `ap_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          name: raw.name || '导入的预设',
+          createdAt: Date.now(),
+          theme: raw.theme,
+          customIcons: raw.customIcons,
+          chatThemes: raw.chatThemes,
+      };
+      setAppearancePresets(prev => [preset, ...prev]);
+      await DB.saveAsset(`appearance_preset_${preset.id}`, JSON.stringify(preset));
+      addToast(`已导入预设「${preset.name}」`, 'success');
+  };
+
   const handleSetActiveCharacter = (id: string) => { setActiveCharacterId(id); localStorage.setItem('os_last_active_char_id', id); };
   const addToast = (message: string, type: Toast['type'] = 'info') => { const id = Date.now().toString(); setToasts(prev => [...prev, { id, message, type }]); setTimeout(() => { setToasts(prev => prev.filter(t => t.id !== id)); }, 3000); };
 
@@ -1225,9 +1660,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   const savedPresetDecos = backupData.theme.desktopDecorations
                       ?.filter(d => d.type === 'preset')
                       .map(d => ({ id: d.id, content: d.content }));
-                  backupData.theme = stripBase64(backupData.theme);
+                  backupData.theme = stripBase64(backupData.theme) ?? backupData.theme;
                   // Restore preset SVGs and remove image decorations (they have no data in text mode)
-                  if (backupData.theme.desktopDecorations && savedPresetDecos) {
+                  if (backupData.theme?.desktopDecorations && savedPresetDecos) {
                       backupData.theme.desktopDecorations = backupData.theme.desktopDecorations
                           .map(d => {
                               const saved = savedPresetDecos.find(p => p.id === d.id);
@@ -1429,11 +1864,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           await DB.importFullData(data);
           
           if (data.theme) {
-              const cleanTheme = { ...data.theme };
-              // Modified: Delete key instead of setting to empty string if it's a data URI
-              // This prevents updateTheme from triggering DB deletion for these assets if they were just restored to DB.
-              if (cleanTheme.wallpaper && cleanTheme.wallpaper.startsWith('data:')) { delete cleanTheme.wallpaper; }
-              if (cleanTheme.launcherWidgetImage && cleanTheme.launcherWidgetImage.startsWith('data:')) { delete cleanTheme.launcherWidgetImage; }
+              const cleanTheme: Partial<typeof data.theme> = { ...data.theme };
+              // Modified: Clear data URIs to prevent updateTheme from re-triggering DB deletion for restored assets.
+              if (cleanTheme.wallpaper?.startsWith('data:')) cleanTheme.wallpaper = undefined;
+              if (cleanTheme.launcherWidgetImage?.startsWith('data:')) cleanTheme.launcherWidgetImage = undefined;
               if (cleanTheme.launcherWidgets) {
                   const cw = { ...cleanTheme.launcherWidgets };
                   for (const k of Object.keys(cw)) { if (cw[k]?.startsWith('data:')) delete cw[k]; }
@@ -1510,7 +1944,19 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   };
 
   const resetSystem = async () => { try { await DB.deleteDB(); localStorage.clear(); window.location.reload(); } catch (e) { console.error(e); addToast('重置失败，请手动清除浏览器数据', 'error'); } };
-  const openApp = (appId: AppID) => setActiveApp(appId);
+  const openApp = useCallback((appId: AppID, options?: { messageWidgetCharId?: string }) => {
+    if (appId === AppID.Chat) {
+      if (options?.messageWidgetCharId) {
+        setMessageSubView('chat');
+        setActiveCharacterId(options.messageWidgetCharId);
+        setActiveApp(AppID.Chat);
+        return;
+      }
+      setActiveApp(AppID.Chat);
+      return;
+    }
+    setActiveApp(appId);
+  }, [setMessageSubView]);
   const closeApp = () => setActiveApp(AppID.Launcher);
   const unlock = () => setIsLocked(false);
 
@@ -1595,9 +2041,18 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     addToast,
     customIcons,
     setCustomIcon,
+    appearancePresets,
+    saveAppearancePreset,
+    applyAppearancePreset,
+    deleteAppearancePreset,
+    renameAppearancePreset,
+    exportAppearancePreset,
+    importAppearancePreset,
     lastMsgTimestamp,
     unreadMessages,
     clearUnread,
+    messageSubView,
+    setMessageSubView,
     exportSystem,
     importSystem,
     resetSystem,
@@ -1609,7 +2064,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     suspendedCall,
     suspendCall,
     resumeCall,
-    clearSuspendedCall
+    clearSuspendedCall,
+    appOrder,
+    setAppOrder,
   };
 
   return (

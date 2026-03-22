@@ -7,7 +7,8 @@ import StatusBar from './os/StatusBar';
 import Launcher from '../apps/Launcher';
 import Settings from '../apps/Settings';
 import Character from '../apps/Character';
-import Chat from '../apps/Chat'; 
+import Chat from '../apps/Chat';
+import ContactsList from '../components/chat/ContactsList';
 import GroupChat from '../apps/GroupChat'; 
 import ThemeMaker from '../apps/ThemeMaker';
 import Appearance from '../apps/Appearance';
@@ -32,8 +33,11 @@ import SongwritingApp from '../apps/SongwritingApp';
 import CallApp from '../apps/CallApp';
 import VoiceDesignerApp from '../apps/VoiceDesignerApp';
 import GuidebookApp from '../apps/GuidebookApp';
-import { SpecialMomentsApp, ValentineController, shouldShowValentinePopup } from './ValentineEvent';
-import { WhiteDayController, shouldShowWhiteDayPopup, isWhiteDay } from './WhiteDayEvent';
+import LifeSimApp from '../apps/LifeSimApp';
+import { SpecialMomentsApp, ValentineController } from './ValentineEvent';
+import { WhiteDayController } from './WhiteDayEvent';
+import { shouldShowValentinePopup } from '../utils/valentineEventUtils';
+import { shouldShowWhiteDayPopup, isWhiteDay } from '../utils/whiteDayEventUtils';
 import { AppID } from '../types';
 import { App as CapApp } from '@capacitor/app';
 import { StatusBar as CapStatusBar, Style as StatusBarStyle } from '@capacitor/status-bar';
@@ -142,7 +146,7 @@ const DisclaimerPopup: React.FC<{ onAccept: () => void }> = ({ onAccept }) => (
 );
 
 const PhoneShell: React.FC = () => {
-  const { theme, isLocked, unlock, activeApp, closeApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters, handleBack, suspendedCall, resumeCall } = useOS();
+  const { theme, isLocked, unlock, activeApp, closeApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters, handleBack, suspendedCall, resumeCall, messageSubView } = useOS();
 
   // Disclaimer popup for first-time users
   const [showDisclaimer, setShowDisclaimer] = useState(() => {
@@ -325,7 +329,7 @@ const PhoneShell: React.FC = () => {
     switch (activeApp) {
       case AppID.Settings: return <Settings />;
       case AppID.Character: return <Character />;
-      case AppID.Chat: return <Chat />;
+      case AppID.Chat: return messageSubView === 'contacts' ? <ContactsList /> : <Chat />;
       case AppID.GroupChat: return <GroupChat />; 
       case AppID.ThemeMaker: return <ThemeMaker />;
       case AppID.Appearance: return <Appearance />;
@@ -350,6 +354,7 @@ const PhoneShell: React.FC = () => {
       case AppID.Call: return <CallApp />;
       case AppID.VoiceDesigner: return <VoiceDesignerApp />;
       case AppID.Guidebook: return <GuidebookApp />;
+      case AppID.LifeSim: return <LifeSimApp />;
       case AppID.SpecialMoments: return <SpecialMomentsApp />;
       case AppID.Launcher:
       default: return <Launcher />;
