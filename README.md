@@ -8,8 +8,8 @@
 
 本仓库是在两个开源项目基础上做的**个人二改整合**：
 
-- **SULLYTEST2（https://github.com/qegj567-cloud/SULLYTEST2）**：手机模拟 OS、角色聊天、Notion 日记等基底。
-- **SullyOS（https://github.com/qegj567-cloud/SullyOS）**：从中合并了部分能力（如都市人生、外观系统、主动消息）。
+- **SULLYTEST2**：手机模拟 OS、角色聊天、Notion 日记等基底。（https://github.com/qegj567-cloud/SULLYTEST2）
+- **SullyOS**：从中合并了部分能力（如都市人生、外观系统、主动消息）。（https://github.com/qegj567-cloud/SullyOS）
 
 ---
 
@@ -23,8 +23,6 @@
 ---
 
 下面说明**二改介绍与用法**，再附上游功能概览与说明。
-
----
 
 ## 二改功能介绍与用法
 
