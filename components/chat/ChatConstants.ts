@@ -3,7 +3,7 @@ import { ChatTheme } from '../../types';
 
 // Group chat context limit (messages to include in context)
 export const DEFAULT_GROUPCHAT_CONTEXT_LIMIT = 500;
-export const GROUPCHAT_CONTEXT_LIMIT_KEY = 'groupchat-context-limit';
+export const GROUPCHAT_CONTEXT_LIMIT_KEY = 'groupchat_context_limit';
 
 // Built-in presets map to the new data structure for consistency
 export const PRESET_THEMES: Record<string, ChatTheme> = {
