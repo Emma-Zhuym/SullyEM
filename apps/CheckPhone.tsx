@@ -6,6 +6,16 @@ import { ContextBuilder } from '../utils/context';
 import Modal from '../components/os/Modal';
 import { safeResponseJson } from '../utils/safeApi';
 
+/** 会话标题里用于合并的「名字」：括号前为主名（中文/英文括号），备注 alias 不同也视为同一会话 */
+function phoneTitleBase(title: string): string {
+    const t = title.trim();
+    const i1 = t.indexOf('（');
+    if (i1 > 0) return t.slice(0, i1).trim();
+    const i2 = t.indexOf('(');
+    if (i2 > 0) return t.slice(0, i2).trim();
+    return t;
+}
+
 // --- Debug Component ---
 const LayoutInspector: React.FC = () => {
     const [stats, setStats] = useState({ w: 0, h: 0, vh: 0, top: 0 });
@@ -115,20 +125,32 @@ const CheckPhone: React.FC = () => {
         setActiveAppId('home');
     };
 
+    /** 删除同一会话（主名相同）下的全部聊天证据及对应 system 消息 */
     const handleDeleteRecord = async (record: PhoneEvidence) => {
         if (!targetChar) return;
-        
-        const newRecords = (targetChar.phoneState?.records || []).filter(r => r.id !== record.id);
-        updateCharacter(targetChar.id, { 
-            phoneState: { ...(targetChar.phoneState ?? { records: [] }), records: newRecords } 
+
+        const base = phoneTitleBase(record.title);
+        const all = targetChar.phoneState?.records || [];
+        const toRemove = all.filter(
+            r => r.type === 'chat' && phoneTitleBase(r.title) === base
+        );
+        const removeIds = new Set(toRemove.map(r => r.id));
+        const newRecords = all.filter(r => !removeIds.has(r.id));
+
+        updateCharacter(targetChar.id, {
+            phoneState: { ...(targetChar.phoneState ?? { records: [] }), records: newRecords }
         });
 
-        if (record.systemMessageId) {
-            await DB.deleteMessage(record.systemMessageId);
+        for (const r of toRemove) {
+            if (r.systemMessageId) {
+                try {
+                    await DB.deleteMessage(r.systemMessageId);
+                } catch { /* ignore */ }
+            }
         }
 
-        if (selectedChatRecord?.id === record.id) {
-            setActiveAppId('chat'); // Go back to list
+        if (selectedChatRecord && phoneTitleBase(selectedChatRecord.title) === base) {
+            setActiveAppId('chat');
             setSelectedChatRecord(null);
         }
 
@@ -183,6 +205,24 @@ const CheckPhone: React.FC = () => {
             if (char2Re && char2Re.test(line)) return line.replace(/^[^:：]+[:：]\s*/, '我：');
             return line;
         }).join('\n');
+    };
+
+    /**
+     * 在 viewer 角色手机里，会话列表里「对方」应显示的标题：与固定联系人里 linked 到 peer 的「名字（备注）」一致。
+     * 同步消息到对面手机时必须用这个标题，否则会出现「本地刷新是备注名、同步过来是真名」两条会话无法合并的问题。
+     */
+    const getPeerPhoneChatTitle = (viewerChar: CharacterProfile, peerCharId: string): string => {
+        const fc = viewerChar.phoneState?.fixedContacts?.find(c => c.linkedCharId === peerCharId);
+        const peer = characters.find(c => c.id === peerCharId);
+        if (fc) return fc.note ? `${fc.name}（${fc.note}）` : fc.name;
+        return peer?.name ?? 'Unknown';
+    };
+
+    /** 同一会话（同主名）内用于展示的标题：取时间最新一条的完整 title，alias 以最新为准 */
+    const getLatestDisplayTitleForBase = (all: PhoneEvidence[], base: string): string => {
+        const inGroup = all.filter(r => r.type === 'chat' && phoneTitleBase(r.title) === base);
+        if (inGroup.length === 0) return base;
+        return [...inGroup].sort((a, b) => b.timestamp - a.timestamp)[0].title;
     };
 
     const handleSaveContact = () => {
@@ -417,10 +457,10 @@ const CheckPhone: React.FC = () => {
             }
 
             const existingRecords = targetChar.phoneState?.records || [];
-            // Archive any existing active chat records whose title matches a newly generated one
-            const newTitles = new Set(newRecordsToAdd.map(r => r.title));
+            // Archive any existing active chat records whose「主名」与本轮新记录相同（alias 不同也归档旧话题）
+            const newBases = new Set(newRecordsToAdd.map(r => phoneTitleBase(r.title)));
             const archivedExisting = existingRecords.map(r =>
-                r.type === 'chat' && newTitles.has(r.title) && !r.isArchived
+                r.type === 'chat' && newBases.has(phoneTitleBase(r.title)) && !r.isArchived
                     ? { ...r, isArchived: true }
                     : r
             );
@@ -434,18 +474,22 @@ const CheckPhone: React.FC = () => {
                 const char2 = characters.find(ch => ch.id === contact.linkedCharId);
                 if (!char2) continue;
 
-                // 找到本轮这个 title 对应的新记录
-                const recordForContact = newRecordsToAdd.find(r => r.title === (contact.note ? `${contact.name}（${contact.note}）` : contact.name) || r.title.startsWith(contact.name));
+                // 找到本轮对应的新记录：主名与固定联系人 name 一致即可（alias 可变）
+                const recordForContact = newRecordsToAdd.find(r =>
+                    phoneTitleBase(r.title) === contact.name.trim() ||
+                    r.title === (contact.note ? `${contact.name}（${contact.note}）` : contact.name) ||
+                    r.title.startsWith(contact.name)
+                );
                 if (!recordForContact) continue;
 
                 const flippedDetail = flipDetailPerspective(recordForContact.detail, char2.name);
-                const char2Title = targetChar.name;  // char2 视角下，对方就是 char1
+                const char2Title = getPeerPhoneChatTitle(char2, targetChar.id);
 
                 const char2Ps = char2.phoneState ?? { records: [] };
                 const char2Existing = char2Ps.records || [];
-                // 归档 char2 里同 title 的旧话题
+                // 归档 char2 里同主名（忽略 alias）的旧话题
                 const char2Archived = char2Existing.map(r =>
-                    r.type === 'chat' && r.title === char2Title && !r.isArchived
+                    r.type === 'chat' && phoneTitleBase(r.title) === phoneTitleBase(char2Title) && !r.isArchived
                         ? { ...r, isArchived: true }
                         : r
                 );
@@ -459,8 +503,8 @@ const CheckPhone: React.FC = () => {
                 updateCharacter(char2.id, {
                     phoneState: { ...char2Ps, records: [...char2Archived, char2NewRecord] }
                 });
-                // 写入 char2 私聊消息库，便于「手动归档记忆」等与 char1 同链路读到
-                const char2SysContent = `[系统: ${char2.name} 与 "${targetChar.name}" 的聊天记录-内容涉及: ${flippedDetail.replace(/\n/g, ' ')}]`;
+                // 写入 char2 私聊消息库，便于「手动归档记忆」等与 char1 同链路读到（联系人名与手机列表一致）
+                const char2SysContent = `[系统: ${char2.name} 与 "${char2Title}" 的聊天记录-内容涉及: ${flippedDetail.replace(/\n/g, ' ')}]`;
                 await DB.saveMessage({
                     charId: char2.id,
                     role: 'system',
@@ -487,10 +531,12 @@ const CheckPhone: React.FC = () => {
 
         try {
             const context = ContextBuilder.buildCoreContext(targetChar, userProfile, true); // Enable detailed context
+            const allChatForPrompt = targetChar.phoneState?.records?.filter(r => r.type === 'chat') || [];
+            const displayTitleForPrompt = getLatestDisplayTitleForBase(allChatForPrompt, phoneTitleBase(selectedChatRecord.title));
             const prompt = `${context}
 
 ### [Task: Continue Conversation]
-Roleplay: You are "${targetChar.name}". You are chatting on your phone with "${selectedChatRecord.title}".
+Roleplay: You are "${targetChar.name}". You are chatting on your phone with "${displayTitleForPrompt}".
 Current History:
 """
 ${selectedChatRecord.detail}
@@ -500,7 +546,7 @@ Task: Please continue this conversation for 3-5 more turns.
 Style: Casual, IM style.
 Format: 
 - Use "我: ..." for yourself (${targetChar.name}).
-- Use "对方: ..." for the contact (${selectedChatRecord.title}).
+- Use "对方: ..." for the contact (${displayTitleForPrompt}).
 - Only output the new dialogue lines. Do NOT repeat history.
 `;
 
@@ -536,8 +582,10 @@ Format:
                 });
 
                 // 同步续写内容到 char2（若该联系人有 linkedCharId）
+                const selBase = phoneTitleBase(selectedChatRecord.title);
                 const linkedContact = fixedContacts.find(c =>
                     c.linkedCharId && (
+                        c.name === selBase ||
                         selectedChatRecord.title === (c.note ? `${c.name}（${c.note}）` : c.name) ||
                         selectedChatRecord.title.startsWith(c.name)
                     )
@@ -545,18 +593,18 @@ Format:
                 if (linkedContact?.linkedCharId) {
                     const char2 = characters.find(ch => ch.id === linkedContact.linkedCharId);
                     if (char2) {
-                        const char2Title = targetChar.name;
+                        const char2Title = getPeerPhoneChatTitle(char2, targetChar.id);
                         const char2Ps = char2.phoneState ?? { records: [] };
                         const char2Records = char2Ps.records || [];
                         // 找到 char2 里对应 title 的未归档记录，append 翻转后的新内容
                         const flippedNewLines = flipDetailPerspective(newLines, char2.name);
                         const char2Updated = char2Records.map(r =>
-                            r.type === 'chat' && r.title === char2Title && !r.isArchived
+                            r.type === 'chat' && phoneTitleBase(r.title) === phoneTitleBase(char2Title) && !r.isArchived
                                 ? { ...r, detail: `${r.detail}\n${flippedNewLines}` }
                                 : r
                         );
                         // 如果 char2 里还没有这条记录（首次续写前没刷新过 char2），新建一条
-                        const hasExisting = char2Records.some(r => r.type === 'chat' && r.title === char2Title && !r.isArchived);
+                        const hasExisting = char2Records.some(r => r.type === 'chat' && phoneTitleBase(r.title) === phoneTitleBase(char2Title) && !r.isArchived);
                         const finalChar2Records = hasExisting ? char2Updated : [
                             ...char2Records,
                             {
@@ -576,7 +624,7 @@ Format:
                                 charId: char2.id,
                                 role: 'system',
                                 type: 'text',
-                                content: `[系统: ${char2.name} 与 "${targetChar.name}" 的聊天记录（续）-内容涉及: ${cont}]`
+                                content: `[系统: ${char2.name} 与 "${char2Title}" 的聊天记录（续）-内容涉及: ${cont}]`
                             });
                         }
                     }
@@ -608,38 +656,33 @@ Format:
     );
 
     const renderChatList = () => {
-        // Group by title: one card per contact, showing the most recent active record
+        // Group by「主名」phoneTitleBase：同主名合并为一行；展示标题用时间最新一条的完整 title（alias 以最新为准）
         const allChat = records.filter(r => r.type === 'chat');
-        const byTitle = new Map<string, PhoneEvidence>();
-        allChat
-            .slice()
-            .sort((a, b) => b.timestamp - a.timestamp)
-            .forEach(r => {
-                if (!byTitle.has(r.title)) {
-                    byTitle.set(r.title, r);
-                } else if (!r.isArchived && byTitle.get(r.title)?.isArchived) {
-                    byTitle.set(r.title, r);
-                }
-            });
-        const list = Array.from(byTitle.values()).sort((a, b) => b.timestamp - a.timestamp);
+        const bases = [...new Set(allChat.map(r => phoneTitleBase(r.title)))];
+        const list = bases
+            .map(base => {
+                const inBase = allChat.filter(r => phoneTitleBase(r.title) === base);
+                const displayTitle = getLatestDisplayTitleForBase(allChat, base);
+                const activeRecord = inBase
+                    .filter(x => !x.isArchived)
+                    .sort((a, b) => b.timestamp - a.timestamp)[0]
+                    || inBase.sort((a, b) => b.timestamp - a.timestamp)[0];
+                return { base, displayTitle, activeRecord };
+            })
+            .sort((a, b) => b.activeRecord.timestamp - a.activeRecord.timestamp);
 
         return (
             <div className="absolute inset-0 w-full h-full flex flex-col bg-slate-50 z-10">
                 {renderHeader('Message', () => setActiveAppId('home'))}
                 <div className="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar pb-24 overscroll-contain">
                     {list.length === 0 && <div className="text-center text-slate-400 mt-20 text-xs">暂无聊天记录</div>}
-                    {list.map(r => {
-                        // Find the current active record for this title
-                        const activeRecord = allChat
-                            .filter(x => x.title === r.title && !x.isArchived)
-                            .sort((a, b) => b.timestamp - a.timestamp)[0] || r;
-                        const hasHistory = allChat.some(x => x.title === r.title && x.isArchived);
-                        // 使用联系人标题中的第一个有效字符作为头像首字（优先汉字/字母/数字）
-                        const initialMatch = r.title.match(/[\u4e00-\u9fa5A-Za-z0-9]/);
-                        const initial = initialMatch ? initialMatch[0] : (r.title[0] || '聊');
+                    {list.map(({ base, displayTitle, activeRecord }) => {
+                        const hasHistory = allChat.some(x => phoneTitleBase(x.title) === base && x.isArchived);
+                        const initialMatch = displayTitle.match(/[\u4e00-\u9fa5A-Za-z0-9]/);
+                        const initial = initialMatch ? initialMatch[0] : (displayTitle[0] || '聊');
                         return (
                             <div
-                                key={r.title}
+                                key={base}
                                 onClick={() => { setSelectedChatRecord(activeRecord); setActiveAppId('chat_detail'); }}
                                 className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 relative group animate-slide-up active:scale-98 transition-transform cursor-pointer"
                             >
@@ -649,7 +692,7 @@ Format:
                                     </div>
                                     <div className="flex-1 min-w-0">
                                         <div className="flex justify-between items-baseline mb-1">
-                                            <div className="font-bold text-slate-700 text-sm truncate">{r.title}</div>
+                                            <div className="font-bold text-slate-700 text-sm truncate">{displayTitle}</div>
                                             <div className="text-[10px] text-slate-400 flex items-center gap-1">
                                                 {hasHistory && <span className="text-indigo-300">有历史</span>}
                                                 <span>{new Date(activeRecord.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
@@ -660,7 +703,7 @@ Format:
                                         </div>
                                     </div>
                                 </div>
-                                <button onClick={(e) => { e.stopPropagation(); handleDeleteRecord(r); }} className="absolute top-2 right-2 w-6 h-6 bg-red-100 text-red-500 rounded-full flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity z-10">×</button>
+                                <button onClick={(e) => { e.stopPropagation(); handleDeleteRecord(activeRecord); }} className="absolute top-2 right-2 w-6 h-6 bg-red-100 text-red-500 rounded-full flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity z-10">×</button>
                             </div>
                         );
                     })}
@@ -677,9 +720,13 @@ Format:
   const renderChatDetail = () => {
     if (!selectedChatRecord || !targetChar) return null;
 
-    // Collect archived records for this title (as read-only history)
+    const selBase = phoneTitleBase(selectedChatRecord.title);
+    const allChatRows = records.filter(r => r.type === 'chat');
+    const headerTitle = getLatestDisplayTitleForBase(allChatRows, selBase);
+
+    // Collect archived records for this「主名」（as read-only history）
     const archivedForTitle = records
-        .filter(r => r.type === 'chat' && r.title === selectedChatRecord.title && r.isArchived)
+        .filter(r => r.type === 'chat' && phoneTitleBase(r.title) === selBase && r.isArchived)
         .sort((a, b) => a.timestamp - b.timestamp);
 
     const isCurrentActive = !selectedChatRecord.isArchived;
@@ -703,7 +750,7 @@ Format:
             <div key={idx} className={`flex ${msg.isMe ? 'justify-end' : 'justify-start'} ${dimmed ? 'opacity-60' : ''}`}>
                 {!msg.isMe && (
                     <div className="w-9 h-9 rounded-md bg-gray-300 flex items-center justify-center text-xs text-gray-500 mr-2 shrink-0">
-                        {selectedChatRecord.title[0]}
+                        {headerTitle[0]}
                     </div>
                 )}
                 <div className={`px-3 py-2 rounded-lg max-w-[75%] text-sm leading-relaxed shadow-sm break-words relative ${msg.isMe ? 'bg-[#95ec69] text-black' : 'bg-white text-black'}`}>
@@ -719,7 +766,7 @@ Format:
 
     return (
       <div className="absolute inset-0 w-full h-full flex flex-col bg-[#f2f2f2] z-[100] overflow-hidden">
-            {renderHeader(selectedChatRecord.title, () => setActiveAppId('chat'))}
+            {renderHeader(headerTitle, () => setActiveAppId('chat'))}
 
             <div className="flex-1 overflow-y-auto p-4 space-y-3 no-scrollbar overscroll-contain min-h-0">
 

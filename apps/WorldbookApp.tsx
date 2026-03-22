@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
 import { Worldbook } from '../types';
 import Modal from '../components/os/Modal';
+import { DiamondsFour, BookOpen } from '@phosphor-icons/react';
 
 const WorldbookApp: React.FC = () => {
     const { closeApp, worldbooks, addWorldbook, updateWorldbook, deleteWorldbook, addToast } = useOS();
@@ -180,7 +181,7 @@ const WorldbookApp: React.FC = () => {
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-slate-600"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                     </button>
                     <span className="font-bold text-slate-700 text-lg tracking-wide flex items-center gap-2">
-                        <span className="text-indigo-500">❖</span> 世界书
+<DiamondsFour size={18} className="text-indigo-500" /> 世界书
                     </span>
                     <button onClick={handleCreate} className="w-9 h-9 bg-indigo-500 text-white rounded-full shadow-lg shadow-indigo-200 flex items-center justify-center active:scale-90 transition-transform hover:bg-indigo-600">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
@@ -192,7 +193,7 @@ const WorldbookApp: React.FC = () => {
             <div className="flex-1 overflow-y-auto p-5 pb-24 space-y-4 no-scrollbar relative z-0">
                 {Object.keys(groupedBooks).length === 0 && (
                     <div className="flex flex-col items-center justify-center h-64 text-slate-400 gap-4 opacity-60">
-                        <span className="text-5xl">📖</span>
+<BookOpen size={48} className="text-slate-400" />
                         <span className="text-xs font-medium">世界还是空白的...</span>
                     </div>
                 )}

@@ -671,7 +671,7 @@ const CallApp: React.FC = () => {
     if (audioUrl !== targetUrl) setAudioUrl(targetUrl);
     audioRef.current.src = targetUrl;
     audioRef.current.currentTime = 0;
-    audioRef.current.play().catch(() => addToast('音频已生成，自动播放被浏览器拦截，请点击🔊重播', 'info'));
+audioRef.current.play().catch(() => addToast('音频已生成，自动播放被浏览器拦截，请点击重播', 'info'));
     setCallState('speaking');
   };
   const resumeAudio = () => {

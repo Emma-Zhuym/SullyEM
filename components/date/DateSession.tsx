@@ -431,7 +431,7 @@ const DateSession: React.FC<DateSessionProps> = ({
         // Loop
         if (dialogueBatch.length > 0) {
             // Replay
-            addToast('↺ 重播对话', 'info');
+addToast('重播对话', 'info');
             processNextDialogue(dialogueBatch[0], dialogueBatch.slice(1));
             return;
         }

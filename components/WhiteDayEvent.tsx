@@ -25,8 +25,11 @@ import {
     WHITEDAY_DISMISSED_KEY,
     WHITEDAY_COMPLETED_KEY,
     WHITEDAY_RECORD_KEY,
+    shouldShowWhiteDayPopup,
+    isWhiteDay,
+    isWhiteDayEventAvailable,
 } from '../utils/whiteDayEventUtils';
-
+export { shouldShowWhiteDayPopup, isWhiteDay, isWhiteDayEventAvailable };
 const QUIZ_PASS_SCORE = 5;
 const QUIZ_TOTAL = 7;
 

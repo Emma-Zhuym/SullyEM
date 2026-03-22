@@ -7,6 +7,23 @@ import { ContextBuilder } from '../utils/context';
 import { processImage } from '../utils/file';
 import Modal from '../components/os/Modal';
 import { safeResponseJson } from '../utils/safeApi';
+import { House, User, Package, Warning } from '@phosphor-icons/react';
+
+const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
+const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
+
+const STICKER_OPTIONS = [
+    { code: '2728', label: 'sparkles' },
+    { code: '1f388', label: 'balloon' },
+    { code: '1f3a8', label: 'palette' },
+    { code: '1f4f7', label: 'camera' },
+    { code: '1f3b5', label: 'music' },
+    { code: '1f3ae', label: 'game' },
+    { code: '1f354', label: 'burger' },
+    { code: '1f3d6-fe0f', label: 'beach' },
+    { code: '1f4a4', label: 'sleep' },
+    { code: '1f4a1', label: 'idea' },
+];
 
 // --- Constants & Styles ---
 const BRAND_COLOR = '#ff2442'; // Premium Red
@@ -114,7 +131,7 @@ const SocialApp: React.FC = () => {
     // Post Creation State
     const [newPostTitle, setNewPostTitle] = useState('');
     const [newPostContent, setNewPostContent] = useState('');
-    const [newPostEmoji, setNewPostEmoji] = useState('✨');
+const [newPostEmoji, setNewPostEmoji] = useState('2728');
 
     // Comment Input State
     const [commentInput, setCommentInput] = useState('');
@@ -427,7 +444,7 @@ ${charContexts}
                     authorAvatar: avatar,
                     title: item.title || '无标题',
                     content: item.content || '...',
-                    images: item.emojis || ['✨'],
+images: item.emojis || ['2728'],
                     likes: item.likes || 0,
                     isCollected: false,
                     isLiked: false,
@@ -816,7 +833,7 @@ ${identityMap}
                                         </div>
                                     ))}
                                     {(characterHandles[c.id]?.length || 0) === 0 && (
-                                        <div className="text-[10px] text-red-400 italic">⚠️ 请至少保留一个身份</div>
+<div className="text-[10px] text-red-400 italic flex items-center gap-1"><Warning size={12} weight="bold" /> 请至少保留一个身份</div>
                                     )}
                                 </div>
                             </div>
@@ -875,13 +892,13 @@ ${identityMap}
                         <div className="mt-4 pt-4 border-t border-slate-50">
                             <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">添加心情贴纸 (Sticker)</p>
                             <div className="flex gap-4 overflow-x-auto pb-2 no-scrollbar">
-                                {['✨','🎈','🎨','📷','🎵','🎮','🍔','🏖️','💤','💡'].map(emoji => (
-                                    <button 
-                                        key={emoji} 
-                                        onClick={() => setNewPostEmoji(emoji)} 
-                                        className={`w-12 h-12 rounded-xl border flex items-center justify-center text-2xl transition-all shrink-0 ${newPostEmoji === emoji ? 'border-[#ff2442] bg-red-50' : 'border-slate-100'}`}
+{STICKER_OPTIONS.map(sticker => (
+                                    <button
+                                        key={sticker.code}
+                                        onClick={() => setNewPostEmoji(sticker.code)}
+                                        className={`w-12 h-12 rounded-xl border flex items-center justify-center transition-all shrink-0 ${newPostEmoji === sticker.code ? 'border-[#ff2442] bg-red-50' : 'border-slate-100'}`}
                                     >
-                                        {emoji}
+                                        <img src={twemojiUrl(sticker.code)} alt={sticker.label} className="w-7 h-7" />
                                     </button>
                                 ))}
                             </div>
@@ -1027,7 +1044,7 @@ ${identityMap}
                                 </div>
                                 {feed.filter(p => profileTab === 'notes' ? p.authorName === socialProfile.name : p.isCollected).length === 0 && (
                                     <div className="flex flex-col items-center justify-center py-20 text-slate-300 gap-2">
-                                        <span className="text-4xl grayscale opacity-30">📦</span>
+<Package size={48} className="text-slate-300 opacity-30" />
                                         <span className="text-xs">空空如也</span>
                                     </div>
                                 )}
@@ -1039,11 +1056,11 @@ ${identityMap}
                 {/* Bottom Navigation - Floating Glass Island (Only shown when not creating) */}
                 <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-[90%] h-16 bg-white/80 backdrop-blur-2xl rounded-full shadow-[0_8px_32px_rgba(0,0,0,0.12)] border border-white/50 flex items-center justify-around z-40">
                     <button onClick={() => setActiveTab('home')} className={`text-sm font-medium flex flex-col items-center justify-center gap-0.5 transition-all w-12 h-12 rounded-full ${activeTab === 'home' ? 'text-slate-900 bg-white shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>
-                        <span className="text-xl">🏠</span>
+<House size={24} weight={activeTab === 'home' ? 'fill' : 'regular'} />
                     </button>
                     <button onClick={() => setIsCreateOpen(true)} className="w-12 h-12 bg-[#ff2442] text-white rounded-full flex items-center justify-center shadow-lg shadow-red-200 active:scale-95 transition-transform text-2xl font-light -mt-6 border-4 border-white/50">+</button>
                     <button onClick={() => setActiveTab('me')} className={`text-sm font-medium flex flex-col items-center justify-center gap-0.5 transition-all w-12 h-12 rounded-full ${activeTab === 'me' ? 'text-slate-900 bg-white shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>
-                        <span className="text-xl">👤</span>
+                        <User size={24} />
                     </button>
                 </div>
             </div>

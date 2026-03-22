@@ -176,7 +176,7 @@ export const ProactiveChat = {
 
   /**
    * Start or update one character's proactive schedule.
-   * intervalMinutes: 最小 15 分钟，会按 15 分钟取整（如 20→15, 60→60）
+   * intervalMinutes: 最小 15 分钟，会按 15 分钟取整（如 20→15, 60→60）（二改）
    */
   start(charId: string, intervalMinutes: number) {
     const clamped = Math.max(15, Math.round(intervalMinutes / 15) * 15);

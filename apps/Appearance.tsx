@@ -7,6 +7,11 @@ import { processImage } from '../utils/file';
 import { ChatAppearanceEditor } from '../components/appearance/ChatAppearanceEditor';
 import { Sparkle } from '@phosphor-icons/react';
 
+const TwemojiImg: React.FC<{ code: string; alt?: string; className?: string }> = ({ code, alt, className = 'w-4 h-4 inline-block' }) => (
+  <img src={`https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/${code}.png`} alt={alt || ''} className={className} draggable={false} />
+);
+
+// --- Preset Manager Component ---
 interface PresetManagerProps {
     presets: AppearancePreset[];
     onSave: (name: string) => void;
@@ -87,9 +92,9 @@ const PresetManager: React.FC<PresetManagerProps> = ({ presets, onSave, onApply,
                 </div>
             </section>
 
-            <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+<section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
                 <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">导入外观预设</h2>
-                <p className="text-[10px] text-slate-400 mb-3">从 .json 文件导入他人分享的外观预设。</p>
+                <p className="text-[10px] text-slate-400 mb-3">从 .json 文件导入他人分享的外观预设。系统整合备份也会包含当前外观设置，单独预设文件更适合分享。</p>
                 <input type="file" ref={importRef} className="hidden" accept=".json" onChange={handleImport} />
                 <button onClick={() => importRef.current?.click()}
                     className="w-full py-2.5 bg-gradient-to-r from-blue-50 to-cyan-50 text-blue-500 font-bold text-xs rounded-xl border border-blue-200 active:scale-95 transition-transform flex items-center justify-center gap-2">
@@ -97,12 +102,13 @@ const PresetManager: React.FC<PresetManagerProps> = ({ presets, onSave, onApply,
                     选择文件导入
                 </button>
             </section>
-
             <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
                 <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">已保存预设 ({presets.length})</h2>
                 {presets.length === 0 ? (
                     <div className="text-center py-8">
-                        <Sparkle size={48} weight="fill" className="mx-auto text-slate-300 mb-2" />
+                        <div className="text-3xl mb-2 opacity-40">
+                            <Sparkle size={48} weight="fill" className="mx-auto text-slate-300" />
+                        </div>
                         <p className="text-xs text-slate-400">还没有外观预设</p>
                         <p className="text-[10px] text-slate-300 mt-1">保存当前外观或导入预设文件开始使用</p>
                     </div>
@@ -129,6 +135,7 @@ const PresetManager: React.FC<PresetManagerProps> = ({ presets, onSave, onApply,
                                         </div>
                                     )}
                                 </div>
+{/* Info & actions */}
                                 <div className="p-3">
                                     {editingId === preset.id ? (
                                         <div className="flex gap-2 mb-2">
@@ -656,7 +663,9 @@ const Appearance: React.FC = () => {
                         {decorations.length === 0 && (
                             <div className="absolute inset-0 flex items-center justify-center">
                                 <div className="text-center text-white/40">
-                                    <div className="text-3xl mb-2">✨</div>
+<div className="text-3xl mb-2">✨</div>
+
+<Sparkle size={48} weight="fill" className="text-white/60 mb-2" />
                                     <div className="text-[10px] font-bold">添加装饰开始DIY</div>
                                 </div>
                             </div>
@@ -686,7 +695,7 @@ const Appearance: React.FC = () => {
                                 if (items.length === 0) return null;
                                 return (
                                     <div key={cat} className="mb-3">
-                                        <div className="text-[10px] text-slate-500 mb-1.5">{cat}</div>
+                                        <div className="text-[10px] text-slate-500 mb-1.5 flex items-center gap-1">{cat}</div>
                                         <div className="flex gap-2 flex-wrap">
                                             {items.map(preset => (
                                                 <button key={preset.name} onClick={() => addDecoration(preset.content, 'preset')}
@@ -815,21 +824,7 @@ const Appearance: React.FC = () => {
                     <div className="text-[10px] text-slate-400 mt-3 px-1">提示: 装饰会叠加显示在桌面第二页上，可自由调节每个装饰的位置、大小、旋转和透明度。支持上传自定义图片或使用预设贴纸。</div>
                 </section>
             </>
-        ) : activeTab === 'presets' ? (
-            <PresetManager
-                presets={appearancePresets}
-                onSave={saveAppearancePreset}
-                onApply={applyAppearancePreset}
-                onDelete={deleteAppearancePreset}
-                onRename={renameAppearancePreset}
-                onExport={exportAppearancePreset}
-                onImport={importAppearancePreset}
-                addToast={addToast}
-                currentTheme={theme}
-            />
-        ) : activeTab === 'chat' ? (
-            <ChatAppearanceEditor theme={theme} updateTheme={updateTheme} />
-        ) : (
+        ) : activeTab === 'icons' ? (
             <div className="grid grid-cols-3 gap-4">
                 {INSTALLED_APPS.map(app => {
                     const Icon = Icons[app.icon];
@@ -860,7 +855,21 @@ const Appearance: React.FC = () => {
                 })}
                 <input type="file" ref={iconInputRef} className="hidden" accept="image/*" onChange={(e) => e.target.files?.[0] && handleIconUpload(e.target.files[0])} />
             </div>
-        )}
+        ) : activeTab === 'presets' ? (
+            <PresetManager
+                presets={appearancePresets}
+                onSave={saveAppearancePreset}
+                onApply={applyAppearancePreset}
+                onDelete={deleteAppearancePreset}
+                onRename={renameAppearancePreset}
+                onExport={exportAppearancePreset}
+                onImport={importAppearancePreset}
+                addToast={addToast}
+                currentTheme={theme}
+            />
+        ) : activeTab === 'chat' ? (
+            <ChatAppearanceEditor theme={theme} updateTheme={updateTheme} />
+        ) : null}
       </div>
     </div>
   );

@@ -27,7 +27,9 @@ import {
     VALENTINE_RECORD_KEY,
     isValentineEventAvailable,
     isValentinePast,
+    shouldShowValentinePopup,
 } from '../utils/valentineEventUtils';
+export { shouldShowValentinePopup };
 
 // ============================================================
 // 情人节立绘 Sprite 映射 (占位 emoji，等图片整理好后替换为图床URL)

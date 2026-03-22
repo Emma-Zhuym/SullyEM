@@ -1258,7 +1258,7 @@ export const DB = {
           });
       };
 
-      const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, songs, quizzes, guidebookSessions, lifeSimStates] = await Promise.all([
+      const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, songs, quizzes, guidebookSessions, scheduledMessages, lifeSimStates] = await Promise.all([
           getAllFromStore(STORE_CHARACTERS),
           getAllFromStore(STORE_MESSAGES),
           getAllFromStore(STORE_THEMES),
@@ -1286,6 +1286,7 @@ export const DB = {
           getAllFromStore(STORE_SONGS),
           getAllFromStore(STORE_QUIZZES),
           getAllFromStore(STORE_GUIDEBOOK),
+          getAllFromStore(STORE_SCHEDULED),
           getAllFromStore(STORE_LIFE_SIM),
       ]);
 
@@ -1308,6 +1309,7 @@ export const DB = {
           songs,
           quizSessions: quizzes,
           guidebookSessions,
+          scheduledMessages,
           lifeSimState: lifeSimStates[0] || null
       };
   },
@@ -1324,6 +1326,7 @@ export const DB = {
           STORE_XHS_ACTIVITIES, STORE_XHS_STOCK,
           STORE_QUIZZES,
           STORE_GUIDEBOOK,
+          STORE_SCHEDULED,
           STORE_LIFE_SIM
       ].filter(name => db.objectStoreNames.contains(name));
 
@@ -1331,7 +1334,7 @@ export const DB = {
 
       const clearAndAdd = (storeName: string, items: any[]) => {
           if (!availableStores.includes(storeName)) return;
-          if (!items || items.length === 0) return; 
+          if (items === undefined || items === null) return;
           
           const store = tx.objectStore(storeName);
           store.clear();
@@ -1419,7 +1422,7 @@ export const DB = {
       if (data.customThemes) mergeStore(STORE_THEMES, data.customThemes);
       if (data.savedEmojis) mergeStore(STORE_EMOJIS, data.savedEmojis);
       if (data.emojiCategories) mergeStore(STORE_EMOJI_CATEGORIES, data.emojiCategories); 
-      if (data.assets) mergeStore(STORE_ASSETS, data.assets);
+      if (data.assets !== undefined) clearAndAdd(STORE_ASSETS, data.assets || []);
       if (data.savedJournalStickers) mergeStore(STORE_JOURNAL_STICKERS, data.savedJournalStickers);
 
       if (data.galleryImages) clearAndAdd(STORE_GALLERY, data.galleryImages);
@@ -1437,6 +1440,11 @@ export const DB = {
       if (data.songs) clearAndAdd(STORE_SONGS, data.songs);
       if (data.quizSessions) clearAndAdd(STORE_QUIZZES, data.quizSessions);
       if (data.guidebookSessions) clearAndAdd(STORE_GUIDEBOOK, data.guidebookSessions);
+      if (data.scheduledMessages !== undefined && availableStores.includes(STORE_SCHEDULED)) {
+          const store = tx.objectStore(STORE_SCHEDULED);
+          store.clear();
+          (data.scheduledMessages || []).forEach(item => store.put(item));
+      }
       if (data.lifeSimState !== undefined && availableStores.includes(STORE_LIFE_SIM)) {
           const store = tx.objectStore(STORE_LIFE_SIM);
           store.clear();

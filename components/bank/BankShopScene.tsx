@@ -2,10 +2,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { BankShopState, CharacterProfile, UserProfile, APIConfig, ShopStaff } from '../../types';
 import { SHOP_RECIPES } from './BankGameConstants';
+import BankAssetIcon from './BankAssetIcon';
 import { ContextBuilder } from '../../utils/context';
 import { useOS } from '../../context/OSContext';
 import { DB } from '../../utils/db';
 import { safeResponseJson } from '../../utils/safeApi';
+import { PawPrint, Bell, Sparkle, Book } from '@phosphor-icons/react';
 
 interface Props {
     shopState: BankShopState;
@@ -70,7 +72,7 @@ const BankShopScene: React.FC<Props> = ({
         onMoveStaff(x, floorY);
     };
 
-    // Push system message to chat history via DB (uses [系统: ...] format for 🔔 display)
+// Push system message to chat history via DB (uses [系统: ...] format for bell display)
     const pushVisitorSystemMessage = async (charId: string, message: string) => {
         try {
             await DB.saveMessage({
@@ -229,7 +231,7 @@ Language: Chinese.`;
                     {/* Pet Badge */}
                     {isPet && (
                         <div className="absolute -top-6 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1">
-                            <span className="text-sm">🐾</span>
+<PawPrint className="w-4 h-4 text-pink-500" weight="fill" />
                             {ownerChar && (
                                 <img src={ownerChar.avatar} className="w-4 h-4 rounded-full border border-white shadow-sm" title={`${ownerChar.name}的宠物`} />
                             )}
@@ -238,11 +240,11 @@ Language: Chinese.`;
 
                     {/* Love indicator when owner is visiting */}
                     {isOwnerVisiting && (
-                        <div className="absolute -top-10 text-xl animate-bounce z-20">💕</div>
+<div className="absolute -top-10 text-xl animate-bounce z-20"><img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f495.png" alt="love" className="w-5 h-5" /></div>
                     )}
 
                     {/* Fatigue Bubble */}
-                    {s.fatigue > 80 && !isOwnerVisiting && <div className="absolute -top-8 text-xl animate-bounce z-20">💤</div>}
+                    {s.fatigue > 80 && !isOwnerVisiting && <div className="absolute -top-8 text-xl animate-bounce z-20"><img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4a4.png" alt="zzz" className="w-5 h-5" /></div>}
 
                     {/* Sprite */}
                     <div className={`text-5xl filter drop-shadow-lg transform group-hover:scale-110 transition-transform select-none relative z-10 origin-bottom ${isOwnerVisiting ? 'animate-pulse' : ''}`}>
@@ -255,7 +257,7 @@ Language: Chinese.`;
                             ? 'bg-gradient-to-r from-pink-100 to-rose-100 text-rose-600 border border-pink-200'
                             : 'bg-white/90 text-slate-600 border border-slate-200'
                     }`}>
-                        {isPet && <span className="mr-0.5">🐾</span>}
+{isPet && <PawPrint className="w-3 h-3 mr-0.5 inline-block text-pink-500" weight="fill" />}
                         {s.name}
                     </div>
 
@@ -319,7 +321,7 @@ Language: Chinese.`;
                     <div className="relative bg-gradient-to-b from-[#5D4037] to-[#4E342E] px-8 py-3 rounded-xl shadow-2xl border-2 border-[#6D4C41]">
                         <div className="absolute inset-1 rounded-lg border border-[#795548]/30"></div>
                         <div className="text-center relative z-10">
-                            <span className="text-[9px] uppercase tracking-[0.25em] text-[#D7CCC8] block mb-0.5">☕ Est. 2024 ☕</span>
+<span className="text-[9px] uppercase tracking-[0.25em] text-[#D7CCC8] block mb-0.5 flex items-center justify-center gap-1"><img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/2615.png" alt="" className="w-3 h-3 inline-block" /> Est. 2024 <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/2615.png" alt="" className="w-3 h-3 inline-block" /></span>
                             <span className="font-serif font-bold text-xl text-[#FFF8E1] drop-shadow-sm tracking-wide">{shopState.shopName}</span>
                         </div>
                     </div>
@@ -392,7 +394,14 @@ Language: Chinese.`;
                          return r ? (
                              <div key={rid} className="flex flex-col items-center animate-fade-in group" style={{ animationDelay: `${i*100}ms` }}>
                                  <div className="relative">
-                                     <div className="text-4xl filter drop-shadow-lg transform group-hover:scale-110 group-hover:-translate-y-1 transition-all duration-300">{r.icon}</div>
+<div className="w-10 h-10 flex items-center justify-center">
+                                         <BankAssetIcon
+                                             value={r.icon}
+                                             alt={r.name}
+                                             imgClassName="w-10 h-10 object-contain filter drop-shadow-lg transform group-hover:scale-110 group-hover:-translate-y-1 transition-all duration-300"
+                                             textClassName="text-4xl leading-none filter drop-shadow-lg transform group-hover:scale-110 group-hover:-translate-y-1 transition-all duration-300"
+                                         />
+                                     </div>
                                      {/* Reflection */}
                                      <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-6 h-2 bg-black/10 rounded-full blur-sm"></div>
                                  </div>
@@ -436,20 +445,20 @@ Language: Chinese.`;
             {/* 5. Decorative Elements */}
             <div className="absolute bottom-[22%] left-[3%] z-10 pointer-events-none">
                 <div className="relative">
-                    <span className="text-5xl filter drop-shadow-xl">🪴</span>
+<img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1fab4.png" alt="plant" className="w-12 h-12 filter drop-shadow-xl" />
                     <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-8 h-2 bg-black/15 rounded-full blur-sm"></div>
                 </div>
             </div>
 
             <div className="absolute top-[28%] right-[12%] z-0 pointer-events-none">
                 <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#FFF8E1] to-[#FFE0B2] border-4 border-[#8D6E63] shadow-lg flex items-center justify-center">
-                    <span className="text-2xl">🕐</span>
+<img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f550.png" alt="clock" className="w-6 h-6" />
                 </div>
             </div>
 
             <div className="absolute top-[18%] left-1/2 -translate-x-1/2 z-0 pointer-events-none opacity-60">
                 <div className="w-8 h-10 bg-[#3E2723] rounded-sm shadow-md flex items-center justify-center">
-                    <span className="text-xs">☕</span>
+<img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/2615.png" alt="coffee" className="w-3 h-3" />
                 </div>
             </div>
 
@@ -474,7 +483,7 @@ Language: Chinese.`;
                             getVisitorPet(visitor.char.id) ? 'border-2 border-pink-300' : 'border border-[#FFE0B2]'
                         }`}>
                             {getVisitorPet(visitor.char.id) && (
-                                <div className="absolute -top-2 -right-2 text-lg animate-bounce">💕</div>
+<div className="absolute -top-2 -right-2 animate-bounce"><img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f495.png" alt="love" className="w-5 h-5" /></div>
                             )}
                             {visitor.msg}
                         </div>
@@ -495,7 +504,7 @@ Language: Chinese.`;
                             ? 'bg-gradient-to-r from-pink-400 to-rose-500 border border-pink-300'
                             : 'bg-gradient-to-r from-[#8D6E63] to-[#6D4C41] border border-[#A1887F]/30'
                     }`}>
-                        {getVisitorPet(visitor.char.id) && <span className="mr-1">💕</span>}
+{getVisitorPet(visitor.char.id) && <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f495.png" alt="love" className="w-3 h-3 inline-block mr-1" />}
                         {visitor.char.name}
                     </div>
 
@@ -526,11 +535,11 @@ Language: Chinese.`;
                                 animationDuration: `${2 + Math.random() * 2}s`
                             }}
                         >
-                            {['💕', '💗', '💖', '💝', '🩷'][Math.floor(Math.random() * 5)]}
+<img src={['https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f495.png','https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f497.png','https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f496.png','https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f49d.png','https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1fa77.png'][Math.floor(Math.random() * 5)]} alt="heart" className="w-6 h-6" />
                         </div>
                     ))}
                     <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
-                        <div className="text-6xl animate-ping">💕</div>
+                        <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f495.png" alt="love" className="w-16 h-16 animate-ping" />
                     </div>
                     <div className="absolute inset-0 bg-gradient-to-t from-pink-200/20 to-transparent animate-pulse"></div>
                 </div>
@@ -549,7 +558,7 @@ Language: Chinese.`;
                     <div className="relative bg-gradient-to-b from-[#6D4C41] to-[#5D4037] w-14 h-16 rounded-xl shadow-xl flex flex-col items-center justify-center gap-1 overflow-hidden border border-[#8D6E63]/50">
                         <div className="absolute inset-0 bg-gradient-to-t from-transparent to-white/5"></div>
                         <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'repeating-linear-gradient(90deg, transparent, transparent 3px, rgba(0,0,0,0.1) 3px, rgba(0,0,0,0.1) 4px)' }}></div>
-                        <div className="text-2xl filter drop-shadow-sm relative z-10">📖</div>
+<img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4d6.png" alt="guestbook" className="w-6 h-6 filter drop-shadow-sm relative z-10" />
                         <div className="text-[7px] font-bold uppercase tracking-wider text-[#D7CCC8] relative z-10">情报志</div>
                         <div className="absolute -top-1 -right-1 w-4 h-4 bg-gradient-to-br from-[#FF5252] to-[#D32F2F] rounded-full border-2 border-white shadow-lg flex items-center justify-center animate-pulse">
                             <span className="text-[8px] text-white font-bold">!</span>
@@ -562,7 +571,7 @@ Language: Chinese.`;
             <div className="absolute top-4 left-4 z-40">
                 <div className="bg-white/70 backdrop-blur-xl px-4 py-2 rounded-2xl shadow-lg border border-white/50 flex items-center gap-2">
                     <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[#FFD54F] to-[#FFB300] flex items-center justify-center shadow-md">
-                        <span className="text-lg">✨</span>
+<img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/2728.png" alt="sparkles" className="w-5 h-5" />
                     </div>
                     <div className="flex flex-col">
                         <span className="text-[9px] text-[#8D6E63] font-medium uppercase tracking-wider">人气值</span>
@@ -585,7 +594,7 @@ Language: Chinese.`;
                         {isInviting ? (
                             <div className="w-6 h-6 border-3 border-white border-t-transparent rounded-full animate-spin"></div>
                         ) : (
-                            <span className="text-3xl filter drop-shadow-md relative z-10">🛎️</span>
+<img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f6ce.png" alt="bell" className="w-8 h-8 filter drop-shadow-md relative z-10" />
                         )}
                     </div>
                     <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 whitespace-nowrap">

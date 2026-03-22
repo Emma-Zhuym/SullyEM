@@ -6,6 +6,7 @@ import { GameSession, GameTheme, CharacterProfile, GameLog, GameActionOption } f
 import { ContextBuilder } from '../utils/context';
 import { extractContent, extractJson } from '../utils/safeApi';
 import Modal from '../components/os/Modal';
+import { Planet, RocketLaunch, Lightning, LockSimple, DiceFive, Toolbox, FloppyDisk, ArrowsClockwise, DoorOpen } from '@phosphor-icons/react';
 
 // --- Themes Configuration (Enhanced) ---
 const GAME_THEMES: Record<GameTheme, { bg: string, text: string, accent: string, font: string, border: string, cardBg: string, gradient: string, optionNormal: string, optionChaotic: string, optionEvil: string }> = {
@@ -812,7 +813,7 @@ Output: A concise summary in Chinese (e.g. "探索了地牢并击败了史莱姆
                 <div className="p-6 flex-1 overflow-y-auto no-scrollbar z-10 space-y-4">
                     {games.length === 0 && (
                         <div className="flex flex-col items-center justify-center h-64 text-slate-500 gap-4">
-                            <div className="w-20 h-20 rounded-full bg-white/5 flex items-center justify-center text-4xl border border-white/5 animate-pulse">🌌</div>
+<div className="w-20 h-20 rounded-full bg-white/5 flex items-center justify-center border border-white/5 animate-pulse"><Planet size={48} className="text-indigo-400" /></div>
                             <p className="text-xs tracking-widest uppercase">No Active Adventures</p>
                         </div>
                     )}
@@ -905,7 +906,7 @@ Output: A concise summary in Chinese (e.g. "探索了地牢并击败了史莱姆
                         disabled={isCreating}
                         className="w-full py-3 bg-slate-800 text-white font-bold rounded-2xl shadow-lg active:scale-95 transition-transform flex items-center justify-center gap-2"
                     >
-                        {isCreating ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> 生成序章...</> : <><span>🚀</span> 开始冒险</>}
+{isCreating ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> 生成序章...</> : <><RocketLaunch size={18} /> 开始冒险</>}
                     </button>
                 </div>
             </div>
@@ -934,7 +935,7 @@ Output: A concise summary in Chinese (e.g. "探索了地牢并击败了史莱姆
                                 <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
                                 {activeGame.status.location}
                             </span>
-                            {lastTokenUsage && <span className="text-[8px] opacity-40 font-mono" title={`Prompt: ${lastTokenUsage.prompt || '?'} | Completion: ${lastTokenUsage.completion || '?'} | Total session: ${totalTokensUsed}`}>⚡{lastTokenUsage.prompt || '?'}/{lastTokenUsage.completion || '?'} (∑{totalTokensUsed})</span>}
+{lastTokenUsage && <span className="text-[8px] opacity-40 font-mono inline-flex items-center gap-0.5" title={`Prompt: ${lastTokenUsage.prompt || '?'} | Completion: ${lastTokenUsage.completion || '?'} | Total session: ${totalTokensUsed}`}><Lightning size={10} weight="fill" />{lastTokenUsage.prompt || '?'}/{lastTokenUsage.completion || '?'} (∑{totalTokensUsed})</span>}
                         </div>
                     </div>
                 </div>
@@ -982,7 +983,7 @@ Output: A concise summary in Chinese (e.g. "探索了地牢并击败了史莱姆
                         className={`flex flex-col items-center bg-blue-500/20 rounded p-1 border cursor-pointer active:scale-95 transition-all ${sanityLocked ? 'border-blue-400 ring-1 ring-blue-400/50' : 'border-blue-500/30'}`}
                     >
                         <span className="text-[8px] text-blue-300 font-bold uppercase flex items-center gap-1">
-                            SAN (理智) {sanityLocked && <span className="text-blue-400">🔒</span>}
+SAN (理智) {sanityLocked && <LockSimple size={10} weight="fill" className="text-blue-400 inline" />}
                         </span>
                         <span className="text-xs font-mono font-bold text-blue-100">{activeGame.status.sanity || 100}</span>
                     </div>
@@ -994,7 +995,7 @@ Output: A concise summary in Chinese (e.g. "探索了地牢并击败了史莱姆
                 {/* Token Statistics */}
                 {lastTokenUsage && (
                     <div className="mt-1.5 flex items-center justify-between bg-white/5 rounded px-2 py-1 border border-white/10">
-                        <span className="text-[8px] text-white/40 font-mono">⚡ 上下文: {lastTokenUsage.prompt ?? '?'} | 回复: {lastTokenUsage.completion ?? '?'} | 本次: {lastTokenUsage.total}</span>
+<span className="text-[8px] text-white/40 font-mono inline-flex items-center gap-0.5"><Lightning size={10} weight="fill" /> 上下文: {lastTokenUsage.prompt ?? '?'} | 回复: {lastTokenUsage.completion ?? '?'} | 本次: {lastTokenUsage.total}</span>
                         <span className="text-[8px] text-white/40 font-mono">∑ {totalTokensUsed}</span>
                     </div>
                 )}
@@ -1055,7 +1056,7 @@ Output: A concise summary in Chinese (e.g. "探索了地牢并击败了史莱姆
                                 <span className={`text-[10px] font-bold opacity-60`}>{log.speakerName}</span>
                                 {log.diceRoll && (
                                     <span className="text-[10px] bg-white/20 px-1.5 rounded text-yellow-500 font-mono">
-                                        🎲 {log.diceRoll.result}
+<DiceFive size={12} weight="fill" className="inline" /> {log.diceRoll.result}
                                     </span>
                                 )}
                             </div>
@@ -1105,7 +1106,7 @@ Output: A concise summary in Chinese (e.g. "探索了地牢并击败了史莱姆
                             disabled={isRolling}
                             className={`flex-1 py-2 rounded border ${theme.border} hover:bg-white/10 active:scale-95 transition-transform flex items-center justify-center gap-2 font-bold text-sm`}
                         >
-                            <span className="text-xl">🎲</span> {isRolling ? 'Rolling...' : (diceResult || 'Roll D20')}
+<DiceFive size={24} weight="fill" /> {isRolling ? 'Rolling...' : (diceResult || 'Roll D20')}
                         </button>
                         {['调查', '攻击', '交涉'].map(action => (
                             <button key={action} onClick={() => handleAction(action)} className={`px-4 py-2 rounded border ${theme.border} hover:bg-white/10 text-xs font-bold transition-colors active:scale-95`}>{action}</button>
@@ -1119,7 +1120,7 @@ Output: A concise summary in Chinese (e.g. "探索了地牢并击败了史莱姆
                         onClick={() => setShowTools(!showTools)}
                         className={`p-3 h-12 rounded-xl border ${theme.border} hover:bg-white/10 active:scale-95 transition-transform flex items-center justify-center ${showTools ? 'bg-white/20' : ''}`}
                     >
-                        <span className="text-lg">🧰</span>
+<Toolbox size={22} />
                     </button>
 
                     {/* Reroll Button (Context Sensitive) */}
@@ -1180,13 +1181,13 @@ Output: A concise summary in Chinese (e.g. "探索了地牢并击败了史莱姆
                     </div>
 
                     <button onClick={handleArchiveAndQuit} className="w-full py-3 bg-emerald-500 text-white font-bold rounded-2xl shadow-lg flex items-center justify-center gap-2">
-                        <span>💾</span> 归档记忆并退出
+<FloppyDisk size={18} /> 归档记忆并退出
                     </button>
                     <button onClick={handleRestart} className="w-full py-3 bg-orange-500 text-white font-bold rounded-2xl shadow-lg flex items-center justify-center gap-2">
-                        <span>🔄</span> 重置当前游戏
+                        <ArrowsClockwise size={18} /> 重置当前游戏
                     </button>
                     <button onClick={handleLeave} className="w-full py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl flex items-center justify-center gap-2">
-                        <span>🚪</span> 暂时离开 (不归档)
+                        <DoorOpen size={18} /> 暂时离开 (不归档)
                     </button>
                 </div>
             </Modal>

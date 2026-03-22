@@ -7,6 +7,10 @@ import { ContextBuilder } from '../utils/context';
 import { processImage } from '../utils/file';
 import Modal from '../components/os/Modal';
 import { safeResponseJson } from '../utils/safeApi';
+import { Sparkle } from '@phosphor-icons/react';
+
+const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
+const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
 
 // --- Assets & Constants ---
 
@@ -20,7 +24,10 @@ const PAPER_STYLES = [
 ];
 
 const DEFAULT_STICKERS = [
-    '✨', '💖', '🌸', '🎀', '🍰', '🐱', '🐶', '☁️', '🌙', '⭐', '🎵', '🌿', '🍓', '🧸', '🎈', '💌', '💤', '🥺', '😡', '😭'
+twemojiUrl('2728'), twemojiUrl('1f496'), twemojiUrl('1f338'), twemojiUrl('1f380'), twemojiUrl('1f370'),
+    twemojiUrl('1f431'), twemojiUrl('1f436'), twemojiUrl('2601-fe0f'), twemojiUrl('1f319'), twemojiUrl('2b50'),
+    twemojiUrl('1f3b5'), twemojiUrl('1f33f'), twemojiUrl('1f353'), twemojiUrl('1f9f8'), twemojiUrl('1f388'),
+    twemojiUrl('1f48c'), twemojiUrl('1f4a4'), twemojiUrl('1f97a'), twemojiUrl('1f621'), twemojiUrl('1f62d'),
 ];
 
 // HELPER: Get local date string YYYY-MM-DD
@@ -715,7 +722,7 @@ Structure:
                         {activeTab === 'char' && (
                             currentEntry?.charPage ? renderPage(currentEntry.charPage, 'char') : (
                                 <div className="w-full h-full bg-[#252525] rounded-3xl border border-white/5 flex flex-col items-center justify-center text-white/40 gap-4 p-8 text-center">
-                                    <div className="text-5xl opacity-20 animate-pulse">💌</div>
+<div className="opacity-20 animate-pulse"><img src={twemojiUrl('1f48c')} alt="letter" className="w-12 h-12" /></div>
                                     {isThinking ? (
                                         <div className="space-y-2">
                                             <p className="text-sm font-medium text-amber-500">对方正在阅读你的日记...</p>
@@ -784,7 +791,7 @@ Structure:
                             onClick={() => setShowStickerPanel(!showStickerPanel)} 
                             className={`w-11 h-11 rounded-full flex items-center justify-center text-xl shadow-lg active:scale-90 transition-transform ${showStickerPanel ? 'bg-white text-black' : 'bg-gradient-to-br from-amber-400 to-orange-500 text-white'}`}
                         >
-                            ✨
+<Sparkle size={24} weight="fill" />
                         </button>
                     </div>
                 </div>
@@ -796,8 +803,8 @@ Structure:
                                 +
                             </button>
                             {DEFAULT_STICKERS.map((s, i) => (
-                                <button key={`def-${i}`} onClick={() => addSticker(s)} className="text-3xl hover:scale-110 transition-transform p-2 bg-white/5 rounded-xl border border-white/5 flex items-center justify-center">
-                                    {s}
+<button key={`def-${i}`} onClick={() => addSticker(s)} className="hover:scale-110 transition-transform p-2 bg-white/5 rounded-xl border border-white/5 flex items-center justify-center">
+                                    <img src={s} alt="" className="w-8 h-8 object-contain pointer-events-none" />
                                 </button>
                             ))}
                             {customStickers.map((s, i) => (

@@ -689,7 +689,9 @@ export const NotionManager = {
     },
 
     /**
-     * 创建日记页面（通过 Worker 代理）；支持 Markdown 转 blocks；附加列会先拉库 schema，Select 等尽量用选项 id。
+     * 创建日记页面（通过 Worker 代理）- 花里胡哨美化版 ✨
+     * 支持 Markdown 格式的日记内容，自动转换为丰富的 Notion blocks
+     * 附加列会先拉库 schema，Select 等尽量用选项 id
      */
     createDiaryPage: async (
         apiKey: string,
@@ -712,7 +714,6 @@ export const NotionManager = {
                 dbSchema = await NotionManager.fetchDatabaseJson(apiKey, databaseId);
             }
             const extraProps = buildNotionDiaryExtraPropertiesApi(extraPropertyDefs, entry, dateStr, dbSchema);
-            // Name/Date 在前，附加属性在后，避免任意合并顺序导致附加列未生效的边界情况
             const pageData = {
                 parent: { database_id: databaseId },
                 icon: { emoji: moodEmoji },

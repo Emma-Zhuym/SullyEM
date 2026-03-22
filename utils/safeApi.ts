@@ -116,6 +116,66 @@ export function extractContent(data: any): string {
  *
  * Returns parsed object on success, null on total failure.
  */
+/**
+ * Attempt to repair truncated JSON by closing open strings, arrays, and objects.
+ * Handles the common case where LLM output is cut off mid-string.
+ */
+function repairTruncatedJson(text: string): string | null {
+    // If it already ends with } or ], it's probably not truncated in a way we can fix
+    const trimmed = text.trim();
+    if (trimmed.endsWith('}') || trimmed.endsWith(']')) return null; // let other steps handle it
+
+    // Walk through the string tracking state
+    let inString = false;
+    let escaped = false;
+    const stack: ('{' | '[')[] = [];
+    let lastKeyValueEnd = 0; // position after last complete key:value pair
+
+    for (let i = 0; i < trimmed.length; i++) {
+        const ch = trimmed[i];
+
+        if (escaped) { escaped = false; continue; }
+        if (ch === '\\' && inString) { escaped = true; continue; }
+
+        if (ch === '"') {
+            inString = !inString;
+            continue;
+        }
+
+        if (inString) continue;
+
+        if (ch === '{') stack.push('{');
+        else if (ch === '[') stack.push('[');
+        else if (ch === '}') { if (stack.length > 0 && stack[stack.length - 1] === '{') stack.pop(); }
+        else if (ch === ']') { if (stack.length > 0 && stack[stack.length - 1] === '[') stack.pop(); }
+
+        // Track positions after complete values at object level
+        if (stack.length === 1 && stack[0] === '{' && (ch === ',' || ch === '}')) {
+            lastKeyValueEnd = i + 1;
+        }
+    }
+
+    if (stack.length === 0) return null; // balanced, nothing to repair
+
+    // Strategy: truncate to last complete key:value, then close brackets
+    let repaired = '';
+    if (lastKeyValueEnd > 0) {
+        repaired = trimmed.slice(0, lastKeyValueEnd).replace(/,\s*$/, '');
+    } else {
+        // No complete key:value found at top level, try closing from current position
+        repaired = trimmed;
+        // If we're in an open string, close it
+        if (inString) repaired += '"';
+    }
+
+    // Close remaining open brackets in reverse order
+    for (let i = stack.length - 1; i >= 0; i--) {
+        repaired += stack[i] === '{' ? '}' : ']';
+    }
+
+    return repaired;
+}
+
 export function extractJson(raw: string): any | null {
     if (!raw) return null;
 
@@ -157,7 +217,24 @@ export function extractJson(raw: string): any | null {
 
     try { return JSON.parse(fixed); } catch {}
 
-    // 6. Last resort: try to extract individual JSON objects if there are multiple
+    // 6. Try to repair truncated JSON (LLM hit max_tokens)
+    // Find the first { and attempt to close any open strings/brackets
+    const firstBrace = text.indexOf('{');
+    if (firstBrace >= 0) {
+        let truncated = text.slice(firstBrace);
+        const repaired = repairTruncatedJson(truncated);
+        if (repaired) {
+            try { return JSON.parse(repaired); } catch {}
+            // Also try with common fixes applied
+            try {
+                return JSON.parse(repaired
+                    .replace(/,\s*([}\]])/g, '$1')
+                    .replace(/([{,]\s*)([a-zA-Z_]\w*)\s*:/g, '$1"$2":'));
+            } catch {}
+        }
+    }
+
+    // 7. Last resort: try to extract individual JSON objects if there are multiple
     // (AI sometimes outputs two JSON blocks, take the larger one)
     const allObjects = [...text.matchAll(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g)];
     if (allObjects.length > 0) {
@@ -170,7 +247,7 @@ export function extractJson(raw: string): any | null {
         }
     }
 
-    // 7. AI sometimes wraps the expected JSON in a wrapper object like {"result": {...}}
+    // 8. AI sometimes wraps the expected JSON in a wrapper object like {"result": {...}}
     // Try to find the first nested object value and return it
     for (const m of allObjects) {
         try {

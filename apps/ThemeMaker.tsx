@@ -69,12 +69,24 @@ const CSS_EXAMPLES = [
     },
     {
         name: '像素 (Pixel)',
-        code: `/* Pixel Art Style */
+code: `/* Pixel Art Style — Refined */
 .sully-bubble-user, .sully-bubble-ai {
   border-radius: 0px !important;
-  border: 2px solid #000;
-  box-shadow: 4px 4px 0px #000;
-  font-family: monospace;
+  border: 3px solid #2d2d2d;
+  box-shadow: 4px 4px 0px #2d2d2d, inset -2px -2px 0px rgba(0,0,0,0.12), inset 2px 2px 0px rgba(255,255,255,0.25);
+  font-family: 'Courier New', monospace;
+  image-rendering: pixelated;
+  letter-spacing: 0.02em;
+}
+.sully-bubble-user {
+  background: linear-gradient(135deg, #6366f1 0%, #818cf8 100%) !important;
+  border-color: #4338ca;
+  box-shadow: 4px 4px 0px #4338ca, inset -2px -2px 0px rgba(0,0,0,0.15), inset 2px 2px 0px rgba(255,255,255,0.2);
+}
+.sully-bubble-ai {
+  background: linear-gradient(135deg, #f8f8f8 0%, #e8e8e8 100%) !important;
+  border-color: #bbb;
+  box-shadow: 4px 4px 0px #bbb, inset -2px -2px 0px rgba(0,0,0,0.06), inset 2px 2px 0px rgba(255,255,255,0.8);
 }`
     }
 ];

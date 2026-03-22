@@ -1,10 +1,15 @@
 /// <reference lib="WebWorker" />
 /**
- * 精简版 Service Worker：仅负责 proactive 定时 + keepalive，不含 2.0 推送
+ * Service Worker：proactive 定时 + keepalive + ActiveMsg 2.0 推送
  */
+
+import { installReiSW } from '@rei-standard/amsg-sw';
 
 const PING_INTERVAL = 15_000;
 const MAX_MANUAL_ALIVE_MS = 5 * 60_000;
+const ACTIVE_MSG_DB_NAME = 'ActiveMsg';
+const ACTIVE_MSG_DB_VERSION = 1;
+const ACTIVE_MSG_INBOX_STORE = 'inbox';
 
 let pingTimer: number | null = null;
 let manualKeepAliveCount = 0;
@@ -14,6 +19,11 @@ const proactiveSchedules = new Map<string, { charId: string; intervalMs: number 
 const proactiveTimers = new Map<string, number>();
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
+
+installReiSW(sw, {
+  defaultIcon: './icons/icon-192.png',
+  defaultBadge: './icons/icon-192.png',
+});
 
 function hasActiveProactiveSchedules() {
   return proactiveTimers.size > 0;
@@ -65,7 +75,7 @@ function stopKeepAlive() {
   refreshKeepAlive();
 }
 
-async function notifyClients(data: Record<string, unknown>) {
+async function notifyClients(data: Record<string, any>) {
   const clients = await sw.clients.matchAll({ type: 'window', includeUncontrolled: true });
   for (const client of clients) {
     client.postMessage(data);
@@ -112,6 +122,102 @@ function syncProactive(configs: Array<{ charId: string; intervalMs: number }>) {
 
   refreshKeepAlive();
 }
+
+function readPushPayload(event: PushEvent): any | null {
+  if (!event.data) return null;
+  try {
+    return event.data.json();
+  } catch {
+    try {
+      return { message: event.data?.text() };
+    } catch {
+      return null;
+    }
+  }
+}
+
+function openInboxDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(ACTIVE_MSG_DB_NAME, ACTIVE_MSG_DB_VERSION);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(ACTIVE_MSG_INBOX_STORE)) {
+        db.createObjectStore(ACTIVE_MSG_INBOX_STORE, { keyPath: 'messageId' });
+      }
+    };
+  });
+}
+
+async function saveIncomingActiveMessage(payload: any) {
+  const charId = payload?.metadata?.charId;
+  const charName = payload?.contactName || payload?.metadata?.charName || '主动消息';
+  const body = String(payload?.message || payload?.body || '').trim();
+  const messageId = String(payload?.messageId || `${charId || 'unknown'}-${Date.now()}`);
+  const payloadTimestamp = payload?.timestamp;
+  const parsedSentAt = payloadTimestamp ? new Date(payloadTimestamp).getTime() : NaN;
+  const sentAt = Number.isFinite(parsedSentAt) ? parsedSentAt : Date.now();
+
+  if (!charId || !body) return;
+
+  const db = await openInboxDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(ACTIVE_MSG_INBOX_STORE, 'readwrite');
+    tx.objectStore(ACTIVE_MSG_INBOX_STORE).put({
+      messageId,
+      charId,
+      charName,
+      body,
+      avatarUrl: payload?.avatarUrl,
+      source: payload?.source,
+      messageType: payload?.messageType,
+      messageSubtype: payload?.messageSubtype,
+      taskId: payload?.taskId ?? null,
+      metadata: payload?.metadata || {},
+      sentAt,
+      receivedAt: Date.now(),
+    });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+
+  await notifyClients({
+    type: 'active-msg-received',
+    charId,
+    charName,
+    body,
+    avatarUrl: payload?.avatarUrl,
+    sentAt,
+  });
+}
+
+sw.addEventListener('push', (event: PushEvent) => {
+  const payload = readPushPayload(event);
+  if (!payload) return;
+  event.waitUntil(saveIncomingActiveMessage(payload));
+});
+
+sw.addEventListener('notificationclick', (event: NotificationEvent) => {
+  const payload = event.notification.data?.payload || event.notification.data || {};
+  const charId = payload?.metadata?.charId || payload?.charId || '';
+  event.notification.close();
+
+  event.waitUntil((async () => {
+    const clients = await sw.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    if (clients.length > 0) {
+      const client = clients[0];
+      await client.focus();
+      client.postMessage({ type: 'active-msg-open', charId });
+      return;
+    }
+
+    const openUrl = new URL(sw.registration.scope || sw.location.origin);
+    openUrl.searchParams.set('openApp', 'chat');
+    if (charId) openUrl.searchParams.set('activeMsgCharId', charId);
+    await sw.clients.openWindow(openUrl.toString());
+  })());
+});
 
 sw.addEventListener('message', (event: ExtendableMessageEvent) => {
   const { type } = event.data || {};

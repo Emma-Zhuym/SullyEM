@@ -105,7 +105,7 @@ const LifeSimResetCardView: React.FC<{ card: any }> = ({ card }) => {
                 }}
             >
                 {parsed.charAvatar ? (
-                    <img src={parsed.charAvatar} className="w-8 h-8 object-cover shrink-0" style={{ borderRadius: 2, border: '2px solid rgba(255,255,255,0.25)' }} alt="" />
+<img src={parsed.charAvatar} className="w-8 h-8 object-cover shrink-0" style={{ borderRadius: 2, border: '2px solid rgba(255,255,255,0.25)' }} />
                 ) : (
                     <div className="w-8 h-8 flex items-center justify-center text-white text-sm font-bold shrink-0" style={{ borderRadius: 2, background: 'linear-gradient(135deg, #b86c3d, #d39b62)' }}>
                         {parsed.charName?.[0] || '?'}
@@ -199,6 +199,13 @@ interface MessageItemProps {
     voiceLoading?: boolean;
     isVoicePlaying?: boolean;
     onPlayVoice?: () => void;
+// Chat layout customization
+    avatarShape?: 'circle' | 'rounded' | 'square';
+    avatarSize?: 'small' | 'medium' | 'large';
+    avatarMode?: 'grouped' | 'every_message';
+    bubbleVariant?: 'modern' | 'flat' | 'outline' | 'shadow' | 'wechat' | 'ios';
+    messageSpacing?: 'compact' | 'default' | 'spacious';
+    showTimestamp?: 'always' | 'hover' | 'never';
 }
 
 const MessageItem = React.memo(({
@@ -220,10 +227,21 @@ const MessageItem = React.memo(({
     voiceLoading,
     isVoicePlaying,
     onPlayVoice,
+avatarShape = 'circle',
+    avatarSize = 'medium',
+    avatarMode = 'grouped',
+    bubbleVariant = 'modern',
+    messageSpacing = 'default',
+    showTimestamp = 'hover',
 }: MessageItemProps) => {
     const isUser = m.role === 'user';
     const isSystem = m.role === 'system';
-    const marginBottom = isLastInGroup ? 'mb-6' : 'mb-1.5';
+    const spacingClass = messageSpacing === 'compact' ? (isLastInGroup ? 'mb-3' : 'mb-0.5') : messageSpacing === 'spacious' ? (isLastInGroup ? 'mb-8' : 'mb-2.5') : (isLastInGroup ? 'mb-6' : 'mb-1.5');
+    const marginBottom = spacingClass;
+    const avatarSizeClass = avatarSize === 'small' ? 'w-7 h-7' : avatarSize === 'large' ? 'w-12 h-12' : 'w-9 h-9';
+    const avatarRadiusClass = avatarShape === 'square' ? 'rounded-sm' : avatarShape === 'rounded' ? 'rounded-xl' : 'rounded-full';
+    const avatarSizePx = avatarSize === 'small' ? 28 : avatarSize === 'large' ? 48 : 36;
+    const shouldShowAvatar = avatarMode === 'every_message' || isLastInGroup;
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const startPos = useRef({ x: 0, y: 0 }); // Track touch start position
 
@@ -304,24 +322,24 @@ const MessageItem = React.memo(({
     // Render Avatar with potential decoration/frame
     // Removed mb-5 from here, handled via absolute positioning in parent
     const renderAvatar = (src: string) => (
-        <div className="relative w-9 h-9 z-0">
-            {isLastInGroup && (
+<div className={`relative ${avatarSizeClass} z-0`}>
+            {shouldShowAvatar && (
                 <>
-                    <img 
-                        src={src} 
-                        className="w-full h-full rounded-full object-cover shadow-sm ring-1 ring-black/5 relative z-0" 
-                        alt="avatar" 
-                        loading="lazy" 
-                        decoding="async" 
+                    <img
+                        src={src}
+                        className={`w-full h-full ${avatarRadiusClass} object-cover shadow-sm ring-1 ring-black/5 relative z-0`}
+                        alt="avatar"
+                        loading="lazy"
+                        decoding="async"
                     />
                     {styleConfig.avatarDecoration && (
-                        <img 
+                        <img
                             src={styleConfig.avatarDecoration}
                             className="absolute pointer-events-none z-10 max-w-none"
                             style={{
                                 left: `${styleConfig.avatarDecorationX ?? 50}%`,
                                 top: `${styleConfig.avatarDecorationY ?? 50}%`,
-                                width: `${36 * (styleConfig.avatarDecorationScale ?? 1)}px`, // Base size 36px (w-9)
+width: `${avatarSizePx * (styleConfig.avatarDecorationScale ?? 1)}px`,
                                 height: 'auto',
                                 transform: `translate(-50%, -50%) rotate(${styleConfig.avatarDecorationRotate ?? 0}deg)`,
                             }}
@@ -351,7 +369,7 @@ const MessageItem = React.memo(({
                             </div>
                         )}
                         <div className="w-full px-4 my-3" {...interactionProps}>
-                            <div className="w-72 mx-auto">
+<div className="mx-auto w-72">
                                 <LifeSimResetCardView card={scoreData} />
                             </div>
                         </div>
@@ -427,7 +445,7 @@ const MessageItem = React.memo(({
             const callMemo = String(m.metadata?.keepsakeLine || `“今天这通电话，我会记很久。” —— ${m.metadata?.characterName || charName}`);
             const memoTitle = m.metadata?.characterName || charName;
             const memoAvatar = m.metadata?.characterAvatar || charAvatar;
-            const timeHint = durationSec <= 240 ? '☕ 差不多是一杯咖啡的时间' : '🎵 像听完一首喜欢的歌再多一点';
+const timeHint = durationSec <= 240 ? '差不多是一杯咖啡的时间' : '像听完一首喜欢的歌再多一点';
 
             return (
                 <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`}>
@@ -468,9 +486,9 @@ const MessageItem = React.memo(({
                 <div className="flex justify-center my-6 px-10 w-full" {...interactionProps}>
                     <div className="flex items-center gap-1.5 bg-slate-200/40 backdrop-blur-md text-slate-500 px-3 py-1 rounded-full shadow-sm border border-white/20 select-none cursor-pointer active:scale-95 transition-transform">
                         {/* Optional Icon based on content */}
-                        {displayText.includes('任务') ? '✨' :
-                        displayText.includes('纪念日') || displayText.includes('Event') ? '📅' :
-                        displayText.includes('转账') ? '💰' : '🔔'}
+<img src={displayText.includes('任务') ? 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/2728.png' :
+                        displayText.includes('纪念日') || displayText.includes('Event') ? 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4c5.png' :
+                        displayText.includes('转账') ? 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4b0.png' : 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f514.png'} alt="" className="w-4 h-4" />
                         <span className="text-[10px] font-medium tracking-wide">{displayText}</span>
                     </div>
                 </div>
@@ -479,26 +497,7 @@ const MessageItem = React.memo(({
     }
 
     if (m.type === 'interaction') {
-        if (m.metadata?.kind === 'notion_diary_nudge') {
-            return (
-                <div className={`flex flex-col items-center ${marginBottom} w-full animate-fade-in relative transition-[padding] duration-300 ${selectionMode ? 'pl-8' : ''}`}>
-                    {selectionMode && (
-                        <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
-                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
-                                {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
-                            </div>
-                        </div>
-                    )}
-                    <div className="text-[10px] text-slate-400 mb-1 opacity-70">{formatTime(m.timestamp)}</div>
-                    <div className="group relative cursor-pointer active:scale-95 transition-transform" {...interactionProps}>
-                        <div className="text-[11px] text-slate-600 bg-violet-50/90 backdrop-blur-sm px-4 py-1.5 rounded-full flex items-center gap-1.5 border border-violet-100 shadow-sm select-none">
-                            <span>📝</span>
-                            <span className="font-medium opacity-90">提醒写 Notion 日记</span>
-                        </div>
-                    </div>
-                </div>
-            );
-        }
+
         return (
             <div className={`flex flex-col items-center ${marginBottom} w-full animate-fade-in relative transition-[padding] duration-300 ${selectionMode ? 'pl-8' : ''}`}>
                 {selectionMode && (
@@ -511,7 +510,7 @@ const MessageItem = React.memo(({
                 <div className="text-[10px] text-slate-400 mb-1 opacity-70">{formatTime(m.timestamp)}</div>
                 <div className="group relative cursor-pointer active:scale-95 transition-transform" {...interactionProps}>
                         <div className="text-[11px] text-slate-500 bg-slate-200/50 backdrop-blur-sm px-4 py-1.5 rounded-full flex items-center gap-1.5 border border-white/40 shadow-sm select-none">
-                        <span className="group-hover:animate-bounce">👉</span>
+<img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f449.png" alt="poke" className="w-4 h-4 group-hover:animate-bounce" />
                         <span className="font-medium opacity-80">{isUser ? '你' : charName}</span>
                         <span className="opacity-60">戳了戳</span>
                         <span className="font-medium opacity-80">{isUser ? charName : '你'}</span>
@@ -547,7 +546,9 @@ const MessageItem = React.memo(({
                     <div className={selectionMode ? 'pointer-events-none' : ''}>
                         {content}
                     </div>
-                    {isLastInGroup && <div className="text-[9px] text-slate-400/80 px-1 mt-1 font-medium">{formatTime(m.timestamp)}</div>}
+{isLastInGroup && showTimestamp !== 'never' && (
+                        <div className={`text-[9px] text-slate-400/80 px-1 mt-1 font-medium ${showTimestamp === 'hover' ? 'opacity-0 group-hover:opacity-100 transition-opacity' : ''}`}>{formatTime(m.timestamp)}</div>
+                    )}
                 </div>
 
                 {/* User Avatar - Absolute Positioned */}
@@ -594,7 +595,7 @@ const MessageItem = React.memo(({
                                 if (container.querySelector('.xhs-cover-fallback')) return;
                                 const fallback = document.createElement('div');
                                 fallback.className = 'xhs-cover-fallback w-full h-full bg-gradient-to-br from-red-50 to-pink-100 flex items-center justify-center';
-                                fallback.innerHTML = `<div class="text-center"><div class="text-2xl mb-1">📕</div><div class="text-[10px] text-red-300 font-medium">${note.title ? '封面加载失败' : '小红书笔记'}</div></div>`;
+fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4d5.png" alt="" class="w-6 h-6 mx-auto" /></div><div class="text-[10px] text-red-300 font-medium">${note.title ? '封面加载失败' : '小红书笔记'}</div></div>`;
                                 container.appendChild(fallback);
                             }}
                         />
@@ -640,7 +641,7 @@ const MessageItem = React.memo(({
         return commonLayout(
             <div className="w-64 bg-white rounded-xl overflow-hidden shadow-sm border border-slate-100 cursor-pointer active:opacity-90 transition-opacity">
                 <div className="h-32 w-full flex items-center justify-center text-6xl relative overflow-hidden" style={{ background: post.bgStyle || '#fce7f3' }}>
-                    {post.images?.[0] || '📄'}
+{post.images?.[0] || <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4c4.png" alt="document" className="w-12 h-12" />}
                     <div className="absolute bottom-0 left-0 w-full p-2 bg-gradient-to-t from-black/30 to-transparent">
                         <div className="text-white text-xs font-bold line-clamp-1">{post.title}</div>
                     </div>
@@ -806,7 +807,7 @@ const MessageItem = React.memo(({
                         <div className="text-xs font-bold text-slate-800 truncate">{scoreData.courseTitle}</div>
                         <div className="text-[10px] text-slate-500 truncate mt-0.5">{scoreData.chapterTitle}</div>
                         <div className="mt-2 pt-2 border-t border-slate-50 flex items-center gap-1 text-[10px] text-emerald-500">
-                            📝 刷题报告
+<img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4dd.png" alt="" className="w-3 h-3 inline-block" /> 刷题报告
                         </div>
                     </div>
                 </div>
@@ -828,7 +829,7 @@ const MessageItem = React.memo(({
             return commonLayout(
                 <div className="w-64 bg-white rounded-xl overflow-hidden shadow-sm border border-slate-100 cursor-pointer active:opacity-90 transition-opacity" {...interactionProps}>
                     <div className={`h-28 w-full bg-gradient-to-br ${gradient} flex flex-col items-center justify-center text-white relative`}>
-                        <div className="text-3xl mb-1">{scoreData.genreIcon || '🎵'}</div>
+<div className="text-3xl mb-1">{scoreData.genreIcon || <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f3b5.png" alt="music" className="w-8 h-8" />}</div>
                         <div className="font-bold text-sm">{scoreData.title}</div>
                         {scoreData.subtitle && <div className="text-[10px] opacity-80">{scoreData.subtitle}</div>}
                         {scoreData.status === 'completed' && (
@@ -847,7 +848,7 @@ const MessageItem = React.memo(({
                             <p className="text-xs text-slate-600 line-clamp-3 leading-relaxed whitespace-pre-wrap">{scoreData.lyrics.substring(0, 100)}</p>
                         )}
                         <div className="mt-2 pt-2 border-t border-slate-50 flex items-center gap-1 text-[10px] text-fuchsia-500">
-                            🎵 乐谱分享
+<img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f3b5.png" alt="" className="w-3 h-3 inline-block" /> 乐谱分享
                         </div>
                     </div>
                 </div>
@@ -906,11 +907,16 @@ const MessageItem = React.memo(({
             : { borderRadius: `${radius}px`, borderBottomLeftRadius: '2px' };
     }
 
-    // Container style (BackgroundColor + Opacity)
+// Container style (BackgroundColor + Opacity) with bubble variant
     const containerStyle: React.CSSProperties = {
-        backgroundColor: styleConfig.backgroundColor,
-        opacity: styleConfig.opacity, // Overall container opacity
+        backgroundColor: bubbleVariant === 'outline' ? 'transparent' : styleConfig.backgroundColor,
+        opacity: styleConfig.opacity,
         ...borderObj,
+        ...(bubbleVariant === 'outline' ? { border: `2px solid ${styleConfig.backgroundColor}`, boxShadow: 'none' } : {}),
+        ...(bubbleVariant === 'shadow' ? { boxShadow: '0 4px 12px rgba(0,0,0,0.12)' } : {}),
+        ...(bubbleVariant === 'flat' ? { boxShadow: 'none' } : {}),
+        ...(bubbleVariant === 'wechat' ? { boxShadow: 'none', border: '1px solid rgba(15,23,42,0.05)' } : {}),
+        ...(bubbleVariant === 'ios' ? { boxShadow: '0 10px 24px rgba(148,163,184,0.16)', border: '1px solid rgba(255,255,255,0.75)', backdropFilter: 'blur(12px)' } : {}),
     };
 
     // --- Inline formatting parser: code → bold → italic → plain ---
@@ -1010,8 +1016,8 @@ const MessageItem = React.memo(({
         .replace(/\[\[(?:QU[OA]TE|引用)[：:][\s\S]*?\]\]/g, '')  // residual double-bracket quotes (incl. typos & Chinese)
         .replace(/\[(?:QU[OA]TE|引用)[：:][^\]]*\]/g, '')     // residual single-bracket quotes (incl. typos & Chinese)
         .replace(/\[回复\s*[""\u201C][^""\u201D]*?[""\u201D](?:\.{0,3})\]\s*[：:]?\s*/g, '')  // [回复 "content"]: format
-        // Residual [[UPPER_SNAKE:…]] tool tags（含额外 Notion 库 [[TAG:…]]、XHS_* 等）
-        .replace(/\[\[([A-Z][A-Z0-9_]*):\s*[\s\S]*?\]\]/g, '')
+// Residual action/system tags that may have leaked through
+        .replace(/\[\[(?:ACTION|RECALL|SEARCH|DIARY|READ_DIARY|FS_DIARY|FS_READ_DIARY|SEND_EMOJI|DIARY_START|DIARY_END|FS_DIARY_START|FS_DIARY_END)[:\s][\s\S]*?\]\]/g, '')
         .replace(/\[schedule_message[^\]]*\]/g, '')
         .replace(/<[语語]音>[\s\S]*?<\/[语語]音>/g, '')  // strip <语音>...</语音> voice tags
         .replace(/^\s*---\s*$/gm, '')                // standalone --- lines
@@ -1045,7 +1051,7 @@ const MessageItem = React.memo(({
     return commonLayout(
         <div className={isVoiceOnlyMsg
             ? 'relative animate-fade-in'
-            : `relative shadow-sm px-5 py-3 animate-fade-in border border-black/5 active:scale-[0.98] transition-transform overflow-visible ${isUser ? 'sully-bubble-user' : 'sully-bubble-ai'}`}
+: `relative ${bubbleVariant === 'flat' || bubbleVariant === 'outline' || bubbleVariant === 'wechat' ? '' : 'shadow-sm '}px-5 py-3 animate-fade-in ${bubbleVariant === 'outline' ? '' : 'border border-black/5 '}active:scale-[0.98] transition-transform overflow-visible ${isUser ? 'sully-bubble-user' : 'sully-bubble-ai'}`}
             style={isVoiceOnlyMsg ? undefined : containerStyle}>
 
             {/* Layer 1: Background Image with Independent Opacity */}
@@ -1271,10 +1277,19 @@ const MessageItem = React.memo(({
            prev.isFirstInGroup === next.isFirstInGroup &&
            prev.isLastInGroup === next.isLastInGroup &&
            prev.activeTheme === next.activeTheme &&
+prev.charAvatar === next.charAvatar &&
+           prev.charName === next.charName &&
+           prev.userAvatar === next.userAvatar &&
            prev.selectionMode === next.selectionMode &&
            prev.isSelected === next.isSelected &&
            prev.translationEnabled === next.translationEnabled &&
            prev.isShowingTarget === next.isShowingTarget &&
+prev.avatarShape === next.avatarShape &&
+           prev.avatarSize === next.avatarSize &&
+           prev.avatarMode === next.avatarMode &&
+           prev.bubbleVariant === next.bubbleVariant &&
+           prev.messageSpacing === next.messageSpacing &&
+           prev.showTimestamp === next.showTimestamp &&
            prev.voiceData?.url === next.voiceData?.url &&
            prev.voiceLoading === next.voiceLoading &&
            prev.isVoicePlaying === next.isVoicePlaying;

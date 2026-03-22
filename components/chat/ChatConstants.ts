@@ -1,9 +1,9 @@
 
 import { ChatTheme } from '../../types';
 
-/** 群聊 App「AI 上下文条数」与私聊 system 注入群摘要共用 localStorage key；未存过时的默认条数 */
-export const DEFAULT_GROUPCHAT_CONTEXT_LIMIT = 100;
-export const GROUPCHAT_CONTEXT_LIMIT_KEY = 'groupchat_context_limit';
+// Group chat context limit (messages to include in context)
+export const DEFAULT_GROUPCHAT_CONTEXT_LIMIT = 500;
+export const GROUPCHAT_CONTEXT_LIMIT_KEY = 'groupchat-context-limit';
 
 // Built-in presets map to the new data structure for consistency
 export const PRESET_THEMES: Record<string, ChatTheme> = {

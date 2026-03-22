@@ -9,6 +9,7 @@ lerna-debug.log*
 
 node_modules
 *.tsbuildinfo
+.npm-cache
 dist
 dist-ssr
 *.local
@@ -23,3 +24,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# xiaohongshu-skills (cloned dependency)
+xiaohongshu-skills/

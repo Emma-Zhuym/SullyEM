@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { SpeakerHigh, PlayCircle, StopCircle, Plus, Trash, FloppyDisk, Lock } from '@phosphor-icons/react';
+import { SpeakerHigh, PlayCircle, StopCircle, Plus, Trash, FloppyDisk, Lock, Check, Warning } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { fetchMiniMaxVoices, MiniMaxVoiceItem } from '../utils/minimaxVoice';
@@ -523,7 +523,7 @@ const VoiceDesignerApp: React.FC = () => {
           {audioUrl && timberWeights.filter(tw => tw.voice_id.trim()).length > 1 && (
             <div className="space-y-1.5">
               <p className="text-[10px] text-emerald-600/80 text-center">
-                ✓ 混合声线已就绪，直接点「应用」即可使用。通话时会实时混合，效果与试听一致。
+<Check size={12} weight="bold" className="inline" /> 混合声线已就绪，直接点「应用」即可使用。通话时会实时混合，效果与试听一致。
               </p>
               <details className="group">
                 <summary className="text-[10px] text-slate-400 text-center cursor-pointer hover:text-slate-500 select-none">
@@ -531,7 +531,7 @@ const VoiceDesignerApp: React.FC = () => {
                 </summary>
                 <div className="mt-2 space-y-1.5 pt-2 border-t border-slate-100">
                   <p className="text-[10px] text-amber-600/70 text-center">
-                    ⚠ 克隆会从试听音频中提取音色特征，生成的声音可能与混合试听有差异。仅在需要固定 voice_id 时使用。
+<Warning size={12} weight="bold" className="inline" /> 克隆会从试听音频中提取音色特征，生成的声音可能与混合试听有差异。仅在需要固定 voice_id 时使用。
                   </p>
                   <button onClick={handleBakeVoice} disabled={isBaking}
                     className="w-full py-2 rounded-xl bg-slate-200 hover:bg-slate-300 disabled:opacity-50 text-slate-600 text-xs font-medium flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform">

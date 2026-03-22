@@ -12,6 +12,7 @@ import BankAnalytics from '../components/bank/BankAnalytics';
 import { SHOP_RECIPES, INITIAL_DOLLHOUSE } from '../components/bank/BankGameConstants';
 import { processImage } from '../utils/file';
 import { ContextBuilder } from '../utils/context';
+import { Coffee, ClipboardText, ChartBar, Coin, Target, UserCircle, BookOpen, Lightning, Storefront } from '@phosphor-icons/react';
 
 const INITIAL_STATE: BankFullState = {
     config: {
@@ -959,7 +960,7 @@ ${previousGuestbook}
                                                     ×
                                                 </button>
                                                 <div className="text-lg opacity-30 group-hover:opacity-60 transition-opacity select-none">
-                                                    {idx % 2 === 0 ? '📌' : '📎'}
+{idx % 2 === 0 ? '●' : '○'}
                                                 </div>
                                             </div>
                                         </div>
@@ -988,9 +989,9 @@ ${previousGuestbook}
             <div className="shrink-0 z-30 pb-safe px-4 py-2" style={{ background: 'linear-gradient(180deg, rgba(255,248,225,0.95) 0%, rgba(253,246,227,0.98) 100%)', backdropFilter: 'blur(10px)' }}>
                 <div className="flex items-center justify-around bg-white/80 backdrop-blur-sm rounded-2xl p-1.5 shadow-lg border border-[#E8DCC8]">
                     {[
-                        { key: 'game', icon: '☕', label: '店铺', color: '#8D6E63' },
-                        { key: 'manage', icon: '📋', label: '经营', color: '#FF7043' },
-                        { key: 'report', icon: '📊', label: '账本', color: '#66BB6A' }
+{ key: 'game', label: '店铺', color: '#8D6E63' },
+                        { key: 'manage', label: '经营', color: '#FF7043' },
+                        { key: 'report', label: '账本', color: '#66BB6A' }
                     ].map(tab => (
                         <button
                             key={tab.key}
@@ -1001,7 +1002,7 @@ ${previousGuestbook}
                                     : 'hover:bg-[#FDF6E3]'
                             }`}
                         >
-                            <span className={`text-xl mb-0.5 ${activeTab === tab.key ? 'transform scale-110' : ''}`}>{tab.icon}</span>
+<span className={`text-xl mb-0.5 ${activeTab === tab.key ? 'transform scale-110' : ''}`}>{tab.key === 'game' ? <Storefront size={20} weight="bold" /> : tab.key === 'manage' ? <ClipboardText size={20} weight="bold" /> : <ChartBar size={20} weight="bold" />}</span>
                             <span className={`text-[10px] font-bold tracking-wide ${activeTab === tab.key ? 'text-white' : 'text-[#A1887F]'}`}>
                                 {tab.label}
                             </span>
@@ -1014,7 +1015,7 @@ ${previousGuestbook}
             </div>
 
             {/* Premium Modals */}
-            <Modal isOpen={showAddTxModal} title="💰 记一笔" onClose={() => setShowAddTxModal(false)} footer={
+<Modal isOpen={showAddTxModal} title="记一笔" onClose={() => setShowAddTxModal(false)} footer={
                 <button onClick={handleAddTransaction} className="w-full py-4 bg-gradient-to-r from-[#FF8A65] to-[#FF7043] text-white font-bold rounded-2xl shadow-lg hover:shadow-xl active:scale-[0.98] transition-all text-base">
                     确认入账
                 </button>
@@ -1039,13 +1040,13 @@ ${previousGuestbook}
                             value={txNote}
                             onChange={e => setTxNote(e.target.value)}
                             className="w-full bg-[#FDF6E3] border-2 border-[#E8DCC8] rounded-2xl px-4 py-4 text-base font-medium text-[#5D4037] focus:border-[#FF7043] outline-none transition-colors"
-                            placeholder="买什么了？🛒"
+placeholder="买什么了？"
                         />
                     </div>
                 </div>
             </Modal>
 
-            <Modal isOpen={showGoalModal} title="🎯 新目标" onClose={() => setShowGoalModal(false)} footer={
+<Modal isOpen={showGoalModal} title="新目标" onClose={() => setShowGoalModal(false)} footer={
                 <button onClick={handleAddGoal} className="w-full py-4 bg-gradient-to-r from-[#66BB6A] to-[#43A047] text-white font-bold rounded-2xl shadow-lg hover:shadow-xl active:scale-[0.98] transition-all text-base">
                     添加目标
                 </button>
@@ -1056,7 +1057,7 @@ ${previousGuestbook}
                         <input
                             value={goalName}
                             onChange={e => setGoalName(e.target.value)}
-                            placeholder="例如: Nintendo Switch 🎮"
+placeholder="例如: Nintendo Switch"
                             className="w-full bg-[#FDF6E3] border-2 border-[#E8DCC8] rounded-2xl px-4 py-4 text-base font-medium text-[#5D4037] focus:border-[#66BB6A] outline-none transition-colors"
                         />
                     </div>
@@ -1077,7 +1078,7 @@ ${previousGuestbook}
             </Modal>
 
             {/* Staff Edit Modal */}
-            <Modal isOpen={showStaffEdit} title="👤 员工档案" onClose={() => { setShowStaffEdit(false); setEditingStaff(null); }} footer={
+<Modal isOpen={showStaffEdit} title="员工档案" onClose={() => { setShowStaffEdit(false); setEditingStaff(null); }} footer={
                 <button onClick={handleSaveStaff} className="w-full py-4 bg-gradient-to-r from-[#42A5F5] to-[#1E88E5] text-white font-bold rounded-2xl shadow-lg hover:shadow-xl active:scale-[0.98] transition-all text-base">
                     保存修改
                 </button>
@@ -1094,7 +1095,7 @@ ${previousGuestbook}
                                     : editingStaff.avatar
                                 }
                                 <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <span className="text-white text-xs font-bold bg-black/40 px-2 py-1 rounded-lg">📷 更换</span>
+<span className="text-white text-xs font-bold bg-black/40 px-2 py-1 rounded-lg">更换</span>
                                 </div>
                                 <input type="file" ref={staffImageInputRef} className="hidden" accept="image/*" onChange={handleStaffImageUpload} />
                             </div>
@@ -1106,7 +1107,7 @@ ${previousGuestbook}
                                     placeholder="姓名"
                                 />
                                 <div className="inline-flex items-center gap-1.5 text-xs text-white bg-gradient-to-r from-[#8D6E63] to-[#6D4C41] px-3 py-1 rounded-full font-bold">
-                                    {editingStaff.role === 'manager' ? '💼 经理' : editingStaff.role === 'chef' ? '👨‍🍳 主厨' : '🙋 服务员'}
+{editingStaff.role === 'manager' ? '经理' : editingStaff.role === 'chef' ? '主厨' : '服务员'}
                                 </div>
                             </div>
                         </div>
@@ -1116,7 +1117,7 @@ ${previousGuestbook}
                                 value={editingStaff.personality || ''}
                                 onChange={e => setEditingStaff({...editingStaff, personality: e.target.value})}
                                 className="w-full bg-[#FDF6E3] border-2 border-[#E8DCC8] rounded-2xl px-4 py-3 text-sm text-[#5D4037] focus:border-[#42A5F5] outline-none transition-colors"
-                                placeholder="懒洋洋的，喜欢晒太阳 ☀️"
+placeholder="懒洋洋的，喜欢晒太阳"
                             />
                         </div>
                     </div>
@@ -1124,24 +1125,24 @@ ${previousGuestbook}
             </Modal>
 
             {/* Help/Tutorial Modal */}
-            <Modal isOpen={showTutorial} title="📖 玩法说明" onClose={() => setShowTutorial(false)}>
+<Modal isOpen={showTutorial} title="玩法说明" onClose={() => setShowTutorial(false)}>
                 <div className="space-y-5 text-[#5D4037]">
                     <div className="flex gap-4 p-4 bg-gradient-to-r from-[#FFF8E1] to-[#FFF3E0] rounded-2xl">
-                        <div className="w-12 h-12 bg-gradient-to-br from-[#FFD54F] to-[#FFB300] rounded-xl flex items-center justify-center text-2xl shadow-md shrink-0">💰</div>
+                        <div className="w-12 h-12 bg-gradient-to-br from-[#FFD54F] to-[#FFB300] rounded-xl flex items-center justify-center text-2xl shadow-md shrink-0"><Coin size={24} weight="fill" className="text-white" /></div>
                         <div>
                             <div className="font-bold text-base mb-1">省钱 = 能量 (AP)</div>
                             <p className="text-xs text-[#8D6E63] leading-relaxed">设定每日预算。如果这天花得比预算少，结余的钱就会变成第二天的行动点数 (AP)。</p>
                         </div>
                     </div>
                     <div className="flex gap-4 p-4 bg-gradient-to-r from-[#EFEBE9] to-[#D7CCC8] rounded-2xl">
-                        <div className="w-12 h-12 bg-gradient-to-br from-[#8D6E63] to-[#6D4C41] rounded-xl flex items-center justify-center text-2xl shadow-md shrink-0">☕</div>
+<div className="w-12 h-12 bg-gradient-to-br from-[#8D6E63] to-[#6D4C41] rounded-xl flex items-center justify-center text-2xl shadow-md shrink-0"><Coffee size={24} weight="fill" className="text-white" /></div>
                         <div>
                             <div className="font-bold text-base mb-1">经营店铺</div>
                             <p className="text-xs text-[#8D6E63] leading-relaxed">消耗 AP 来解锁食谱、雇佣员工、举办活动。店铺越高级，吸引的访客越多。</p>
                         </div>
                     </div>
                     <div className="flex gap-4 p-4 bg-gradient-to-r from-[#E3F2FD] to-[#BBDEFB] rounded-2xl">
-                        <div className="w-12 h-12 bg-gradient-to-br from-[#42A5F5] to-[#1E88E5] rounded-xl flex items-center justify-center text-2xl shadow-md shrink-0">👆</div>
+<div className="w-12 h-12 bg-gradient-to-br from-[#42A5F5] to-[#1E88E5] rounded-xl flex items-center justify-center text-2xl shadow-md shrink-0"><Lightning size={24} weight="fill" className="text-white" /></div>
                         <div>
                             <div className="font-bold text-base mb-1">互动操作</div>
                             <p className="text-xs text-[#5C6BC0] leading-relaxed">

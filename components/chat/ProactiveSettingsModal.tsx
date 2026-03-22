@@ -13,7 +13,7 @@ interface ProactiveSettingsModalProps {
 }
 
 const INTERVAL_OPTIONS = [
-    { label: '15 分钟', value: 15 },
+
     { label: '30 分钟', value: 30 },
     { label: '1 小时', value: 60 },
     { label: '2 小时', value: 120 },
@@ -29,6 +29,7 @@ const ProactiveSettingsModal: React.FC<ProactiveSettingsModalProps> = ({
     const saved = char.proactiveConfig;
     const [enabled, setEnabled] = useState(saved?.enabled ?? false);
     const [morningGreetingEnabled, setMorningGreetingEnabled] = useState(saved?.morningGreetingEnabled ?? false);
+
     const [interval, setInterval_] = useState(saved?.intervalMinutes ?? 60);
     const [useSecondaryApi, setUseSecondaryApi] = useState(saved?.useSecondaryApi ?? false);
     const [secUrl, setSecUrl] = useState(saved?.secondaryApi?.baseUrl ?? '');
@@ -42,6 +43,7 @@ const ProactiveSettingsModal: React.FC<ProactiveSettingsModalProps> = ({
             const s = char.proactiveConfig;
             setEnabled(s?.enabled ?? false);
             setMorningGreetingEnabled(s?.morningGreetingEnabled ?? false);
+
             setInterval_(s?.intervalMinutes ?? 60);
             setUseSecondaryApi(s?.useSecondaryApi ?? false);
             setSecUrl(s?.secondaryApi?.baseUrl ?? '');
@@ -56,6 +58,7 @@ const ProactiveSettingsModal: React.FC<ProactiveSettingsModalProps> = ({
             enabled,
             intervalMinutes: interval,
             morningGreetingEnabled,
+
             useSecondaryApi: useSecondaryApi && !!secUrl,
             secondaryApi: useSecondaryApi && secUrl ? {
                 baseUrl: secUrl,
@@ -105,15 +108,17 @@ const ProactiveSettingsModal: React.FC<ProactiveSettingsModalProps> = ({
                     </button>
                 </div>
 
-                {/* 早安消息 Toggle（在「启用主动消息」下方） */}
-                <div className="flex items-center justify-between py-2 border-t border-slate-100">
+                <div className="flex items-center justify-between pt-2 border-t border-slate-100">
                     <div>
                         <span className="text-sm font-bold text-slate-700 block">早安消息</span>
-                        <span className="text-[11px] text-slate-400">每天 6–11 点首次打开时发一条早安消息。性格不适合主动的角色可关闭。</span>
+                        <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
+                            每天 6:00～11:00 首次打开 App 时，该角色会错开发一条早安（与上方「间隔主动消息」独立）
+                        </p>
                     </div>
                     <button
+                        type="button"
                         onClick={() => setMorningGreetingEnabled(!morningGreetingEnabled)}
-                        className={`w-12 h-7 rounded-full transition-colors relative shrink-0 ml-3 ${morningGreetingEnabled ? 'bg-amber-500' : 'bg-slate-200'}`}
+                        className={`w-12 h-7 rounded-full transition-colors relative shrink-0 ${morningGreetingEnabled ? 'bg-amber-400' : 'bg-slate-200'}`}
                     >
                         <span className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow transition-all duration-200 ${morningGreetingEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
                     </button>
@@ -132,7 +137,7 @@ const ProactiveSettingsModal: React.FC<ProactiveSettingsModalProps> = ({
                     <>
                         <div>
                             <label className="text-sm font-bold text-slate-700 block mb-2">发送间隔</label>
-                            <div className="grid grid-cols-4 gap-2">
+<div className="grid grid-cols-3 gap-2">
                                 {INTERVAL_OPTIONS.map(opt => (
                                     <button
                                         key={opt.value}
@@ -146,7 +151,7 @@ const ProactiveSettingsModal: React.FC<ProactiveSettingsModalProps> = ({
                                     </button>
                                 ))}
                             </div>
-                            <p className="text-[10px] text-slate-400 mt-1">可选 15 分钟～24 小时</p>
+
                         </div>
 
                         {/* Secondary API Toggle */}

@@ -1,7 +1,5 @@
 
-
-
-import React, { useState, useEffect, Component, ErrorInfo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useOS } from '../context/OSContext';
 import StatusBar from './os/StatusBar';
 import Launcher from '../apps/Launcher';
@@ -34,68 +32,15 @@ import CallApp from '../apps/CallApp';
 import VoiceDesignerApp from '../apps/VoiceDesignerApp';
 import GuidebookApp from '../apps/GuidebookApp';
 import LifeSimApp from '../apps/LifeSimApp';
-import { SpecialMomentsApp, ValentineController } from './ValentineEvent';
-import { WhiteDayController } from './WhiteDayEvent';
-import { shouldShowValentinePopup } from '../utils/valentineEventUtils';
-import { shouldShowWhiteDayPopup, isWhiteDay } from '../utils/whiteDayEventUtils';
+import { SpecialMomentsApp, ValentineController, shouldShowValentinePopup } from './ValentineEvent';
+import { WhiteDayController, shouldShowWhiteDayPopup, isWhiteDay } from './WhiteDayEvent';
 import { AppID } from '../types';
 import { App as CapApp } from '@capacitor/app';
 import { StatusBar as CapStatusBar, Style as StatusBarStyle } from '@capacitor/status-bar';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
-
-// Internal Error Boundary Component
-class AppErrorBoundary extends Component<{ children: React.ReactNode, onCloseApp: () => void }, { hasError: boolean, error: Error | null }> {
-    constructor(props: any) {
-        super(props);
-        this.state = { hasError: false, error: null };
-    }
-
-    static getDerivedStateFromError(error: Error) {
-        return { hasError: true, error };
-    }
-
-    componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-        console.error("App Crash:", error, errorInfo);
-    }
-
-    // Reset error state when children change (e.g. app switch)
-    componentDidUpdate(prevProps: any) {
-        if (prevProps.children !== this.props.children) {
-            this.setState({ hasError: false, error: null });
-        }
-    }
-
-    render() {
-        if (this.state.hasError) {
-            return (
-                <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 text-white p-6 text-center space-y-4">
-                    <div className="text-4xl">😵</div>
-                    <h2 className="text-lg font-bold">应用运行错误</h2>
-                    <p className="text-xs text-slate-400 font-mono bg-black/30 p-3 rounded max-w-full overflow-auto max-h-40 select-text break-all whitespace-pre-wrap">
-                        {this.state.error?.message || 'Unknown Error'}
-                    </p>
-                    <button
-                        onClick={() => {
-                            const errText = this.state.error?.message || 'Unknown Error';
-                            navigator.clipboard?.writeText(errText).then(() => {}).catch(() => {});
-                        }}
-                        className="px-4 py-2 bg-slate-700 rounded-full text-xs active:scale-95 transition-transform"
-                    >
-                        复制错误信息
-                    </button>
-                    <button
-                        onClick={() => { this.setState({ hasError: false }); this.props.onCloseApp(); }}
-                        className="px-6 py-3 bg-red-600 rounded-full font-bold text-sm shadow-lg active:scale-95 transition-transform"
-                    >
-                        返回桌面
-                    </button>
-                </div>
-            );
-        }
-        return this.props.children;
-    }
-}
+import { isIOSStandaloneWebApp } from '../utils/iosStandalone';
+import AppErrorBoundary from './os/AppErrorBoundary';
 
 const DISCLAIMER_KEY = 'sullyos_disclaimer_accepted';
 
@@ -146,7 +91,8 @@ const DisclaimerPopup: React.FC<{ onAccept: () => void }> = ({ onAccept }) => (
 );
 
 const PhoneShell: React.FC = () => {
-  const { theme, isLocked, unlock, activeApp, closeApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters, handleBack, suspendedCall, resumeCall, messageSubView } = useOS();
+  const { theme, isLocked, unlock, activeApp, closeApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters, handleBack, suspendedCall, resumeCall, activeCharacterId, messageSubView } = useOS();
+  const useIOSStandaloneLayout = isIOSStandaloneWebApp();
 
   // Disclaimer popup for first-time users
   const [showDisclaimer, setShowDisclaimer] = useState(() => {
@@ -261,6 +207,18 @@ const PhoneShell: React.FC = () => {
       window.scrollTo(0, 0);
   }, [activeApp]);
 
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const wallpaper = theme.wallpaper;
+    const backgroundValue = !wallpaper ? '#0f1115' : (wallpaper.startsWith('http') || wallpaper.startsWith('data:') || wallpaper.startsWith('blob:')) ? `url(${wallpaper})` : wallpaper;
+    [document.documentElement, document.body].forEach((element) => {
+      element.style.background = backgroundValue;
+      element.style.backgroundPosition = 'center';
+      element.style.backgroundSize = 'cover';
+      element.style.backgroundRepeat = 'no-repeat';
+    });
+  }, [theme.wallpaper]);
+
   if (!isDataLoaded) {
     return <div className="w-full h-full bg-black flex items-center justify-center"><div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin"></div></div>;
   }
@@ -281,7 +239,7 @@ const PhoneShell: React.FC = () => {
     return (
       <div 
         onClick={() => {
-            if ('Notification' in window && Notification.permission !== 'granted') {
+            if ('Notification' in window && Notification.permission === 'default') {
                 Notification.requestPermission();
             }
             unlock();
@@ -372,7 +330,7 @@ const PhoneShell: React.FC = () => {
              filter: activeApp !== AppID.Launcher ? 'blur(10px)' : 'none',
              opacity: activeApp !== AppID.Launcher ? 0.6 : 1,
              backfaceVisibility: 'hidden',
-             contain: 'strict'
+             contain: useIOSStandaloneLayout ? undefined : 'strict'
          }}
        />
        
@@ -392,8 +350,8 @@ const PhoneShell: React.FC = () => {
   }}
 > 
           {/* App Container */}
-         <div className="flex-1 relative overflow-hidden" style={{ contain: 'layout style paint' }}>
-    <AppErrorBoundary onCloseApp={closeApp}>
+         <div className="flex-1 relative overflow-hidden" style={{ contain: useIOSStandaloneLayout ? undefined : 'layout style paint' }}>
+    <AppErrorBoundary onCloseApp={closeApp} resetKey={`${activeApp}:${activeCharacterId || 'none'}`}>
         {renderApp()}
     </AppErrorBoundary>
 </div>

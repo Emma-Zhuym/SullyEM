@@ -4,6 +4,10 @@ import { useOS } from '../context/OSContext';
 import { processImage } from '../utils/file';
 import { safeResponseJson } from '../utils/safeApi';
 import Modal from '../components/os/Modal';
+import { Camera, ImageSquare, GlobeSimple, MagnifyingGlass, Lightning } from '@phosphor-icons/react';
+
+const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
+const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
 
 // --- Simple Markdown Renderer for Web Content ---
 const WebRenderer: React.FC<{ content: string }> = ({ content }) => {
@@ -26,7 +30,7 @@ const WebRenderer: React.FC<{ content: string }> = ({ content }) => {
                 if (noteMatch) {
                     return (
                         <div key={i} className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden mb-4 inline-block w-[48%] mr-[2%] align-top break-inside-avoid">
-                            <div className="aspect-[3/4] bg-slate-200 w-full flex items-center justify-center text-4xl text-slate-400">📷</div>
+<div className="aspect-[3/4] bg-slate-200 w-full flex items-center justify-center text-slate-400"><Camera size={48} /></div>
                             <div className="p-2">
                                 <div className="font-bold text-slate-800 text-xs line-clamp-2 mb-2">{noteMatch[1]}</div>
                                 <div className="flex justify-between items-center">
@@ -35,7 +39,7 @@ const WebRenderer: React.FC<{ content: string }> = ({ content }) => {
                                         <span className="text-[10px] text-slate-500 truncate w-12">{noteMatch[2]}</span>
                                     </div>
                                     <div className="flex items-center gap-0.5 text-slate-400">
-                                        <span className="text-[10px]">❤️ {noteMatch[3]}</span>
+<span className="text-[10px] flex items-center gap-0.5"><img src={twemojiUrl('2764-fe0f')} alt="heart" className="w-3 h-3 inline" /> {noteMatch[3]}</span>
                                     </div>
                                 </div>
                             </div>
@@ -91,7 +95,7 @@ const WebRenderer: React.FC<{ content: string }> = ({ content }) => {
                         <div key={i} className="my-4 bg-slate-100 rounded-lg overflow-hidden border border-slate-200">
                             {/* Placeholder for images since AI can't generate real URLs reliably without tool use */}
                             <div className="h-40 flex items-center justify-center bg-slate-200 text-slate-400 gap-2 flex-col">
-                                <span className="text-2xl">🖼️</span> 
+<ImageSquare size={28} />
                                 <span className="text-xs text-slate-500">{imgMatch[1] || 'External Image'}</span>
                             </div>
                         </div>
@@ -387,7 +391,7 @@ Generate realistic results linking to hypothetical URLs.`;
     const renderStartPage = () => (
         <div className="flex flex-col items-center justify-center h-full pb-20 p-4 animate-fade-in">
             <div className="text-5xl font-bold text-slate-300 mb-8 flex flex-col items-center gap-2">
-                <span>🌐</span>
+<GlobeSimple size={48} className="text-slate-300" />
                 <span className="text-2xl tracking-widest uppercase">Sully Browser</span>
             </div>
             
@@ -411,18 +415,18 @@ Generate realistic results linking to hypothetical URLs.`;
 
             <div className="grid grid-cols-4 gap-6 mt-12 w-full max-w-sm px-4">
                 {[
-                    { name: 'Google', icon: '🔍', url: 'google.com' },
-                    { name: 'Bilibili', icon: '📺', url: 'bilibili.com' },
-                    { name: 'RedBook', icon: '📕', url: 'xiaohongshu.com' },
-                    { name: 'Sully', icon: '🐱', url: 'sully.personal.blog' },
+{ name: 'Google', icon: twemojiUrl('1f50d'), url: 'google.com' },
+                    { name: 'Bilibili', icon: twemojiUrl('1f4fa'), url: 'bilibili.com' },
+                    { name: 'RedBook', icon: twemojiUrl('1f4d5'), url: 'xiaohongshu.com' },
+                    { name: 'Sully', icon: twemojiUrl('1f431'), url: 'sully.personal.blog' },
                 ].map((site) => (
-                    <button 
-                        key={site.name} 
+                    <button
+                        key={site.name}
                         onClick={() => navigate(site.url)}
                         className="flex flex-col items-center gap-2 group"
                     >
-                        <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center text-xl shadow-sm border border-slate-100 group-hover:scale-110 transition-transform group-active:scale-95">
-                            {site.icon}
+                        <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center shadow-sm border border-slate-100 group-hover:scale-110 transition-transform group-active:scale-95">
+                            <img src={site.icon} alt={site.name} className="w-6 h-6" />
                         </div>
                         <span className="text-[10px] text-slate-500 font-medium">{site.name}</span>
                     </button>
@@ -473,7 +477,7 @@ Generate realistic results linking to hypothetical URLs.`;
                     <div className="text-slate-400">
                         {currentUrl.startsWith('https') ? 
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={`w-3 h-3 ${isRealNet ? 'text-green-600' : 'text-slate-400'}`}><path fillRule="evenodd" d="M10 2a.75.75 0 0 1 .75.75v.506a5.001 5.001 0 0 1 .533.025c.947.1 1.95.217 2.883.534.364.124.699.27.995.45.353.214.673.475.775.833.08.277.086.598-.037.84a2.532 2.532 0 0 1-.397.643c-.456.602-1.393.896-1.921 1.018a9.497 9.497 0 0 1-1.077.177 10.37 10.37 0 0 1-1.753.072V17.25h1.75a.75.75 0 0 1 0 1.5h-5a.75.75 0 0 1 0-1.5h1.75v-9.39a10.37 10.37 0 0 1-1.754-.073 9.497 9.497 0 0 1-1.076-.176c-.528-.122-1.465-.416-1.92-.1.018a2.532 2.532 0 0 1-.398-.644c-.122-.242-.116-.563-.036-.84.102-.358.422-.619.775-.833.296-.18.63-.326.995-.45.933-.317 1.936-.434 2.883-.534A5.001 5.001 0 0 1 9.25 3.256V2.75A.75.75 0 0 1 10 2Z" clipRule="evenodd" /></svg> 
-                            : <span className="text-[10px] font-bold">🔍</span>
+: <MagnifyingGlass size={12} weight="bold" />
                         }
                     </div>
                     <input 
@@ -496,7 +500,7 @@ Generate realistic results linking to hypothetical URLs.`;
                 
                 {currentUrl === 'home://start' ? renderStartPage() : (
                     <div className="p-4 pb-24 min-h-full">
-                        {isRealNet && !searchResults && <div className="text-[10px] text-green-600 font-bold bg-green-50 p-2 rounded mb-4 flex items-center gap-2 border border-green-100"><span>⚡</span> 已连接 Brave Search 实时网络</div>}
+{isRealNet && !searchResults && <div className="text-[10px] text-green-600 font-bold bg-green-50 p-2 rounded mb-4 flex items-center gap-2 border border-green-100"><Lightning size={12} weight="fill" /> 已连接 Brave Search 实时网络</div>}
                         
                         {searchResults ? renderSearchResults() : (
                             <WebRenderer content={content} />

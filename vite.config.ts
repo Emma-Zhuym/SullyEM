@@ -12,9 +12,10 @@ export default defineConfig({
       },
     },
   ],
-  base: './', // 关键配置：使用相对路径，确保在 GitHub Pages 子目录下能找到资源
+  // GitHub Pages 发布时使用相对路径，避免仓库子路径导致资源 404
+  base: process.env.GITHUB_PAGES ? './' : '/',
   server: {
-    host: true, // 允许局域网内的手机访问
+    host: true, // 允许局域网内的手机访问（二改）
     proxy: {
       '/api/minimax/t2a': {
         target: 'https://api.minimaxi.com',

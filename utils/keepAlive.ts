@@ -10,7 +10,6 @@
  *   KeepAlive.stop();    // after API call completes
  */
 
-// @ts-expect-error Vite worker URL import
 import serviceWorkerUrl from '../worker/sw-keep-alive.ts?worker&url';
 
 let registered = false;
@@ -19,7 +18,7 @@ function resolveServiceWorkerRegistration() {
   const currentDir = new URL('./', window.location.href);
   return {
     scope: currentDir.pathname,
-    scriptUrl: serviceWorkerUrl as string,
+    scriptUrl: serviceWorkerUrl,
   };
 }
 

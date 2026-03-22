@@ -2,7 +2,9 @@
 import React, { useState, useRef } from 'react';
 import { BankFullState, ShopStaff, CharacterProfile } from '../../types';
 import { SHOP_RECIPES, AVAILABLE_STAFF } from './BankGameConstants';
+import BankAssetIcon from './BankAssetIcon';
 import { processImage } from '../../utils/file';
+import { UsersThree, Target, Sparkle, PawPrint, Link as LinkIcon, Camera, Check, Lightbulb, Confetti, Briefcase, CookingPot, HandWaving, Dog, Cat, Rabbit } from '@phosphor-icons/react';
 
 interface Props {
     state: BankFullState;
@@ -29,7 +31,7 @@ const BankGameMenu: React.FC<Props> = ({
     // Custom Hire Form
     const [customName, setCustomName] = useState('');
     const [customRole, setCustomRole] = useState<'waiter'|'chef'|'manager'>('waiter');
-    const [customAvatar, setCustomAvatar] = useState('🐾');
+const [customAvatar, setCustomAvatar] = useState('https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f43e.png');
     const [selectedOwner, setSelectedOwner] = useState<string>(''); // Character ID for pet owner
     const [isPetMode, setIsPetMode] = useState(false);
     const avatarInputRef = useRef<HTMLInputElement>(null);
@@ -80,7 +82,7 @@ const BankGameMenu: React.FC<Props> = ({
         onHireStaff(newStaff, isPetMode ? 150 : 200);
         setShowCustomHire(false);
         setCustomName('');
-        setCustomAvatar('🐾');
+setCustomAvatar('https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f43e.png');
         setSelectedOwner('');
         setIsPetMode(false);
         setAvatarUrl('');
@@ -92,8 +94,8 @@ const BankGameMenu: React.FC<Props> = ({
             {/* Premium Tab Bar */}
             <div className="flex bg-white/60 backdrop-blur-sm p-1.5 rounded-2xl shadow-sm border border-[#E8DCC8]">
                 {[
-                    { key: 'staff', label: '员工', icon: '👥' },
-                    { key: 'goals', label: '目标', icon: '🎯' }
+{ key: 'staff', label: '员工' },
+                    { key: 'goals', label: '目标' }
                 ].map(t => (
                     <button
                         key={t.key}
@@ -104,7 +106,7 @@ const BankGameMenu: React.FC<Props> = ({
                                 : 'text-[#8D6E63] hover:bg-[#FDF6E3]'
                         }`}
                     >
-                        <span>{t.icon}</span>
+{t.key === 'staff' ? <UsersThree size={16} weight="bold" /> : <Target size={16} weight="bold" />}
                         <span>{t.label}</span>
                     </button>
                 ))}
@@ -188,7 +190,7 @@ const BankGameMenu: React.FC<Props> = ({
                                 onClick={() => setShowCustomHire(!showCustomHire)}
                                 className="text-[10px] font-bold text-[#42A5F5] bg-[#E3F2FD] px-3 py-1.5 rounded-lg hover:bg-[#BBDEFB] transition-colors"
                             >
-                                {showCustomHire ? '收起' : '✨ 自定义招聘'}
+{showCustomHire ? '收起' : <><Sparkle size={12} weight="fill" className="inline" /> 自定义招聘</>}
                             </button>
                         </div>
 
@@ -198,7 +200,7 @@ const BankGameMenu: React.FC<Props> = ({
                                 {/* Pet Mode Toggle */}
                                 <div className="flex items-center justify-between bg-gradient-to-r from-[#FFE0B2]/30 to-[#FFCC80]/30 p-3 rounded-xl">
                                     <div className="flex items-center gap-2">
-                                        <span className="text-xl">🐾</span>
+<PawPrint size={20} weight="fill" className="text-[#8D6E63]" />
                                         <div>
                                             <div className="text-xs font-bold text-[#8D6E63]">宠物模式</div>
                                             <div className="text-[9px] text-[#A1887F]">为角色招募专属宠物员工</div>
@@ -259,7 +261,7 @@ const BankGameMenu: React.FC<Props> = ({
                                                         : 'text-[#8D6E63]'
                                                 }`}
                                             >
-                                                🔗 图床URL
+<><LinkIcon size={10} weight="bold" className="inline" /> 图床URL</>
                                             </button>
                                             <button
                                                 type="button"
@@ -270,7 +272,7 @@ const BankGameMenu: React.FC<Props> = ({
                                                         : 'text-[#8D6E63]'
                                                 }`}
                                             >
-                                                📷 上传
+<><Camera size={10} weight="bold" className="inline" /> 上传</>
                                             </button>
                                         </div>
                                     </div>
@@ -279,7 +281,7 @@ const BankGameMenu: React.FC<Props> = ({
                                         {/* Avatar Preview */}
                                         <div className="w-14 h-14 flex-shrink-0 bg-white rounded-xl border border-[#E8DCC8] flex items-center justify-center overflow-hidden">
                                             {customAvatar.startsWith('data:') || customAvatar.startsWith('http') ? (
-                                                <img src={customAvatar} className="w-full h-full object-cover" onError={() => setCustomAvatar('🐾')} />
+<img src={customAvatar} className="w-full h-full object-cover" onError={() => setCustomAvatar('https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f43e.png')} />
                                             ) : (
                                                 <span className="text-2xl">{customAvatar}</span>
                                             )}
@@ -296,7 +298,7 @@ const BankGameMenu: React.FC<Props> = ({
                                                     className="w-full bg-white rounded-xl px-3 py-2 text-xs border border-[#E8DCC8] outline-none focus:border-[#42A5F5] transition-colors"
                                                 />
                                                 <div className="text-[9px] text-[#66BB6A] flex items-center gap-1">
-                                                    <span>✓</span>
+<Check size={10} weight="bold" />
                                                     <span>推荐使用图床，节省本地存储空间</span>
                                                 </div>
                                             </div>
@@ -307,7 +309,7 @@ const BankGameMenu: React.FC<Props> = ({
                                                     onClick={() => avatarInputRef.current?.click()}
                                                     className="w-full py-2 bg-[#FDF6E3] border border-dashed border-[#BCAAA4] rounded-xl text-xs text-[#8D6E63] hover:bg-[#FFF8E1] hover:border-[#8D6E63] transition-all"
                                                 >
-                                                    📷 选择图片
+<><Camera size={12} weight="bold" className="inline" /> 选择图片</>
                                                 </button>
                                                 <div className="text-[9px] text-[#BCAAA4] mt-1 text-center">
                                                     图片将占用本地存储
@@ -331,9 +333,9 @@ const BankGameMenu: React.FC<Props> = ({
                                         onChange={(e) => setCustomRole(e.target.value as any)}
                                         className="bg-white rounded-xl px-3 py-2 text-xs border border-[#E8DCC8] outline-none text-[#5D4037]"
                                     >
-                                        <option value="waiter">{isPetMode ? '🐕 店小二' : '🙋 服务员'}</option>
-                                        <option value="chef">{isPetMode ? '🐱 小帮厨' : '👨‍🍳 大厨'}</option>
-                                        <option value="manager">{isPetMode ? '🐰 吉祥物' : '💼 经理'}</option>
+<option value="waiter">{isPetMode ? '店小二' : '服务员'}</option>
+                                        <option value="chef">{isPetMode ? '小帮厨' : '大厨'}</option>
+                                        <option value="manager">{isPetMode ? '吉祥物' : '经理'}</option>
                                     </select>
                                     <button
                                         onClick={handleCustomHire}
@@ -351,7 +353,7 @@ const BankGameMenu: React.FC<Props> = ({
                                 {/* Pet Mode Hint */}
                                 {isPetMode && selectedOwner && (
                                     <div className="bg-[#FFF3E0] p-3 rounded-xl text-[10px] text-[#E65100] flex items-start gap-2">
-                                        <span className="text-base">💡</span>
+<Lightbulb size={16} weight="fill" className="text-[#E65100]" />
                                         <span>当 {characters.find(c => c.id === selectedOwner)?.name} 来访时，会发现自己的宠物在这里打工，触发特殊互动！</span>
                                     </div>
                                 )}
@@ -363,7 +365,14 @@ const BankGameMenu: React.FC<Props> = ({
                             {AVAILABLE_STAFF.filter(s => !state.shop.staff.find(exist => exist.name === s.name)).map(s => (
                                 <div key={s.id} className="bg-[#FDF6E3] p-4 rounded-2xl border border-[#E8DCC8] flex items-center justify-between hover:bg-[#FFF8E1] transition-colors">
                                     <div className="flex items-center gap-3">
-                                        <div className="w-12 h-12 rounded-xl bg-white/60 flex items-center justify-center text-2xl grayscale-[50%] opacity-80">{s.avatar}</div>
+<div className="w-12 h-12 rounded-xl bg-white/60 flex items-center justify-center overflow-hidden">
+                                            <BankAssetIcon
+                                                value={s.avatar}
+                                                alt={s.name}
+                                                imgClassName="w-full h-full object-cover rounded-xl grayscale-[50%] opacity-80"
+                                                textClassName="text-2xl leading-none grayscale-[50%] opacity-80"
+                                            />
+                                        </div>
                                         <div>
                                             <div className="font-bold text-sm text-[#5D4037]">{s.name}</div>
                                             <div className="text-[10px] text-[#A1887F] uppercase tracking-wider">{s.role === 'manager' ? '经理' : s.role === 'chef' ? '主厨' : '服务员'}</div>
@@ -379,7 +388,7 @@ const BankGameMenu: React.FC<Props> = ({
                             ))}
                             {AVAILABLE_STAFF.every(s => state.shop.staff.find(exist => exist.name === s.name)) && !showCustomHire && (
                                 <div className="text-center py-8">
-                                    <div className="text-4xl mb-2 opacity-50">🎉</div>
+<div className="mb-2 opacity-50"><Confetti size={40} weight="duotone" className="text-[#8D6E63] mx-auto" /></div>
                                     <div className="text-xs text-[#A1887F]">全员已到齐！</div>
                                 </div>
                             )}
@@ -448,7 +457,7 @@ const BankGameMenu: React.FC<Props> = ({
                     {/* Goals List */}
                     {state.goals.length === 0 ? (
                         <div className="text-center py-12">
-                            <div className="text-6xl mb-3 opacity-40">🎯</div>
+<div className="mb-3 opacity-40"><Target size={56} weight="duotone" className="text-[#8D6E63] mx-auto" /></div>
                             <div className="text-sm text-[#A1887F]">还没有储蓄目标</div>
                             <div className="text-xs text-[#BCAAA4] mt-1">设定一个目标，开始攒钱吧！</div>
                         </div>
@@ -466,7 +475,7 @@ const BankGameMenu: React.FC<Props> = ({
                                     <div className="relative z-10">
                                         <div className="flex justify-between items-start mb-3">
                                             <div className="flex items-center gap-2">
-                                                <span className="text-2xl">{g.icon || '🎁'}</span>
+{g.icon ? (g.icon.startsWith('http') ? <img src={g.icon} className="w-6 h-6" /> : <span className="text-2xl">{g.icon}</span>) : <Target size={24} weight="duotone" className="text-[#FF7043]" />}
                                                 <span className="font-bold text-[#5D4037]">{g.name}</span>
                                             </div>
                                             <span className="font-mono font-bold text-[#FF7043] text-lg">{state.config.currencySymbol}{g.targetAmount}</span>

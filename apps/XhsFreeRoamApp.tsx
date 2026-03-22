@@ -6,6 +6,11 @@ import { XhsActivityRecord, CharacterProfile } from '../types';
 import { XhsFreeRoamEngine, FreeRoamCallbacks } from '../utils/xhsFreeRoam';
 import { XhsMcpClient } from '../utils/xhsMcpClient';
 import ConfirmDialog from '../components/os/ConfirmDialog';
+import { Book, PencilSimple, MagnifyingGlass, DeviceMobileCamera, ChatCircleDots, PushPin, Moon, House } from '@phosphor-icons/react';
+
+const TwemojiImg: React.FC<{ code: string; alt?: string; className?: string }> = ({ code, alt, className = 'w-4 h-4 inline-block' }) => (
+  <img src={`https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/${code}.png`} alt={alt || ''} className={className} draggable={false} />
+);
 
 const ACTION_LABELS: Record<string, string> = {
     post: '发帖',
@@ -16,13 +21,18 @@ const ACTION_LABELS: Record<string, string> = {
     idle: '休息',
 };
 
-const ACTION_ICONS: Record<string, string> = {
-    post: '✍️',
-    browse: '📱',
-    search: '🔍',
-    comment: '💬',
-    save_topic: '📌',
-    idle: '😴',
+const ACTION_ICON_CODES: Record<string, string> = {
+    post: '270d',
+    browse: '1f4f1',
+    search: '1f50d',
+    comment: '1f4ac',
+    save_topic: '1f4cc',
+    idle: '1f634',
+};
+
+const ActionIcon: React.FC<{ type: string; className?: string }> = ({ type, className = 'w-5 h-5 inline-block' }) => {
+    const code = ACTION_ICON_CODES[type] || '1f4dd';
+    return <TwemojiImg code={code} className={className} />;
 };
 
 const RESULT_COLORS: Record<string, string> = {
@@ -218,7 +228,7 @@ const XhsFreeRoamApp: React.FC = () => {
                 <div className="w-full max-w-lg bg-white rounded-t-3xl p-5 space-y-3 max-h-[75vh] overflow-y-auto animate-slide-up" onClick={e => e.stopPropagation()}>
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                            <span className="text-xl">{ACTION_ICONS[a.actionType] || '📝'}</span>
+<ActionIcon type={a.actionType} className="w-5 h-5 inline-block" />
                             <span className="font-bold text-slate-800">{ACTION_LABELS[a.actionType] || a.actionType}</span>
                             <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${RESULT_COLORS[a.result]}`}>{a.result}</span>
                         </div>
@@ -351,7 +361,7 @@ const XhsFreeRoamApp: React.FC = () => {
                 <div key={a.id || i} className="bg-white rounded-2xl border border-slate-100 p-3 space-y-1.5 animate-fade-in">
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1.5">
-                            <span>{ACTION_ICONS[a.actionType]}</span>
+<ActionIcon type={a.actionType} className="w-4 h-4 inline-block" />
                             <span className="text-xs font-bold text-slate-700">{ACTION_LABELS[a.actionType]}</span>
                         </div>
                         <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${RESULT_COLORS[a.result]}`}>{a.result === 'success' ? '完成' : a.result === 'failed' ? '失败' : '跳过'}</span>
@@ -377,7 +387,7 @@ const XhsFreeRoamApp: React.FC = () => {
             {activities.length === 0 ? (
                 <div className="flex flex-col items-center px-2 py-8 space-y-4">
                     <div className="text-center opacity-60">
-                        <span className="text-4xl">📕</span>
+<Book size={48} weight="fill" className="text-rose-400" />
                         <p className="text-sm text-slate-500 font-medium mt-2">{char?.name || '角色'}还没有自由活动记录</p>
                     </div>
 
@@ -391,15 +401,15 @@ const XhsFreeRoamApp: React.FC = () => {
                             <p className="text-[10px] font-bold text-slate-400">ta可能会：</p>
                             <div className="grid grid-cols-2 gap-1.5">
                                 {[
-                                    { icon: '✍️', text: '发一条笔记' },
-                                    { icon: '🔍', text: '搜感兴趣的话题' },
-                                    { icon: '📱', text: '刷首页看看热门' },
-                                    { icon: '🏠', text: '查看自己的主页' },
-                                    { icon: '💬', text: '回复自己帖子的评论' },
-                                    { icon: '😴', text: '或者什么都不做' },
+{ code: '270d', text: '发一条笔记' },
+                                    { code: '1f50d', text: '搜感兴趣的话题' },
+                                    { code: '1f4f1', text: '刷首页看看热门' },
+                                    { code: '1f3e0', text: '查看自己的主页' },
+                                    { code: '1f4ac', text: '回复自己帖子的评论' },
+                                    { code: '1f634', text: '或者什么都不做' },
                                 ].map((item, i) => (
                                     <div key={i} className="flex items-center gap-1.5 bg-slate-50 rounded-lg px-2 py-1.5">
-                                        <span className="text-xs">{item.icon}</span>
+                                        <TwemojiImg code={item.code} className="w-3.5 h-3.5 inline-block" />
                                         <span className="text-[10px] text-slate-500">{item.text}</span>
                                     </div>
                                 ))}
@@ -423,7 +433,7 @@ const XhsFreeRoamApp: React.FC = () => {
                     >
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-1.5">
-                                <span>{ACTION_ICONS[a.actionType]}</span>
+<ActionIcon type={a.actionType} className="w-4 h-4 inline-block" />
                                 <span className="text-xs font-bold text-slate-700">{ACTION_LABELS[a.actionType]}</span>
                                 <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${RESULT_COLORS[a.result]}`}>{a.result}</span>
                             </div>
@@ -525,7 +535,7 @@ const XhsFreeRoamApp: React.FC = () => {
                         </span>
                     ) : (
                         <span className="flex items-center justify-center gap-2">
-                            <span>📕</span>
+<Book size={18} weight="fill" />
                             {char ? `${char.name}，去自由活动吧！` : '请先选择角色'}
                         </span>
                     )}

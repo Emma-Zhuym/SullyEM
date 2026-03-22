@@ -8,6 +8,7 @@ import { safeResponseJson, extractJson } from '../utils/safeApi';
 import { DB } from '../utils/db';
 import Modal from '../components/os/Modal';
 import ConfirmDialog from '../components/os/ConfirmDialog';
+import { Check, PencilSimple } from '@phosphor-icons/react';
 
 // --- Helper Components ---
 
@@ -545,13 +546,13 @@ const SongwritingApp: React.FC = () => {
         setActiveSong(completed);
         await updateSong(completed.id, { status: 'completed', completedAt: completed.completedAt });
 
-        // Send 🔔 system message to chat
+// Send system message to chat
         const genreInfo = SONG_GENRES.find(g => g.id === completed.genre);
         await DB.saveMessage({
             charId: collaborator.id,
             role: 'system',
             type: 'text',
-            content: `[系统: ${userProfile.name} 和 ${collaborator.name} 一起完成了歌曲创作《${completed.title}》(${genreInfo?.label || completed.genre}) 🎵]`,
+content: `[系统: ${userProfile.name} 和 ${collaborator.name} 一起完成了歌曲创作《${completed.title}》(${genreInfo?.label || completed.genre})]`,
         });
 
         setShowPreviewModal(false);
@@ -583,7 +584,7 @@ const SongwritingApp: React.FC = () => {
             title: activeSong.title,
             subtitle: activeSong.subtitle,
             genre: genreInfo?.label || activeSong.genre,
-            genreIcon: genreInfo?.icon || '🎵',
+genreIcon: genreInfo?.icon || '',
             mood: moodInfo?.label || activeSong.mood,
             moodIcon: moodInfo?.icon || '',
             coverStyle: activeSong.coverStyle,
@@ -832,7 +833,7 @@ const SongwritingApp: React.FC = () => {
                                         <div className="font-medium text-sm text-stone-700">{c.name}</div>
                                         <div className="text-[10px] text-stone-400 truncate">{c.description || '将作为你的音乐导师'}</div>
                                     </div>
-                                    {tempCollaboratorId === c.id && <div className="w-4 h-4 bg-stone-700 rounded-full flex items-center justify-center text-white text-[9px]">✓</div>}
+{tempCollaboratorId === c.id && <div className="w-4 h-4 bg-stone-700 rounded-full flex items-center justify-center text-white"><Check size={10} weight="bold" /></div>}
                                 </button>
                             ))}
                         </div>
@@ -1121,7 +1122,7 @@ const SongwritingApp: React.FC = () => {
                                     </div>
                                     {/* Hover actions (desktop) */}
                                     <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 flex gap-0.5 transition-opacity">
-                                        <button onClick={() => startEditLine(line)} className="p-1 bg-white rounded text-stone-400 hover:text-stone-600 text-[10px] border border-stone-200">✏</button>
+<button onClick={() => startEditLine(line)} className="p-1 bg-white rounded text-stone-400 hover:text-stone-600 border border-stone-200"><PencilSimple size={12} /></button>
                                         <button onClick={() => handleDeleteLine(line.id)} className="p-1 bg-white rounded text-stone-400 hover:text-red-400 text-[10px] border border-stone-200">×</button>
                                     </div>
                                     {/* Long press context menu (mobile) */}

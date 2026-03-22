@@ -28,12 +28,12 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md',
       style={{ WebkitTapHighlightColor: 'transparent' }}
     >
       {/* Container: Glass Prism with internal glow */}
-      <div className={`${sizeClasses} relative flex items-center justify-center 
-        bg-white/10 backdrop-blur-xl rounded-[1.2rem]
-        border-t border-l border-white/40 border-b border-r border-white/10
-        shadow-[0_8px_16px_rgba(0,0,0,0.2)]
-        transition-all duration-300
-        group-hover:bg-white/20 group-hover:shadow-[0_0_20px_rgba(255,255,255,0.3)] group-hover:border-white/60
+<div className={`${sizeClasses} relative flex items-center justify-center
+        bg-white/[0.08] backdrop-blur-2xl rounded-[1.25rem]
+        border border-white/[0.15]
+        shadow-[0_8px_24px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.1)]
+        transition-all duration-300 ease-out
+        group-hover:bg-white/[0.15] group-hover:shadow-[0_4px_30px_rgba(255,255,255,0.12),inset_0_1px_0_rgba(255,255,255,0.2)] group-hover:border-white/30
       `}>
         
         {/* Shine effect - Optimized: Only show on hover/active to save GPU on mobile idle */}

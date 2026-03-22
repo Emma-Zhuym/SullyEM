@@ -1,5 +1,5 @@
-
 import { CharacterProfile, UserProfile } from '../types';
+import { normalizeUserImpression } from './impression';
 
 /**
  * Memory Central
@@ -7,7 +7,69 @@ import { CharacterProfile, UserProfile } from '../types';
  * 包含：身份设定、用户画像、世界观、核心记忆、详细记忆、以及角色内心看法。
  */
 export const ContextBuilder = {
-    
+
+    /**
+     * 构建角色设定+记忆上下文（角色名、核心指令、世界观 + 月度总结 & 当月日度总结）
+     * 用于情绪评估，不包含世界书、印象、用户画像等重型数据，不截断
+     */
+    buildRoleSettingsContext: (char: CharacterProfile): string => {
+        let context = `[System: Character Role Settings]\n\n`;
+
+        // 1. 角色名
+        context += `### 角色名\n`;
+        context += `${char.name}\n\n`;
+
+        // 2. 核心指令（完整，不截断）
+        context += `### 核心指令\n`;
+        context += `${char.systemPrompt || '你是一个温柔、拟人化的AI伴侣。'}\n\n`;
+
+        // 3. 世界观（完整，不截断，不含世界书）
+        if (char.worldview && char.worldview.trim()) {
+            context += `### 世界观与设定\n${char.worldview}\n\n`;
+        }
+
+        // 4. 记忆摘要（月度总结 + 当月日度总结）
+        let memorySection = '';
+
+        // 4a. 月度总结 (refinedMemories) — 全部输出
+        if (char.refinedMemories && Object.keys(char.refinedMemories).length > 0) {
+            memorySection += `**月度总结 (Monthly Summaries)**:\n`;
+            Object.entries(char.refinedMemories).sort().forEach(([date, summary]) => {
+                memorySection += `- [${date}]: ${summary}\n`;
+            });
+            memorySection += `\n`;
+        }
+
+        // 4b. 当月日度总结 — 只取当前月份
+        const now = new Date();
+        const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        if (char.memories && char.memories.length > 0) {
+            const currentMonthLogs = char.memories.filter(m => {
+                let normDate = m.date.replace(/[\/年月]/g, '-').replace('日', '');
+                const parts = normDate.split('-');
+                if (parts.length >= 2) {
+                    normDate = `${parts[0]}-${parts[1].padStart(2, '0')}`;
+                }
+                return normDate.startsWith(currentMonthKey);
+            });
+            if (currentMonthLogs.length > 0) {
+                memorySection += `**本月详细记录 [${currentMonthKey}]**:\n`;
+                currentMonthLogs.forEach(m => {
+                    memorySection += `- ${m.date} (${m.mood || 'rec'}): ${m.summary}\n`;
+                });
+                memorySection += `\n`;
+            }
+        }
+
+        if (memorySection) {
+            context += `### 记忆摘要 (Memory Reference)\n`;
+            context += memorySection;
+            context += `⚠️ 情绪可以被记忆触发：如果记忆中存在未解决的矛盾、反复出现的摩擦模式、或对方曾经伤害过你的事件，你可以在情绪评估中让角色"翻旧账"——即某个记忆片段突然浮上心头，引发新的buff或加剧已有buff的强度。这种情绪涌现应当自然且有迹可循，不要凭空捏造不存在的记忆。\n\n`;
+        }
+
+        return context;
+    },
+
     /**
      * 构建核心人设上下文
      * @param char 角色档案
@@ -60,8 +122,8 @@ export const ContextBuilder = {
 
         // 4. [NEW] 印象档案 (Private Impression)
         // 这是角色对用户的私密看法，只有角色知道
-        if (char.impression) {
-            const imp = char.impression;
+        const imp = normalizeUserImpression(char.impression);
+        if (imp) {
             context += `### [私密档案: 我眼中的${user.name}] (Private Impression)\n`;
             context += `(注意：以下内容是你内心对TA的真实看法，不要直接告诉用户，但要基于这些看法来决定你的态度。)\n`;
             context += `- 核心评价: ${imp.personality_core.summary}\n`;
@@ -126,6 +188,14 @@ export const ContextBuilder = {
             memoryContent = "(暂无特定记忆，请基于当前对话互动)";
         }
         context += `${memoryContent}\n\n`;
+
+        // 6. 情绪底色 Buff (Emotion Buff Injection)
+        // 放在角色设定之后，使所有调用 ContextBuilder 的 App 都能感知情绪状态
+        if (char.emotionConfig?.enabled && char.buffInjection) {
+            context += `${char.buffInjection}\n\n`;
+            console.log(`🎭 [Context] Buff injected for ${char.name}:\n`, char.buffInjection);
+            console.log(`🎭 [Context] Active buffs:`, JSON.stringify(char.activeBuffs || [], null, 2));
+        }
 
         // Debug: warn about missing context sections
         const missing: string[] = [];

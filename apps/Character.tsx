@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useOS } from '../context/OSContext';
 import { AppID, CharacterProfile, CharacterExportData, UserImpression, MemoryFragment } from '../types';
-import { SlidersHorizontal } from '@phosphor-icons/react';
+import { SlidersHorizontal, SpeakerHigh, Books, BookOpen } from '@phosphor-icons/react';
 import Modal from '../components/os/Modal';
 import { processImage } from '../utils/file';
 import { Capacitor } from '@capacitor/core';
@@ -10,12 +10,14 @@ import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import { DB } from '../utils/db';
 import { ContextBuilder } from '../utils/context';
+import { formatLifeSimResetCardForContext } from '../utils/lifeSimChatCard';
 import { DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import ImpressionPanel from '../components/character/ImpressionPanel';
 import MemoryArchivist from '../components/character/MemoryArchivist';
 import { safeResponseJson } from '../utils/safeApi';
 import { fetchMiniMaxVoices, MiniMaxVoiceItem } from '../utils/minimaxVoice';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
+import { normalizeUserImpression } from '../utils/impression';
 
 const CharacterCard: React.FC<{
     char: CharacterProfile;
@@ -52,7 +54,7 @@ const CharacterCard: React.FC<{
 );
 
 const Character: React.FC = () => {
-    const { closeApp, openApp, characters, activeCharacterId, setActiveCharacterId, addCharacter, updateCharacter, deleteCharacter, apiConfig, addToast, userProfile, customThemes, addCustomTheme, worldbooks, setMessageSubView } = useOS();
+const { closeApp, openApp, characters, activeCharacterId, setActiveCharacterId, addCharacter, updateCharacter, deleteCharacter, apiConfig, addToast, userProfile, customThemes, addCustomTheme, worldbooks } = useOS();
   const [view, setView] = useState<'list' | 'detail'>('list');
   const [detailTab, setDetailTab] = useState<'identity' | 'memory' | 'impression'>('identity');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -342,7 +344,7 @@ const Character: React.FC = () => {
       addToast('核心记忆已删除', 'success');
   };
 
-  const handleExportPreview = () => { if (!formData) return; const mems = formData.memories as any[]; if (!mems || mems.length === 0) { addToast('暂无记忆数据可导出', 'info'); return; } const sortedMemories = [...mems].sort((a, b) => a.date.localeCompare(b.date)); let text = `【角色档案】\nName: ${formData.name}\nExported: ${new Date().toLocaleString()}\n\n`; if (formData.refinedMemories) { text += `=== 核心记忆 ===\n`; Object.entries(formData.refinedMemories).sort().forEach(([k, v]) => { text += `[${k}]: ${v}\n`; }); text += `\n=== 详细日志 ===\n`; } let currentYear = '', currentMonth = ''; sortedMemories.forEach(mem => { const match = mem.date.match(/(\d{4})[-/年](\d{1,2})/); if (match) { const y = match[1], m = match[2]; if (y !== currentYear) { text += `\n[ ${y}年 ]\n`; currentYear = y; currentMonth = ''; } if (m !== currentMonth) { text += `\n-- ${parseInt(m)}月 --\n\n`; currentMonth = m; } } text += `📅 ${mem.date} ${mem.mood ? `(#${mem.mood})` : ''}\n${mem.summary}\n\n--------------------------\n\n`; }); setExportText(text); setShowExportModal(true); navigator.clipboard.writeText(text).then(() => addToast('内容已自动复制到剪贴板', 'info')).catch(() => {}); };
+const handleExportPreview = () => { if (!formData) return; const mems = formData.memories as any[]; if (!mems || mems.length === 0) { addToast('暂无记忆数据可导出', 'info'); return; } const sortedMemories = [...mems].sort((a, b) => a.date.localeCompare(b.date)); let text = `【角色档案】\nName: ${formData.name}\nExported: ${new Date().toLocaleString()}\n\n`; if (formData.refinedMemories) { text += `=== 核心记忆 ===\n`; Object.entries(formData.refinedMemories).sort().forEach(([k, v]) => { text += `[${k}]: ${v}\n`; }); text += `\n=== 详细日志 ===\n`; } let currentYear = '', currentMonth = ''; sortedMemories.forEach(mem => { const match = mem.date.match(/(\d{4})[-/年](\d{1,2})/); if (match) { const y = match[1], m = match[2]; if (y !== currentYear) { text += `\n[ ${y}年 ]\n`; currentYear = y; currentMonth = ''; } if (m !== currentMonth) { text += `\n-- ${parseInt(m)}月 --\n\n`; currentMonth = m; } } text += `${mem.date} ${mem.mood ? `(#${mem.mood})` : ''}\n${mem.summary}\n\n--------------------------\n\n`; }); setExportText(text); setShowExportModal(true); navigator.clipboard.writeText(text).then(() => addToast('内容已自动复制到剪贴板', 'info')).catch(() => {}); };
   const handleNativeShare = async () => { if(!exportText) return; if (Capacitor.isNativePlatform()) { try { const fileName = `${formData?.name || 'character'}_memories.txt`; await Filesystem.writeFile({ path: fileName, data: exportText, directory: Directory.Cache, encoding: Encoding.UTF8 }); const uri = await Filesystem.getUri({ directory: Directory.Cache, path: fileName }); await Share.share({ title: '记忆档案', files: [uri.uri] }); } catch(e: any) { console.error("Native share failed", e); addToast('分享组件调起失败，请直接复制文本', 'error'); } } };
   const handleWebFileDownload = () => { const fileName = `${formData?.name || 'character'}_memories.txt`; const blob = new Blob([exportText], { type: 'text/plain' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = fileName; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); addToast('已触发浏览器下载', 'success'); };
   
@@ -429,7 +431,9 @@ const Character: React.FC = () => {
                     else if ((m.type as string) === 'score_card') {
                         try {
                             const card = m.metadata?.scoreCard || JSON.parse(m.content);
-                            if (card?.type === 'guidebook_card') {
+if (card?.type === 'lifesim_reset_card') {
+                                content = formatLifeSimResetCardForContext(card, formData.name);
+                            } else if (card?.type === 'guidebook_card') {
                                 const diff = (card.finalAffinity ?? 0) - (card.initialAffinity ?? 0);
                                 content = `[攻略本游戏结算] ${formData.name}和${userProfile.name}玩了一局"攻略本"恋爱小游戏（${card.rounds || '?'}回合）。结局：「${card.title || '???'}」 好感度变化：${card.initialAffinity} → ${card.finalAffinity}（${diff >= 0 ? '+' : ''}${diff}） ${formData.name}的评语：${card.charVerdict || '无'} ${formData.name}对${userProfile.name}的新发现：${card.charNewInsight || '无'}`;
                             } else if (card?.type === 'whiteday_card') {
@@ -443,7 +447,7 @@ const Character: React.FC = () => {
                             }
                         } catch { content = '[系统卡片]'; }
                     }
-                    else if (m.type === 'interaction' && m.metadata?.kind === 'notion_diary_nudge') content = `[快捷: ${userProfile.name}提醒${formData.name}写Notion日记]`;
+
                     else if (m.type === 'interaction') content = `[系统: ${userProfile.name}戳了${formData.name}一下]`;
                     else if (m.type === 'transfer') content = `[系统: ${userProfile.name}转账 ${m.metadata?.amount}]`;
 
@@ -545,13 +549,15 @@ const Character: React.FC = () => {
               let content = m.content;
               if (m.type === 'image') content = '[图片]';
               else if (m.type === 'emoji') content = '[表情包]';
-              else if (m.type === 'interaction' && m.metadata?.kind === 'notion_diary_nudge') content = `[提醒写Notion日记]`;
+
               else if (m.type === 'interaction') content = `[戳了一下]`;
               else if (m.type === 'transfer') content = `[转账 ${m.metadata?.amount ?? ''}]`;
               else if ((m.type as string) === 'score_card') {
                   try {
                       const card = m.metadata?.scoreCard || JSON.parse(m.content);
-                      if (card?.type === 'guidebook_card') {
+if (card?.type === 'lifesim_reset_card') {
+                          content = formatLifeSimResetCardForContext(card, charName);
+                      } else if (card?.type === 'guidebook_card') {
                           const diff = (card.finalAffinity ?? 0) - (card.initialAffinity ?? 0);
                           content = `[攻略本结算] 结局「${card.title || '???'}」好感${diff >= 0 ? '+' : ''}${diff}`;
                       } else if (card?.type === 'whiteday_card') {
@@ -567,8 +573,9 @@ const Character: React.FC = () => {
           if (msgText) messagesToAnalyze += `\n【最近的聊天记录 (Recent Chats - 仅用于检测近期变化)】:\n${msgText}\n`;
 
           // 重置时不传旧印象，避免模型锚定在旧内容上
-          const currentProfileJSON = (type === 'initial') ? "null" : (formData.impression ? JSON.stringify(formData.impression, null, 2) : "null");
-          const isInitialGeneration = type === 'initial' || !formData.impression;
+const normalizedCurrentImpression = normalizeUserImpression(formData.impression);
+          const currentProfileJSON = (type === 'initial') ? "null" : (normalizedCurrentImpression ? JSON.stringify(normalizedCurrentImpression, null, 2) : "null");
+          const isInitialGeneration = type === 'initial' || !normalizedCurrentImpression;
           
           const summaryInstruction = isInitialGeneration 
               ? "用一段话（100字以内）概括你对TA的【宏观整体印象】。不要局限于最近的对话，而是定义TA本质上是个什么样的人，以及TA对你意味着什么。必须第一人称。"
@@ -666,14 +673,8 @@ ${isInitialGeneration ? `
           let content = data.choices[0].message.content;
           
           content = content.replace(/```json/g, '').replace(/```/g, '').trim();
-          const parsed: UserImpression = JSON.parse(content);
-
-          // Normalize observed_changes: convert objects to strings if AI returned wrong format
-          if (parsed.observed_changes && Array.isArray(parsed.observed_changes)) {
-              parsed.observed_changes = parsed.observed_changes.map((c: any) =>
-                  typeof c === 'string' ? c : c?.description ? `[${c.period || ''}] ${c.description}` : JSON.stringify(c)
-              );
-          }
+const parsed = normalizeUserImpression(JSON.parse(content));
+          if (!parsed) throw new Error('印象生成结果不完整');
 
           if (editingIdRef.current === targetId) {
               handleChange('impression', parsed);
@@ -870,7 +871,7 @@ ${isInitialGeneration ? `
                <div className="h-32 bg-gradient-to-b from-white/90 to-transparent backdrop-blur-sm flex flex-col justify-end px-5 pb-2 shrink-0 z-40 sticky top-0">
                    <div className="flex justify-between items-center mb-3">
                        <button onClick={handleBack} className="p-2 -ml-2 rounded-full hover:bg-white/60 flex items-center gap-1 text-slate-600"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg><span className="text-sm font-medium">列表</span></button>
-                       <button onClick={() => { setActiveCharacterId(formData.id); setMessageSubView('chat'); openApp(AppID.Chat); }} className="text-xs px-3 py-1.5 bg-primary text-white rounded-full font-bold shadow-sm shadow-primary/30 flex items-center gap-1 active:scale-95 transition-transform"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M3.105 2.288a.75.75 0 0 0-.826.95l1.414 4.926H16.5a.75.75 0 0 1 0 1.5H3.693l-1.414 4.926a.75.75 0 0 0 .826.95 28.897 28.897 0 0 0 15.293-7.155.75.75 0 0 0 0-1.114A28.897 28.897 0 0 0 3.105 2.288Z" /></svg>发消息</button>
+<button onClick={() => { setActiveCharacterId(formData.id); openApp(AppID.Chat); }} className="text-xs px-3 py-1.5 bg-primary text-white rounded-full font-bold shadow-sm shadow-primary/30 flex items-center gap-1 active:scale-95 transition-transform"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M3.105 2.288a.75.75 0 0 0-.826.95l1.414 4.926H16.5a.75.75 0 0 1 0 1.5H3.693l-1.414 4.926a.75.75 0 0 0 .826.95 28.897 28.897 0 0 0 15.293-7.155.75.75 0 0 0 0-1.114A28.897 28.897 0 0 0 3.105 2.288Z" /></svg>发消息</button>
                    </div>
                    <div className="flex gap-6 text-sm font-medium text-slate-400 pl-1">
                        <button onClick={() => setDetailTab('identity')} className={`pb-2 transition-colors relative ${detailTab === 'identity' ? 'text-slate-800' : ''}`}>设定{detailTab === 'identity' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-full"></div>}</button>
@@ -909,7 +910,7 @@ ${isInitialGeneration ? `
 
                            <div className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100 space-y-3">
                                <div className="flex items-center justify-between">
-                                   <label className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest">🔊 MiniMax 音色设定</label>
+<label className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest flex items-center gap-1"><SpeakerHigh size={12} /> MiniMax 音色设定</label>
                                    <div className="flex gap-1.5">
                                        <button
                                            onClick={() => { setActiveCharacterId(formData.id); openApp(AppID.VoiceDesigner); }}
@@ -991,7 +992,7 @@ ${isInitialGeneration ? `
                            {/* Worldbook Section */}
                            <div>
                                <div className="flex justify-between items-center mb-2 px-1">
-                                   <label className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest block">📚 扩展设定 (Worldbooks)</label>
+<label className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest block flex items-center gap-1"><Books size={12} /> 扩展设定 (Worldbooks)</label>
                                    <button onClick={() => setShowWorldbookModal(true)} className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-1 rounded font-bold hover:bg-indigo-100">+ 挂载</button>
                                 </div>
                                 <div className="space-y-2">
@@ -999,7 +1000,7 @@ ${isInitialGeneration ? `
                                        formData.mountedWorldbooks.map(wb => (
                                            <div key={wb.id} className="flex items-center justify-between bg-white px-4 py-3 rounded-2xl border border-indigo-50 shadow-sm group">
                                                <div className="flex items-center gap-2 min-w-0">
-                                                   <span className="text-lg shrink-0">📖</span>
+<BookOpen size={20} className="shrink-0 text-indigo-400" />
                                                    <div className="flex flex-col min-w-0">
                                                        <span className="text-sm font-bold text-slate-700 truncate">{wb.title}</span>
                                                        {wb.category && <span className="text-[9px] text-slate-400">{wb.category}</span>}

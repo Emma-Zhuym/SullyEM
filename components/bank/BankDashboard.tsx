@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
 import { BankFullState, CharacterProfile } from '../../types';
+import BankAssetIcon from './BankAssetIcon';
 import { processImage } from '../../utils/file';
 
 interface Props {
@@ -100,11 +101,11 @@ const BankDashboard: React.FC<Props> = ({
                 {/* Status HUD in Room */}
                 <div className="absolute top-3 left-3 flex flex-col gap-1">
                     <div className="flex items-center gap-1 bg-white/80 backdrop-blur px-2 py-0.5 rounded-full border border-white/50 shadow-sm">
-                        <span className="text-xs">✨</span>
+<img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/2728.png" alt="" className="w-3 h-3" />
                         <div className="w-10 h-1.5 bg-slate-200 rounded-full overflow-hidden"><div className="h-full bg-rose-400" style={{ width: `${moodLevel}%` }}></div></div>
                     </div>
                     <div className="flex items-center gap-1 bg-white/80 backdrop-blur px-2 py-0.5 rounded-full border border-white/50 shadow-sm">
-                        <span className="text-xs">🔋</span>
+                        <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f50b.png" alt="" className="w-3 h-3" />
                         <div className="w-10 h-1.5 bg-slate-200 rounded-full overflow-hidden"><div className="h-full bg-orange-400" style={{ width: `${energyLevel}%` }}></div></div>
                     </div>
                 </div>
@@ -162,7 +163,7 @@ const BankDashboard: React.FC<Props> = ({
                     onClick={onFeedPet}
                     className="flex flex-col items-center justify-center p-3 bg-white rounded-2xl border border-slate-100 shadow-sm active:scale-95 transition-transform hover:border-orange-200 group"
                 >
-                    <span className="text-xl mb-1 group-hover:scale-110 transition-transform">🍗</span>
+<img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f357.png" alt="feed" className="w-6 h-6 mb-1 group-hover:scale-110 transition-transform" />
                     <span className="text-xs font-bold text-slate-700">投喂</span>
                     <span className="text-[9px] text-orange-400 font-mono font-bold">-10 AP</span>
                 </button>
@@ -171,7 +172,7 @@ const BankDashboard: React.FC<Props> = ({
                     onClick={onRefreshVisitor}
                     className="flex flex-col items-center justify-center p-3 bg-white rounded-2xl border border-slate-100 shadow-sm active:scale-95 transition-transform hover:border-indigo-200 group"
                 >
-                    <span className="text-xl mb-1 group-hover:scale-110 transition-transform">🚪</span>
+<img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f6aa.png" alt="invite" className="w-6 h-6 mb-1 group-hover:scale-110 transition-transform" />
                     <span className="text-xs font-bold text-slate-700">邀请访客</span>
                     <span className="text-[9px] text-indigo-400 font-mono font-bold">-20 AP</span>
                 </button>
@@ -181,7 +182,7 @@ const BankDashboard: React.FC<Props> = ({
             <div>
                 <div className="flex justify-between items-center mb-3 px-1">
                     <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                        <span>🎯</span> 心愿单
+心愿单
                     </h3>
                     <button onClick={onOpenAddGoal} className="w-5 h-5 bg-white text-slate-400 rounded-md flex items-center justify-center shadow-sm text-xs hover:text-slate-600 border border-slate-200">+</button>
                 </div>
@@ -196,7 +197,14 @@ const BankDashboard: React.FC<Props> = ({
                         <div key={goal.id} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 relative overflow-hidden">
                             <div className="flex justify-between items-start mb-2 relative z-10">
                                 <div className="flex items-center gap-2">
-                                    <span className="text-lg">{goal.icon}</span>
+<div className="w-5 h-5 flex items-center justify-center">
+                                        <BankAssetIcon
+                                            value={goal.icon}
+                                            alt={goal.name}
+                                            imgClassName="w-5 h-5 object-contain"
+                                            textClassName="text-lg leading-none"
+                                        />
+                                    </div>
                                     <div>
                                         <div className="font-bold text-sm text-slate-700">{goal.name}</div>
                                         <div className="text-[10px] text-slate-400 font-mono">{state.config.currencySymbol}{goal.targetAmount}</div>

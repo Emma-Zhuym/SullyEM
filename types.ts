@@ -99,6 +99,22 @@ export interface AppearancePreset {
   theme: OSTheme;
   customIcons?: Record<string, string>;
   chatThemes?: ChatTheme[];
+  chatLayout?: ChatLayoutPreset;
+}
+
+export interface ChatLayoutPreset {
+  id: string;
+  name: string;
+  createdAt: number;
+  chatBg?: string;
+  chatBgOpacity?: number;
+  headerStyle?: 'default' | 'minimal' | 'immersive';
+  inputStyle?: 'default' | 'rounded' | 'flat';
+  avatarShape?: 'circle' | 'rounded' | 'square';
+  avatarSize?: 'small' | 'medium' | 'large';
+  messageLayout?: 'default' | 'compact' | 'spacious';
+  showTimestamp?: 'always' | 'hover' | 'never';
+  bubbleThemeId?: string;
 }
 
 export interface TranslationConfig {
@@ -121,10 +137,59 @@ export interface APIConfig {
   model: string;
 }
 
-export interface ApiPreset {
-  id: string;
-  name: string;
-  config: APIConfig;
+export type ActiveMsg2DbDriver = 'pg' | 'neon';
+export type ActiveMsg2Mode = 'fixed' | 'auto' | 'prompted';
+export type ActiveMsg2Recurrence = 'none' | 'daily' | 'weekly';
+
+export interface ActiveMsg2ApiConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+export interface ActiveMsg2GlobalConfig {
+  userId: string;
+  driver: ActiveMsg2DbDriver;
+  databaseUrl: string;
+  initSecret?: string;
+  tenantId?: string;
+  tenantToken?: string;
+  cronToken?: string;
+  cronWebhookUrl?: string;
+  masterKeyFingerprint?: string;
+  initializedAt?: number;
+  updatedAt?: number;
+}
+
+export interface ActiveMsg2CharacterConfig {
+  enabled: boolean;
+  mode: ActiveMsg2Mode;
+  firstSendTime: string;
+  recurrenceType: ActiveMsg2Recurrence;
+  userMessage?: string;
+  promptHint?: string;
+  maxTokens?: number;
+  taskUuid?: string;
+  remoteStatus?: 'idle' | 'scheduled' | 'sent' | 'error';
+  useSecondaryApi?: boolean;
+  secondaryApi?: ActiveMsg2ApiConfig;
+  lastSyncedAt?: number;
+  lastError?: string;
+}
+
+export interface ActiveMsg2InboxMessage {
+  messageId: string;
+  charId: string;
+  charName: string;
+  body: string;
+  avatarUrl?: string;
+  source?: string;
+  messageType?: string;
+  messageSubtype?: string;
+  taskId?: string | null;
+  metadata?: Record<string, any>;
+  sentAt?: number;
+  receivedAt: number;
 }
 
 /** 写入 Notion 日记库时额外填充的属性（数据库里须已有同名、同类型列；勿与 Name/Date 重复） */
@@ -146,6 +211,23 @@ export interface NotionExtraDatabase {
   tag: string;
   databaseId: string;
 }
+
+export interface CharacterBuff {
+  id: string;
+  name: string;      // internal key, e.g. 'reconciliation_fragile'
+  label: string;     // display text, e.g. '脆弱的和好'
+  intensity: 1 | 2 | 3;
+  emoji?: string;
+  color?: string;    // hex, e.g. '#f87171'
+  description?: string;  // 用户可读的简短说明（给用户看的，不是给AI的）
+}
+
+export interface ApiPreset {
+  id: string;
+  name: string;
+  config: APIConfig;
+}
+
 
 // 实时上下文配置 - 让AI角色感知真实世界
 export interface RealtimeConfig {
@@ -179,6 +261,9 @@ export interface RealtimeConfig {
   // 小红书配置 (MCP / Skills 双模式浏览器自动化)
   xhsEnabled: boolean;
   xhsMcpConfig?: XhsMcpConfig;
+
+  /** 主动消息 2.0 全局开关。默认 false，需在设置中手动启用 */
+  activeMsg2Enabled?: boolean;
 
   // 缓存配置
   cacheMinutes: number;
@@ -733,6 +818,19 @@ export interface CharacterProfile {
       model: string;
     };
   };
+
+  // 情绪Buff系统
+  activeMsg2Config?: ActiveMsg2CharacterConfig;
+  activeBuffs?: CharacterBuff[];
+  buffInjection?: string;   // 注入到systemPrompt的叙事型情绪底色描述
+  emotionConfig?: {
+    enabled: boolean;
+    api?: {
+      baseUrl: string;
+      apiKey: string;
+      model: string;
+    };
+  };
 }
 
 export interface GroupProfile {
@@ -1217,6 +1315,7 @@ export interface FullBackupData {
     availableModels?: string[];
     realtimeConfig?: RealtimeConfig;  // 实时感知配置（天气/新闻/Notion）
     customIcons?: Record<string, string>;
+    appearancePresets?: AppearancePreset[];
     characters?: CharacterProfile[];
     groups?: GroupProfile[]; 
     messages?: Message[];
@@ -1273,6 +1372,15 @@ export interface FullBackupData {
 
     // Guidebook (攻略本)
     guidebookSessions?: GuidebookSession[];
+
+    // Chat delayed actions
+    scheduledMessages?: {
+        id: string;
+        charId: string;
+        content: string;
+        dueAt: number;
+        createdAt: number;
+    }[];
 
     // LifeSim (都市人生)
     lifeSimState?: LifeSimState | null;

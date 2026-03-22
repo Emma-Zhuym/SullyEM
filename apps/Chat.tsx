@@ -4,21 +4,24 @@ import { DB } from '../utils/db';
 import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory } from '../types';
 import { processImage } from '../utils/file';
 import { safeResponseJson } from '../utils/safeApi';
+import { formatLifeSimResetCardForContext } from '../utils/lifeSimChatCard';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeNote } from '../utils/xhsMcpClient';
 import MessageItem from '../components/chat/MessageItem';
 import { PRESET_THEMES, DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import ChatHeader from '../components/chat/ChatHeader';
 import ChatInputArea from '../components/chat/ChatInputArea';
 import ChatModals from '../components/chat/ChatModals';
-import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
 import Modal from '../components/os/Modal';
+import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
+import EmotionSettingsModal from '../components/chat/EmotionSettingsModal';
+import ActiveMsg2SettingsModal from '../components/chat/ActiveMsg2SettingsModal';
 import { useChatAI } from '../hooks/useChatAI';
 import { synthesizeSpeech, cleanTextForTts } from '../utils/minimaxTts';
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 
 const Chat: React.FC = () => {
-    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, setMessageSubView } = useOS();
+    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, theme: osTheme, setMessageSubView } = useOS();
     const [messages, setMessages] = useState<Message[]>([]);
     const [totalMsgCount, setTotalMsgCount] = useState(0);
     const [visibleCount, setVisibleCount] = useState(30);
@@ -54,6 +57,8 @@ const Chat: React.FC = () => {
     const [selectedCategory, setSelectedCategory] = useState<EmojiCategory | null>(null); // For deletion modal
     const [editContent, setEditContent] = useState('');
     const [isSummarizing, setIsSummarizing] = useState(false);
+    const [showActiveMsg2Modal, setShowActiveMsg2Modal] = useState(false);
+    const [showEmotionModal, setShowEmotionModal] = useState(false);
 
     // Archive Prompts State
     const [archivePrompts, setArchivePrompts] = useState<{id: string, name: string, content: string}[]>(DEFAULT_ARCHIVE_PROMPTS);
@@ -95,8 +100,7 @@ const Chat: React.FC = () => {
         return emojis.filter(e => !e.categoryId || !hiddenIds.has(e.categoryId));
     }, [emojis, categories, visibleCategories]);
 
-    // --- Initialize Hook ---
-    const { isTyping, recallStatus, searchStatus, diaryStatus, lastTokenUsage, tokenBreakdown, contextComposition, setLastTokenUsage, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
+    const { isTyping, recallStatus, searchStatus, diaryStatus, emotionStatus, lastTokenUsage, tokenBreakdown, contextComposition, setLastTokenUsage, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
         char,
         userProfile,
         apiConfig,
@@ -423,6 +427,23 @@ const Chat: React.FC = () => {
         visibleCountRef.current = visibleCount;
     }, [visibleCount]);
 
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const detail = (e as CustomEvent).detail;
+            if (detail?.charId === activeCharacterId) {
+                DB.getAllCharacters().then(all => {
+                    const updated = all.find(c => c.id === activeCharacterId);
+                    if (updated) updateCharacter(updated.id, {
+                        activeBuffs: updated.activeBuffs,
+                        buffInjection: updated.buffInjection
+                    });
+                }).catch(() => {});
+            }
+        };
+        window.addEventListener('emotion-updated', handler);
+        return () => window.removeEventListener('emotion-updated', handler);
+    }, [activeCharacterId, updateCharacter]);
+
     const handleInputChange = (val: string) => {
         setInput(val);
         if (val.trim()) localStorage.setItem(draftKey, val);
@@ -559,7 +580,7 @@ const Chat: React.FC = () => {
         switch (type) {
             case 'transfer': setModalType('transfer'); break;
             case 'poke': handleSendText('[戳一戳]', 'interaction'); break;
-            case 'notion-diary-quick': void handleNotionDiaryQuick(); break;
+
             case 'archive': setModalType('archive-settings'); break;
             case 'settings': setModalType('chat-settings'); break;
             case 'emoji-import': setModalType('emoji-import'); break;
@@ -570,6 +591,9 @@ const Chat: React.FC = () => {
             case 'category-options': setSelectedCategory(payload); setModalType('category-options'); break;
             case 'delete-category-req': setSelectedCategory(payload); setModalType('delete-category'); break;
             case 'proactive': setShowProactiveModal(true); break;
+case 'proactive2': setShowActiveMsg2Modal(true); break;
+            case 'notion-diary-quick': void handleNotionDiaryQuick(); break;
+            case 'emotion': setShowEmotionModal(true); break;
         }
     };
 
@@ -776,7 +800,9 @@ const Chat: React.FC = () => {
                     else if ((m.type as string) === 'score_card') {
                         try {
                             const card = m.metadata?.scoreCard || JSON.parse(m.content);
-                            if (card?.type === 'guidebook_card') {
+if (card?.type === 'lifesim_reset_card') {
+                                content = formatLifeSimResetCardForContext(card, char.name);
+                            } else if (card?.type === 'guidebook_card') {
                                 const diff = (card.finalAffinity ?? 0) - (card.initialAffinity ?? 0);
                                 content = `[攻略本游戏结算] ${char.name}和${userProfile.name}玩了一局"攻略本"恋爱小游戏（${card.rounds || '?'}回合）。结局：「${card.title || '???'}」 好感度变化：${card.initialAffinity} → ${card.finalAffinity}（${diff >= 0 ? '+' : ''}${diff}） ${char.name}的评语：${card.charVerdict || '无'} ${char.name}对${userProfile.name}的新发现：${card.charNewInsight || '无'}`;
                             } else if (card?.type === 'whiteday_card') {
@@ -790,7 +816,7 @@ const Chat: React.FC = () => {
                             }
                         } catch { content = '[系统卡片]'; }
                     }
-                    else if (m.type === 'interaction' && m.metadata?.kind === 'notion_diary_nudge') content = `[快捷: ${userProfile.name}提醒${char.name}写Notion日记]`;
+
                     else if (m.type === 'interaction') content = `[系统: ${userProfile.name}戳了${char.name}一下]`;
                     else if (m.type === 'transfer') content = `[系统: ${userProfile.name}转账 ${m.metadata?.amount}]`;
                     return `[${formatTime(m.timestamp)}] ${sender}: ${content}`;
@@ -984,6 +1010,7 @@ const Chat: React.FC = () => {
 
     const displayMessages = useMemo(() => messages
         .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
+.filter(m => !m.metadata?.proactiveHint) // Hide proactive system hints
         .filter(m => !char?.hideBeforeMessageId || m.id >= char.hideBeforeMessageId)
         .filter(m => { if (char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card') return false; return true; })
         .slice(-visibleCount),
@@ -1015,15 +1042,49 @@ const Chat: React.FC = () => {
     // Memoize ChatInputArea callbacks
     const handleSendCallback = useCallback(() => handleSendText(), [char, input, replyTarget]);
     const handleCharSelectCallback = useCallback((id: string) => { setActiveCharacterId(id); setShowPanel('none'); }, []);
+const chatChromeStyle = osTheme.chatChromeStyle || 'soft';
+    const chatBackgroundStyle = osTheme.chatBackgroundStyle || 'plain';
+    const chatRootClass =
+        chatChromeStyle === 'pixel'
+            ? 'flex flex-col h-full bg-[#efe1cf] overflow-hidden relative font-sans transition-[background-image,background-color] duration-500'
+            : chatChromeStyle === 'flat'
+              ? 'flex flex-col h-full bg-white overflow-hidden relative font-sans transition-[background-image,background-color] duration-500'
+              : chatChromeStyle === 'floating'
+                ? 'flex flex-col h-full bg-[#eef2ff] overflow-hidden relative font-sans transition-[background-image,background-color] duration-500'
+                : 'flex flex-col h-full bg-[#f1f5f9] overflow-hidden relative font-sans transition-[background-image,background-color] duration-500';
+    const chatRootStyle: React.CSSProperties = char.chatBackground
+        ? {
+            backgroundImage: `url(${char.chatBackground})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+        }
+        : chatBackgroundStyle === 'grid'
+          ? {
+              backgroundColor: chatChromeStyle === 'pixel' ? '#efe1cf' : '#f8fafc',
+              backgroundImage:
+                  'linear-gradient(rgba(148,163,184,0.14) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,0.14) 1px, transparent 1px)',
+              backgroundSize: '20px 20px',
+            }
+          : chatBackgroundStyle === 'paper'
+            ? {
+                backgroundColor: chatChromeStyle === 'pixel' ? '#f4e8d9' : '#f9f7f2',
+                backgroundImage: 'radial-gradient(circle at 1px 1px, rgba(148,163,184,0.12) 1px, transparent 0)',
+                backgroundSize: '16px 16px',
+              }
+            : chatBackgroundStyle === 'mesh'
+              ? {
+                  backgroundColor: '#f8fafc',
+                  backgroundImage:
+                      'radial-gradient(circle at 15% 20%, rgba(59,130,246,0.18), transparent 28%), radial-gradient(circle at 85% 15%, rgba(244,114,182,0.18), transparent 24%), radial-gradient(circle at 60% 75%, rgba(45,212,191,0.18), transparent 26%)',
+                }
+              : {
+                  backgroundImage: 'none',
+                };
 
     return (
         <div 
-            className="flex flex-col h-full bg-[#f1f5f9] overflow-hidden relative font-sans transition-[background-image] duration-500"
-            style={{ 
-                backgroundImage: char.chatBackground ? `url(${char.chatBackground})` : 'none',
-                backgroundSize: 'cover',
-                backgroundPosition: 'center',
-            }}
+            className={chatRootClass}
+            style={chatRootStyle}
         >
              {activeTheme.customCss && <style>{activeTheme.customCss}</style>}
 
@@ -1068,23 +1129,37 @@ const Chat: React.FC = () => {
                 onGenerateVoice={selectedMessage ? () => handleManualTts(selectedMessage) : undefined}
              />
              
-             <ChatHeader 
+<ChatHeader
                 selectionMode={selectionMode}
                 selectedCount={selectedMsgIds.size}
                 onCancelSelection={() => { setSelectionMode(false); setSelectedMsgIds(new Set()); }}
                 activeCharacter={char}
                 isTyping={isTyping}
                 isSummarizing={isSummarizing}
+isEmotionEvaluating={emotionStatus === 'evaluating'}
                 lastTokenUsage={lastTokenUsage}
                 tokenBreakdown={tokenBreakdown}
                 contextComposition={contextComposition}
-                onClose={() => { setMessageSubView('chat'); closeApp(); }}
+                onClose={closeApp}
+                onOpenContacts={() => setMessageSubView('contacts')}
                 onTriggerAI={() => triggerAI(messages)}
                 onShowCharsPanel={() => setShowPanel('chars')}
-                onOpenContacts={() => setMessageSubView('contacts')}
+                onDeleteBuff={(buffId) => {
+                    const currentBuffs = char.activeBuffs || [];
+                    const newBuffs = currentBuffs.filter(b => b.id !== buffId);
+                    const newInjection = newBuffs.length === 0 ? '' : (char.buffInjection || '');
+                    updateCharacter(char.id, { activeBuffs: newBuffs, buffInjection: newInjection });
+                    addToast('已删除该情绪状态', 'info');
+                }}
+                headerStyle={osTheme.chatHeaderStyle}
+                avatarShape={osTheme.chatAvatarShape}
+                headerAlign={osTheme.chatHeaderAlign}
+                headerDensity={osTheme.chatHeaderDensity}
+                statusStyle={osTheme.chatStatusStyle}
+                chromeStyle={osTheme.chatChromeStyle}
              />
 
-            <div ref={scrollRef} className="flex-1 overflow-y-auto pt-6 pb-6 no-scrollbar" style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}>
+            <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden pt-6 pb-6 no-scrollbar" style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}>
                 {collapsedCount > 0 && (
                     <div className="flex justify-center mb-6">
                         <button onClick={async () => {
@@ -1097,14 +1172,23 @@ const Chat: React.FC = () => {
                 )}
 
                 {displayMessages.map((m, i) => {
-                    const prevRole = i > 0 ? displayMessages[i - 1].role : null;
-                    const nextRole = i < displayMessages.length - 1 ? displayMessages[i + 1].role : null;
+const prevMessage = i > 0 ? displayMessages[i - 1] : null;
+                    const nextMessage = i < displayMessages.length - 1 ? displayMessages[i + 1] : null;
+                    const messageGroupGapMs = 30 * 60 * 1000;
+                    const breaksWithPrevious =
+                        !prevMessage ||
+                        prevMessage.role !== m.role ||
+                        Math.abs(m.timestamp - prevMessage.timestamp) > messageGroupGapMs;
+                    const breaksWithNext =
+                        !nextMessage ||
+                        nextMessage.role !== m.role ||
+                        Math.abs(nextMessage.timestamp - m.timestamp) > messageGroupGapMs;
                     return (
                         <MessageItem
                             key={m.id || i}
                             msg={m}
-                            isFirstInGroup={prevRole !== m.role}
-                            isLastInGroup={nextRole !== m.role}
+isFirstInGroup={breaksWithPrevious}
+                            isLastInGroup={breaksWithNext}
                             activeTheme={activeTheme}
                             charAvatar={char.avatar}
                             charName={char.name}
@@ -1120,13 +1204,19 @@ const Chat: React.FC = () => {
                             voiceLoading={voiceLoading.has(m.id)}
                             isVoicePlaying={playingMsgId === m.id}
                             onPlayVoice={() => handlePlayVoice(m.id)}
+avatarShape={osTheme.chatAvatarShape}
+                            avatarSize={osTheme.chatAvatarSize}
+                            avatarMode={osTheme.chatAvatarMode}
+                            bubbleVariant={osTheme.chatBubbleStyle}
+                            messageSpacing={osTheme.chatMessageSpacing}
+                            showTimestamp={osTheme.chatShowTimestamp}
                         />
                     );
                 })}
                 
                 {(isTyping || recallStatus || searchStatus || diaryStatus) && !selectionMode && (
                     <div className="flex items-end gap-3 px-3 mb-6 animate-fade-in">
-                        <img src={char.avatar} className="w-9 h-9 rounded-[10px] object-cover" />
+<img src={char.avatar} className={`${osTheme.chatAvatarSize === 'small' ? 'w-7 h-7' : osTheme.chatAvatarSize === 'large' ? 'w-12 h-12' : 'w-9 h-9'} ${osTheme.chatAvatarShape === 'square' ? 'rounded-sm' : osTheme.chatAvatarShape === 'rounded' ? 'rounded-xl' : 'rounded-[10px]'} object-cover`} />
                         <div className="bg-white px-4 py-3 rounded-2xl shadow-sm">
                             {searchStatus ? (
                                 <div className="flex items-center gap-2 text-xs text-emerald-500 font-medium">
@@ -1180,31 +1270,81 @@ const Chat: React.FC = () => {
                     onReroll={handleReroll}
                     canReroll={canReroll}
                     isProactiveActive={isProactiveActive}
+                    isActiveMsg2Enabled={!!char.activeMsg2Config?.enabled}
+                    activeMsg2Available={!!realtimeConfig.activeMsg2Enabled}
+                    isEmotionEnabled={!!char.emotionConfig?.enabled}
+                    inputStyle={osTheme.chatInputStyle}
+                    sendButtonStyle={osTheme.chatSendButtonStyle}
+                    chromeStyle={osTheme.chatChromeStyle}
                 />
             </div>
 
 
-            {/* Proactive Message Modal */}
-            <ProactiveSettingsModal
-                isOpen={showProactiveModal}
-                onClose={() => setShowProactiveModal(false)}
-                char={char}
-                isProactiveActive={isProactiveActive}
-                onSave={(config) => {
-                    updateCharacter(char.id, { proactiveConfig: config });
-                    if (config.enabled) {
-                        startProactiveChat(config.intervalMinutes);
-                        addToast(`已启动主动消息，每 ${config.intervalMinutes >= 60 ? (config.intervalMinutes / 60) + ' 小时' : config.intervalMinutes + ' 分钟'}发送一次`, 'success');
-                    } else {
+{/* Proactive Settings Modal */}
+            {char && (
+                <ProactiveSettingsModal
+                    isOpen={showProactiveModal}
+                    onClose={() => setShowProactiveModal(false)}
+                    char={char}
+                    isProactiveActive={isProactiveActive}
+                    onSave={(config) => {
+                        updateCharacter(char.id, { proactiveConfig: config });
+                        if (config.enabled) {
+                            startProactiveChat(config.intervalMinutes);
+                            addToast(`已启动主动消息，每 ${config.intervalMinutes >= 60 ? (config.intervalMinutes / 60) + ' 小时' : config.intervalMinutes + ' 分钟'}发送一次`, 'success');
+                        } else {
+                            stopProactiveChat();
+                            addToast('已关闭主动消息', 'info');
+                        }
+                    }}
+                    onStop={() => {
                         stopProactiveChat();
-                    }
-                }}
-                onStop={() => {
-                    stopProactiveChat();
-                    updateCharacter(char.id, { proactiveConfig: { ...char.proactiveConfig, enabled: false, intervalMinutes: char.proactiveConfig?.intervalMinutes || 60 } });
-                    addToast('已关闭主动消息', 'info');
-                }}
-            />
+                        updateCharacter(char.id, {
+                            proactiveConfig: {
+                                ...(char.proactiveConfig || { intervalMinutes: 60, enabled: false }),
+                                enabled: false,
+                            },
+                        });
+                        addToast('已停止主动消息', 'info');
+                    }}
+                />
+            )}
+
+            {/* Active Message 2.0 Modal */}
+            {char && (
+                <ActiveMsg2SettingsModal
+                    isOpen={showActiveMsg2Modal}
+                    onClose={() => setShowActiveMsg2Modal(false)}
+                    char={char}
+                    apiConfig={apiConfig}
+                    userProfile={userProfile}
+                    groups={groups}
+                    realtimeConfig={realtimeConfig}
+                    onSave={(config) => {
+                        updateCharacter(char.id, { activeMsg2Config: config });
+                    }}
+                    addToast={addToast}
+                />
+            )}
+
+            {/* Emotion Settings Modal */}
+            {char && (
+                <EmotionSettingsModal
+                    isOpen={showEmotionModal}
+                    onClose={() => setShowEmotionModal(false)}
+                    char={char}
+                    apiPresets={apiPresets}
+                    addApiPreset={addApiPreset}
+                    onSave={(config) => {
+                        updateCharacter(char.id, { emotionConfig: config });
+                        addToast(config.enabled ? '情绪感知已启用' : '情绪感知已关闭', config.enabled ? 'success' : 'info');
+                    }}
+                    onClearBuffs={() => {
+                        updateCharacter(char.id, { activeBuffs: [], buffInjection: '' });
+                        addToast('情绪状态已清除', 'info');
+                    }}
+                />
+            )}
 
             {/* Forward Modal */}
             <Modal isOpen={showForwardModal} title="转发聊天记录" onClose={() => setShowForwardModal(false)}>

@@ -7,6 +7,7 @@ import ConfirmDialog from '../components/os/ConfirmDialog';
 import { processImage } from '../utils/file';
 import { NOVEL_THEMES, analyzeWriterPersonaSimple } from '../utils/novelUtils';
 import NovelWriter from '../components/novel/NovelWriter';
+import { Robot, MaskHappy, PenNib, Books, FolderOpen } from '@phosphor-icons/react';
 
 const NovelApp: React.FC = () => {
     const { closeApp, novels, addNovel, updateNovel, deleteNovel, characters, updateCharacter, apiConfig, addToast, userProfile, worldbooks } = useOS();
@@ -207,7 +208,7 @@ const NovelApp: React.FC = () => {
 
                 <div className="flex-1 overflow-y-auto p-6 space-y-8 no-scrollbar">
                     <section>
-                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2"><span>🤖</span> 系统角色 (AI Collaborators)</h3>
+<h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2"><Robot size={14} /> 系统角色 (AI Collaborators)</h3>
                         <div className="grid grid-cols-2 gap-4">
                             {characters.map(c => (
                                 <div key={c.id} onClick={() => { setLibraryPersonaChar(c); setShowPersonaModal(true); }} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex flex-col items-center gap-3 cursor-pointer hover:shadow-md transition-all active:scale-95">
@@ -218,7 +219,7 @@ const NovelApp: React.FC = () => {
                         </div>
                     </section>
                     <section>
-                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2"><span>🎭</span> 历史剧中人 (From History)</h3>
+<h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2"><MaskHappy size={14} /> 历史剧中人 (From History)</h3>
                         {historyProtagonists.length === 0 ? <div className="text-center py-8 text-slate-400 text-xs">暂无历史角色数据</div> : <div className="grid grid-cols-1 gap-3">{historyProtagonists.map((p, idx) => (<div key={idx} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm"><div className="flex justify-between items-start mb-2"><span className="font-bold text-slate-800">{p.name}</span><span className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded border border-indigo-100">{p.role}</span></div><p className="text-xs text-slate-500 leading-relaxed line-clamp-3">{p.description || "暂无描述"}</p></div>))}</div>}
                     </section>
                 </div>
@@ -264,7 +265,7 @@ const NovelApp: React.FC = () => {
                             </div>
                         );
                     })}
-                    {novels.length === 0 && <div className="col-span-2 flex flex-col items-center justify-center h-64 text-slate-300 gap-3"><span className="text-4xl opacity-50 grayscale">🖋️</span><span className="text-sm font-sans">点击右上角，开始创作</span></div>}
+{novels.length === 0 && <div className="col-span-2 flex flex-col items-center justify-center h-64 text-slate-300 gap-3"><PenNib size={48} className="opacity-50" /><span className="text-sm font-sans">点击右上角，开始创作</span></div>}
                 </div>
             </div>
         );
@@ -298,7 +299,7 @@ const NovelApp: React.FC = () => {
                         </div>
                     </section>
                     <section className="space-y-4">
-                        <div className="flex justify-between items-center"><label className="text-xs font-bold text-slate-400 uppercase block">世界观设定</label><button onClick={() => setIsWorldbookModalOpen(true)} className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-1 rounded font-bold hover:bg-indigo-100 flex items-center gap-1"><span>📚</span> 导入世界书</button></div>
+<div className="flex justify-between items-center"><label className="text-xs font-bold text-slate-400 uppercase block">世界观设定</label><button onClick={() => setIsWorldbookModalOpen(true)} className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-1 rounded font-bold hover:bg-indigo-100 flex items-center gap-1"><Books size={12} /> 导入世界书</button></div>
                         <textarea value={tempWorld} onChange={e => setTempWorld(e.target.value)} placeholder="世界观设定..." className="w-full h-32 bg-white border border-slate-200 rounded-xl p-3 text-sm resize-none outline-none focus:border-slate-400" />
                     </section>
                     <section className="space-y-4">
@@ -306,7 +307,7 @@ const NovelApp: React.FC = () => {
                         <div className="flex gap-3 overflow-x-auto pb-2 no-scrollbar">{characters.map(c => (<div key={c.id} onClick={() => { const s = new Set(selectedCollaborators); if(s.has(c.id)) s.delete(c.id); else s.add(c.id); setSelectedCollaborators(s); }} className={`flex flex-col items-center gap-2 cursor-pointer transition-opacity ${selectedCollaborators.has(c.id) ? 'opacity-100' : 'opacity-50 grayscale'}`}><img src={c.avatar} className="w-12 h-12 rounded-full object-cover shadow-sm" /><span className="text-[10px] font-bold text-slate-600">{c.name}</span></div>))}</div>
                     </section>
                     <section className="space-y-4">
-                        <div className="flex justify-between items-center"><label className="text-xs font-bold text-slate-400 uppercase">剧中人</label><div className="flex gap-2"><button onClick={() => setIsProtoImportOpen(true)} className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-1 rounded font-bold hover:bg-indigo-100 border border-indigo-100">📂 导入</button><button onClick={() => openProtagonistEdit()} className="text-[10px] bg-slate-100 px-2 py-1 rounded text-slate-600 hover:bg-slate-200 transition-colors">+ 添加</button></div></div>
+<div className="flex justify-between items-center"><label className="text-xs font-bold text-slate-400 uppercase">剧中人</label><div className="flex gap-2"><button onClick={() => setIsProtoImportOpen(true)} className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-1 rounded font-bold hover:bg-indigo-100 border border-indigo-100 flex items-center gap-1"><FolderOpen size={12} /> 导入</button><button onClick={() => openProtagonistEdit()} className="text-[10px] bg-slate-100 px-2 py-1 rounded text-slate-600 hover:bg-slate-200 transition-colors">+ 添加</button></div></div>
                         <div className="grid grid-cols-2 gap-3">{tempProtagonists.map((p, idx) => (<ProtagonistCard key={p.id} p={p} onClick={() => openProtagonistEdit(p)} onDelete={() => setTempProtagonists(tempProtagonists.filter((_, i) => i !== idx))} />))}</div>
                     </section>
                 </div>

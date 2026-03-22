@@ -10,6 +10,21 @@ import {
     buildEndCardPrompt,
 } from '../utils/guidebookPrompts';
 import { DB } from '../utils/db';
+import {
+    ArrowLeft,
+    ArrowRight,
+    Heart,
+    CaretUp,
+    CaretDown,
+    CaretRight,
+    PencilSimple,
+    Sparkle,
+    FlowerLotus,
+    Star,
+    Diamond,
+    DiamondsFour,
+    Cards,
+} from '@phosphor-icons/react';
 
 // --- Helper: Generate ID ---
 const genId = () => Math.random().toString(36).slice(2, 10);
@@ -127,7 +142,7 @@ const GameHeader: React.FC<{
         <div className="flex items-center gap-2.5 pl-5 pr-3 py-2.5"
             style={{ background: 'linear-gradient(135deg, rgba(200,185,190,0.3) 0%, rgba(190,175,195,0.2) 100%)', borderBottom: '2px solid rgba(180,165,170,0.2)' }}>
             <button onClick={onBack} className="w-7 h-7 rounded-full bg-white/60 flex items-center justify-center text-xs font-bold active:scale-90 transition-transform shadow-sm backdrop-blur-sm" style={{ color: '#9b8a8e' }}>
-                ←
+<ArrowLeft size={14} />
             </button>
             {charAvatar && (
                 <img src={charAvatar} className="w-8 h-8 rounded-full object-cover shadow-md" style={{ boxShadow: '0 0 0 2px rgba(180,165,170,0.4)' }} />
@@ -144,7 +159,7 @@ const GameHeader: React.FC<{
                     color: affinity >= 0 ? '#8b6a6e' : '#6a6e8b',
                     border: affinity >= 0 ? '1px solid rgba(190,160,165,0.3)' : '1px solid rgba(160,165,190,0.3)',
                 }}>
-                    <span className="text-[10px] mr-0.5">♥</span>{affinity}
+<Heart size={10} weight="fill" className="mr-0.5" />{affinity}
                 </div>
             )}
         </div>
@@ -230,7 +245,7 @@ const SegmentBubble: React.FC<{ seg: { speaker: string; text: string }; charName
             </div>
         ) : (
             <div className="rounded-xl px-3 py-2 shadow-sm ml-4" style={{ background: 'linear-gradient(135deg, rgba(245,238,235,0.7), rgba(240,232,230,0.6))', border: '1px solid rgba(200,180,175,0.25)' }}>
-                <span className="text-[10px] font-bold mr-1.5" style={{ color: '#9b7a7e' }}>♥ {charName}</span>
+<span className="text-[10px] font-bold mr-1.5 inline-flex items-center gap-0.5" style={{ color: '#9b7a7e' }}><Heart size={10} weight="fill" /> {charName}</span>
                 <span className="text-sm leading-relaxed" style={{ color: '#5a4a4e' }}>{seg.text}</span>
             </div>
         )}
@@ -267,7 +282,7 @@ const RoundDisplay: React.FC<{
                     }`}>
                         {affinityDiff >= 0 ? '+' : ''}{affinityDiff}
                     </div>
-                    <span className="text-[10px] shrink-0" style={{ color: 'rgba(160,145,150,0.5)' }}>{expanded ? '▲' : '▼'}</span>
+<span className="text-[10px] shrink-0" style={{ color: 'rgba(160,145,150,0.5)' }}>{expanded ? <CaretUp size={12} /> : <CaretDown size={12} />}</span>
                 </button>
 
                 {/* GM Narration — always visible */}
@@ -291,7 +306,7 @@ const RoundDisplay: React.FC<{
                             </span>
                             <span className="flex-1 truncate">{chosen?.text}</span>
                             <span className="text-[9px] text-white px-1.5 py-0.5 rounded-full font-bold shrink-0" style={{ background: '#b8909a' }}>
-                                ← {charName}
+<ArrowLeft size={10} className="inline" /> {charName}
                             </span>
                             <span className={`text-[10px] font-mono font-bold shrink-0 ${(chosen?.affinity || 0) >= 0 ? 'text-emerald-500' : 'text-red-400'}`}>
                                 {(chosen?.affinity || 0) >= 0 ? '+' : ''}{chosen?.affinity}
@@ -299,7 +314,7 @@ const RoundDisplay: React.FC<{
                         </div>
                         {/* Brief reaction */}
                         <div className="rounded-lg px-2.5 py-1.5" style={{ background: 'linear-gradient(135deg, rgba(245,238,235,0.6), rgba(240,232,230,0.5))', border: '1px solid rgba(200,180,175,0.2)' }}>
-                            <span className="font-bold text-[11px] mr-1" style={{ color: '#9b7a7e' }}>♥ {charName}</span>
+<span className="font-bold text-[11px] mr-1 inline-flex items-center gap-0.5" style={{ color: '#9b7a7e' }}><Heart size={11} weight="fill" /> {charName}</span>
                             <span className="text-xs" style={{ color: '#5a4a4e' }}>{round.charReaction}</span>
                         </div>
                     </div>
@@ -327,7 +342,7 @@ const RoundDisplay: React.FC<{
                                     <span className="flex-1">{opt.text}</span>
                                     {i === round.charChoice && (
                                         <span className="text-[9px] text-white px-1.5 py-0.5 rounded-full font-bold shrink-0" style={{ background: '#b8909a' }}>
-                                            ← {charName}
+<ArrowLeft size={10} className="inline" /> {charName}
                                         </span>
                                     )}
                                     <span className={`text-[10px] font-mono font-bold shrink-0 ${opt.affinity >= 0 ? 'text-emerald-500' : 'text-red-400'}`}>
@@ -351,12 +366,12 @@ const RoundDisplay: React.FC<{
                                     affinityDiff > 0 ? 'bg-gradient-to-r from-emerald-300 to-emerald-400' : affinityDiff < 0 ? 'bg-gradient-to-r from-red-300 to-red-400' : 'bg-gray-300'
                                 }`} style={{ width: `${Math.min(Math.abs(affinityDiff) * 3, 100)}%` }} />
                             </div>
-                            <span className="text-[10px] font-mono" style={{ color: 'rgba(140,125,130,0.5)' }}>{round.affinityBefore}→{round.affinityAfter}</span>
+<span className="text-[10px] font-mono" style={{ color: 'rgba(140,125,130,0.5)' }}>{round.affinityBefore}<ArrowRight size={10} className="inline" />{round.affinityAfter}</span>
                         </div>
 
                         {/* Reaction */}
                         <div className="rounded-lg px-2.5 py-2" style={{ background: 'linear-gradient(135deg, rgba(245,238,235,0.6), rgba(240,232,230,0.5))', border: '1px solid rgba(200,180,175,0.2)' }}>
-                            <span className="font-bold text-[11px] mr-1" style={{ color: '#9b7a7e' }}>♥ {charName}</span>
+<span className="font-bold text-[11px] mr-1 inline-flex items-center gap-0.5" style={{ color: '#9b7a7e' }}><Heart size={11} weight="fill" /> {charName}</span>
                             <span className="text-xs" style={{ color: '#5a4a4e' }}>{round.charReaction}</span>
                         </div>
 
@@ -364,7 +379,7 @@ const RoundDisplay: React.FC<{
                         {round.charInsight && (
                             <div className="rounded-xl px-3 py-2.5" style={{ background: 'linear-gradient(135deg, rgba(220,235,248,0.55), rgba(210,228,245,0.45))', border: '1px solid rgba(160,190,220,0.35)' }}>
                                 <div className="text-[9px] font-bold mb-1 flex items-center gap-1" style={{ color: '#5a7a9e' }}>
-                                    <span>◆</span> 关于你的发现
+<Diamond size={12} weight="fill" /> 关于你的发现
                                 </div>
                                 <div className="text-xs leading-relaxed italic" style={{ color: '#3a5a78' }}>
                                     {round.charInsight}
@@ -376,7 +391,7 @@ const RoundDisplay: React.FC<{
                         {round.charExploration && (
                             <div className="rounded-xl px-3 py-2.5" style={{ background: 'linear-gradient(135deg, rgba(240,235,225,0.6), rgba(238,230,218,0.5))', border: '1px solid rgba(210,195,175,0.3)' }}>
                                 <div className="text-[9px] font-bold mb-1 flex items-center gap-1" style={{ color: '#a09070' }}>
-                                    <span>✦</span> 深入探讨
+<Sparkle size={12} weight="fill" /> 深入探讨
                                 </div>
                                 <div className="text-xs leading-relaxed" style={{ color: '#6a5a45' }}>
                                     <span className="font-bold mr-1" style={{ color: '#8a7a60' }}>{charName}:</span>{round.charExploration}
@@ -411,8 +426,8 @@ const EndCard: React.FC<{
                 {/* Header with character */}
                 <div className="text-center pt-5 pb-3 px-5 relative">
                     {/* Decorative corners */}
-                    <div className="absolute top-2 left-3 text-lg" style={{ color: 'rgba(180,165,170,0.3)' }}>✿</div>
-                    <div className="absolute top-2 right-3 text-lg" style={{ color: 'rgba(180,165,170,0.3)' }}>✿</div>
+<div className="absolute top-2 left-3 text-lg" style={{ color: 'rgba(180,165,170,0.3)' }}><FlowerLotus size={18} /></div>
+                    <div className="absolute top-2 right-3 text-lg" style={{ color: 'rgba(180,165,170,0.3)' }}><FlowerLotus size={18} /></div>
 
                     {charAvatar ? (
                         <img src={charAvatar} className="w-16 h-16 rounded-2xl object-cover shadow-lg mx-auto mb-2" style={{ boxShadow: '0 0 0 3px rgba(180,165,170,0.35), 0 4px 12px rgba(0,0,0,0.1)' }} />
@@ -456,11 +471,11 @@ const EndCard: React.FC<{
                     {highlights.length > 0 && (
                         <Card className="p-3 space-y-1.5">
                             <div className="text-[10px] tracking-wider font-bold flex items-center gap-1" style={{ color: '#9b8a8e' }}>
-                                <span>★</span> 名场面
+<Star size={12} weight="fill" /> 名场面
                             </div>
                             {highlights.map((h, i) => (
                                 <div key={i} className="text-xs flex gap-2 rounded-lg p-2" style={{ color: '#5a4a50', background: 'rgba(245,238,235,0.5)' }}>
-                                    <span className="shrink-0" style={{ color: '#b8909a' }}>▸</span>
+                                    <span className="shrink-0" style={{ color: '#b8909a' }}><CaretRight size={12} weight="bold" /></span>
                                     <span>{h}</span>
                                 </div>
                             ))}
@@ -471,7 +486,7 @@ const EndCard: React.FC<{
                     {session.endCard?.charNewInsight && (
                         <div className="rounded-2xl p-4" style={{ background: 'linear-gradient(135deg, rgba(215,230,248,0.65), rgba(200,220,245,0.5))', border: '1px solid rgba(150,185,225,0.4)' }}>
                             <div className="text-[10px] font-bold flex items-center gap-1 mb-2" style={{ color: '#4a6a92' }}>
-                                <span>◆</span> 这局游戏让我发现的你
+<Diamond size={12} weight="fill" /> 这局游戏让我发现的你
                             </div>
                             <div className="text-sm leading-relaxed italic" style={{ color: '#2a4a68' }}>
                                 {session.endCard.charNewInsight}
@@ -485,9 +500,9 @@ const EndCard: React.FC<{
                             <div className="rounded-2xl p-3 backdrop-blur-sm transition-all" style={{ background: 'linear-gradient(135deg, rgba(245,238,235,0.6), rgba(235,228,238,0.5))', border: '1px solid rgba(200,185,190,0.25)' }}>
                                 <div className="flex items-center justify-between mb-1">
                                     <div className="text-[10px] font-bold flex items-center gap-1" style={{ color: '#9b7a7e' }}>
-                                        <span>♥</span> {charName}的真心话
+<Heart size={12} weight="fill" /> {charName}的真心话
                                     </div>
-                                    <span className="text-xs" style={{ color: '#b8a0a8' }}>{expanded ? '▲' : '▼'}</span>
+                                    <span className="text-xs" style={{ color: '#b8a0a8' }}>{expanded ? <CaretUp size={12} /> : <CaretDown size={12} />}</span>
                                 </div>
                                 <div className={`text-sm leading-relaxed ${expanded ? '' : 'line-clamp-2'}`} style={{ color: '#5a4a50' }}>
                                     {charSummary}
@@ -1049,7 +1064,7 @@ const GuidebookApp: React.FC = () => {
                     <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'repeating-linear-gradient(90deg, transparent, transparent 3px, rgba(255,255,255,0.03) 3px, rgba(255,255,255,0.03) 4px)' }} />
                     <div className="flex items-center gap-3 px-4 py-3 relative z-10">
                         <button onClick={closeApp} className="w-7 h-7 rounded-full bg-white/10 flex items-center justify-center text-white/60 text-xs active:scale-90 transition-transform backdrop-blur-sm border border-white/10">
-                            ←
+<ArrowLeft size={14} />
                         </button>
                         <div className="flex-1">
                             <div className="text-xs tracking-[0.3em] text-white/40 font-light" style={{ fontFamily: 'Georgia, serif' }}>CHARACTER SELECT</div>
@@ -1232,12 +1247,12 @@ const GuidebookApp: React.FC = () => {
                             {/* Content */}
                             <div className="px-5 py-4 space-y-3.5 max-h-[65vh] overflow-y-auto no-scrollbar">
                                 {[
-                                    { icon: '✦', title: '基本概念', desc: '你是出题人，角色是答题者。每回合你设计三个行为选项（含好感度分值），AI角色会根据自己的性格选一个——你需要猜到她会选哪个！' },
-                                    { icon: '♥', title: '好感度系统', desc: '每个选项对应一个分值（可以是负数）。角色选择后，分值累加到当前好感度。结局好坏取决于最终好感度。' },
-                                    { icon: '✿', title: 'AI 一键填入', desc: '不知道出什么题？点"✦ AI 一键填入"，AI会根据当前剧情自动帮你生成三个选项和分值，你可以直接用或者修改。' },
-                                    { icon: '★', title: '点击选项快速编辑', desc: '游戏过程中，点击任意选项（A/B/C）可以在弹出框里快速编辑内容和分值，手机党友好！' },
-                                    { icon: '◈', title: '幻想场景', desc: '开始时可以设定一个场景背景（比如异世界冒险、校园日常），AI会据此生成开场白并保持世界观一致。' },
-                                    { icon: '◇', title: '结算卡片', desc: '游戏结束后生成结算卡，包含角色的真实评语和本局高光时刻，还可以发送到聊天。' },
+{ icon: <Sparkle size={14} weight="fill" />, title: '基本概念', desc: '你是出题人，角色是答题者。每回合你设计三个行为选项（含好感度分值），AI角色会根据自己的性格选一个——你需要猜到她会选哪个！' },
+                                    { icon: <Heart size={14} weight="fill" />, title: '好感度系统', desc: '每个选项对应一个分值（可以是负数）。角色选择后，分值累加到当前好感度。结局好坏取决于最终好感度。' },
+                                    { icon: <FlowerLotus size={14} weight="fill" />, title: 'AI 一键填入', desc: '不知道出什么题？点"AI 一键填入"，AI会根据当前剧情自动帮你生成三个选项和分值，你可以直接用或者修改。' },
+                                    { icon: <Star size={14} weight="fill" />, title: '点击选项快速编辑', desc: '游戏过程中，点击任意选项（A/B/C）可以在弹出框里快速编辑内容和分值，手机党友好！' },
+                                    { icon: <DiamondsFour size={14} weight="fill" />, title: '幻想场景', desc: '开始时可以设定一个场景背景（比如异世界冒险、校园日常），AI会据此生成开场白并保持世界观一致。' },
+                                    { icon: <Cards size={14} weight="fill" />, title: '结算卡片', desc: '游戏结束后生成结算卡，包含角色的真实评语和本局高光时刻，还可以发送到聊天。' },
                                 ].map((item, i) => (
                                     <div key={i} className="flex gap-3">
                                         <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs shrink-0 mt-0.5" style={{ background: 'rgba(244,143,177,0.15)', color: '#f48fb1' }}>{item.icon}</div>
@@ -1251,7 +1266,7 @@ const GuidebookApp: React.FC = () => {
                             {/* Close */}
                             <div className="px-5 pb-5 pt-3">
                                 <button onClick={() => setShowTutorial(false)} className="w-full py-2.5 rounded-2xl text-sm font-bold active:scale-95 transition-transform" style={{ background: 'linear-gradient(135deg, rgba(244,143,177,0.25), rgba(167,139,250,0.2))', color: '#f48fb1', border: '1px solid rgba(244,143,177,0.2)' }}>
-                                    明白了！开始攻略 →
+明白了！开始攻略 <ArrowRight size={14} className="inline" />
                                 </button>
                             </div>
                         </div>
@@ -1285,7 +1300,7 @@ const GuidebookApp: React.FC = () => {
                     <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'repeating-linear-gradient(90deg, transparent, transparent 3px, rgba(255,255,255,0.03) 3px, rgba(255,255,255,0.03) 4px)' }} />
                     <div className="flex items-center gap-3 px-4 py-3 relative z-10">
                         <button onClick={backToLobby} className="w-7 h-7 rounded-full bg-white/10 flex items-center justify-center text-white/60 text-xs active:scale-90 transition-transform backdrop-blur-sm border border-white/10">
-                            ←
+<ArrowLeft size={14} />
                         </button>
                         <div className="flex-1">
                             <div className="text-xs tracking-[0.3em] text-white/40 font-light" style={{ fontFamily: 'Georgia, serif' }}>GAME SETUP</div>
@@ -1348,7 +1363,7 @@ const GuidebookApp: React.FC = () => {
                             <div className="p-3.5 space-y-2.5">
                                 <div className="flex items-center justify-between">
                                     <div className="flex items-center gap-1.5">
-                                        <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px]" style={{ background: 'linear-gradient(135deg, #d4a0a0, #c48b8b)', color: 'white' }}>♥</div>
+<div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px]" style={{ background: 'linear-gradient(135deg, #d4a0a0, #c48b8b)', color: 'white' }}><Heart size={12} weight="fill" /></div>
                                         <span className="text-xs font-bold" style={{ color: '#8b6f6f' }}>初始好感度</span>
                                     </div>
                                     <div className="px-2.5 py-0.5 rounded-full text-xs font-bold" style={{ color: '#9b7a7a', background: 'rgba(212,160,160,0.15)', border: '1px solid rgba(200,180,175,0.2)' }}>
@@ -1390,7 +1405,7 @@ const GuidebookApp: React.FC = () => {
                         <div className="rounded-2xl overflow-hidden" style={{ background: 'rgba(245,238,235,0.7)', backdropFilter: 'blur(8px)', border: '1.5px solid rgba(200,180,175,0.25)' }}>
                             <div className="p-3 space-y-2">
                                 <div className="flex items-center gap-1.5">
-                                    <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px]" style={{ background: 'linear-gradient(135deg, #c9b1bd, #b89aaa)', color: 'white' }}>✦</div>
+<div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px]" style={{ background: 'linear-gradient(135deg, #c9b1bd, #b89aaa)', color: 'white' }}><Sparkle size={12} weight="fill" /></div>
                                     <span className="text-xs font-bold" style={{ color: '#8b6f6f' }}>回合数</span>
                                 </div>
                                 <div className="grid grid-cols-4 gap-1.5">
@@ -1416,19 +1431,19 @@ const GuidebookApp: React.FC = () => {
                         <div className="rounded-2xl overflow-hidden" style={{ background: 'rgba(245,238,235,0.7)', backdropFilter: 'blur(8px)', border: '1.5px solid rgba(200,180,175,0.25)' }}>
                             <div className="p-3.5 space-y-2.5">
                                 <div className="flex items-center gap-1.5">
-                                    <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px]" style={{ background: 'linear-gradient(135deg, #c5b8c9, #b5a3bb)', color: 'white' }}>✿</div>
+<div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px]" style={{ background: 'linear-gradient(135deg, #c5b8c9, #b5a3bb)', color: 'white' }}><FlowerLotus size={12} weight="fill" /></div>
                                     <span className="text-xs font-bold" style={{ color: '#8b6f6f' }}>幻想场景</span>
                                     <span className="text-[9px] ml-0.5" style={{ color: 'rgba(160,130,130,0.4)' }}>选一个或自己写</span>
                                 </div>
                                 {/* Fantasy Presets */}
                                 <div className="grid grid-cols-3 gap-1.5">
                                     {[
-                                        { label: '🎮 游戏世界', value: '你们在一起玩的游戏世界里冒险（RPG/开放世界），角色用游戏内的方式攻略用户' },
-                                        { label: '📖 小说剧情', value: '你们是小说里的角色，身处用户喜欢的故事类型中，角色按剧情节奏推进攻略' },
-                                        { label: '🏫 校园日常', value: '校园背景，放学后/午休/社团活动等经典galgame场景' },
-                                        { label: '🌃 都市奇遇', value: '现代都市奇幻背景，偶然相遇在咖啡馆/书店/雨天的街角' },
-                                        { label: '⚔️ 异世界', value: '奇幻异世界冒险，勇者与同伴的旅程，角色在冒险途中制造心动瞬间' },
-                                        { label: '🔮 自由想象', value: '' },
+{ label: '游戏世界', icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f3ae.png', value: '你们在一起玩的游戏世界里冒险（RPG/开放世界），角色用游戏内的方式攻略用户' },
+                                        { label: '小说剧情', icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4d6.png', value: '你们是小说里的角色，身处用户喜欢的故事类型中，角色按剧情节奏推进攻略' },
+                                        { label: '校园日常', icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f3eb.png', value: '校园背景，放学后/午休/社团活动等经典galgame场景' },
+                                        { label: '都市奇遇', icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f303.png', value: '现代都市奇幻背景，偶然相遇在咖啡馆/书店/雨天的街角' },
+                                        { label: '异世界', icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/2694.png', value: '奇幻异世界冒险，勇者与同伴的旅程，角色在冒险途中制造心动瞬间' },
+                                        { label: '自由想象', icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f52e.png', value: '' },
                                     ].map(preset => (
                                         <button key={preset.label} onClick={() => setScenarioHint(preset.value)}
                                             className="py-2 px-1 rounded-xl text-[10px] transition-all active:scale-90 text-center leading-tight"
@@ -1442,7 +1457,7 @@ const GuidebookApp: React.FC = () => {
                                                 color: 'rgba(120,100,100,0.6)',
                                                 border: '1px solid rgba(200,180,175,0.2)',
                                             }}>
-                                            {preset.label}
+<img src={preset.icon} className="w-4 h-4 inline" alt="" />{' '}{preset.label}
                                         </button>
                                     ))}
                                 </div>
@@ -1503,7 +1518,7 @@ const GuidebookApp: React.FC = () => {
                 <div className="p-4 shrink-0">
                     <button onClick={handleOpeningDone}
                         className="w-full py-2.5 bg-white/70 text-sm font-bold rounded-xl active:scale-95 transition-transform shadow-sm" style={{ color: '#8b7a7e', border: '1px solid rgba(200,185,190,0.3)' }}>
-                        跳过 →
+跳过 <ArrowRight size={14} className="inline" />
                     </button>
                 </div>
             </GameFrame>
@@ -1564,7 +1579,7 @@ const GuidebookApp: React.FC = () => {
                 {isReplay && session?.endCard && (
                     <Card className="p-4 space-y-3 mt-2">
                         <div className="text-center">
-                            <div className="text-[10px] tracking-wider font-bold mb-1" style={{ color: '#9b8a8e' }}>✦ 结算 ✦</div>
+<div className="text-[10px] tracking-wider font-bold mb-1 flex items-center justify-center gap-1" style={{ color: '#9b8a8e' }}><Sparkle size={12} weight="fill" /> 结算 <Sparkle size={12} weight="fill" /></div>
                             <div className="text-lg font-black" style={{ color: '#5a4a50' }}>「{session.endCard.title}」</div>
                         </div>
                         <div className="text-sm italic text-center rounded-xl p-2" style={{ color: '#5a4a50', background: 'rgba(245,238,235,0.5)' }}>
@@ -1572,13 +1587,13 @@ const GuidebookApp: React.FC = () => {
                         </div>
                         {session.endCard.highlights.map((h, i) => (
                             <div key={i} className="text-xs flex gap-2 rounded-lg p-2" style={{ color: '#5a4a50', background: 'rgba(245,238,235,0.3)' }}>
-                                <span className="shrink-0" style={{ color: '#b8909a' }}>▸</span><span>{h}</span>
+<span className="shrink-0" style={{ color: '#b8909a' }}><CaretRight size={12} weight="bold" /></span><span>{h}</span>
                             </div>
                         ))}
                         {session.endCard.charSummary && (
                             <div className="rounded-xl p-3" style={{ background: 'linear-gradient(135deg, rgba(245,238,235,0.5), rgba(235,228,238,0.4))', border: '1px solid rgba(200,185,190,0.2)' }}>
                                 <div className="text-[10px] font-bold mb-1 flex items-center gap-1" style={{ color: '#9b7a7e' }}>
-                                    <span>♥</span> {charName}的真心话
+<Heart size={12} weight="fill" /> {charName}的真心话
                                 </div>
                                 <div className="text-sm leading-relaxed" style={{ color: '#5a4a50' }}>{session.endCard.charSummary}</div>
                             </div>
@@ -1614,7 +1629,7 @@ const GuidebookApp: React.FC = () => {
                             {inputCollapsed ? '展开编辑面板' : '收起编辑面板'}
                         </span>
                         <span className="text-[10px]" style={{ color: 'rgba(160,145,150,0.5)' }}>
-                            {inputCollapsed ? '▲' : '▼'}
+{inputCollapsed ? <CaretUp size={12} /> : <CaretDown size={12} />}
                         </span>
                     </button>
 
@@ -1624,11 +1639,11 @@ const GuidebookApp: React.FC = () => {
                             <button onClick={() => { setEditingScenario(true); setEditScenarioText(roundScenario); }}
                                 className="w-full flex gap-2 items-start active:scale-[0.98] transition-transform"
                                 style={{ background: 'rgba(255,255,255,0.7)', border: '1px dashed rgba(200,185,190,0.3)', borderRadius: '12px', padding: '8px 10px' }}>
-                                <span className="w-5 h-5 rounded-md flex items-center justify-center text-[10px] shrink-0 mt-0.5" style={{ background: 'rgba(200,185,190,0.2)', color: '#9b8a8e' }}>✿</span>
+<span className="w-5 h-5 rounded-md flex items-center justify-center text-[10px] shrink-0 mt-0.5" style={{ background: 'rgba(200,185,190,0.2)', color: '#9b8a8e' }}><FlowerLotus size={12} /></span>
                                 <span className="flex-1 text-left text-xs leading-relaxed truncate" style={{ color: roundScenario ? '#5a4a50' : 'rgba(160,140,145,0.5)' }}>
                                     {roundScenario || '场景描述 (可选，留空由GM发挥)'}
                                 </span>
-                                <span className="text-[10px] shrink-0 mt-0.5" style={{ color: 'rgba(160,140,145,0.5)' }}>✎</span>
+                                <span className="text-[10px] shrink-0 mt-0.5" style={{ color: 'rgba(160,140,145,0.5)' }}><PencilSimple size={12} /></span>
                             </button>
 
                             {/* Tappable option rows */}
@@ -1645,7 +1660,7 @@ const GuidebookApp: React.FC = () => {
                                     <span className="text-[10px] font-bold shrink-0 px-1.5 py-0.5 rounded-lg" style={{ color: optionScores[i] >= 0 ? '#7a5a5e' : '#5a5a7a', background: optionScores[i] >= 0 ? 'rgba(200,170,175,0.2)' : 'rgba(170,170,200,0.2)' }}>
                                         {optionScores[i] >= 0 ? '+' : ''}{optionScores[i]}
                                     </span>
-                                    <span className="text-[10px] shrink-0" style={{ color: 'rgba(160,140,145,0.5)' }}>✎</span>
+<span className="text-[10px] shrink-0" style={{ color: 'rgba(160,140,145,0.5)' }}><PencilSimple size={12} /></span>
                                 </button>
                             ))}
 
@@ -1658,7 +1673,7 @@ const GuidebookApp: React.FC = () => {
                             <div className="flex gap-2">
                                 <button onClick={handleAIAssist} disabled={isLoading}
                                     className="flex-1 py-2 bg-white/70 text-xs font-bold rounded-xl active:scale-95 transition-transform shadow-sm" style={{ color: '#9b8a8e', border: '1px solid rgba(200,185,190,0.3)' }}>
-                                    ✦ AI 一键填入
+<Sparkle size={12} weight="fill" className="inline" /> AI 一键填入
                                 </button>
                                 <button onClick={handleSubmitRound} disabled={isLoading || optionTexts.some(t => !t.trim())}
                                     className="flex-1 py-2 text-white text-xs font-bold rounded-xl active:scale-95 transition-transform disabled:opacity-50 shadow-md" style={{ background: 'linear-gradient(135deg, #b8909a, #a07880)' }}>
@@ -1785,7 +1800,7 @@ const GuidebookApp: React.FC = () => {
                     <div className="relative w-full max-w-md rounded-3xl overflow-hidden shadow-2xl max-h-[85vh] overflow-y-auto" style={{ background: 'linear-gradient(160deg, #f5f0ee 0%, #ece6e9 100%)', border: '1px solid rgba(200,185,190,0.3)' }}>
                         <div className="px-5 pt-5 pb-3" style={{ borderBottom: '1px solid rgba(200,185,190,0.15)' }}>
                             <div className="flex items-center gap-2">
-                                <span className="w-6 h-6 rounded-lg flex items-center justify-center text-[10px] shrink-0" style={{ background: 'rgba(200,185,190,0.2)', color: '#9b8a8e' }}>✿</span>
+<span className="w-6 h-6 rounded-lg flex items-center justify-center text-[10px] shrink-0" style={{ background: 'rgba(200,185,190,0.2)', color: '#9b8a8e' }}><FlowerLotus size={12} /></span>
                                 <span className="text-sm font-bold" style={{ color: '#5a4a50' }}>编辑场景描述</span>
                             </div>
                         </div>

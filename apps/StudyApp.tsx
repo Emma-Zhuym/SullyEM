@@ -6,6 +6,7 @@ import { StudyCourse, StudyChapter, CharacterProfile, Message, UserProfile, APIC
 import { ContextBuilder } from '../utils/context';
 import Modal from '../components/os/Modal';
 import { safeResponseJson } from '../utils/safeApi';
+import { Notepad, Check, X, CheckCircle, XCircle, Hand } from '@phosphor-icons/react';
 
 type PdfJsLike = {
     getDocument: (src: { data: ArrayBuffer }) => { promise: Promise<any> };
@@ -532,7 +533,7 @@ const StudyApp: React.FC = () => {
 
             // Scanned PDF Detection
             if (fullText.trim().length < 50 && pdf.numPages > 0) {
-                addToast('⚠️ 检测到文本极少，可能是扫描件/图片PDF。建议先进行OCR识别。', 'error');
+addToast('检测到文本极少，可能是扫描件/图片PDF。建议先进行OCR识别。', 'error');
             }
 
             // Set temp data and open modal
@@ -894,7 +895,7 @@ Note: Use "我" (I) to refer to yourself.
 
         // 3. Trigger next logic
         if (nextIdx >= updatedChapters.length) {
-            setCurrentText("恭喜！这本书我们已经学完了！真棒！🎉");
+setCurrentText("恭喜！这本书我们已经学完了！真棒！");
             setClassroomState('finished');
         } else {
             handleTeach(updatedCourse, newIndex);
@@ -1286,7 +1287,7 @@ Answer in character. Be helpful and clear. If they're confused about a concept, 
                 <div className="p-6 flex-1 overflow-y-auto no-scrollbar">
                     {allQuizzes.length === 0 ? (
                         <div className="flex flex-col items-center justify-center h-full text-slate-400">
-                            <span className="text-4xl mb-4">📝</span>
+<Notepad size={48} className="mb-4 text-slate-400" />
                             <span className="text-sm">还没有做过题哦</span>
                             <span className="text-xs mt-1">在自习室的课堂中点击「刷题」开始吧</span>
                         </div>
@@ -1369,7 +1370,7 @@ Answer in character. Be helpful and clear. If they're confused about a concept, 
                         {viewQuiz.questions.map((q, i) => (
                             <div key={q.id} className={`rounded-2xl p-4 border ${q.isCorrect ? 'bg-emerald-900/10 border-emerald-500/20' : 'bg-red-900/10 border-red-500/20'}`}>
                                 <div className="flex items-start gap-2 mb-2">
-                                    <span className={`text-sm font-bold shrink-0 ${q.isCorrect ? 'text-emerald-400' : 'text-red-400'}`}>{q.isCorrect ? '✓' : '✗'}</span>
+<span className={`text-sm font-bold shrink-0 ${q.isCorrect ? 'text-emerald-400' : 'text-red-400'}`}>{q.isCorrect ? <Check size={16} weight="bold" /> : <X size={16} weight="bold" />}</span>
                                     <span className="text-white/90 text-sm">{i + 1}. {q.stem}</span>
                                 </div>
                                 {q.options && (
@@ -1537,7 +1538,7 @@ Answer in character. Be helpful and clear. If they're confused about a concept, 
                                                     const isSelected = quizUserAnswers[q.id] === opt.val;
                                                     return (
                                                         <button key={opt.val} onClick={() => handleQuizAnswer(q.id, opt.val)} className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all ${isSelected ? (opt.val === 'true' ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white') : 'bg-slate-50 text-slate-600 hover:bg-slate-100 active:scale-[0.98]'}`}>
-                                                            {opt.val === 'true' ? '⭕' : '❌'} {opt.label}
+{opt.val === 'true' ? <CheckCircle size={16} weight="bold" className="inline" /> : <XCircle size={16} weight="bold" className="inline" />} {opt.label}
                                                         </button>
                                                     );
                                                 })}
@@ -1795,7 +1796,7 @@ Answer in character. Be helpful and clear. If they're confused about a concept, 
                                     className={`w-full text-left p-3 rounded-xl text-xs transition-all ${idx === activeCourse.currentChapterIndex ? 'bg-emerald-600 text-white font-bold' : 'text-slate-400 hover:bg-white/5'}`}
                                 >
                                     <div className="flex items-center gap-2">
-                                        {ch.isCompleted ? <span className="text-emerald-400">✓</span> : <span className="w-2 h-2 rounded-full bg-slate-600"></span>}
+{ch.isCompleted ? <Check size={14} weight="bold" className="text-emerald-400" /> : <span className="w-2 h-2 rounded-full bg-slate-600"></span>}
                                         {ch.title}
                                     </div>
                                 </button>
@@ -1850,10 +1851,10 @@ Answer in character. Be helpful and clear. If they're confused about a concept, 
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
                             </button>
                             <button onClick={() => setClassroomState('q_and_a')} className="w-12 h-12 bg-white/10 hover:bg-white/20 text-white rounded-2xl font-bold border border-white/10 active:scale-95 transition-all flex items-center justify-center">
-                                ✋
+<Hand size={24} />
                             </button>
-                            <button onClick={openQuizSetup} className="w-12 h-12 bg-amber-600/80 hover:bg-amber-500 text-white rounded-2xl font-bold border border-amber-400/30 active:scale-95 transition-all flex items-center justify-center text-lg" title="刷题">
-                                📝
+                            <button onClick={openQuizSetup} className="w-12 h-12 bg-amber-600/80 hover:bg-amber-500 text-white rounded-2xl font-bold border border-amber-400/30 active:scale-95 transition-all flex items-center justify-center" title="刷题">
+                                <Notepad size={24} />
                             </button>
                             <button onClick={handleFinishChapter} className="flex-1 h-12 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl font-bold shadow-lg shadow-emerald-900/30 active:scale-95 transition-all flex items-center justify-center gap-2">
                                 下一章 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" /></svg>

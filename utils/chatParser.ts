@@ -88,7 +88,7 @@ export const ChatParser = {
             // Strip markdown headers (# ## ### etc) → keep the text
             .replace(/^#{1,6}\s+/gm, '')
             // Strip residual action/system tags that weren't caught earlier
-            .replace(/\[\[([A-Z][A-Z0-9_]*):\s*[\s\S]*?\]\]/g, '')
+            .replace(/\[\[(?:ACTION|RECALL|SEARCH|DIARY|READ_DIARY|FS_DIARY|FS_READ_DIARY|DIARY_START|DIARY_END|FS_DIARY_START|FS_DIARY_END)[:\s][\s\S]*?\]\]/g, '')
             .replace(/\[schedule_message[^\]]*\]/g, '')
             .replace(/\[\[(?:QU[OA]TE|引用)[：:][\s\S]*?\]\]/g, '')
             .replace(/\[(?:QU[OA]TE|引用)[：:][^\]]*\]/g, '')

@@ -7,8 +7,14 @@ import { ContextBuilder } from '../utils/context';
 import { processImage } from '../utils/file';
 import Modal from '../components/os/Modal';
 import { safeResponseJson } from '../utils/safeApi';
+import { Door, Sparkle, Image, GearSix, Camera } from '@phosphor-icons/react';
+import { FURNITURE_ICONS } from '../utils/furnitureIcons';
+
+const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
+const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
 
 // --- 1. 免版权贴纸素材库 (Sticker Library) ---
+// 使用手绘 SVG 图标替代 Twemoji，更精致的视觉体验
 const ASSET_LIBRARY = {
     // Sully专属家具 (默认大小已根据你的布局调整)
     sully_special: [
@@ -19,26 +25,26 @@ const ASSET_LIBRARY = {
         { name: 'Sully垃圾桶', image: 'https://sharkpan.xyz/f/75Nvsj/LJT.png', defaultScale: 0.9 },
     ],
     furniture: [
-        { name: '床', image: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f6cf.png', defaultScale: 1.5 },
-        { name: '沙发', image: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f6cb.png', defaultScale: 1.4 },
-        { name: '椅子', image: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1fa91.png', defaultScale: 1.0 },
-        { name: '马桶', image: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f6bd.png', defaultScale: 1.0 },
-        { name: '浴缸', image: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f6c1.png', defaultScale: 1.5 },
+{ name: '床', image: FURNITURE_ICONS.bed, defaultScale: 1.5 },
+        { name: '沙发', image: FURNITURE_ICONS.sofa, defaultScale: 1.4 },
+        { name: '椅子', image: FURNITURE_ICONS.chair, defaultScale: 1.0 },
+        { name: '马桶', image: FURNITURE_ICONS.toilet, defaultScale: 1.0 },
+        { name: '浴缸', image: FURNITURE_ICONS.bathtub, defaultScale: 1.5 },
     ],
     decor: [
-        { name: '盆栽', image: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1fab4.png', defaultScale: 0.8 },
-        { name: '电脑', image: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f5a5.png', defaultScale: 0.8 },
-        { name: '游戏机', image: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f3ae.png', defaultScale: 0.6 },
-        { name: '吉他', image: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f3b8.png', defaultScale: 1.0 },
-        { name: '画', image: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f5bc.png', defaultScale: 1.2 },
-        { name: '书堆', image: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4da.png', defaultScale: 0.8 },
-        { name: '台灯', image: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f3db.png', defaultScale: 0.8 },
-        { name: '垃圾桶', image: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f5d1.png', defaultScale: 0.7 },
+        { name: '盆栽', image: FURNITURE_ICONS.plant, defaultScale: 0.8 },
+        { name: '电脑', image: FURNITURE_ICONS.computer, defaultScale: 0.8 },
+        { name: '游戏机', image: FURNITURE_ICONS.gamepad, defaultScale: 0.6 },
+        { name: '吉他', image: FURNITURE_ICONS.guitar, defaultScale: 1.0 },
+        { name: '画', image: FURNITURE_ICONS.painting, defaultScale: 1.2 },
+        { name: '书堆', image: FURNITURE_ICONS.books, defaultScale: 0.8 },
+        { name: '台灯', image: FURNITURE_ICONS.lamp, defaultScale: 0.8 },
+        { name: '垃圾桶', image: FURNITURE_ICONS.trash, defaultScale: 0.7 },
     ],
     food: [
-        { name: '咖啡', image: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/2615.png', defaultScale: 0.5 },
-        { name: '蛋糕', image: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f370.png', defaultScale: 0.6 },
-        { name: '披萨', image: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f355.png', defaultScale: 0.8 },
+        { name: '咖啡', image: FURNITURE_ICONS.coffee, defaultScale: 0.5 },
+        { name: '蛋糕', image: FURNITURE_ICONS.cake, defaultScale: 0.6 },
+        { name: '披萨', image: FURNITURE_ICONS.pizza, defaultScale: 0.8 },
     ]
 };
 
@@ -407,7 +413,7 @@ const RoomApp: React.FC = () => {
         }
     };
 
-    // 🔴 Fallback Initialization: Used when main generation fails due to Safety Block
+// Fallback Initialization: Used when main generation fails due to Safety Block
     const initializeFallback = async (c: CharacterProfile) => {
         try {
             console.warn("Triggering Room Fallback Initialization");
@@ -1039,7 +1045,7 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
         <div key={c.id} onClick={() => handleEnterRoom(c)} className="min-h-[180px] bg-white rounded-2xl shadow-sm border border-slate-100 p-4 flex flex-col items-center justify-center gap-3 cursor-pointer active:scale-95 transition-all relative overflow-hidden group hover:shadow-md">
                             <div className="w-20 h-20 rounded-full p-1 border-2 border-slate-100 relative">
                                 <img src={c.avatar} className="w-full h-full rounded-full object-cover" />
-                                <div className="absolute bottom-0 right-0 w-6 h-6 bg-green-400 rounded-full border-2 border-white flex items-center justify-center text-[10px] text-white">🏠</div>
+<div className="absolute bottom-0 right-0 w-6 h-6 bg-green-400 rounded-full border-2 border-white flex items-center justify-center"><img src={twemojiUrl('1f3e0')} alt="home" className="w-3 h-3" /></div>
                             </div>
                             <span className="font-bold text-slate-700 text-sm">{c.name}</span>
                         </div>
@@ -1090,7 +1096,7 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
             
             {isInitializing && (
                 <div className="absolute inset-0 z-[500] bg-white flex flex-col items-center justify-center animate-fade-in">
-                    <div className="text-4xl mb-4 animate-bounce">🚪</div>
+<div className="text-4xl mb-4 animate-bounce"><Door size={48} className="text-slate-400" /></div>
                     <p className="text-sm font-bold text-slate-500">{initStatusText}</p>
                 </div>
             )}
@@ -1127,7 +1133,7 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                 {/* Character Actor - Z Index Boosted to simulate standing in front */}
                 <div onClick={(e) => { e.stopPropagation(); handlePokeActor(); }} className={`absolute transition-[left,top] duration-[1000ms] ease-in-out origin-bottom-center ${stickerClass} cursor-pointer active:scale-95 group`} style={{ left: `${actorState.x}%`, top: `${actorState.y}%`, width: '120px', transform: `translate(-50%, -100%) scale(${actorState.action === 'walk' ? 1.05 : (actorState.action === 'bounce' ? 1.1 : 1)})`, zIndex: Math.floor(actorState.y) + 20 }}>
                     <img src={actorImage} className={`w-full h-full object-contain ${actorState.action === 'walk' ? 'animate-bounce' : ''}`} />
-                    {mode === 'edit' && <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-black/60 text-white text-[9px] px-2 py-1 rounded backdrop-blur-sm whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">📷 换装</div>}
+{mode === 'edit' && <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-black/60 text-white text-[9px] px-2 py-1 rounded backdrop-blur-sm whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1"><Camera size={12} /> 换装</div>}
                     {/* Fixed: Wider bubble width */}
                     {aiBubble.visible && <div className="absolute bottom-[105%] left-1/2 -translate-x-1/2 bg-white px-4 py-3 rounded-[20px] rounded-bl-none shadow-lg border-2 border-black/5 min-w-[120px] max-w-[300px] animate-pop-in z-50"><p className="text-xs font-bold text-slate-700 leading-tight text-center break-words">{aiBubble.text}</p><button onClick={(e) => { e.stopPropagation(); setAiBubble({ ...aiBubble, visible: false }); }} className="absolute -top-2 -right-2 bg-slate-200 text-slate-500 rounded-full w-4 h-4 flex items-center justify-center text-[8px]">×</button></div>}
                 </div>
@@ -1162,7 +1168,7 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                                     <button onClick={() => handleDeleteTodo(idx)} className="text-slate-300 hover:text-red-400 px-1 opacity-0 group-hover:opacity-100 transition-opacity">×</button>
                                 </li>
                             ))}</ul> : <div className="text-center py-10 text-slate-400 text-xs">生成中...</div>}
-                            <div className="mt-8 p-4 bg-yellow-50 rounded-xl border border-yellow-100 text-xs text-yellow-800 leading-relaxed italic relative"><span className="absolute -top-3 left-4 text-2xl">📌</span>这是 {char?.name} 今天的自动行程表。虽然你不能帮TA做，但可以监督TA哦。</div>
+<div className="mt-8 p-4 bg-yellow-50 rounded-xl border border-yellow-100 text-xs text-yellow-800 leading-relaxed italic relative"><span className="absolute -top-3 left-4"><img src={twemojiUrl('1f4cc')} alt="pin" className="w-6 h-6" /></span>这是 {char?.name} 今天的自动行程表。虽然你不能帮TA做，但可以监督TA哦。</div>
                         </div>
                     )}
                     {activePanel === 'notebook' && (
@@ -1225,11 +1231,11 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                             <div className="space-y-4">
                                 <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2">
                                     <button onClick={() => setShowLibrary(true)} className="flex flex-col items-center gap-1 shrink-0"><div className="w-12 h-12 bg-blue-500 rounded-xl flex items-center justify-center text-white shadow-md text-xl">+</div><span className="text-[10px] font-bold text-slate-500">家具库</span></button>
-                                    <button onClick={() => setShowCustomModal(true)} className="flex flex-col items-center gap-1 shrink-0"><div className="w-12 h-12 bg-purple-500 rounded-xl flex items-center justify-center text-white shadow-md text-xl">✨</div><span className="text-[10px] font-bold text-slate-500">自定义</span></button>
-                                    <button onClick={() => wallInputRef.current?.click()} className="flex flex-col items-center gap-1 shrink-0"><div className="w-12 h-12 bg-slate-200 rounded-xl flex items-center justify-center text-slate-500 shadow-sm border border-slate-300">🖼️</div><span className="text-[10px] font-bold text-slate-500">换墙纸</span></button>
-                                    <button onClick={() => floorInputRef.current?.click()} className="flex flex-col items-center gap-1 shrink-0"><div className="w-12 h-12 bg-slate-200 rounded-xl flex items-center justify-center text-slate-500 shadow-sm border border-slate-300">🧱</div><span className="text-[10px] font-bold text-slate-500">换地板</span></button>
+<button onClick={() => setShowCustomModal(true)} className="flex flex-col items-center gap-1 shrink-0"><div className="w-12 h-12 bg-purple-500 rounded-xl flex items-center justify-center text-white shadow-md"><Sparkle size={24} /></div><span className="text-[10px] font-bold text-slate-500">自定义</span></button>
+                                    <button onClick={() => wallInputRef.current?.click()} className="flex flex-col items-center gap-1 shrink-0"><div className="w-12 h-12 bg-slate-200 rounded-xl flex items-center justify-center text-slate-500 shadow-sm border border-slate-300"><Image size={24} /></div><span className="text-[10px] font-bold text-slate-500">换墙纸</span></button>
+                                    <button onClick={() => floorInputRef.current?.click()} className="flex flex-col items-center gap-1 shrink-0"><div className="w-12 h-12 bg-slate-200 rounded-xl flex items-center justify-center shadow-sm border border-slate-300"><img src={twemojiUrl('1f9f1')} alt="brick" className="w-6 h-6" /></div><span className="text-[10px] font-bold text-slate-500">换地板</span></button>
                                     {/* Settings Button */}
-                                    <button onClick={() => setShowSettingsModal(true)} className="flex flex-col items-center gap-1 shrink-0"><div className="w-12 h-12 bg-slate-200 rounded-xl flex items-center justify-center text-slate-600 shadow-sm border border-slate-300">⚙️</div><span className="text-[10px] font-bold text-slate-500">设置</span></button>
+                                    <button onClick={() => setShowSettingsModal(true)} className="flex flex-col items-center gap-1 shrink-0"><div className="w-12 h-12 bg-slate-200 rounded-xl flex items-center justify-center text-slate-600 shadow-sm border border-slate-300"><GearSix size={24} /></div><span className="text-[10px] font-bold text-slate-500">设置</span></button>
                                     {/* Developer Export Button */}
                                     <button onClick={() => setShowDevModal(true)} className="flex flex-col items-center gap-1 shrink-0"><div className="w-12 h-12 bg-slate-800 rounded-xl flex items-center justify-center text-white shadow-sm border border-slate-600">{'{}'}</div><span className="text-[10px] font-bold text-slate-500">Dev</span></button>
                                     
@@ -1392,7 +1398,7 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                         <div className="pt-4 border-t border-slate-100">
                             <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Sully 专属维护</h4>
                             <button onClick={resetSullyRoom} className="w-full py-3 bg-red-50 text-red-500 font-bold rounded-2xl border border-red-100 flex items-center justify-center gap-2 active:scale-95 transition-transform">
-                                <span className="text-lg">🧹</span> 还原初始样板房
+<img src={twemojiUrl('1f9f9')} alt="broom" className="w-5 h-5" /> 还原初始样板房
                             </button>
                             <p className="text-[9px] text-slate-400 mt-2 text-center">如果不小心弄乱了房间，点此可一键恢复默认布局。</p>
                         </div>
@@ -1403,7 +1409,7 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
             {/* Refresh Confirmation Modal */}
             <Modal isOpen={showRefreshConfirm} title="强制刷新?" onClose={() => setShowRefreshConfirm(false)} footer={<div className="flex gap-2 w-full"><button onClick={() => setShowRefreshConfirm(false)} className="flex-1 py-3 bg-slate-100 text-slate-500 rounded-2xl font-bold">取消</button><button onClick={handleForceRefresh} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl">少管我!</button></div>}>
                 <div className="text-center py-4 space-y-2">
-                    <div className="text-4xl">🕰️</div>
+<div><img src={twemojiUrl('1f570-fe0f')} alt="clock" className="w-10 h-10 mx-auto" /></div>
                     <p className="text-sm text-slate-600 font-bold">每天早上 6:00 自动刷新</p>
                     <p className="text-xs text-slate-400">还没到时间哦，确定要消耗算力强制重新生成今天的房间状态吗？</p>
                 </div>
