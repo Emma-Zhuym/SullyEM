@@ -183,7 +183,7 @@ const KEEPALIVE_MAX_BODY = 60 * 1024;
 
 export async function sendInstantPush(
   payload: InstantPushPayload,
-  options: { keepalive?: boolean } = {},
+  options: { keepalive?: boolean; onDispatched?: () => void } = {},
 ): Promise<{ ok: boolean; error?: string; data?: unknown }> {
   const cfg = loadInstantConfig();
   if (!isInstantConfigReady(cfg)) {
@@ -195,7 +195,13 @@ export async function sendInstantPush(
     if (cfg.clientToken) headers['X-Client-Token'] = cfg.clientToken;
     const body = JSON.stringify(payload);
     const useKeepalive = !!options.keepalive && body.length <= KEEPALIVE_MAX_BODY;
-    const res = await fetch(url, { method: 'POST', headers, body, keepalive: useKeepalive });
+    // fetch() 同步 return Promise 时，浏览器已把请求排进网络栈，keepalive:true
+    // 让浏览器在进程被杀后仍努力送达。这一刻就是"安全可杀"，立刻通知 UI；不能
+    // 等 await resolve —— worker 端 LLM + push 全跑完才回 200，那时 push 可能
+    // 比 response 更早到达浏览器，UI 会出现"AI 回复都到了气泡还半透明"。
+    const fetchPromise = fetch(url, { method: 'POST', headers, body, keepalive: useKeepalive });
+    options.onDispatched?.();
+    const res = await fetchPromise;
     let parsed: { success?: boolean; data?: unknown; error?: { message?: string } } | null = null;
     try { parsed = await res.json(); } catch { /* non-JSON */ }
     if (!res.ok) {
@@ -262,12 +268,15 @@ export async function sendInstantPushAndAwaitReply(
 
   try {
     // keepalive: true 让 fetch 在进程被杀后仍能完成（iOS PWA swipe-kill 关键保障）
-    const sendResult = await sendInstantPush({ ...business, pushSubscription: sub }, { keepalive: true });
+    // onDispatched 在 fetch 同步排进网络栈后立刻 fire，UI 此时即可取消"准备中"
+    // 半透明态 —— 不等 response，因为 worker 是同步阻塞跑完 LLM+push 才 200
+    const sendResult = await sendInstantPush(
+      { ...business, pushSubscription: sub },
+      { keepalive: true, onDispatched: onPosted },
+    );
     if (!sendResult.ok) {
       return { ok: false, outcome: 'send-failed', error: sendResult.error };
     }
-    // worker 已收到（200 + success:true）—— 让 UI 取消"准备中"半透明态
-    onPosted?.();
 
     const timedOut = await Promise.race([
       pushArrived.then(() => false as const),
