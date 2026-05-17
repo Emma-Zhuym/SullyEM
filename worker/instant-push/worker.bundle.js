@@ -715,7 +715,7 @@ function createCloudflareWorker(optionsBuilder) {
 }
 
 // worker/instant-push/src/index.ts
-var src_default = createCloudflareWorker((env) => ({
+var inner = createCloudflareWorker((env) => ({
   vapid: {
     email: env.VAPID_EMAIL || "mailto:noreply@example.com",
     publicKey: env.VAPID_PUBLIC_KEY,
@@ -723,6 +723,23 @@ var src_default = createCloudflareWorker((env) => ({
   },
   clientToken: env.AMSG_CLIENT_TOKEN
 }));
+var CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, X-Client-Token, Authorization",
+  "Access-Control-Max-Age": "86400"
+};
+var src_default = {
+  async fetch(request, env, ctx) {
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
+    const res = await inner.fetch(request, env);
+    const headers = new Headers(res.headers);
+    for (const [k, v] of Object.entries(CORS_HEADERS)) headers.set(k, v);
+    return new Response(res.body, { status: res.status, headers });
+  }
+};
 export {
   src_default as default
 };
