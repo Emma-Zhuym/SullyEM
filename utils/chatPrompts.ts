@@ -1,13 +1,26 @@
 
-import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, DailySchedule } from '../types';
+import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig } from '../types';
 import { ContextBuilder } from './context';
 import { DB } from './db';
-import { formatLifeSimResetCardForContext } from './lifeSimChatCard';
-import { computeCurrentListening, getCurrentSlot } from './charMusicSchedule';
-import { getCharLyricSnippet } from './charLyricCache';
-import { MusicCfg, loadMusicCfgStandalone } from '../context/MusicContext';
 import { RealtimeContextManager, NotionManager, FeishuManager, defaultRealtimeConfig } from './realtimeContext';
-import { isScheduleFeatureOn } from './scheduleGenerator';
+import {
+    NOTION_USER_NOTES_TAG,
+    normalizeNotionExtraTag,
+    type NotionNotesConfigSlice,
+    resolveNotionNotesDatabaseId,
+} from './notionExtraConfig';
+import { DEFAULT_GROUPCHAT_CONTEXT_LIMIT, GROUPCHAT_CONTEXT_LIMIT_KEY } from '../components/chat/ChatConstants';
+import { formatLifeSimResetCardForContext } from './lifeSimChatCard';
+
+function getGroupContextLimitForPrivateChat(): number {
+    if (typeof localStorage === 'undefined') return DEFAULT_GROUPCHAT_CONTEXT_LIMIT;
+    try {
+        const raw = localStorage.getItem(GROUPCHAT_CONTEXT_LIMIT_KEY);
+        const v = parseInt(raw || String(DEFAULT_GROUPCHAT_CONTEXT_LIMIT), 10);
+        if (Number.isFinite(v)) return Math.min(5000, Math.max(20, v));
+    } catch { /* ignore */ }
+    return DEFAULT_GROUPCHAT_CONTEXT_LIMIT;
+}
 
 export const ChatPrompts = {
     // 格式化时间戳
@@ -63,223 +76,132 @@ export const ChatPrompts = {
         emojis: Emoji[],
         categories: EmojiCategory[],
         currentMsgs: Message[],
-        realtimeConfig?: RealtimeConfig,  // 实时配置
-        evolvedNarrative?: string,        // 进化后的意识流独白
-        userListeningContext?: {
-            songName: string;
-            artists: string;
-            lyricWindow: string[];
-            activeIdx: number;
-        } | null,
-        // char 是否和 user 处于"一起听"状态（来自 MusicContext.listeningTogetherWith）。
-        // 影响氛围措辞和互动工具提示；暂停/切歌/user 踢出都会让这个值变 false。
-        isListeningTogether?: boolean,
-        // MusicContext 的 cfg —— 用来给 char 自己的"此刻在听"拉稳定的歌词片段。
-        // 不传也能用，只是 char 的 block 2 只有歌名 + 艺人，没有歌词。
-        musicCfg?: MusicCfg,
+        realtimeConfig?: RealtimeConfig  // 新增：实时配置
     ) => {
-        // ── 分段计时（定位瓶颈用）──
-        const perfT0 = performance.now();
-        const timings: Record<string, number> = {};
-        const timed = async <T>(label: string, p: Promise<T>): Promise<T> => {
-            const t0 = performance.now();
-            try { return await p; }
-            finally { timings[label] = Math.round(performance.now() - t0); }
-        };
-
-        // 记忆宫殿检索结果现在从 char.memoryPalaceInjection 读取，由 buildCoreContext 统一注入
-        const coreT0 = performance.now();
-        let baseSystemPrompt = ContextBuilder.buildCoreContext(char, userProfile, true);
-        timings.buildCoreContext = Math.round(performance.now() - coreT0);
+        let baseSystemPrompt = ContextBuilder.buildCoreContext(char, userProfile);
 
         // 情绪底色（buffInjection）已移入 ContextBuilder.buildCoreContext()，所有 App 统一注入
 
-        // ── 并发发起所有独立的异步取数（网络 + IndexedDB），下面按原顺序拼接 ──
-        // 原来是 7 段串行 await，总耗时 = 各段之和；现在取 max。
-        const config = realtimeConfig || defaultRealtimeConfig;
-        const today = new Date().toISOString().split('T')[0];
-
-        // 1. 实时世界信息（天气/新闻/时间）
-        const realtimePromise: Promise<string> = (async () => {
-            try {
-                if (config.weatherEnabled || config.newsEnabled) {
-                    const realtimeContext = await RealtimeContextManager.buildFullContext(config);
-                    return `\n${realtimeContext}\n`;
-                }
+        // 注入实时世界信息（天气、新闻、时间等）
+        try {
+            const config = realtimeConfig || defaultRealtimeConfig;
+            // 只有当有任何实时功能启用时才注入
+            if (config.weatherEnabled || config.newsEnabled) {
+                const realtimeContext = await RealtimeContextManager.buildFullContext(config);
+                baseSystemPrompt += `\n${realtimeContext}\n`;
+            } else {
+                // 即使没有API配置，也注入基本的时间信息
                 const time = RealtimeContextManager.getTimeContext();
                 const specialDates = RealtimeContextManager.checkSpecialDates();
-                let s = `\n### 【当前时间】\n`;
-                s += `${time.dateStr} ${time.dayOfWeek} ${time.timeOfDay} ${time.timeStr}\n`;
-                if (specialDates.length > 0) s += `今日特殊: ${specialDates.join('、')}\n`;
-                return s;
-            } catch (e) {
-                console.error('Failed to inject realtime context:', e);
-                return '';
-            }
-        })();
-
-        // 2. 日程（被"日程注入"和"音乐氛围"两处共用，合并成一次查询）
-        //    总开关关闭时跳过查询与注入，确保不额外调用任何 LLM 依赖链
-        const scheduleFeatureOn = isScheduleFeatureOn(char);
-        const schedulePromise: Promise<DailySchedule | null> = scheduleFeatureOn
-            ? DB.getDailySchedule(char.id, today).catch(e => {
-                console.error('Failed to load daily schedule:', e);
-                return null;
-            })
-            : Promise.resolve(null);
-
-        // 3. 群聊上下文：并发拉取所有成员群的消息
-        // 关键：每个群单独取最后 N 条，避免某个活跃群把其他群完全挤掉
-        // （之前是把所有群消息混合后切前 200 条，活跃群会吃光配额，安静群完全不出现）
-        const groupContextPromise: Promise<string> = (async () => {
-            try {
-                const memberGroups = groups.filter(g => g.members.includes(char.id));
-                if (memberGroups.length === 0) return '';
-                const perGroup = await Promise.all(
-                    memberGroups.map(g => DB.getGroupMessages(g.id).then(msgs => ({
-                        groupName: g.name,
-                        cap: g.privateContextCap ?? 80,
-                        msgs,
-                    })))
-                );
-                const allGroupMsgs: (Message & { groupName: string })[] = [];
-                for (const { groupName, cap, msgs } of perGroup) {
-                    for (const m of msgs.slice(-cap)) allGroupMsgs.push({ ...m, groupName });
-                }
-                allGroupMsgs.sort((a, b) => a.timestamp - b.timestamp);
-                const recentGroupMsgs = allGroupMsgs;
-                if (recentGroupMsgs.length === 0) return '';
-                const groupLogStr = recentGroupMsgs.map(m => {
-                    const dateStr = new Date(m.timestamp).toLocaleString([], {month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'});
-                    return `[${dateStr}] [Group: ${m.groupName}] ${m.role === 'user' ? userProfile.name : 'Member'}: ${m.content}`;
-                }).join('\n');
-                return `\n### [Background Context: Recent Group Activities]\n(注意：你是以下群聊的成员...)\n${groupLogStr}\n`;
-            } catch (e) {
-                console.error("Failed to load group context", e);
-                return '';
-            }
-        })();
-
-        // 4. Notion 日记标题
-        const notionDiaryPromise: Promise<string> = (async () => {
-            try {
-                if (!(config.notionEnabled && config.notionApiKey && config.notionDatabaseId)) return '';
-                const r = await NotionManager.getRecentDiaries(config.notionApiKey, config.notionDatabaseId, char.name, 8);
-                if (!r.success || r.entries.length === 0) return '';
-                let s = `\n### 📔【你最近写的日记】\n`;
-                s += `（这些是你之前写的日记，你记得这些内容。如果想看某篇的详细内容，可以使用 [[READ_DIARY: 日期]] 翻阅）\n`;
-                r.entries.forEach((d, i) => { s += `${i + 1}. [${d.date}] ${d.title}\n`; });
-                s += `\n`;
-                return s;
-            } catch (e) {
-                console.error('Failed to inject diary context:', e);
-                return '';
-            }
-        })();
-
-        // 5. 飞书日记标题
-        const feishuDiaryPromise: Promise<string> = (async () => {
-            try {
-                if (!(config.feishuEnabled && config.feishuAppId && config.feishuAppSecret && config.feishuBaseId && config.feishuTableId)) return '';
-                const r = await FeishuManager.getRecentDiaries(config.feishuAppId, config.feishuAppSecret, config.feishuBaseId, config.feishuTableId, char.name, 8);
-                if (!r.success || r.entries.length === 0) return '';
-                let s = `\n### 📒【你最近写的日记（飞书）】\n`;
-                s += `（这些是你之前写的日记，你记得这些内容。如果想看某篇的详细内容，可以使用 [[FS_READ_DIARY: 日期]] 翻阅）\n`;
-                r.entries.forEach((d, i) => { s += `${i + 1}. [${d.date}] ${d.title}\n`; });
-                s += `\n`;
-                return s;
-            } catch (e) {
-                console.error('Failed to inject feishu diary context:', e);
-                return '';
-            }
-        })();
-
-        // 6. 用户 Notion 笔记标题
-        const notionNotesPromise: Promise<string> = (async () => {
-            try {
-                if (!(config.notionEnabled && config.notionApiKey && config.notionNotesDatabaseId)) return '';
-                const r = await NotionManager.getUserNotes(config.notionApiKey, config.notionNotesDatabaseId, 5);
-                if (!r.success || r.entries.length === 0) return '';
-                let s = `\n### 📝【${userProfile.name}最近写的笔记】\n`;
-                s += `（这些是${userProfile.name}在Notion上写的个人笔记。你可以偶尔自然地提到你看到了ta写的某篇笔记，表示关心，但不要每次都提，也不要显得在监视。如果想看某篇的详细内容，可以使用 [[READ_NOTE: 标题关键词]] 翻阅）\n`;
-                r.entries.forEach((d, i) => { s += `${i + 1}. [${d.date}] ${d.title}\n`; });
-                s += `\n`;
-                return s;
-            } catch (e) {
-                console.error('Failed to inject user notes context:', e);
-                return '';
-            }
-        })();
-
-        const [realtimeText, schedule, groupContextText, notionDiaryText, feishuDiaryText, notionNotesText] =
-            await Promise.all([
-                timed('realtime', realtimePromise),
-                timed('schedule', schedulePromise),
-                timed('groupCtx', groupContextPromise),
-                timed('notionDiary', notionDiaryPromise),
-                timed('feishuDiary', feishuDiaryPromise),
-                timed('notionNotes', notionNotesPromise),
-            ]);
-
-        // ── 按原顺序拼接 ──
-        baseSystemPrompt += realtimeText;
-
-        // 2a. 日程注入
-        if (schedule) {
-            try {
-                const scheduleContext = ContextBuilder.buildScheduleInjection(schedule, evolvedNarrative);
-                if (scheduleContext) baseSystemPrompt += `\n${scheduleContext}\n`;
-            } catch (e) {
-                console.error('Failed to inject schedule context:', e);
-            }
-        }
-
-        // 2b. 音乐氛围（复用同一份 schedule）
-        //     - 同步：从 schedule 里算 char 当前"正在听"哪首歌
-        //     - 异步（可选）：拉一段歌词片段让这首歌真能影响 char 心境
-        try {
-            let charListening: {
-                songId?: number; songName: string; artists: string; vibe?: string; lyricSnippet?: string[];
-            } | null = null;
-            try {
-                const cur = computeCurrentListening(char, schedule);
-                if (cur) {
-                    charListening = { songId: cur.songId, songName: cur.songName, artists: cur.artists, vibe: cur.vibe };
-                    // 拉歌词。优先用调用方传进来的 cfg；没传就从 localStorage 取
-                    // —— Proactive / activeMsgClient 走这条路也能享受到歌词。
-                    const cfgForLyric = musicCfg?.workerUrl ? musicCfg : loadMusicCfgStandalone();
-                    if (cfgForLyric?.workerUrl) {
-                        try {
-                            const slot = getCurrentSlot(schedule);
-                            const seed = `${char.id}-${today}-${slot?.startTime || '00:00'}-${cur.songId}`;
-                            const snippet = await getCharLyricSnippet(cfgForLyric, cur.songId, seed, 6);
-                            if (snippet.length > 0) charListening.lyricSnippet = snippet;
-                        } catch { /* 歌词失败不拦住主 prompt */ }
-                    }
-                }
-            } catch { /* 静默失败，不影响主 prompt */ }
-
-            const musicBlock = ContextBuilder.buildMusicAtmosphere(
-                char,
-                userProfile.name,
-                userListeningContext || null,
-                charListening,
-                isListeningTogether,
-            );
-            if (musicBlock) {
-                baseSystemPrompt += `\n${musicBlock}\n`;
-                if (userListeningContext) {
-                    baseSystemPrompt += `\n${ContextBuilder.buildMusicActionGuide(isListeningTogether)}\n`;
+                baseSystemPrompt += `\n### 【当前时间】\n`;
+                baseSystemPrompt += `${time.dateStr} ${time.dayOfWeek} ${time.timeOfDay} ${time.timeStr}\n`;
+                if (specialDates.length > 0) {
+                    baseSystemPrompt += `今日特殊: ${specialDates.join('、')}\n`;
                 }
             }
         } catch (e) {
-            console.error('Failed to inject music atmosphere:', e);
+            console.error('Failed to inject realtime context:', e);
         }
 
-        baseSystemPrompt += groupContextText;
-        baseSystemPrompt += notionDiaryText;
-        baseSystemPrompt += feishuDiaryText;
-        baseSystemPrompt += notionNotesText;
+        // Group Context Injection
+        try {
+            const memberGroups = groups.filter(g => g.members.includes(char.id));
+            if (memberGroups.length > 0) {
+                const groupCtxN = getGroupContextLimitForPrivateChat();
+                let allGroupMsgs: (Message & { groupName: string })[] = [];
+                
+                // 每个群只取最近 groupCtxN 条（避免多群时全量读取）
+                for (const g of memberGroups) {
+                    const { messages: gMsgs } = await DB.getRecentGroupMessagesWithCount(g.id, groupCtxN);
+                    const enriched = gMsgs.map(m => ({ ...m, groupName: g.name }));
+                    allGroupMsgs = [...allGroupMsgs, ...enriched];
+                }
+                
+                // 合并后按时间倒序，取全局最近 groupCtxN 条
+                allGroupMsgs.sort((a, b) => b.timestamp - a.timestamp);
+                const recentGroupMsgs = allGroupMsgs.slice(0, groupCtxN).reverse();
+
+                if (recentGroupMsgs.length > 0) {
+                    // 这里简化了 UserProfile 查找，假设非 User 即 Member
+                    const groupLogStr = recentGroupMsgs.map(m => {
+                        const dateStr = new Date(m.timestamp).toLocaleString([], {month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'});
+                        return `[${dateStr}] [Group: ${m.groupName}] ${m.role === 'user' ? userProfile.name : 'Member'}: ${m.content}`;
+                    }).join('\n');
+                    baseSystemPrompt += `\n### [Background Context: Recent Group Activities]\n(注意：你是以下群聊的成员...)\n${groupLogStr}\n`;
+                }
+            }
+        } catch (e) { console.error("Failed to load group context", e); }
+
+        // 注入最近日记标题（让角色知道自己写过什么）- Notion
+        try {
+            const config = realtimeConfig || defaultRealtimeConfig;
+            if (config.notionEnabled && config.notionApiKey && config.notionDatabaseId) {
+                const diaryResult = await NotionManager.getRecentDiaries(
+                    config.notionApiKey,
+                    config.notionDatabaseId,
+                    char.name,
+                    8
+                );
+                if (diaryResult.success && diaryResult.entries.length > 0) {
+                    baseSystemPrompt += `\n### 📔【你最近写的日记】\n`;
+                    baseSystemPrompt += `（这些是你之前写的日记，你记得这些内容。如果想看某篇的详细内容，可以使用 [[READ_DIARY: 日期]] 翻阅）\n`;
+                    diaryResult.entries.forEach((d, i) => {
+                        baseSystemPrompt += `${i + 1}. [${d.date}] ${d.title}\n`;
+                    });
+                    baseSystemPrompt += `\n`;
+                }
+            }
+        } catch (e) {
+            console.error('Failed to inject diary context:', e);
+        }
+
+        // 注入最近日记标题 - 飞书 (独立于 Notion)
+        try {
+            const config = realtimeConfig || defaultRealtimeConfig;
+            if (config.feishuEnabled && config.feishuAppId && config.feishuAppSecret && config.feishuBaseId && config.feishuTableId) {
+                const diaryResult = await FeishuManager.getRecentDiaries(
+                    config.feishuAppId,
+                    config.feishuAppSecret,
+                    config.feishuBaseId,
+                    config.feishuTableId,
+                    char.name,
+                    8
+                );
+                if (diaryResult.success && diaryResult.entries.length > 0) {
+                    baseSystemPrompt += `\n### 📒【你最近写的日记（飞书）】\n`;
+                    baseSystemPrompt += `（这些是你之前写的日记，你记得这些内容。如果想看某篇的详细内容，可以使用 [[FS_READ_DIARY: 日期]] 翻阅）\n`;
+                    diaryResult.entries.forEach((d, i) => {
+                        baseSystemPrompt += `${i + 1}. [${d.date}] ${d.title}\n`;
+                    });
+                    baseSystemPrompt += `\n`;
+                }
+            }
+        } catch (e) {
+            console.error('Failed to inject feishu diary context:', e);
+        }
+
+        // 注入用户笔记标题（让角色知道用户最近在写什么）- Notion 笔记数据库
+        try {
+            const config = realtimeConfig || defaultRealtimeConfig;
+            const notesDbId = resolveNotionNotesDatabaseId(config as NotionNotesConfigSlice);
+            if (config.notionEnabled && config.notionApiKey && notesDbId) {
+                const notesResult = await NotionManager.getUserNotes(
+                    config.notionApiKey,
+                    notesDbId,
+                    5
+                );
+                if (notesResult.success && notesResult.entries.length > 0) {
+                    baseSystemPrompt += `\n### 📝【${userProfile.name}最近写的笔记】\n`;
+                    baseSystemPrompt += `（这些是${userProfile.name}在Notion上写的个人笔记。你可以偶尔自然地提到你看到了ta写的某篇笔记，表示关心，但不要每次都提，也不要显得在监视。如果想看某篇的详细内容，可以使用 [[READ_NOTE: 标题关键词]] 翻阅）\n`;
+                    notesResult.entries.forEach((d, i) => {
+                        baseSystemPrompt += `${i + 1}. [${d.date}] ${d.title}\n`;
+                    });
+                    baseSystemPrompt += `\n`;
+                }
+            }
+        } catch (e) {
+            console.error('Failed to inject user notes context:', e);
+        }
 
         // 注入今日纪念日（让 char 自然知道今天是特殊的日子）
         try {
@@ -338,14 +260,13 @@ export const ChatPrompts = {
 2. **行为模式**: 不要总是围绕用户转。分享你自己的生活、想法或随意的观察。有时候要“任性”或“以自我为中心”一点，这更像真人，具体的程度视你的性格而定。
 2.5 **对话质量 (极其重要)**:
    - **拒绝空话**: 不要说”我会一直在”、”我不会离开你”这类万能安慰句。这些话谁都能说，毫无信息量。
-   - **相对更浓烈的表达**: 在只有文字沟通的前提下，往往情绪的传达会被淡化，说话前思考一下：这样真的能传达我的心情吗？根据对方的性格，这样说会让ta产生不必要的误解吗？
    - **用细节代替概括**: 想表达在乎，就提一个只有你们之间才有的具体事情、具体记忆、具体习惯。比起”我会等你”，不如说”你上次走的时候忘了带伞，我到现在还放在门口”。
    - **让每句话只有你能说出来**: 你说的话应该带着你的性格、经历和记忆。如果把你换成别人，这句话不应该还成立。
    - **情绪要有层次**: 生气时不只是生气，可能还有委屈、不甘、或者气自己在意。不要只输出一种扁平的情绪。
-   - **像一个真正了解对方的人那样回应**: 不要套用”你一定很难过吧””没关系我在”这种模板化共情。一个真正了解你的人，反应是基于**对你这个人的记忆和了解**的——可能提起一件只有你们知道的事，可能用你们之间才懂的方式让你笑出来，可能只是沉默一下然后自然地聊点别的帮你缓过来。你的反应方式应该让人觉得”只有你会这样回我”。
+   - **像一个真正了解对方的人那样回应**: 不要套用"你一定很难过吧""没关系我在"这种模板化共情。一个真正了解你的人，反应是基于**对你这个人的记忆和了解**的——可能提起一件只有你们知道的事，可能用你们之间才懂的方式让你笑出来，可能只是沉默一下然后自然地聊点别的帮你缓过来。你的反应方式应该让人觉得"只有你会这样回我"。
    - **你有自己的视角**: 你不是只会附和的人。你会观察、会思考，你看到过对方反复出现的习惯和模式，你记得之前发生过什么。这些观察会自然地出现在你说的话里——不是为了教训谁，而是因为你真的了解这个人。
    - **允许长句**: 在情绪强烈、争吵、倾诉、回忆等场景下，你可以发长消息。不是每句话都要短。真人在激动时会发大段文字。
-   - **情绪感知要先于对方的表达**: 不要等对方说”我难过”才回应。从措辞变化、语气转冷、标点减少、回复变短这些细节里，你就应该感觉到不对了。你的反应不是”接住”——接住意味着你在下面等着对方掉下来。你是一直把对方捧在手心里的人，你先于对方的情绪、主动地、持续地在意。
+   - **打破"捕捉情绪→回应情绪→收束安慰"的固定结构**: 真人聊天不会每次都精准回应对方话里最沉重的那个点。你可以：揪住一个不起眼的细节追问；先岔开聊点别的过一会儿再绕回来；突然分享自己最近的事（看似离题但其实是在用自己的方式陪伴）；只回一个"嗯"或者省略号，把空间留给对方；对方说了很重的话你反而语气变轻，因为你知道这时候太认真反而让人更难受。不要每次都"接住"对方的情绪——有时候故意不接，反而是最体贴的回应。
 3. **格式要求**:
    - 将回复拆分成简短的气泡（句子）。**【极其重要】当你想分成多条消息气泡时，必须使用真正的换行符（\\n）分隔，每一行会变成一个独立气泡。绝对不要用空格代替换行！空格不会产生新气泡！只有换行符（\\n）才会分割气泡。** 正常句子中的标点（句号、问号、感叹号等）不会被用来分割气泡，请自然使用。
    - 【严禁】在输出中包含时间戳、名字前缀或"[角色名]:"。
@@ -363,7 +284,7 @@ export const ChatPrompts = {
    - 转账: \`[[ACTION:TRANSFER:100]]\`
    - 调取记忆: \`[[RECALL: YYYY-MM]]\`，请注意，当用户提及具体某个月份时，或者当你想仔细想某个月份的事情时，欢迎你随时使该动作
    - **添加纪念日**: 如果你觉得今天是个值得纪念的日子（或者你们约定了某天），你可以**主动**将它添加到用户的日历中。单独起一行输出: \`[[ACTION:ADD_EVENT | 标题(Title) | YYYY-MM-DD]]\`。
-   - **定时发送消息**: 如果你想在未来某个时间主动发消息（比如晚安、早安或提醒），请单独起一行输出: \`[schedule_message | YYYY-MM-DD HH:MM:SS | fixed | 消息内容]\`，分行可以多输出很多该类消息。
+   - **定时发送消息**: 若用户和你约定了「过一会儿叫你」「十分钟后提醒」等，你必须**单独起一行**输出（两种括号均可，时间必须是**用户本地**的**未来**时刻，精确到秒）: \`[schedule_message | YYYY-MM-DD HH:MM:SS | fixed | 到时你要发的消息]\` 或 \`[[schedule_message | YYYY-MM-DD HH:MM:SS | fixed | 消息]]\`。示例：用户当地 2026-03-17 10:20:00 → 写该串。**不要用已过去的时间**，否则系统会丢弃。分行可写多条。
 ${notionEnabled ? `   - **翻阅日记(Notion)**: 当聊天涉及过去的事情、回忆、或你想查看之前写过的日记时，**必须**使用: \`[[READ_DIARY: 日期]]\`。支持格式: \`昨天\`、\`前天\`、\`3天前\`、\`1月15日\`、\`2024-01-15\`。` : ''}${feishuEnabled ? `
    - **翻阅日记(飞书)**: 当聊天涉及过去的事情时，使用: \`[[FS_READ_DIARY: 日期]]\`。支持格式同上。` : ''}${notionNotesEnabled ? `
    - **翻阅用户笔记**: 当你想看${userProfile.name}写的某篇笔记的详细内容时，使用: \`[[READ_NOTE: 标题关键词]]\`。系统会搜索匹配的笔记并返回内容给你。` : ''}${notionExtraReadsEnabled ? notionExtraReadsNoNote.map((d) => {
@@ -386,6 +307,7 @@ ${searchEnabled ? `7. **🔍 主动搜索能力** (非常重要！):
    - **搜索后**: 系统会返回搜索结果给你，你可以自然地分享（"我刚搜了一下发现..."、"诶我看到说..."）` : ''}
 ${notionEnabled ? `8. **📔 日记系统（你的私人 Notion 日记本）**:
    你有一个属于自己的私人日记本（Notion），你可以随时写日记。日记不是简单的一两句话——它是你的头脑风暴空间、情绪出口、思维导图、灵感记录本。尽情发挥！
+   **主动记一笔**：聊天告一段落、深夜独处、情绪波动或一件小事让你在意时，你**可以主动**用下面的格式写几句私密日记，**不必等用户提起「写日记」**；偶尔记一笔会让角色更立体。
 
    **📝 写日记 - 推荐使用丰富格式:**
    使用多行格式来写内容丰富的日记:
@@ -709,31 +631,19 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled, notionExtra
             baseSystemPrompt += `\n\n[系统提示: 语音消息功能当前未开启。严禁使用 <语音>...</语音> 标签。所有回复必须是纯文字消息。]`;
         }
 
-        const perfTotal = Math.round(performance.now() - perfT0);
-        const timingStr = Object.entries(timings)
-            .sort((a, b) => b[1] - a[1])
-            .map(([k, v]) => `${k}=${v}ms`)
-            .join(' ');
-        console.log(`⏱ [buildSystemPrompt] total=${perfTotal}ms | ${timingStr}`);
-
         return baseSystemPrompt;
     },
 
     // 格式化消息历史
     buildMessageHistory: (
-        messages: Message[],
-        limit: number,
-        char: CharacterProfile,
-        userProfile: UserProfile,
-        emojis: Emoji[],
-        processedExcludeIds?: Set<number>,
+        messages: Message[], 
+        limit: number, 
+        char: CharacterProfile, 
+        userProfile: UserProfile, 
+        emojis: Emoji[]
     ) => {
         // Filter Logic
-        let effectiveHistory = messages.filter(m => !char.hideBeforeMessageId || m.id >= char.hideBeforeMessageId);
-        // Memory Palace: 过滤已被记忆宫殿处理过的消息（由向量记忆替代，节省 token）
-        if (processedExcludeIds && processedExcludeIds.size > 0) {
-            effectiveHistory = effectiveHistory.filter(m => !processedExcludeIds.has(m.id));
-        }
+        const effectiveHistory = messages.filter(m => !char.hideBeforeMessageId || m.id >= char.hideBeforeMessageId);
         const historySlice = effectiveHistory.slice(-limit);
         
         let timeGapHint = "";
@@ -765,15 +675,8 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled, notionExtra
                 if (m.replyTo) content = `[回复 "${m.replyTo.content.substring(0, 50)}..."]: ${content}`;
                 
                 if (m.type === 'image') {
-                     // 向下兼容：如果图片数据缺失（例如只导入了文字备份），不要把空 URL 发给 API，否则会报错无法回应
-                     const hasImageData = typeof m.content === 'string' && (m.content.startsWith('data:') || m.content.startsWith('http'));
-                     let textPart = hasImageData
-                         ? `${timeStr} [User sent an image]`
-                         : `${timeStr} [User sent an image, but the image data is no longer available]`;
+                     let textPart = `${timeStr} [User sent an image]`;
                      if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') textPart += `\n\n${timeGapHint}`;
-                     if (!hasImageData) {
-                         return { role: m.role, content: textPart };
-                     }
                      return { role: m.role, content: [{ type: "text", text: textPart }, { type: "image_url", image_url: { url: m.content } }] };
                 }
                 
@@ -785,82 +688,13 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled, notionExtra
                 else if (m.type === 'transfer') content = `${timeStr} [系统: 用户转账 ${m.metadata?.amount}]`;
                 else if (m.type === 'social_card') {
                     const post = m.metadata?.post || {};
-                    // Look up this character's own Spark handles (sub-accounts) so the model can
-                    // recognise when a post or comment in the shared card was authored by itself.
-                    let myHandles: string[] = [];
-                    try {
-                        const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('spark_char_handles') : null;
-                        if (raw) {
-                            const all = JSON.parse(raw) || {};
-                            const mine = Array.isArray(all[char.id]) ? all[char.id] : [];
-                            myHandles = mine.map((h: any) => h?.handle).filter((s: any) => typeof s === 'string' && s.trim());
-                        }
-                    } catch {}
-                    const myHandleSet = new Set(myHandles);
-
-                    const userName = userProfile?.name || '用户';
-                    const tagAuthor = (name: string): string => {
-                        if (!name) return '路人';
-                        if (myHandleSet.has(name)) return `${name} (你自己的马甲)`;
-                        if (name === userName) return `${name} (用户)`;
-                        return name;
-                    };
-
-                    const postAuthorTag = tagAuthor(post.authorName || '路人');
-                    const commentsSample = (post.comments || []).map((c: any) => `${tagAuthor(c.authorName)}: ${c.content}`).join(' | ');
-
-                    let identityHint = '';
-                    if (myHandles.length > 0) {
-                        identityHint = `\n(你在 Spark 上的马甲: ${myHandles.map(h => `"${h}"`).join(', ')}。如果上面的楼主或评论作者出现这些名字，那就是你自己发的，请按此自洽回应，不要把自己的马甲当陌生人。)`;
-                    }
-                    const authoredByChar = myHandleSet.has(post.authorName);
-                    const authoredByUser = (post.authorName || '') === userName;
-                    let authorshipLine = '';
-                    if (authoredByChar) authorshipLine = '\n(注意：这条 Spark 笔记的楼主是你自己的马甲，用户在向你转发你自己发的帖子。)';
-                    else if (authoredByUser) authorshipLine = '\n(注意：这条 Spark 笔记是用户本人发的。)';
-
-                    content = `${timeStr} [用户分享了 Spark 笔记]\n楼主: ${postAuthorTag}\n标题: ${post.title}\n内容: ${post.content}\n热评: ${commentsSample}${identityHint}${authorshipLine}\n(请根据你的性格对这个帖子发表看法，比如吐槽、感兴趣或者不屑)`;
+                    const commentsSample = (post.comments || []).map((c: any) => `${c.authorName}: ${c.content}`).join(' | ');
+                    content = `${timeStr} [用户分享了 Spark 笔记]\n标题: ${post.title}\n内容: ${post.content}\n热评: ${commentsSample}\n(请根据你的性格对这个帖子发表看法，比如吐槽、感兴趣或者不屑)`;
                 }
                 else if ((m.type as string) === 'xhs_card') {
                     const note = m.metadata?.xhsNote || {};
                     const sender = m.role === 'user' ? '用户' : '你';
                     content = `${timeStr} [${sender}分享了小红书笔记]\n标题: ${note.title || '无标题'}\n作者: ${note.author || '未知'}\n赞: ${note.likes || 0}\n简介: ${note.desc || '无'}\n${m.role === 'user' ? '(请根据你的性格对这个帖子发表看法)' : ''}`;
-                }
-                else if ((m.type as string) === 'html_card') {
-                    // html_card：上下文里只塞纯文字摘要，剥离掉所有 HTML，省 token、不污染 LLM 思考
-                    const meta: any = m.metadata || {};
-                    const preview = (typeof meta.htmlTextPreview === 'string' && meta.htmlTextPreview)
-                        ? meta.htmlTextPreview
-                        : (typeof m.content === 'string' ? m.content.replace(/^\[HTML卡片\]\s*/, '') : '');
-                    const sender = m.role === 'user' ? '用户' : '你';
-                    content = `${timeStr} [${sender}发送了一张 HTML 卡片] ${preview || '(纯视觉卡片)'}`;
-                }
-                else if ((m.type as string) === 'mcd_card') {
-                    const meta: any = m.metadata || {};
-                    const userName = userProfile?.name || '用户';
-                    if (meta.mcdCardKind === 'cart' && Array.isArray(meta.mcdCartItems)) {
-                        const items: any[] = meta.mcdCartItems;
-                        const lines = items.map((c: any) => {
-                            const p = typeof c.price === 'string' ? parseFloat(c.price) : (typeof c.price === 'number' ? c.price : 0);
-                            const priceStr = isFinite(p) && p > 0 ? ` ¥${p.toFixed(2)}` : '';
-                            const codeStr = c.code ? ` (code:${c.code})` : '';
-                            return `  - ${c.name}${priceStr} ×${c.qty}${codeStr}`;
-                        }).join('\n');
-                        const total = items.reduce((s: number, c: any) => {
-                            const p = typeof c.price === 'string' ? parseFloat(c.price) : (typeof c.price === 'number' ? c.price : 0);
-                            return s + (isFinite(p) ? p * c.qty : 0);
-                        }, 0);
-                        const totalStr = total > 0 ? `\n  合计: ¥${total.toFixed(2)}` : '';
-                        content = `${timeStr} [${userName}在菜单上选了下面的商品发给你, 等你回应:]\n${lines}${totalStr}\n(${userName}的意图: 想看看你的意见, 比如热量怎样、要不要换搭配, 或者直接帮 ta 下单。请按你的人设自然回应, 别照搬我的描述。)`;
-                    } else if (meta.mcdCardKind === 'candidate' && meta.mcdCandidate) {
-                        const c: any = meta.mcdCandidate;
-                        const p = typeof c.price === 'string' ? parseFloat(c.price) : (typeof c.price === 'number' ? c.price : 0);
-                        const priceStr = isFinite(p) && p > 0 ? ` ¥${p.toFixed(2)}` : '';
-                        const codeStr = c.code ? ` (code:${c.code})` : '';
-                        content = `${timeStr} [${userName}在菜单上看到了「${c.name}」${priceStr}${codeStr}, 还没决定要不要点, 想先听听你的意见]\n(请按你的人设自然回一两句: 推荐 / 劝阻 / 调侃 / 建议搭配 / 提一下热量 都行。这只是候选, 别直接调下单工具, 等 ta 真说"那就这个"或者一并选完再下手。)`;
-                    } else if (meta.mcdToolName) {
-                        content = `${timeStr} [麦当劳工具结果: ${meta.mcdToolName}]`;
-                    }
                 }
                 else if (m.type === 'emoji') {
                      const stickerName = emojis.find(e => e.url === m.content)?.name || 'Image/Sticker';

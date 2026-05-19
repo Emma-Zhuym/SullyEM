@@ -2071,6 +2071,11 @@ export interface AgendaItem {
     detail?: string;
     visualPrompt?: string;
     rarity?: SimStoryAttachmentRarity;
+    // Emma's custom fields for ScheduleApp agenda
+    dateTime?: string;              // ISO datetime string for minute-precise scheduling
+    charId?: string;                // associated character ID
+    reminderMinutes?: number | null; // minutes before event to remind (null = no reminder)
+    createdAt?: number;             // creation timestamp ms
 }
 
 export interface SimStoryAttachment {

@@ -15,6 +15,14 @@ import { ProactiveChat } from '../utils/proactiveChat';
 import { InstantPushSettingsModal } from '../components/settings/InstantPushSettingsModal';
 import { PushVapidSettingsModal } from '../components/settings/PushVapidSettingsModal';
 import { isPushVapidReady } from '../utils/pushVapid';
+import ActiveMsgGlobalSettingsModal from '../components/settings/ActiveMsgGlobalSettingsModal';
+import type { NotionDiaryExtraProperty, NotionExtraDatabase } from '../types';
+import {
+    dedupeNotionReadNoteRows,
+    migrateLegacyNotionNotesToExtra,
+    normalizeNotionExtraTag,
+    NOTION_USER_NOTES_TAG,
+} from '../utils/notionExtraConfig';
 
 const DiagRow: React.FC<{ label: string; value: string; bad?: boolean }> = ({ label, value, bad }) => (
     <div className="flex items-start justify-between gap-3">
@@ -93,13 +101,17 @@ const Settings: React.FC = () => {
   const [rtNotionEnabled, setRtNotionEnabled] = useState(realtimeConfig.notionEnabled);
   const [rtNotionKey, setRtNotionKey] = useState(realtimeConfig.notionApiKey);
   const [rtNotionDbId, setRtNotionDbId] = useState(realtimeConfig.notionDatabaseId);
-  /** 日记附加：仅支持角色名、心情两列，用 checkbox 控制 */
+  const [rtNotionNotesDbId, setRtNotionNotesDbId] = useState(realtimeConfig.notionNotesDatabaseId || '');
+  // Emma: Notion diary extra columns
   const [rtDiaryExtraCharacter, setRtDiaryExtraCharacter] = useState(false);
   const [rtDiaryExtraCharacterColumn, setRtDiaryExtraCharacterColumn] = useState('');
   const [rtDiaryExtraMood, setRtDiaryExtraMood] = useState(false);
   const [rtDiaryExtraMoodColumn, setRtDiaryExtraMoodColumn] = useState('');
-  const [rtNotionNotesDbId, setRtNotionNotesDbId] = useState('');
+  // Emma: read-only extra databases with TAG system
   const [rtNotionExtraDbs, setRtNotionExtraDbs] = useState<NotionExtraDatabase[]>(realtimeConfig.notionExtraDatabases || []);
+  const [notionReadOnlyDbsExpanded, setNotionReadOnlyDbsExpanded] = useState(false);
+  // Emma: activeMsg 2.0 modal
+  const [showActiveMsgModal, setShowActiveMsgModal] = useState(false);
   const [rtFeishuEnabled, setRtFeishuEnabled] = useState(realtimeConfig.feishuEnabled);
   const [rtFeishuAppId, setRtFeishuAppId] = useState(realtimeConfig.feishuAppId);
   const [rtFeishuAppSecret, setRtFeishuAppSecret] = useState(realtimeConfig.feishuAppSecret);
@@ -295,24 +307,6 @@ const Settings: React.FC = () => {
       setLocalMiniMaxRegion(apiConfig.minimaxRegion === 'overseas' ? 'overseas' : 'domestic');
       setLocalAceStepKey(apiConfig.aceStepApiKey || '');
   }, [apiConfig]);
-
-  const openRealtimeModal = () => {
-      const extra = realtimeConfig.notionDiaryExtraProperties || [];
-      const charProp = extra.find(p => (p.valueTemplate || '').includes('${char}'));
-      const moodProp = extra.find(p => (p.valueTemplate || '').includes('${mood}'));
-      setRtDiaryExtraCharacter(!!charProp);
-      setRtDiaryExtraCharacterColumn((charProp?.propertyName || '').trim());
-      setRtDiaryExtraMood(!!moodProp);
-      setRtDiaryExtraMoodColumn((moodProp?.propertyName || '').trim());
-      const { config: merged } = migrateLegacyNotionNotesToExtra(realtimeConfig);
-      const notesId = merged.notionNotesDatabaseId?.trim() || merged.notionExtraDatabases?.find((d) => normalizeNotionExtraTag(d.tag) === NOTION_USER_NOTES_TAG)?.databaseId?.trim() || '';
-      setRtNotionNotesDbId(notesId);
-      setRtNotionExtraDbs(
-          merged.notionExtraDatabases?.filter((d) => normalizeNotionExtraTag(d.tag) !== NOTION_USER_NOTES_TAG).map((d) => ({ ...d })) || []
-      );
-      setNotionReadOnlyDbsExpanded(false);
-      setShowRealtimeModal(true);
-  };
 
   const loadPreset = (preset: typeof apiPresets[0]) => {
       setLocalUrl(preset.config.baseUrl);
@@ -567,26 +561,27 @@ const Settings: React.FC = () => {
       setShowResetConfirm(false);
   };
 
+  // Emma: 打开实时感知弹窗前初始化 Notion extra 字段
+  const openRealtimeModal = () => {
+      const extra = realtimeConfig.notionDiaryExtraProperties || [];
+      const charProp = extra.find(p => (p.valueTemplate || '').includes('${char}'));
+      const moodProp = extra.find(p => (p.valueTemplate || '').includes('${mood}'));
+      setRtDiaryExtraCharacter(!!charProp);
+      setRtDiaryExtraCharacterColumn((charProp?.propertyName || '').trim());
+      setRtDiaryExtraMood(!!moodProp);
+      setRtDiaryExtraMoodColumn((moodProp?.propertyName || '').trim());
+      const { config: merged } = migrateLegacyNotionNotesToExtra(realtimeConfig);
+      const notesId = merged.notionNotesDatabaseId?.trim() || merged.notionExtraDatabases?.find((d) => normalizeNotionExtraTag(d.tag) === NOTION_USER_NOTES_TAG)?.databaseId?.trim() || '';
+      setRtNotionNotesDbId(notesId);
+      setRtNotionExtraDbs(
+          merged.notionExtraDatabases?.filter((d) => normalizeNotionExtraTag(d.tag) !== NOTION_USER_NOTES_TAG).map((d) => ({ ...d })) || []
+      );
+      setNotionReadOnlyDbsExpanded(false);
+      setShowRealtimeModal(true);
+  };
+
   // 保存实时感知配置
   const handleSaveRealtimeConfig = () => {
-      const notesId = rtNotionNotesDbId.trim();
-      const notesEntry = notesId
-          ? [{
-              id: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `note_${Date.now()}`,
-              name: '用户笔记',
-              tag: NOTION_USER_NOTES_TAG,
-              databaseId: notesId,
-          }]
-          : [];
-      const otherDbs = rtNotionExtraDbs
-          .filter((d) => d.databaseId.trim() && d.tag.trim())
-          .map((d) => ({
-              id: d.id || `extra_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
-              name: d.name.trim(),
-              tag: d.tag.trim().toUpperCase().replace(/[^A-Z0-9_]/g, ''),
-              databaseId: d.databaseId.trim(),
-          }));
-      const notionExtraDatabases = dedupeNotionReadNoteRows([...notesEntry, ...otherDbs]);
       updateRealtimeConfig({
           weatherEnabled: rtWeatherEnabled,
           weatherApiKey: rtWeatherKey,
@@ -596,18 +591,22 @@ const Settings: React.FC = () => {
           notionEnabled: rtNotionEnabled,
           notionApiKey: rtNotionKey,
           notionDatabaseId: rtNotionDbId,
-          notionNotesDatabaseId: notesId || undefined,
+          notionNotesDatabaseId: rtNotionNotesDbId || undefined,
+          // Emma: diary extra columns
           notionDiaryExtraProperties: (() => {
               const arr: NotionDiaryExtraProperty[] = [];
-              if (rtDiaryExtraCharacter) {
-                  arr.push({ propertyName: rtDiaryExtraCharacterColumn.trim() || 'Character', notionType: 'rich_text', valueTemplate: '${char}' });
-              }
-              if (rtDiaryExtraMood) {
-                  arr.push({ propertyName: rtDiaryExtraMoodColumn.trim() || 'Mood', notionType: 'rich_text', valueTemplate: '${mood}' });
-              }
-              return arr;
+              if (rtDiaryExtraCharacter) arr.push({ propertyName: rtDiaryExtraCharacterColumn.trim() || 'Character', notionType: 'rich_text', valueTemplate: '${char}' });
+              if (rtDiaryExtraMood) arr.push({ propertyName: rtDiaryExtraMoodColumn.trim() || 'Mood', notionType: 'rich_text', valueTemplate: '${mood}' });
+              return arr.length ? arr : undefined;
           })(),
-          notionExtraDatabases,
+          // Emma: read-only extra databases
+          notionExtraDatabases: (() => {
+              const notesId = rtNotionNotesDbId.trim();
+              const notesEntry: NotionExtraDatabase[] = notesId ? [{ id: NOTION_USER_NOTES_TAG, name: '用户笔记', tag: NOTION_USER_NOTES_TAG, databaseId: notesId }] : [];
+              const otherDbs = rtNotionExtraDbs.filter(d => normalizeNotionExtraTag(d.tag) !== NOTION_USER_NOTES_TAG && d.tag && d.databaseId);
+              const merged = dedupeNotionReadNoteRows([...notesEntry, ...otherDbs]);
+              return merged.length ? merged : undefined;
+          })(),
           feishuEnabled: rtFeishuEnabled,
           feishuAppId: rtFeishuAppId,
           feishuAppSecret: rtFeishuAppSecret,
@@ -691,8 +690,8 @@ const Settings: React.FC = () => {
               const tokenInfo = result.xsecToken ? ' | xsecToken 已获取' : '';
               const loginInfo = result.loggedIn
                   ? ` | ${result.nickname ? `账号: ${result.nickname}` : '已登录'}${result.userId ? ` (ID: ${result.userId})` : ''}${tokenInfo}`
-                  : ' | ⚠️ 未登录，请先在浏览器中登录小红书';
-              setRtTestStatus(`✅ 连接成功! ${toolCount} 个功能可用${loginInfo}`);
+                  : ' | 未登录，请先在浏览器中登录小红书';
+              setRtTestStatus(`连接成功! ${toolCount} 个功能可用${loginInfo}`);
               // 自动填充：只在用户未手动填写时覆盖
               if (result.nickname && !rtXhsNickname) setRtXhsNickname(result.nickname);
               if (result.userId && !rtXhsUserId) setRtXhsUserId(result.userId);
@@ -706,7 +705,7 @@ const Settings: React.FC = () => {
                   }
               });
           } else {
-              setRtTestStatus(`❌ 连接失败: ${result.error}`);
+              setRtTestStatus(`连接失败: ${result.error}`);
           }
       } catch (e: any) {
           setRtTestStatus(`网络错误: ${e.message}`);
@@ -1285,23 +1284,23 @@ const Settings: React.FC = () => {
 
             <div className="grid grid-cols-5 gap-2 text-center">
                 <div className={`py-3 rounded-xl text-xs font-bold ${rtWeatherEnabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-50 text-slate-400'}`}>
-                    <div className="text-lg mb-1">{rtWeatherEnabled ? '☀️' : '🌫️'}</div>
+                    <div className="text-lg mb-1">{rtWeatherEnabled ? <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/2600.png" className="w-5 h-5 inline" alt="" /> : <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f32b.png" className="w-5 h-5 inline" alt="" />}</div>
                     天气
                 </div>
                 <div className={`py-3 rounded-xl text-xs font-bold ${rtNewsEnabled ? 'bg-blue-50 text-blue-600' : 'bg-slate-50 text-slate-400'}`}>
-                    <div className="text-lg mb-1">{rtNewsEnabled ? '📰' : '📄'}</div>
+                    <div className="text-lg mb-1">{rtNewsEnabled ? <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4f0.png" className="w-5 h-5 inline" alt="" /> : <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4c4.png" className="w-5 h-5 inline" alt="" />}</div>
                     新闻
                 </div>
                 <div className={`py-3 rounded-xl text-xs font-bold ${rtNotionEnabled ? 'bg-orange-50 text-orange-600' : 'bg-slate-50 text-slate-400'}`}>
-                    <div className="text-lg mb-1">{rtNotionEnabled ? '📝' : '📋'}</div>
+                    <div className="text-lg mb-1">{rtNotionEnabled ? <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4dd.png" className="w-5 h-5 inline" alt="" /> : <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4cb.png" className="w-5 h-5 inline" alt="" />}</div>
                     Notion
                 </div>
                 <div className={`py-3 rounded-xl text-xs font-bold ${rtFeishuEnabled ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-50 text-slate-400'}`}>
-                    <div className="text-lg mb-1">{rtFeishuEnabled ? '📒' : '📋'}</div>
+                    <div className="text-lg mb-1">{rtFeishuEnabled ? <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4d2.png" className="w-5 h-5 inline" alt="" /> : <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4cb.png" className="w-5 h-5 inline" alt="" />}</div>
                     飞书
                 </div>
                 <div className={`py-3 rounded-xl text-xs font-bold ${rtXhsEnabled ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-400'}`}>
-                    <div className="text-lg mb-1">{rtXhsEnabled ? '📕' : '📋'}</div>
+                    <div className="text-lg mb-1">{rtXhsEnabled ? <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4d5.png" className="w-5 h-5 inline" alt="" /> : <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4cb.png" className="w-5 h-5 inline" alt="" />}</div>
                     小红书
                 </div>
             </div>
@@ -1535,6 +1534,42 @@ const Settings: React.FC = () => {
             <p className="text-xs text-slate-500 leading-relaxed">
                 与上方 Push 加速器不同：前端发 prompt 到你自部署的 Worker，Worker 调你自己的 LLM 生成回复后分句逐条 Web Push。零数据库、零 cron。
             </p>
+        </section>
+
+        {/* Emma: 主动消息 2.0 */}
+        <section className="bg-white/60 backdrop-blur-sm rounded-3xl p-5 shadow-sm border border-white/50">
+            <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                    <div className="p-2 bg-fuchsia-100/60 rounded-xl text-fuchsia-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 3.75h9A2.25 2.25 0 0 1 18.75 6v12a2.25 2.25 0 0 1-2.25 2.25h-9A2.25 2.25 0 0 1 5.25 18V6A2.25 2.25 0 0 1 7.5 3.75Zm0 0V2.25m9 1.5V2.25M8.25 8.25h7.5m-7.5 3h7.5m-7.5 3h4.5" />
+                        </svg>
+                    </div>
+                    <h2 className="text-sm font-semibold text-slate-600 tracking-wider">主动消息 2.0</h2>
+                </div>
+                <div className="flex items-center gap-3">
+                    <span className="text-[10px] text-slate-500">启用</span>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" checked={!!realtimeConfig.activeMsg2Enabled}
+                            onChange={e => { updateRealtimeConfig({ activeMsg2Enabled: e.target.checked }); addToast(e.target.checked ? '已启用，刷新页面后生效' : '已关闭'); }}
+                            className="sr-only peer" />
+                        <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-fuchsia-500"></div>
+                    </label>
+                    {realtimeConfig.activeMsg2Enabled && (
+                        <button type="button" onClick={() => setShowActiveMsgModal(true)} className="text-[10px] bg-fuchsia-100 text-fuchsia-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">配置</button>
+                    )}
+                </div>
+            </div>
+            {!realtimeConfig.activeMsg2Enabled ? (
+                <p className="text-xs text-slate-500 leading-relaxed">云端调度 + Web Push。默认关闭，开启后需刷新页面。不替换本地「主动消息」。</p>
+            ) : (
+                <>
+                    <p className="text-xs text-slate-500 mb-3 leading-relaxed">已启用。聊天「+」里会出现「主动消息 2.0」入口。</p>
+                    <button type="button" onClick={() => setShowActiveMsgModal(true)} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg bg-fuchsia-500 active:scale-95 transition-all">
+                        打开主动消息 2.0 设置
+                    </button>
+                </>
+            )}
         </section>
 
         <div className="text-center text-[10px] text-slate-300 pb-8 font-mono tracking-widest uppercase">
@@ -1922,7 +1957,7 @@ const Settings: React.FC = () => {
               <div className="bg-emerald-50/50 p-4 rounded-2xl space-y-3">
                   <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                          <span className="text-lg">☀️</span>
+                          <Sun size={20} weight="fill" />
                           <span className="text-sm font-bold text-emerald-700">天气感知</span>
                       </div>
                       <label className="relative inline-flex items-center cursor-pointer">
@@ -1949,7 +1984,7 @@ const Settings: React.FC = () => {
               <div className="bg-blue-50/50 p-4 rounded-2xl space-y-3">
                   <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                          <span className="text-lg">📰</span>
+                          <Newspaper size={20} weight="fill" />
                           <span className="text-sm font-bold text-blue-700">新闻热点</span>
                       </div>
                       <label className="relative inline-flex items-center cursor-pointer">
@@ -1976,7 +2011,7 @@ const Settings: React.FC = () => {
               <div className="bg-orange-50/50 p-4 rounded-2xl space-y-3">
                   <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                          <span className="text-lg">📝</span>
+                          <NotePencil size={20} weight="fill" />
                           <span className="text-sm font-bold text-orange-700">Notion 日记</span>
                       </div>
                       <label className="relative inline-flex items-center cursor-pointer">
@@ -1985,188 +2020,88 @@ const Settings: React.FC = () => {
                       </label>
                   </div>
                   {rtNotionEnabled && (
-                      <div className="space-y-3">
-                          {/* ── 1. 基础连接（写日记库 + 附加列） ── */}
-                          <div className="space-y-2">
-                              <div>
-                                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Notion Integration Token</label>
-                                  <input type="password" value={rtNotionKey} onChange={e => setRtNotionKey(e.target.value)} className="w-full bg-white/80 border border-orange-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="secret_..." />
-                              </div>
-                              <div>
-                                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Database ID（日记）</label>
-                                  <input type="text" value={rtNotionDbId} onChange={e => setRtNotionDbId(e.target.value)} className="w-full bg-white/80 border border-orange-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="从数据库URL复制" />
-                              </div>
-                              <button onClick={testNotionApi} className="w-full py-2 bg-orange-100 text-orange-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试Notion连接</button>
-                              <p className="text-[10px] text-orange-500/70 leading-relaxed">
-                                  1. 在 <a href="https://www.notion.so/my-integrations" target="_blank" rel="noreferrer" className="underline">Notion开发者</a> 创建Integration<br/>
-                                  2. 创建一个日记数据库，添加&quot;Name&quot;(标题)和&quot;Date&quot;(日期)属性<br/>
-                                  3. 在数据库右上角菜单中 Connect 你的 Integration
+                      <div className="space-y-2">
+                          <div>
+                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Notion Integration Token</label>
+                              <input type="password" value={rtNotionKey} onChange={e => setRtNotionKey(e.target.value)} className="w-full bg-white/80 border border-orange-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="secret_..." />
+                          </div>
+                          <div>
+                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Database ID</label>
+                              <input type="text" value={rtNotionDbId} onChange={e => setRtNotionDbId(e.target.value)} className="w-full bg-white/80 border border-orange-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="从数据库URL复制" />
+                          </div>
+                          <button onClick={testNotionApi} className="w-full py-2 bg-orange-100 text-orange-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试Notion连接</button>
+                          <div className="border-t border-orange-200/50 pt-2 mt-2">
+                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">笔记数据库 ID（可选）</label>
+                              <input type="text" value={rtNotionNotesDbId} onChange={e => setRtNotionNotesDbId(e.target.value)} className="w-full bg-white/80 border border-orange-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="用户日常笔记的数据库ID" />
+                              <p className="text-[10px] text-orange-500/60 leading-relaxed mt-1">
+                                  填写后角色可以偶尔看到你的笔记标题，温馨地提起你写的内容。留空则不启用。
                               </p>
                           </div>
-
-                          <div className="border-t border-orange-200/50 pt-2 space-y-2">
+                          <p className="text-[10px] text-orange-500/70 leading-relaxed">
+                              1. 在 <a href="https://www.notion.so/my-integrations" target="_blank" className="underline">Notion开发者</a> 创建Integration<br/>
+                              2. 创建一个日记数据库，添加"Name"(标题)和"Date"(日期)属性<br/>
+                              3. 在数据库右上角菜单中 Connect 你的 Integration
+                          </p>
+                          {/* Emma: 日记附加列 */}
+                          <div className="border-t border-orange-200/50 pt-2 mt-2 space-y-2">
                               <label className="text-[10px] font-bold text-slate-400 uppercase block">日记附加列（可选）</label>
-                              <p className="text-[10px] text-orange-500/70 leading-relaxed">
-                                  只需与 Notion 数据库中的属性名一致。支持文本、选择、状态等类型。
-                              </p>
-                              <div className="space-y-2.5">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                      <label className="relative flex items-center gap-2.5 cursor-pointer group shrink-0">
-                                          <span className="relative flex w-4 h-4 shrink-0 items-center justify-center">
-                                              <input type="checkbox" checked={rtDiaryExtraCharacter} onChange={e => setRtDiaryExtraCharacter(e.target.checked)} className="sr-only peer" />
-                                              <span className="absolute inset-0 rounded border-2 border-orange-300 bg-white transition-colors peer-checked:bg-orange-500 peer-checked:border-orange-500 group-hover:border-orange-400" />
-                                              <svg className="relative z-10 w-2.5 h-2.5 text-white opacity-0 peer-checked:opacity-100 transition-opacity" viewBox="0 0 12 12" aria-hidden><path d="M10 3L4.5 8.5 2 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" /></svg>
-                                          </span>
-                                          <span className="text-xs text-slate-600">附加<span className="font-bold">角色名</span>列</span>
-                                      </label>
-                                      <input
-                                          value={rtDiaryExtraCharacterColumn}
-                                          onChange={e => setRtDiaryExtraCharacterColumn(e.target.value)}
-                                          className="flex-1 min-w-[100px] max-w-[160px] text-xs border border-orange-200 rounded-lg px-2 py-1.5 bg-white/80 placeholder:text-slate-400"
-                                          placeholder="如：Character"
-                                      />
-                                  </div>
-                                  <div className="flex flex-wrap items-center gap-2">
-                                      <label className="relative flex items-center gap-2.5 cursor-pointer group shrink-0">
-                                          <span className="relative flex w-4 h-4 shrink-0 items-center justify-center">
-                                              <input type="checkbox" checked={rtDiaryExtraMood} onChange={e => setRtDiaryExtraMood(e.target.checked)} className="sr-only peer" />
-                                              <span className="absolute inset-0 rounded border-2 border-orange-300 bg-white transition-colors peer-checked:bg-orange-500 peer-checked:border-orange-500 group-hover:border-orange-400" />
-                                              <svg className="relative z-10 w-2.5 h-2.5 text-white opacity-0 peer-checked:opacity-100 transition-opacity" viewBox="0 0 12 12" aria-hidden><path d="M10 3L4.5 8.5 2 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" /></svg>
-                                          </span>
-                                          <span className="text-xs text-slate-600">附加<span className="font-bold">心情</span>列</span>
-                                      </label>
-                                      <input
-                                          value={rtDiaryExtraMoodColumn}
-                                          onChange={e => setRtDiaryExtraMoodColumn(e.target.value)}
-                                          className="flex-1 min-w-[100px] max-w-[160px] text-xs border border-orange-200 rounded-lg px-2 py-1.5 bg-white/80 placeholder:text-slate-400"
-                                          placeholder="如：Mood"
-                                      />
-                                  </div>
-                              </div>
-                          </div>
-                          {/* ── 2. 笔记数据库（源码：getUserNotes / searchUserNotes + readNoteContent） ── */}
-                          <div className="border-t border-orange-200/50 pt-2 space-y-2">
-                              <label className="text-[10px] font-bold text-slate-400 uppercase block">笔记数据库 ID（可选）</label>
-                              <input
-                                  type="text"
-                                  value={rtNotionNotesDbId}
-                                  onChange={e => setRtNotionNotesDbId(e.target.value)}
-                                  className="w-full bg-white/80 border border-orange-200 rounded-xl px-3 py-2 text-sm font-mono"
-                                  placeholder="从数据库 URL 复制"
-                              />
-                              <p className="text-[10px] text-orange-500/70 leading-relaxed">
-                                  填写后角色可以偶尔看到你的笔记标题，温馨地提起你写的正文内容。留空则不启用。
-                              </p>
-                          </div>
-
-                          {/* ── 3. 只读 properties（源码：queryExtraDatabaseRead） ── */}
-                          <div className="border-t border-orange-200/50 pt-2 space-y-2">
-                              <div className="flex items-center justify-between gap-2">
-                                  <div className="text-[10px] font-bold text-slate-400 uppercase block">其它只读库（可选）</div>
-                                  <button
-                                      type="button"
-                                      onClick={() => {
-                                          setNotionReadOnlyDbsExpanded(true);
-                                          setRtNotionExtraDbs((prev) => [
-                                              ...prev,
-                                              {
-                                                  id:
-                                                      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-                                                          ? crypto.randomUUID()
-                                                          : `extra_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
-                                                  name: '',
-                                                  tag: '',
-                                                  databaseId: '',
-                                              },
-                                          ]);
-                                      }}
-                                      className="text-[10px] font-bold text-orange-600 bg-orange-100 px-2 py-1 rounded-lg shrink-0"
-                                  >
-                                      + 添加数据库
-                                  </button>
-                              </div>
-
-                              <div className="rounded-xl border border-orange-100/90 bg-white/40 overflow-hidden">
-                                  <div className="px-2 py-1.5">
-                                      <button
-                                          type="button"
-                                          aria-expanded={notionReadOnlyDbsExpanded}
-                                          title={notionReadOnlyDbsExpanded ? '收起列表' : '展开列表（默认折叠）'}
-                                          onClick={() => setNotionReadOnlyDbsExpanded((v) => !v)}
-                                          className="flex w-full flex-wrap items-center gap-x-2 gap-y-0.5 min-w-0 text-left rounded-lg px-1 py-0.5 hover:bg-orange-100/50 transition-colors"
-                                      >
-                                          <svg className="h-2.5 w-2.5 shrink-0 text-black" viewBox="0 0 10 10" aria-hidden>
-                                              {notionReadOnlyDbsExpanded ? (
-                                                  <path fill="currentColor" d="M0 2h10L5 9z" />
-                                              ) : (
-                                                  <path fill="currentColor" d="M2 0v10l7-5z" />
-                                              )}
-                                          </svg>
-                                          <span className="text-[10px] font-bold text-slate-600">数据库信息</span>
-                                          <span className="text-[9px] font-mono text-orange-600/80 shrink-0">
-                                              ({rtNotionExtraDbs.filter((d) => normalizeNotionExtraTag(d.tag) !== NOTION_USER_NOTES_TAG).length})
-                                          </span>
-                                          <span className="text-[9px] text-slate-400">{notionReadOnlyDbsExpanded ? '收起' : '展开'}</span>
-                                      </button>
-                                  </div>
-                                  {notionReadOnlyDbsExpanded && (
-                                      <div className="space-y-2 border-t border-orange-100/80 px-2 pb-2 pt-2">
-                                          {rtNotionExtraDbs
-                                              .filter((d) => normalizeNotionExtraTag(d.tag) !== NOTION_USER_NOTES_TAG)
-                                              .map((row) => (
-                                                  <div key={row.id} className="flex flex-wrap gap-1.5 items-end bg-white/60 border border-orange-100 rounded-xl p-2">
-                                                      <div className="flex-1 min-w-[88px]">
-                                                          <span className="text-[9px] text-slate-400 block mb-0.5">展示名</span>
-                                                          <input
-                                                              value={row.name}
-                                                              onChange={(e) => {
-                                                                  const v = e.target.value;
-                                                                  setRtNotionExtraDbs((prev) => prev.map((r) => (r.id === row.id ? { ...r, name: v } : r)));
-                                                              }}
-                                                              className="w-full text-xs border border-orange-200 rounded-lg px-2 py-1"
-                                                              placeholder="如：Database1"
-                                                          />
-                                                      </div>
-                                                      <div className="w-[100px]">
-                                                          <span className="text-[9px] text-slate-400 block mb-0.5">TAG</span>
-                                                          <input
-                                                              value={row.tag}
-                                                              onChange={(e) => {
-                                                                  const v = e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '');
-                                                                  setRtNotionExtraDbs((prev) => prev.map((r) => (r.id === row.id ? { ...r, tag: v } : r)));
-                                                              }}
-                                                              className="w-full text-xs border border-orange-200 rounded-lg px-2 py-1 font-mono"
-                                                              placeholder="PROJECT"
-                                                          />
-                                                      </div>
-                                                      <div className="flex-[2] min-w-[120px]">
-                                                          <span className="text-[9px] text-slate-400 block mb-0.5">Database ID</span>
-                                                          <input
-                                                              value={row.databaseId}
-                                                              onChange={(e) => {
-                                                                  const v = e.target.value;
-                                                                  setRtNotionExtraDbs((prev) => prev.map((r) => (r.id === row.id ? { ...r, databaseId: v } : r)));
-                                                              }}
-                                                              className="w-full text-xs border border-orange-200 rounded-lg px-2 py-1 font-mono"
-                                                              placeholder="从 URL 复制"
-                                                          />
-                                                      </div>
-                                                      <button
-                                                          type="button"
-                                                          onClick={() => setRtNotionExtraDbs((prev) => prev.filter((r) => r.id !== row.id))}
-                                                          className="text-[10px] text-red-500 px-2 py-1 shrink-0"
-                                                      >
-                                                          删除
-                                                      </button>
-                                                  </div>
-                                              ))}
-                                      </div>
+                              <div className="flex items-center gap-2">
+                                  <label className="relative inline-flex items-center cursor-pointer">
+                                      <input type="checkbox" checked={rtDiaryExtraCharacter} onChange={e => setRtDiaryExtraCharacter(e.target.checked)} className="sr-only peer" />
+                                      <div className="w-8 h-4 bg-gray-200 peer-focus:ring-2 peer-focus:ring-orange-300 rounded-full peer peer-checked:bg-orange-400 transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:after:translate-x-4"></div>
+                                  </label>
+                                  <span className="text-xs text-slate-600">附加角色名列</span>
+                                  {rtDiaryExtraCharacter && (
+                                      <input type="text" value={rtDiaryExtraCharacterColumn} onChange={e => setRtDiaryExtraCharacterColumn(e.target.value)}
+                                          className="flex-1 bg-white/80 border border-orange-200 rounded-lg px-2 py-1 text-xs font-mono" placeholder="列名，如 Character" />
                                   )}
                               </div>
-
-                              <p className="text-[10px] text-orange-500/70 leading-relaxed">
-                              在需添加的数据库右上角菜单中 Connect Integration，<strong>展示名</strong>用于聊天中让角色触发查询，TAG用于系统识别，建议英文大写。
-                              </p>
+                              <div className="flex items-center gap-2">
+                                  <label className="relative inline-flex items-center cursor-pointer">
+                                      <input type="checkbox" checked={rtDiaryExtraMood} onChange={e => setRtDiaryExtraMood(e.target.checked)} className="sr-only peer" />
+                                      <div className="w-8 h-4 bg-gray-200 peer-focus:ring-2 peer-focus:ring-orange-300 rounded-full peer peer-checked:bg-orange-400 transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:after:translate-x-4"></div>
+                                  </label>
+                                  <span className="text-xs text-slate-600">附加心情列</span>
+                                  {rtDiaryExtraMood && (
+                                      <input type="text" value={rtDiaryExtraMoodColumn} onChange={e => setRtDiaryExtraMoodColumn(e.target.value)}
+                                          className="flex-1 bg-white/80 border border-orange-200 rounded-lg px-2 py-1 text-xs font-mono" placeholder="列名，如 Mood" />
+                                  )}
+                              </div>
+                          </div>
+                          {/* Emma: 只读数据库 TAG 系统 */}
+                          <div className="border-t border-orange-200/50 pt-2 mt-2 space-y-2">
+                              <div className="flex items-center justify-between">
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase">其它只读库</label>
+                                  <button type="button" onClick={() => setNotionReadOnlyDbsExpanded(v => !v)}
+                                      className="text-[10px] text-orange-500 flex items-center gap-1" aria-expanded={notionReadOnlyDbsExpanded}>
+                                      <span>({rtNotionExtraDbs.filter(d => normalizeNotionExtraTag(d.tag) !== NOTION_USER_NOTES_TAG).length})</span>
+                                      <span>{notionReadOnlyDbsExpanded ? '收起' : '展开'}</span>
+                                  </button>
+                              </div>
+                              {notionReadOnlyDbsExpanded && (
+                                  <div className="space-y-2">
+                                      {rtNotionExtraDbs.filter(d => normalizeNotionExtraTag(d.tag) !== NOTION_USER_NOTES_TAG).map((db, i) => (
+                                          <div key={i} className="flex gap-1 items-start">
+                                              <div className="flex-1 space-y-1">
+                                                  <input type="text" value={db.name} onChange={e => setRtNotionExtraDbs(prev => prev.map((d, j) => j === i ? { ...d, name: e.target.value } : d))}
+                                                      className="w-full bg-white/80 border border-orange-200 rounded-lg px-2 py-1 text-xs" placeholder="展示名" />
+                                                  <div className="flex gap-1">
+                                                      <input type="text" value={db.tag} onChange={e => setRtNotionExtraDbs(prev => prev.map((d, j) => j === i ? { ...d, tag: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '') } : d))}
+                                                          className="w-24 bg-white/80 border border-orange-200 rounded-lg px-2 py-1 text-xs font-mono" placeholder="TAG" />
+                                                      <input type="text" value={db.databaseId} onChange={e => setRtNotionExtraDbs(prev => prev.map((d, j) => j === i ? { ...d, databaseId: e.target.value } : d))}
+                                                          className="flex-1 bg-white/80 border border-orange-200 rounded-lg px-2 py-1 text-xs font-mono" placeholder="Database ID" />
+                                                  </div>
+                                              </div>
+                                              <button type="button" onClick={() => setRtNotionExtraDbs(prev => prev.filter((_, j) => j !== i))}
+                                                  className="text-orange-400 text-xs mt-1 px-1">✕</button>
+                                          </div>
+                                      ))}
+                                      <button type="button" onClick={() => setRtNotionExtraDbs(prev => [...prev, { id: crypto.randomUUID(), name: '', tag: '', databaseId: '' }])}
+                                          className="w-full py-1.5 border border-dashed border-orange-300 text-orange-500 text-xs rounded-xl">
+                                          + 添加数据库
+                                      </button>
+                                  </div>
+                              )}
                           </div>
                       </div>
                   )}
@@ -2176,7 +2111,7 @@ const Settings: React.FC = () => {
               <div className="bg-indigo-50/50 p-4 rounded-2xl space-y-3">
                   <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                          <span className="text-lg">📒</span>
+                          <Notebook size={20} weight="fill" />
                           <span className="text-sm font-bold text-indigo-700">飞书日记</span>
                           <span className="text-[9px] bg-indigo-100 text-indigo-500 px-1.5 py-0.5 rounded-full">中国区</span>
                       </div>
@@ -2221,7 +2156,7 @@ const Settings: React.FC = () => {
               <div className="bg-red-50/50 p-4 rounded-2xl space-y-3">
                   <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                          <span className="text-lg">📕</span>
+                          <Book size={20} weight="fill" />
                           <span className="text-sm font-bold text-red-700">小红书</span>
                           <span className="text-[9px] bg-red-100 text-red-500 px-1.5 py-0.5 rounded-full">浏览器自动化</span>
                       </div>
@@ -2341,6 +2276,12 @@ const Settings: React.FC = () => {
       <PushVapidSettingsModal
         open={showVapidModal}
         onClose={() => { setShowVapidModal(false); setVapidReadyTick((n) => n + 1); }}
+      />
+
+      <ActiveMsgGlobalSettingsModal
+          isOpen={showActiveMsgModal}
+          onClose={() => setShowActiveMsgModal(false)}
+          addToast={addToast}
       />
 
     </div>

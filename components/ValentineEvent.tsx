@@ -34,6 +34,41 @@ const VALENTINE_SPRITES: Record<string, string> = {
     love:    'https://sharkpan.xyz/f/xl8muX/VBl.png',
 };
 
+const VALENTINE_DISMISSED_KEY = 'sullyos_valentine_2026_dismissed';
+const VALENTINE_COMPLETED_KEY = 'sullyos_valentine_2026_completed';
+const VALENTINE_RECORD_KEY = 'valentine_2026';
+
+// ============================================================
+// 工具函数
+// ============================================================
+
+/** 判断今天是否是情人节 (2026-02-14) */
+const isValentineDay = (): boolean => {
+    const now = new Date();
+    return now.getFullYear() === 2026 && now.getMonth() === 1 && now.getDate() === 14;
+};
+
+/** 判断是否应该显示弹窗 */
+export const shouldShowValentinePopup = (): boolean => {
+    if (!isValentineDay()) return false;
+    try {
+        if (localStorage.getItem(VALENTINE_DISMISSED_KEY)) return false;
+        if (localStorage.getItem(VALENTINE_COMPLETED_KEY)) return false;
+    } catch { /* ignore */ }
+    return true;
+};
+
+/** 判断情人节活动是否当前可用（2026年2月） */
+export const isValentineEventAvailable = (): boolean => {
+    const now = new Date();
+    return now.getFullYear() === 2026 && now.getMonth() === 1;
+};
+
+export const isValentinePast = (): boolean => {
+    const now = new Date();
+    return now.getFullYear() > 2026 || (now.getFullYear() === 2026 && now.getMonth() > 1);
+};
+
 // ============================================================
 // 解析对话中的情绪标签
 // ============================================================

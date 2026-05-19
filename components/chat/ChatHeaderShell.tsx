@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CaretLeft, Lightning } from '@phosphor-icons/react';
+import { CaretLeft, House, Lightning, X } from '@phosphor-icons/react';
 import { CharacterBuff, CharacterProfile } from '../../types';
+import type { ContextComposition } from '../../hooks/useChatAI';
 
 interface TokenBreakdown {
     prompt: number;
@@ -23,7 +24,11 @@ interface ChatHeaderShellProps {
     memoryPalaceStatusText?: string;
     lastTokenUsage: number | null;
     tokenBreakdown?: TokenBreakdown | null;
+    /** 上次请求前字符级构成（点 token 数字展开查看） */
+    contextComposition?: ContextComposition | null;
     onClose: () => void;
+    /** 返回通讯录；与左侧箭头绑定。小房子仍用 onClose 回桌面 */
+    onOpenContacts?: () => void;
     onTriggerAI: () => void;
     onShowCharsPanel: () => void;
     onDeleteBuff?: (buffId: string) => void;
@@ -61,7 +66,9 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     memoryPalaceStatusText,
     lastTokenUsage,
     tokenBreakdown,
+    contextComposition,
     onClose,
+    onOpenContacts,
     onTriggerAI,
     onShowCharsPanel,
     onDeleteBuff,
@@ -73,6 +80,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     chromeStyle = 'soft',
 }) => {
     const buffs: CharacterBuff[] = activeCharacter.activeBuffs || [];
+    const [showTokenPanel, setShowTokenPanel] = useState(false);
     const [openBuff, setOpenBuff] = useState<CharacterBuff | null>(null);
     const [isBuffListExpanded, setIsBuffListExpanded] = useState(false);
     const [confirmDeleteBuff, setConfirmDeleteBuff] = useState<CharacterBuff | null>(null);
@@ -130,6 +138,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     useEffect(() => {
         setIsBuffListExpanded(false);
         setOpenBuff(null);
+        setShowTokenPanel(false);
         setCollapsedVisibleCount(Math.min(COLLAPSED_BUFF_MAX, buffs.length));
     }, [activeCharacter.id, buffs.length]);
 
@@ -326,9 +335,17 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                 <div className="flex items-center gap-2 flex-wrap">
                     {onlineStatusNode}
                     {lastTokenUsage && (
-                        <div className={`text-[9px] px-1.5 py-0.5 rounded-md font-mono border ${isDarkHeader ? 'bg-slate-800 text-slate-300 border-white/10' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/20' : 'bg-slate-100 text-slate-400 border-slate-200'}`} title={tokenBreakdown ? `prompt: ${tokenBreakdown.prompt} | completion: ${tokenBreakdown.completion} | msgs: ${tokenBreakdown.msgCount} | pass: ${tokenBreakdown.pass}` : ''}>
-                            {lastTokenUsage}
-                        </div>
+                        <button
+                            type="button"
+                            className={`text-[9px] px-1.5 py-0.5 rounded-md font-mono border active:scale-95 shrink-0 ${isDarkHeader ? 'bg-slate-800 text-slate-300 border-white/10' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/20' : 'bg-slate-100 text-slate-400 border-slate-200'}`}
+                            title={[
+                                tokenBreakdown ? `prompt: ${tokenBreakdown.prompt} | completion: ${tokenBreakdown.completion} | msgs: ${tokenBreakdown.msgCount} | pass: ${tokenBreakdown.pass}` : '',
+                                contextComposition ? `构成(字符): 核心 ${contextComposition.coreContextChars} + 系统附加 ${contextComposition.systemInjectedChars} + 双语 ${contextComposition.bilingualAddonChars} | 历史 ${contextComposition.historyMessageCount} 条约 ${contextComposition.historyCharsApprox} 字 | 图 ${contextComposition.historyImageTurns} | limit ${contextComposition.contextLimit}` : '',
+                            ].filter(Boolean).join(' · ')}
+                            onClick={(e) => { e.stopPropagation(); setShowTokenPanel((v) => !v); }}
+                        >
+                            ⚡ {lastTokenUsage}
+                        </button>
                     )}
                     {isEmotionEvaluating && (
                         <div className={`text-[9px] px-1.5 py-0.5 rounded-md font-semibold border animate-pulse ${isDarkHeader ? 'bg-violet-500/15 text-violet-200 border-violet-400/20' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/20' : 'bg-violet-50 text-violet-500 border-violet-200'}`}>
@@ -353,9 +370,24 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                 </div>
             ) : useCenteredLayout ? (
                 <div className="relative w-full min-h-[56px] flex items-end justify-center">
-                    <button onClick={onClose} className={`absolute left-0 bottom-2 p-2 ${iconButtonClass}`}>
+                    <button
+                        onClick={onOpenContacts ?? onClose}
+                        className={`absolute left-0 bottom-2 p-2 ${iconButtonClass}`}
+                        title={onOpenContacts ? '返回通讯录' : '返回'}
+                        aria-label={onOpenContacts ? '返回通讯录' : '返回'}
+                    >
                         <CaretLeft className="w-5 h-5" weight="bold" />
                     </button>
+                    {onOpenContacts && (
+                        <button
+                            onClick={onClose}
+                            className={`absolute left-10 bottom-2 p-2 ${iconButtonClass}`}
+                            title="返回桌面主页"
+                            aria-label="返回桌面主页"
+                        >
+                            <House className="w-5 h-5" weight="bold" />
+                        </button>
+                    )}
 
                     {floatingStatusNodes}
 
@@ -372,9 +404,26 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                 </div>
             ) : (
                 <div className="flex items-center gap-3 w-full">
-                    <button onClick={onClose} className={`p-2 -ml-2 ${iconButtonClass}`}>
+                    <button
+                        type="button"
+                        onClick={onOpenContacts ?? onClose}
+                        className={`p-2 -ml-2 shrink-0 ${iconButtonClass}`}
+                        title={onOpenContacts ? '返回通讯录' : '返回'}
+                        aria-label={onOpenContacts ? '返回通讯录' : '返回'}
+                    >
                         <CaretLeft className="w-5 h-5" weight="bold" />
                     </button>
+                    {onOpenContacts && (
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            className={`p-2 -ml-1 shrink-0 ${iconButtonClass}`}
+                            title="返回桌面主页"
+                            aria-label="返回桌面主页"
+                        >
+                            <House className="w-5 h-5" weight="bold" />
+                        </button>
+                    )}
 
                     <div onClick={onShowCharsPanel} className="flex-1 min-w-0 flex items-center gap-3 cursor-pointer">
                         {renderStandardInfo()}
@@ -383,6 +432,53 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                     <button onClick={onTriggerAI} className={`p-2 ml-auto ${actionButtonClass}`} title="触发 AI">
                         <Lightning className="w-5 h-5" weight="bold" />
                     </button>
+                </div>
+            )}
+
+            {/* 手机无 hover：点 ⚡ 数字查看完整 Token 与字符级构成 */}
+            {showTokenPanel && lastTokenUsage != null && (
+                <div
+                    className="absolute left-3 right-3 top-full mt-1 z-[55] rounded-xl border border-slate-200 bg-white/95 backdrop-blur-md shadow-lg p-3 text-left max-h-[55vh] overflow-y-auto"
+                    onClick={(e) => e.stopPropagation()}
+                >
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                        <span className="text-xs font-bold text-slate-700">本次请求 · Token</span>
+                        <button type="button" className="p-1 rounded-full text-slate-400 hover:bg-slate-100" onClick={() => setShowTokenPanel(false)} aria-label="关闭">
+                            <X className="w-4 h-4" weight="bold" />
+                        </button>
+                    </div>
+                    <div className="text-[11px] text-slate-600 space-y-1.5 font-mono leading-relaxed">
+                        <div>
+                            <span className="text-slate-400">API total（⚡ 旁数字）:</span> {lastTokenUsage}
+                        </div>
+                        {tokenBreakdown && (
+                            <>
+                                <div>
+                                    <span className="text-slate-400">prompt:</span> {tokenBreakdown.prompt}　<span className="text-slate-400">completion:</span> {tokenBreakdown.completion}
+                                </div>
+                                <div>
+                                    <span className="text-slate-400">pass:</span> {tokenBreakdown.pass}　<span className="text-slate-400">历史条数(参考):</span> {tokenBreakdown.msgCount}
+                                </div>
+                            </>
+                        )}
+                        {contextComposition ? (
+                            <>
+                                <div className="border-t border-slate-100 pt-2 mt-2 text-slate-500 font-sans text-[10px]">以下为发送前估算（字符数，非 token）</div>
+                                <div>核心人设: {contextComposition.coreContextChars}</div>
+                                <div>系统附加: {contextComposition.systemInjectedChars}</div>
+                                <div>双语附加: {contextComposition.bilingualAddonChars}</div>
+                                <div>
+                                    历史消息: {contextComposition.historyMessageCount} 条 · 文本约 {contextComposition.historyCharsApprox} 字 · 含图 {contextComposition.historyImageTurns} 条
+                                </div>
+                                <div>contextLimit: {contextComposition.contextLimit}</div>
+                            </>
+                        ) : (
+                            <div className="text-[10px] text-amber-600 font-sans pt-1">暂无字符级构成（需走主聊天 triggerAI 一轮后才会更新）</div>
+                        )}
+                        <div className="border-t border-slate-100 pt-2 mt-2 text-[10px] text-slate-400 font-sans leading-snug">
+                            电脑可在开发者工具 Console 搜 <code className="bg-slate-100 px-1 rounded">Context Breakdown</code> 看完整对象。
+                        </div>
+                    </div>
                 </div>
             )}
 

@@ -8,10 +8,7 @@ import { Task, Anniversary, AgendaItem, CharacterProfile } from '../types';
 import Modal from '../components/os/Modal';
 import { ContextBuilder } from '../utils/context';
 import { safeResponseJson } from '../utils/safeApi';
-import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
-
-const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
-const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
+import { sortAnniversariesByNextOccurrence } from '../utils/anniversaryNext';
 
 type ThemeMode = 'cyber' | 'soft' | 'minimal';
 
@@ -177,11 +174,7 @@ const ScheduleApp: React.FC = () => {
         if (!supervisor || !apiConfig.apiKey) { addToast('任务已完成', 'success'); return; }
         addToast(`${supervisor.name} 正在确认你的成果...`, 'info');
         try {
-            // 1. Build Persona Context
-            // RESTORED: Full context
-            await injectMemoryPalace(supervisor, undefined, task.title);
             const baseContext = ContextBuilder.buildCoreContext(supervisor, userProfile);
-
             const userPrompt = `
 ### 场景：任务完成 (Task Completed)
 用户 (${userProfile.name}) 刚刚在现实生活中完成了一个任务/契约： "${task.title}"。
@@ -226,22 +219,10 @@ const ScheduleApp: React.FC = () => {
     const generateAnniversaryThought = async (anni: Anniversary) => {
         const char = characters.find(c => c.id === anni.charId);
         if (!char || !apiConfig.apiKey) return;
-
-        // Check cache (24h)
-        if (anni.aiThought && anni.lastThoughtGeneratedAt && (Date.now() - anni.lastThoughtGeneratedAt < 24 * 60 * 60 * 1000)) {
-            return;
-        }
-
-        // FEEDBACK: Show loading state if explicit call
-        if (Date.now() - (anni.lastThoughtGeneratedAt || 0) > 10000) {
-             addToast(`${char.name} 正在查阅日历...`, 'info');
-        }
-
-        const daysDiff = Math.ceil((new Date(anni.date).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
-        const dayText = daysDiff > 0 ? `还有 ${daysDiff} 天` : (daysDiff === 0 ? '就是今天!' : `已经过去 ${Math.abs(daysDiff)} 天了`);
-
-        // RESTORED: Full context
-        await injectMemoryPalace(char, undefined, anni.title);
+        if (anni.aiThought && anni.lastThoughtGeneratedAt && Date.now() - anni.lastThoughtGeneratedAt < 24 * 3600 * 1000) return;
+        if (Date.now() - (anni.lastThoughtGeneratedAt || 0) > 10000) addToast(`${char.name} 正在查阅日历...`, 'info');
+        const daysDiff = Math.ceil((new Date(anni.date).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+        const dayText = daysDiff > 0 ? `还有 ${daysDiff} 天` : daysDiff === 0 ? '就是今天!' : `已经过去 ${Math.abs(daysDiff)} 天了`;
         const baseContext = ContextBuilder.buildCoreContext(char, userProfile);
         const userPrompt = `
 ### 场景：纪念日提醒
@@ -372,7 +353,7 @@ const ScheduleApp: React.FC = () => {
     const openEditAgendaModal = (item: AgendaItem) => {
         setEditingAgendaId(item.id);
         setNewAgendaTitle(item.title);
-        setNewAgendaDateTime(item.dateTime);
+        setNewAgendaDateTime(item.dateTime ?? '');
         setNewAgendaChar(item.charId ?? '');
         setNewAgendaReminder(item.reminderMinutes === undefined ? 30 : item.reminderMinutes);
         setShowAgendaModal(true);
@@ -394,7 +375,7 @@ const ScheduleApp: React.FC = () => {
                 reminderMinutes: reminder,
             };
             await DB.saveAgenda(item);
-            setAgendaItems(prev => prev.map(a => (a.id === editingAgendaId ? item : a)).sort((x, y) => x.dateTime.localeCompare(y.dateTime)));
+            setAgendaItems(prev => prev.map(a => (a.id === editingAgendaId ? item : a)).sort((x, y) => (x.dateTime ?? '').localeCompare(y.dateTime ?? '')));
             setShowAgendaModal(false);
             resetAgendaForm();
             if (reminder !== null) {
@@ -404,13 +385,14 @@ const ScheduleApp: React.FC = () => {
             const item: AgendaItem = {
                 id: `agenda-${Date.now()}`,
                 title: titleTrim,
+                summary: '',
                 dateTime: newAgendaDateTime,
                 charId: newAgendaChar || undefined,
                 reminderMinutes: reminder,
                 createdAt: Date.now(),
             };
             await DB.saveAgenda(item);
-            setAgendaItems(prev => [...prev, item].sort((a, b) => a.dateTime.localeCompare(b.dateTime)));
+            setAgendaItems(prev => [...prev, item].sort((a, b) => (a.dateTime ?? '').localeCompare(b.dateTime ?? '')));
             setShowAgendaModal(false);
             resetAgendaForm();
             if (reminder !== null) {
@@ -420,7 +402,7 @@ const ScheduleApp: React.FC = () => {
     };
 
     const scheduleAgendaReminder = async (item: AgendaItem, reminderMinutes: number) => {
-        const dueAt = new Date(item.dateTime).getTime() - reminderMinutes * 60 * 1000;
+        const dueAt = new Date(item.dateTime ?? '').getTime() - reminderMinutes * 60 * 1000;
         if (dueAt <= Date.now()) {
             addToast('约定时间太近，提醒已跳过', 'info');
             return;
@@ -500,7 +482,7 @@ const ScheduleApp: React.FC = () => {
     const markedCalDays = useMemo(() => {
         const set = new Set<number>();
         agendaItems.forEach(a => {
-            const d = new Date(a.dateTime);
+            const d = new Date(a.dateTime ?? '');
             if (d.getFullYear() === calYear && d.getMonth() === calMonth) set.add(d.getDate());
         });
         return set;
@@ -527,10 +509,10 @@ const ScheduleApp: React.FC = () => {
     // upcoming 3 or selected-day filter
     const visibleAgenda = useMemo(() => {
         if (selectedCalDate) {
-            return agendaItems.filter(a => a.dateTime.startsWith(selectedCalDate)).sort((a, b) => a.dateTime.localeCompare(b.dateTime));
+            return agendaItems.filter(a => a.dateTime?.startsWith(selectedCalDate)).sort((a, b) => (a.dateTime ?? '').localeCompare(b.dateTime ?? ''));
         }
         const todayStr = new Date().toISOString().slice(0, 10); // YYYY-MM-DD，从今天零点开始
-        return agendaItems.filter(a => a.dateTime.slice(0, 10) >= todayStr).sort((a, b) => a.dateTime.localeCompare(b.dateTime)).slice(0, 3);
+        return agendaItems.filter(a => (a.dateTime?.slice(0, 10) ?? '') >= todayStr).sort((a, b) => (a.dateTime ?? '').localeCompare(b.dateTime ?? '')).slice(0, 3);
     }, [agendaItems, selectedCalDate]);
 
     // ---- Tab button add handler ----
@@ -818,7 +800,7 @@ const ScheduleApp: React.FC = () => {
                                                     <div className="flex-1 min-w-0">
                                                         <div className={`font-bold text-sm truncate ${theme.text}`}>{item.title}</div>
                                                         <div className={`text-[11px] ${theme.textSub} mt-0.5 font-mono`}>
-                                                            {formatAgendaTime(item.dateTime)}
+                                                            {formatAgendaTime(item.dateTime ?? '')}
                                                             {char && <span className="ml-2">· {char.name}</span>}
                                                         </div>
                                                     </div>
@@ -843,7 +825,7 @@ const ScheduleApp: React.FC = () => {
                             )}
 
                             {/* Show all future agenda (if more than 3 and not filtered) */}
-                            {!selectedCalDate && agendaItems.filter(a => a.dateTime.slice(0, 10) >= new Date().toISOString().slice(0, 10)).length > 3 && (
+                            {!selectedCalDate && agendaItems.filter(a => (a.dateTime?.slice(0, 10) ?? '') >= new Date().toISOString().slice(0, 10)).length > 3 && (
                                 <button
                                     onClick={() => {
                                         const today = `${todayDate.getFullYear()}-${String(todayDate.getMonth() + 1).padStart(2, '0')}-${String(todayDate.getDate()).padStart(2, '0')}`;

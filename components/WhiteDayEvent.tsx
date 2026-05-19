@@ -37,6 +37,12 @@ export const WHITEDAY_ASSETS = {
 const WHITEDAY_DISMISSED_KEY = 'sullyos_whiteday_2026_dismissed';
 const WHITEDAY_COMPLETED_KEY = 'sullyos_whiteday_2026_completed';
 export const WHITEDAY_RECORD_KEY = 'whiteday_2026';
+
+export const isWhiteDayEventAvailable = (): boolean => {
+    const now = new Date();
+    return now.getFullYear() === 2026 && now.getMonth() === 2;
+};
+
 const QUIZ_PASS_SCORE = 5;
 const QUIZ_TOTAL = 7;
 

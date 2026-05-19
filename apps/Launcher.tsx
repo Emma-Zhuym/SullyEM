@@ -3,13 +3,14 @@ import { useOS } from '../context/OSContext';
 import { INSTALLED_APPS, DOCK_APPS } from '../constants';
 import AppIcon from '../components/os/AppIcon';
 import { DB } from '../utils/db';
-import { CharacterProfile, Anniversary, AppID, DailySchedule } from '../types';
+import { AppConfig, CharacterProfile, Anniversary, AppID, DailySchedule } from '../types';
 import { ScheduleHomeWidget, ScheduleFullscreenViewer } from '../components/schedule/ScheduleHomeWidget';
 import NowPlayingSquareWidget from '../components/os/NowPlayingSquareWidget';
+import { sortAnniversariesByNextOccurrence } from '../utils/anniversaryNext';
 
 // --- Isolated Components to prevent full re-renders ---
 
-// 1. Clock Component
+// 1. Clock Component (Consumes virtualTime)
 const DesktopClock = React.memo(() => {
     const { virtualTime, theme } = useOS();
     const contentColor = theme.contentColor || '#ffffff';
@@ -75,12 +76,19 @@ const DesktopClock = React.memo(() => {
     );
 });
 
-// 2. Character Widget
+// 2. Character Widget (Consumes Character Data & Messages)
 const CharacterWidget = React.memo(({ 
-    char, unreadCount, lastMessage, onClick, contentColor 
+    char, 
+    unreadCount, 
+    lastMessage, 
+    onClick, 
+    contentColor 
 }: { 
-    char: CharacterProfile | null; unreadCount: number; lastMessage: string;
-    onClick: () => void; contentColor: string;
+    char: CharacterProfile | null, 
+    unreadCount: number, 
+    lastMessage: string, 
+    onClick: () => void,
+    contentColor: string
 }) => {
     return (
         <div className="mb-3 group animate-fade-in">
@@ -151,13 +159,20 @@ const CharacterWidget = React.memo(({
     );
 });
 
-// 3. Grid Page Component
+// 3. Grid Page Component — supports edit mode with ghost drag
 const AppGridPage = React.memo(({
-    apps,
-    openApp
+    apps, openApp, onLongPress,
+    isEditMode = false, pageStartIndex = 0,
+    draggingIdx, hoverIdx: hoverGlobalIdx, onIconPointerDown,
 }: {
-    apps: typeof INSTALLED_APPS,
-    openApp: (id: AppID) => void
+    apps: AppConfig[];
+    openApp: (id: AppID) => void;
+    onLongPress?: () => void;
+    isEditMode?: boolean;
+    pageStartIndex?: number;
+    draggingIdx?: number | null;
+    hoverIdx?: number | null;
+    onIconPointerDown?: (e: React.PointerEvent, globalIdx: number) => void;
 }) => {
     const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const startPress = () => {
@@ -170,17 +185,39 @@ const AppGridPage = React.memo(({
 
     return (
         <div className="grid grid-cols-4 gap-y-6 gap-x-2 place-items-center animate-fade-in relative">
-             {apps.map(app => (
-                 <div
-                    key={app.id}
-                    className="relative transition-transform duration-200 active:scale-95"
-                 >
-                     <AppIcon
-                        app={app}
-                        onClick={() => openApp(app.id)}
-                     />
-                 </div>
-             ))}
+            {apps.map((app, localIdx) => {
+                const globalIdx = pageStartIndex + localIdx;
+                const isDragging = draggingIdx === globalIdx;
+                const isHover = hoverGlobalIdx === globalIdx && hoverGlobalIdx !== draggingIdx;
+                return (
+                    <div
+                        key={app.id}
+                        data-global-idx={globalIdx}
+                        className={[
+                            'relative transition-all duration-150',
+                            isEditMode ? 'animate-icon-wobble cursor-grab' : 'active:scale-95',
+                            isDragging ? 'opacity-0 pointer-events-none' : '',
+                            isHover ? 'scale-110 drop-shadow-lg' : '',
+                        ].join(' ')}
+                        style={{ touchAction: isEditMode ? 'none' : 'auto' }}
+                        onMouseDown={!isEditMode ? startPress : undefined}
+                        onMouseUp={!isEditMode ? cancelPress : undefined}
+                        onMouseLeave={!isEditMode ? cancelPress : undefined}
+                        onTouchStart={!isEditMode ? startPress : undefined}
+                        onTouchEnd={!isEditMode ? cancelPress : undefined}
+                        onTouchMove={!isEditMode ? cancelPress : undefined}
+                        onPointerDown={isEditMode ? (e) => {
+                            e.preventDefault();
+                            onIconPointerDown?.(e, globalIdx);
+                        } : undefined}
+                    >
+                        <AppIcon
+                            app={app}
+                            onClick={isEditMode ? () => {} : () => openApp(app.id)}
+                        />
+                    </div>
+                );
+            })}
         </div>
     );
 });
@@ -241,19 +278,19 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, characte
     const currentYear = now.getFullYear();
     const currentMonth = now.getMonth();
     const monthName = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'][currentMonth];
-    
+
     const getDaysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
     const getFirstDayOfMonth = (year: number, month: number) => new Date(year, month, 1).getDay();
-    
+
     const totalDays = getDaysInMonth(currentYear, currentMonth);
     const startOffset = getFirstDayOfMonth(currentYear, currentMonth);
-    
+
     const calendarDays = Array.from({ length: totalDays }, (_, i) => i + 1);
     const paddingDays = Array.from({ length: startOffset }, () => null);
 
     return (
         <div className="w-full flex-shrink-0 snap-center snap-always flex flex-col px-6 pt-24 pb-8 space-y-6 h-full overflow-y-auto no-scrollbar">
-              <div className="bg-white/25 rounded-3xl p-6 border border-white/25 shadow-xl">
+              <div className="bg-white/10 backdrop-blur-2xl rounded-3xl p-6 border border-white/20 shadow-2xl">
                   <div className="flex justify-between items-center mb-4" style={{ color: contentColor }}>
                       <h3 className="text-xl font-bold tracking-widest">{monthName} {currentYear}</h3>
                       <div onClick={() => openApp('schedule')} className="bg-white/20 p-2 rounded-full cursor-pointer hover:bg-white/40 transition-colors">
@@ -271,7 +308,7 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, characte
                           const hasEvent = anniversaries.some((a: any) => a.date === dateStr);
                           return (
                               <div key={day} className="flex flex-col items-center justify-center h-8 relative">
-                                  <div 
+                                  <div
                                     className={`w-8 h-8 flex items-center justify-center rounded-full text-sm font-medium ${isToday ? 'bg-white text-black font-bold shadow-lg' : 'opacity-80'}`}
                                     style={isToday ? {} : { color: contentColor }}
                                   >
@@ -283,10 +320,10 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, characte
                       })}
                   </div>
               </div>
-
-              <div className="bg-white/25 rounded-3xl p-5 border border-white/25 shadow-xl flex-1 min-h-[200px]">
-                  <h3 className="text-xs font-bold opacity-60 uppercase tracking-widest mb-4 flex items-center gap-2" style={{ color: contentColor }}>
-                      <span className="w-2 h-2 bg-purple-400 rounded-full"></span> Upcoming Events
+              <div className="bg-white/10 backdrop-blur-2xl rounded-3xl p-5 border border-white/20 shadow-2xl flex flex-col min-h-0 max-h-[min(340px,42vh)]">
+                  <h3 className="text-xs font-bold opacity-60 uppercase tracking-widest mb-2 flex items-center gap-2 shrink-0" style={{ color: contentColor }}>
+                      <span className="w-2 h-2 bg-purple-400 rounded-full"></span>
+                      Upcoming Events
                   </h3>
                   <div className="space-y-3 overflow-y-auto overflow-x-hidden min-h-0 pr-1 flex-1 -mr-1" style={{ WebkitOverflowScrolling: 'touch' }}>
                       {upcomingAnniversaryRows.length > 0 ? upcomingAnniversaryRows.map(({ anni, next }) => {
@@ -317,17 +354,15 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, characte
     );
 });
 
-// --- Persist scroll page across remounts ---
+// --- Persist scroll page across remounts (e.g. returning from apps) ---
 let _lastPageIndex = 0;
 
-// Icons per page: page 0 has clock+widget so fewer; pages 1+ have more room
-const PAGE0_COUNT = 12;
-const PAGE_COUNT = 16;
-
 // --- Main Launcher ---
+
 const Launcher: React.FC = () => {
   const { openApp, characters, activeCharacterId, theme, lastMsgTimestamp, isDataLoaded, unreadMessages, appOrder, setAppOrder } = useOS();
 
+  // Local state for widget data to prevent context trashing
   const [widgetChar, setWidgetChar] = useState<CharacterProfile | null>(null);
   const [lastMessage, setLastMessage] = useState<string>('');
   const [anniversaries, setAnniversaries] = useState<Anniversary[]>([]);
@@ -349,10 +384,10 @@ const Launcher: React.FC = () => {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const hoverIdxRef = useRef<number | null>(null);
 
-  // Edge-based page flip (timer approach — more reliable on mobile)
+  // Edge-based page flip
   const edgePageTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastEdgeDir = useRef<'left' | 'right' | null>(null);
-  const activePageIdxRef = useRef(activePageIndex); // stable ref to avoid stale closure
+  const activePageIdxRef = useRef(activePageIndex);
 
   // Mouse drag for page scroll (desktop, non-edit mode)
   const isPageDragging = useRef(false);
@@ -380,12 +415,11 @@ const Launcher: React.FC = () => {
     setAppOrder(newApps.map(a => a.id));
   }, [gridApps, setAppOrder]);
 
-  // Stable refs to avoid stale closures in global event listeners
   const handleReorderRef = useRef(handleReorder);
   useEffect(() => { handleReorderRef.current = handleReorder; }, [handleReorder]);
   useEffect(() => { activePageIdxRef.current = activePageIndex; }, [activePageIndex]);
 
-  // Jump to a page instantly (snap disabled during drag)
+  // Jump to a page instantly
   const scrollToPage = useCallback((pageIdx: number, totalPgs: number) => {
     if (!scrollContainerRef.current) return;
     const clamped = Math.max(0, Math.min(pageIdx, totalPgs - 1));
@@ -394,15 +428,13 @@ const Launcher: React.FC = () => {
     _lastPageIndex = clamped;
   }, []);
 
-  // Clear pending page-flip timer
   const clearEdgeTimer = useCallback(() => {
     if (edgePageTimer.current) { clearTimeout(edgePageTimer.current); edgePageTimer.current = null; }
     lastEdgeDir.current = null;
   }, []);
 
-  // Schedule a page flip when pointer lingers in the edge zone
   const scheduleEdgeFlip = useCallback((dir: 'left' | 'right', totalPgs: number) => {
-    if (lastEdgeDir.current === dir) return; // already scheduled this direction
+    if (lastEdgeDir.current === dir) return;
     clearEdgeTimer();
     lastEdgeDir.current = dir;
     edgePageTimer.current = setTimeout(() => {
@@ -413,28 +445,17 @@ const Launcher: React.FC = () => {
     }, 350);
   }, [clearEdgeTimer, scrollToPage]);
 
-  // Last known pointer position (backup for pointercancel which may lack coords)
   const lastPointerPos = useRef({ x: 0, y: 0 });
 
-  // Start dragging an icon
   const handleIconPointerDown = useCallback((e: React.PointerEvent, globalIdx: number) => {
     const el = e.currentTarget as HTMLElement;
     const rect = el.getBoundingClientRect();
-    dragStateRef.current = {
-      srcIdx: globalIdx,
-      offsetX: e.clientX - rect.left,
-      offsetY: e.clientY - rect.top,
-    };
+    dragStateRef.current = { srcIdx: globalIdx, offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top };
     lastPointerPos.current = { x: e.clientX, y: e.clientY };
     hoverIdxRef.current = globalIdx;
     setDraggingIdx(globalIdx);
     setHoverIdx(globalIdx);
-    setGhostInfo({
-      app: gridApps[globalIdx],
-      x: rect.left,
-      y: rect.top,
-    });
-    // Capture pointer so events aren't lost to browser gestures
+    setGhostInfo({ app: gridApps[globalIdx], x: rect.left, y: rect.top });
     try { el.setPointerCapture(e.pointerId); } catch {}
     if (scrollContainerRef.current) {
       scrollContainerRef.current.style.scrollSnapType = 'none';
@@ -444,20 +465,14 @@ const Launcher: React.FC = () => {
   // Global pointer listeners — active while edit mode is on
   useEffect(() => {
     if (!isEditMode) return;
-
-    // totalPages captured at effect-run time; use ref if it changes
     const getTotalPages = () => {
       if (!scrollContainerRef.current) return 99;
       const w = scrollContainerRef.current.clientWidth;
       return w > 0 ? Math.round(scrollContainerRef.current.scrollWidth / w) : 99;
     };
-
-    // Shared helper: find nearest on-screen icon to a point
     const findNearestIcon = (px: number, py: number): number | null => {
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
-      let minDist = Infinity;
-      let nearest: number | null = null;
+      const vw = window.innerWidth; const vh = window.innerHeight;
+      let minDist = Infinity; let nearest: number | null = null;
       document.querySelectorAll<HTMLElement>('[data-global-idx]').forEach(el => {
         const r = el.getBoundingClientRect();
         if (r.right < 0 || r.left > vw || r.bottom < 0 || r.top > vh) return;
@@ -466,61 +481,34 @@ const Launcher: React.FC = () => {
       });
       return nearest;
     };
-
     const handleMove = (e: PointerEvent) => {
       if (!dragStateRef.current) return;
       e.preventDefault();
       const { offsetX, offsetY } = dragStateRef.current;
       lastPointerPos.current = { x: e.clientX, y: e.clientY };
-
-      setGhostInfo(prev => prev
-        ? { ...prev, x: e.clientX - offsetX, y: e.clientY - offsetY }
-        : null
-      );
-
+      setGhostInfo(prev => prev ? { ...prev, x: e.clientX - offsetX, y: e.clientY - offsetY } : null);
       const nearest = findNearestIcon(e.clientX, e.clientY);
-      if (nearest !== null) {
-        hoverIdxRef.current = nearest;
-        setHoverIdx(nearest);
-      }
-
+      if (nearest !== null) { hoverIdxRef.current = nearest; setHoverIdx(nearest); }
       const containerRect = scrollContainerRef.current?.getBoundingClientRect();
       const EDGE = 110;
       if (containerRect) {
-        if (e.clientX - containerRect.left < EDGE) {
-          scheduleEdgeFlip('left', getTotalPages());
-        } else if (containerRect.right - e.clientX < EDGE) {
-          scheduleEdgeFlip('right', getTotalPages());
-        } else {
-          clearEdgeTimer();
-        }
+        if (e.clientX - containerRect.left < EDGE) scheduleEdgeFlip('left', getTotalPages());
+        else if (containerRect.right - e.clientX < EDGE) scheduleEdgeFlip('right', getTotalPages());
+        else clearEdgeTimer();
       }
     };
-
     const handleUp = (e: PointerEvent) => {
       if (dragStateRef.current) {
-        // Use pointer-up coordinates if available, fall back to last known position
         const px = (e.clientX > 0 || e.clientY > 0) ? e.clientX : lastPointerPos.current.x;
         const py = (e.clientX > 0 || e.clientY > 0) ? e.clientY : lastPointerPos.current.y;
-        // Final nearest-icon calculation at release point — most reliable
         const dest = findNearestIcon(px, py) ?? hoverIdxRef.current;
         const src = dragStateRef.current.srcIdx;
-        if (dest !== null && dest !== src) {
-          handleReorderRef.current(src, dest);
-        }
+        if (dest !== null && dest !== src) handleReorderRef.current(src, dest);
       }
-      dragStateRef.current = null;
-      hoverIdxRef.current = null;
-      lastPointerPos.current = { x: 0, y: 0 };
-      setGhostInfo(null);
-      setDraggingIdx(null);
-      setHoverIdx(null);
-      clearEdgeTimer();
-      if (scrollContainerRef.current) {
-        scrollContainerRef.current.style.scrollSnapType = 'x mandatory';
-      }
+      dragStateRef.current = null; hoverIdxRef.current = null; lastPointerPos.current = { x: 0, y: 0 };
+      setGhostInfo(null); setDraggingIdx(null); setHoverIdx(null); clearEdgeTimer();
+      if (scrollContainerRef.current) scrollContainerRef.current.style.scrollSnapType = 'x mandatory';
     };
-
     window.addEventListener('pointermove', handleMove, { passive: false });
     window.addEventListener('pointerup', handleUp);
     window.addEventListener('pointercancel', handleUp);
@@ -532,25 +520,27 @@ const Launcher: React.FC = () => {
     };
   }, [isEditMode, scheduleEdgeFlip, clearEdgeTimer]);
 
-  const dockAppsConfig = useMemo(() => 
+  const dockAppsConfig = useMemo(() =>
     DOCK_APPS.map(id => INSTALLED_APPS.find(app => app.id === id)).filter(Boolean) as typeof INSTALLED_APPS,
     []
   );
 
-  // Split apps into pages of 8 (4 cols x 2 rows fit comfortably below widget)
-  // Pages: 0 = clock+chat+music+grid (original), 1 = pinwheel, 2 = widget images + grid,
-  //        3+ = plain grid. Pad to at least 3 slots so the pinwheel/widget pages always exist.
-  const APPS_PER_PAGE = 8;
+  // Page 0: 12 apps (4×3 below clock+widget); page 1: pinwheel with 8; pages 2+: 16 each
+  const PAGE0_COUNT = 12;
+  const PINWHEEL_COUNT = 8;
+  const PAGE_COUNT = 16;
   const appPages = useMemo(() => {
       const pages: typeof INSTALLED_APPS[] = [];
-      for (let i = 0; i < gridApps.length; i += APPS_PER_PAGE) {
-          pages.push(gridApps.slice(i, i + APPS_PER_PAGE));
+      pages.push(gridApps.slice(0, PAGE0_COUNT));
+      pages.push(gridApps.slice(PAGE0_COUNT, PAGE0_COUNT + PINWHEEL_COUNT));
+      for (let i = PAGE0_COUNT + PINWHEEL_COUNT; i < gridApps.length; i += PAGE_COUNT) {
+          pages.push(gridApps.slice(i, i + PAGE_COUNT));
       }
       while (pages.length < 3) pages.push([]);
       return pages;
   }, [gridApps]);
 
-  // Page 2 (pinwheel) uses appPages[1]: split into two 2x2 quads
+  // Page 1 (pinwheel) uses appPages[1]: split into two 2x2 quads
   const page2Apps = appPages[1] || [];
   const page2QuadA = useMemo(() => page2Apps.slice(0, 4), [page2Apps]);
   const page2QuadB = useMemo(() => page2Apps.slice(4, 8), [page2Apps]);
@@ -558,21 +548,32 @@ const Launcher: React.FC = () => {
   // Total pages = App Pages + 1 Widget Page
   const totalPages = appPages.length + 1;
 
+  // pageStartIndex: how many global indices before page i
+  const getPageStart = (pageIdx: number) => {
+    if (pageIdx === 0) return 0;
+    if (pageIdx === 1) return PAGE0_COUNT;
+    return PAGE0_COUNT + PINWHEEL_COUNT + (pageIdx - 2) * PAGE_COUNT;
+  };
+
   useEffect(() => {
       const loadData = async () => {
+          // SAFEGUARD: If characters array is empty, reset widget char
           if (!characters || characters.length === 0) {
               setWidgetChar(null);
               setLastMessage('No Character Connected');
               setAnniversaries([]);
               return;
           }
+
           const targetChar = characters.find(c => c.id === activeCharacterId) || characters[0];
           setWidgetChar(targetChar);
+
           try {
               const [msgs, annis] = await Promise.all([
                   DB.getMessagesByCharId(targetChar.id),
                   DB.getAllAnniversaries()
               ]);
+              
               if (msgs.length > 0) {
                   const visibleMsgs = msgs.filter(m => m.role !== 'system');
                   if (visibleMsgs.length > 0) {
@@ -590,8 +591,11 @@ const Launcher: React.FC = () => {
               console.error(e);
           }
       };
-      if (isDataLoaded) loadData();
-  }, [activeCharacterId, lastMsgTimestamp, isDataLoaded, characters]);
+      
+      if (isDataLoaded) {
+          loadData();
+      }
+  }, [activeCharacterId, lastMsgTimestamp, isDataLoaded, characters]); // Trigger on characters change
 
   // Schedule widget data loading (shown below SpecialMoments icon)
   const scheduleChar = useMemo(() => {
@@ -610,8 +614,10 @@ const Launcher: React.FC = () => {
   useLayoutEffect(() => {
       const el = scrollContainerRef.current;
       if (el && _lastPageIndex > 0) {
+          // Temporarily disable smooth scroll so jump is instant
           el.style.scrollBehavior = 'auto';
           el.scrollLeft = el.clientWidth * _lastPageIndex;
+          // Re-enable on next frame
           requestAnimationFrame(() => { el.style.scrollBehavior = 'smooth'; });
       }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -622,11 +628,11 @@ const Launcher: React.FC = () => {
           const scrollLeft = scrollContainerRef.current.scrollLeft;
           const index = Math.round(scrollLeft / width);
           setActivePageIndex(index);
-          _lastPageIndex = index;
+          _lastPageIndex = index; // Persist across remounts
       }
   };
 
-  // Mouse drag (desktop page scroll — disabled in edit mode)
+  // --- Mouse Drag Handlers (page scroll, desktop only) ---
   const handleMouseDown = (e: React.MouseEvent) => {
       if (!scrollContainerRef.current || isEditMode) return;
       isPageDragging.current = true;
@@ -637,6 +643,7 @@ const Launcher: React.FC = () => {
       scrollContainerRef.current.style.scrollSnapType = 'none';
       scrollContainerRef.current.style.cursor = 'grabbing';
   };
+
   const handleMouseMove = (e: React.MouseEvent) => {
       if (!isPageDragging.current || !scrollContainerRef.current) return;
       e.preventDefault();
@@ -644,6 +651,7 @@ const Launcher: React.FC = () => {
       scrollContainerRef.current.scrollLeft = scrollLeftRef.current - (x - startX.current);
       dragMoved.current = Math.abs(x - (startX.current + scrollContainerRef.current.offsetLeft));
   };
+
   const handleMouseUp = () => {
       if (!isPageDragging.current || !scrollContainerRef.current) return;
       isPageDragging.current = false;
@@ -651,19 +659,28 @@ const Launcher: React.FC = () => {
       scrollContainerRef.current.style.scrollSnapType = 'x mandatory';
       scrollContainerRef.current.style.cursor = 'grab';
   };
-  const handleMouseLeave = () => { if (isPageDragging.current) handleMouseUp(); };
+
+  const handleMouseLeave = () => {
+      if (isPageDragging.current) handleMouseUp();
+  };
+
   const handleClickCapture = (e: React.MouseEvent) => {
-      if (dragMoved.current > 5) { e.stopPropagation(); e.preventDefault(); }
+      if (dragMoved.current > 5) {
+          e.stopPropagation();
+          e.preventDefault();
+      }
   };
 
   const contentColor = theme.contentColor || '#ffffff';
+  const launcherBottomInset = 'max(env(safe-area-inset-bottom), 1.25rem)';
+  
   const totalUnread = Object.values(unreadMessages).reduce((a, b) => a + b, 0);
   const widgetUnread = widgetChar && unreadMessages[widgetChar.id] ? unreadMessages[widgetChar.id] : 0;
 
   return (
     <div className="h-full w-full flex flex-col relative z-10 overflow-hidden font-sans select-none">
       
-      {/* Background gradients */}
+      {/* Visual Elements (Decorative Background - Static, low-cost gradients instead of blur) */}
       <div className="absolute inset-0 pointer-events-none">
           <div className="absolute -top-20 -right-20 w-80 h-80 rounded-full" style={{ background: 'radial-gradient(circle, rgba(255,255,255,0.05) 0%, transparent 70%)' }}></div>
           <div className="absolute -bottom-20 -left-20 w-80 h-80 rounded-full" style={{ background: 'radial-gradient(circle, rgba(59,130,246,0.08) 0%, transparent 70%)' }}></div>
@@ -691,6 +708,7 @@ const Launcher: React.FC = () => {
             WebkitOverflowScrolling: 'touch',
         }}
       >
+          {/* Render App Pages */}
           {appPages.map((pageApps, idx) => (
               <div
                 key={idx}
@@ -698,18 +716,27 @@ const Launcher: React.FC = () => {
                 style={{ contentVisibility: 'auto', contain: 'layout paint', transform: 'translateZ(0)' }}
               >
                   {idx === 0 ? (
-                      // Page 1 (original): Clock + Chat + 4x2 App Grid
+                      // Page 1 (original): Clock + Chat + 4x3 App Grid
                       <>
                         <DesktopClock />
                         <CharacterWidget
                             char={widgetChar}
                             unreadCount={widgetUnread}
                             lastMessage={lastMessage}
-                            onClick={() => openApp(AppID.Chat)}
+                            onClick={() => (widgetChar ? openApp(AppID.Chat, { messageWidgetCharId: widgetChar.id }) : openApp(AppID.Chat))}
                             contentColor={contentColor}
                         />
                         <div className="flex-1">
-                            <AppGridPage apps={pageApps} openApp={openApp} />
+                            <AppGridPage
+                                apps={pageApps}
+                                openApp={openApp}
+                                onLongPress={isEditMode ? undefined : () => setIsEditMode(true)}
+                                isEditMode={isEditMode}
+                                pageStartIndex={getPageStart(idx)}
+                                draggingIdx={draggingIdx}
+                                hoverIdx={hoverIdx}
+                                onIconPointerDown={handleIconPointerDown}
+                            />
                         </div>
                       </>
                   ) : idx === 1 ? (
@@ -770,16 +797,22 @@ const Launcher: React.FC = () => {
                                     )}
                                   </div>
                                 )}
+                                {/* Free-positioned Desktop Decorations (z-20 to float above widgets z-10) */}
                                 {theme.desktopDecorations && theme.desktopDecorations.length > 0 && (
                                   <div className="absolute inset-0 pointer-events-none overflow-hidden z-20">
                                     {theme.desktopDecorations.map(deco => (
                                       <img
-                                        key={deco.id} src={deco.content} alt="" loading="lazy"
+                                        key={deco.id}
+                                        src={deco.content}
+                                        alt=""
+                                        loading="lazy"
                                         className="absolute w-16 h-16 object-contain select-none"
                                         style={{
-                                          left: `${deco.x}%`, top: `${deco.y}%`,
+                                          left: `${deco.x}%`,
+                                          top: `${deco.y}%`,
                                           transform: `translate(-50%, -50%) scale(${deco.scale}) rotate(${deco.rotation}deg)${deco.flip ? ' scaleX(-1)' : ''}`,
-                                          opacity: deco.opacity, zIndex: deco.zIndex,
+                                          opacity: deco.opacity,
+                                          zIndex: deco.zIndex,
                                           filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.15))',
                                         }}
                                       />
@@ -789,15 +822,16 @@ const Launcher: React.FC = () => {
                               </>
                             );
                           })()}
+
                           <AppGridPage
-                              apps={pageApps}
-                              openApp={openApp}
-                              onLongPress={isEditMode ? undefined : () => setIsEditMode(true)}
-                              isEditMode={isEditMode}
-                              pageStartIndex={getPageStart(idx)}
-                              draggingIdx={draggingIdx}
-                              hoverIdx={hoverIdx}
-                              onIconPointerDown={handleIconPointerDown}
+                                apps={pageApps}
+                                openApp={openApp}
+                                onLongPress={isEditMode ? undefined : () => setIsEditMode(true)}
+                                isEditMode={isEditMode}
+                                pageStartIndex={getPageStart(idx)}
+                                draggingIdx={draggingIdx}
+                                hoverIdx={hoverIdx}
+                                onIconPointerDown={handleIconPointerDown}
                           />
                           <div className="flex-1"></div>
                       </div>
@@ -812,6 +846,7 @@ const Launcher: React.FC = () => {
             anniversaries={anniversaries}
             characters={characters}
           />
+
       </div>
 
       {/* Ghost element — follows pointer during drag */}
@@ -847,7 +882,10 @@ const Launcher: React.FC = () => {
       )}
 
       {/* Page Indicators */}
-      <div className="absolute bottom-24 left-0 w-full flex justify-center gap-2 pointer-events-none z-20">
+      <div
+          className="absolute left-0 w-full flex justify-center gap-2 pointer-events-none z-20"
+          style={{ bottom: `calc(${launcherBottomInset} + 5.5rem)` }}
+      >
           {Array.from({ length: totalPages }).map((_, i) => (
               <div 
                 key={i}
