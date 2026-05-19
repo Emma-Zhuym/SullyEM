@@ -29,8 +29,8 @@ const normalizeProactiveAiContent = (raw: string): string => {
 
 type JSZipLike = {
   folder: (name: string) => { file: (name: string, data: string, options?: { base64?: boolean }) => void } | null;
-  file: (name: string) => { async: (type: 'string') => Promise<string> } | null;
-  generateAsync: (options: { type: 'blob' }, onUpdate?: (metadata: { percent: number }) => void) => Promise<Blob>;
+  file: ((name: string) => { async: (type: string) => Promise<string> } | null) & ((name: string, data: string | Blob, options?: { base64?: boolean }) => void);
+  generateAsync: (options: { type: 'blob'; streamFiles?: boolean; compression?: string; compressionOptions?: { level: number } }, onUpdate?: (metadata: { percent: number }) => void) => Promise<Blob>;
 };
 
 type JSZipCtorLike = {
@@ -2365,7 +2365,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               apiPresets: (mode === 'text_only' || mode === 'full') ? apiPresets : undefined,
               availableModels: (mode === 'text_only' || mode === 'full') ? availableModels : undefined,
               realtimeConfig: (mode === 'text_only' || mode === 'full') ? realtimeConfig : undefined,
-              memoryPalaceConfig: (mode === 'text_only' || mode === 'full') ? memoryPalaceConfig : undefined,
               theme: theme, // Include theme in all modes (text/media)
               customIcons: (mode === 'text_only' || mode === 'media_only' || mode === 'full')
                   ? { ...customIcons }
@@ -2486,10 +2485,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   const savedPresetDecos = backupData.theme.desktopDecorations
                       ?.filter(d => d.type === 'preset')
                       .map(d => ({ id: d.id, content: d.content }));
-                  backupData.theme = stripBase64(backupData.theme);
+                  backupData.theme = stripBase64(backupData.theme!);
                   // Restore preset SVGs and remove image decorations (they have no data in text mode)
-                  if (backupData.theme.desktopDecorations && savedPresetDecos) {
-                      backupData.theme.desktopDecorations = backupData.theme.desktopDecorations
+                  if (backupData.theme!.desktopDecorations && savedPresetDecos) {
+                      backupData.theme!.desktopDecorations = backupData.theme!.desktopDecorations
                           .map(d => {
                               const saved = savedPresetDecos.find(p => p.id === d.id);
                               return saved ? { ...d, content: saved.content } : d;
@@ -2852,7 +2851,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (data.availableModels) saveModels(data.availableModels);
           if (data.apiPresets) savePresets(data.apiPresets);
           if (data.realtimeConfig) updateRealtimeConfig(data.realtimeConfig); // 恢复实时感知配置
-          if (data.memoryPalaceConfig) updateMemoryPalaceConfig(data.memoryPalaceConfig); // 恢复记忆宫殿全局配置
+          if (data.memoryPalaceFlags) { try { Object.entries(data.memoryPalaceFlags).forEach(([k, v]) => localStorage.setItem(k, v)); } catch {} }
 
           if (data.customIcons !== undefined || data.appearancePresets !== undefined) {
               const existingAssets = await DB.getAllAssets();

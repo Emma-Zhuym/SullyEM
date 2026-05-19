@@ -1,6 +1,6 @@
 
-import React, { useRef } from 'react';
-import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, SmileyWink, BellRinging, NotePencil } from '@phosphor-icons/react';
+import React, { useRef, useState } from 'react';
+import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Code, Brain } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import { isIOSStandaloneWebApp } from '../../utils/iosStandalone';
@@ -33,13 +33,15 @@ interface ChatInputAreaProps {
     // Reroll Support
     onReroll: () => void;
     canReroll: boolean;
-// Proactive messaging
+    // Proactive messaging
     isProactiveActive?: boolean;
-    isActiveMsg2Enabled?: boolean;
-    /** 全局实时设置里是否开启主动消息 2.0；为 false 时入口显示为未开启（与 per-char 开关区分） */
-    activeMsg2Available?: boolean;
-    // Emotion
-    isEmotionEnabled?: boolean;
+    // 麦当劳 MCP
+    mcdConfigured?: boolean;   // 设置里 token 已填且启用
+    mcdActivated?: boolean;    // 当前会话已发"麦请求"
+    // HTML 模块模式
+    htmlModeEnabled?: boolean;
+    // 思考过程展示（会话级）
+    showThinkingChain?: boolean;
     // Input style
     inputStyle?: 'default' | 'rounded' | 'flat' | 'wechat' | 'ios' | 'telegram' | 'discord' | 'pixel';
     sendButtonStyle?: 'circle' | 'pill' | 'minimal';
@@ -54,19 +56,23 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     onPanelAction, onImageSelect, isSummarizing,
     categories = [], activeCategory = 'default',
     onReroll, canReroll,
-isProactiveActive,
-    isActiveMsg2Enabled,
-    activeMsg2Available = true,
-    isEmotionEnabled,
+    isProactiveActive,
+    mcdConfigured = false,
+    mcdActivated = false,
+    htmlModeEnabled = false,
+    showThinkingChain = false,
     inputStyle = 'default',
     sendButtonStyle = 'circle',
     chromeStyle = 'soft',
 }) => {
     const chatImageInputRef = useRef<HTMLInputElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const [actionsPage, setActionsPage] = useState<0 | 1>(0);
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const startPos = useRef({ x: 0, y: 0 }); 
+    const startPos = useRef({ x: 0, y: 0 });
     const isLongPressTriggered = useRef(false); // Track if long press action fired
+    const actionsSwipeStart = useRef<{ x: number; y: number } | null>(null);
+    const actionsSwipeMoved = useRef(false);
     const useIOSStandaloneInputFix = isIOSStandaloneWebApp();
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -145,6 +151,45 @@ isProactiveActive,
         clearTimer();
     };
 
+    // --- Actions Panel Swipe (left/right page switch) ---
+    const handleActionsSwipeStart = (e: React.TouchEvent) => {
+        const t = e.touches[0];
+        actionsSwipeStart.current = { x: t.clientX, y: t.clientY };
+        actionsSwipeMoved.current = false;
+    };
+
+    const handleActionsSwipeMove = (e: React.TouchEvent) => {
+        if (!actionsSwipeStart.current) return;
+        const t = e.touches[0];
+        const dx = t.clientX - actionsSwipeStart.current.x;
+        const dy = t.clientY - actionsSwipeStart.current.y;
+        if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
+            actionsSwipeMoved.current = true;
+        }
+    };
+
+    const handleActionsSwipeEnd = (e: React.TouchEvent) => {
+        if (!actionsSwipeStart.current) return;
+        const t = e.changedTouches[0];
+        const dx = t.clientX - actionsSwipeStart.current.x;
+        const dy = t.clientY - actionsSwipeStart.current.y;
+        actionsSwipeStart.current = null;
+        const SWIPE_THRESHOLD = 40;
+        if (Math.abs(dx) > SWIPE_THRESHOLD && Math.abs(dx) > Math.abs(dy)) {
+            if (dx < 0 && actionsPage === 0) setActionsPage(1);
+            else if (dx > 0 && actionsPage === 1) setActionsPage(0);
+        }
+    };
+
+    const handleActionsClickCapture = (e: React.MouseEvent) => {
+        if (actionsSwipeMoved.current) {
+            e.stopPropagation();
+            e.preventDefault();
+            actionsSwipeMoved.current = false;
+        }
+    };
+
+
     // Wrapper for Click to prevent conflicts
     const handleItemClick = (e: React.MouseEvent, item: any, type: 'emoji' | 'category') => {
         // If long press action triggered, block the click event (do not send)
@@ -164,7 +209,7 @@ isProactiveActive,
         }
     };
 
-const handleInputFocus = () => {
+    const handleInputFocus = () => {
         if (!useIOSStandaloneInputFix) return;
         setShowPanel('none');
         const textarea = textareaRef.current;
@@ -291,17 +336,17 @@ const handleInputFocus = () => {
                 </div>
             ) : (
                 <div className="p-3 px-4 flex gap-3 items-end">
-<button onClick={() => setShowPanel(showPanel === 'actions' ? 'none' : 'actions')} className={actionButtonClass}>
+                    <button onClick={() => setShowPanel(showPanel === 'actions' ? 'none' : 'actions')} className={actionButtonClass}>
                         <Plus className="w-6 h-6" weight="bold" />
                     </button>
-                    <div className={`flex-1 min-w-0 flex items-center px-1 transition-all ${useIOSStandaloneInputFix ? 'overflow-visible' : 'overflow-hidden'} ${inputWrapClass} ${isPixelStyle ? 'focus-within:bg-[#fff7ed]' : 'border border-transparent focus-within:bg-white focus-within:border-primary/30'}`}>
+                    <div className={`flex-1 min-w-0 flex items-center px-1 transition-all ${useIOSStandaloneInputFix ? 'overflow-visible' : 'overflow-hidden'} ${inputWrapClass} ${isPixelStyle ? 'focus-within:bg-[#fff7ed]' : isDiscordStyle ? 'focus-within:bg-slate-800 focus-within:border-white/20' : 'border border-transparent focus-within:bg-white focus-within:border-primary/30'}`}>
                         <textarea 
                             ref={textareaRef}
                             rows={1} 
                             value={input} 
                             onChange={(e) => setInput(e.target.value)} 
                             onKeyDown={handleKeyDown} 
-onFocus={handleInputFocus}
+                            onFocus={handleInputFocus}
                             inputMode="text"
                             enterKeyHint="send"
                             autoCorrect="on"
@@ -317,22 +362,25 @@ onFocus={handleInputFocus}
                     <button 
                         onClick={onSend} 
                         disabled={!input.trim()} 
-className={`${sendButtonClass} ${input.trim() ? '' : 'opacity-45 shadow-none'}`}
+                        className={`${sendButtonClass} ${input.trim() ? '' : 'opacity-45 shadow-none'}`}
                     >
                         {sendButtonStyle === 'pill' ? <span>发送</span> : <PaperPlaneTilt className="w-5 h-5" weight="fill" />}
                     </button>
                 </div>
             )}
 
-            {/* Panels */}
-            {showPanel !== 'none' && !selectionMode && (
-<div className={`${panelClass} h-72 overflow-hidden relative z-0 flex flex-col`}>
+            {/* Panels — always mounted, height transitions for smooth open/close */}
+            {!selectionMode && (
+                <div
+                    className={`${panelClass} overflow-hidden relative z-0 flex flex-col will-change-[max-height] transition-[max-height] duration-200 ease-out`}
+                    style={{ maxHeight: showPanel !== 'none' ? '18rem' : '0px' }}
+                >
                     
                     {/* Emojis Panel with Categories */}
                     {showPanel === 'emojis' && (
                         <>
                             {/* Categories Bar */}
-<div className={panelTopBarClass}>
+                            <div className={panelTopBarClass}>
                                 {categories.map(cat => (
                                     <button 
                                         key={cat.id} 
@@ -346,7 +394,7 @@ className={`${sendButtonClass} ${input.trim() ? '' : 'opacity-45 shadow-none'}`}
                                         onMouseUp={handleTouchEnd}
                                         onMouseLeave={handleTouchEnd}
                                         onContextMenu={(e) => e.preventDefault()}
-className={`px-3 py-1 text-xs rounded-full whitespace-nowrap transition-all select-none flex items-center gap-1 ${activeCategory === cat.id ? activeCategoryClass : inactiveCategoryClass}`}
+                                        className={`px-3 py-1 text-xs rounded-full whitespace-nowrap transition-all select-none flex items-center gap-1 ${activeCategory === cat.id ? activeCategoryClass : inactiveCategoryClass}`}
                                     >
                                         {cat.name}
                                         {cat.allowedCharacterIds && cat.allowedCharacterIds.length > 0 && (
@@ -354,12 +402,12 @@ className={`px-3 py-1 text-xs rounded-full whitespace-nowrap transition-all sele
                                         )}
                                     </button>
                                 ))}
-<button onClick={() => onPanelAction('add-category')} className={categoryAddButtonClass}>+</button>
+                                <button onClick={() => onPanelAction('add-category')} className={categoryAddButtonClass}>+</button>
                             </div>
 
                             <div className="flex-1 overflow-y-auto no-scrollbar p-4">
                                 <div className="grid grid-cols-4 gap-3">
-<button onClick={() => onPanelAction('emoji-import')} className={emojiImportTileClass}>+</button>
+                                    <button onClick={() => onPanelAction('emoji-import')} className={emojiImportTileClass}>+</button>
                                     {emojis.map((e, i) => (
                                         <button 
                                             key={i} 
@@ -373,12 +421,12 @@ className={`px-3 py-1 text-xs rounded-full whitespace-nowrap transition-all sele
                                             onMouseUp={handleTouchEnd}
                                             onMouseLeave={handleTouchEnd}
                                             onContextMenu={(ev) => ev.preventDefault()}
-className={emojiTileClass}
+                                            className={emojiTileClass}
                                         >
                                             <div className="aspect-square w-full">
                                                 <img src={e.url} className="w-full h-full object-contain pointer-events-none" />
                                             </div>
-<span className={`text-[9px] truncate w-full text-center mt-0.5 leading-tight pointer-events-none ${emojiLabelClass}`}>{e.name}</span>
+                                            <span className={`text-[9px] truncate w-full text-center mt-0.5 leading-tight pointer-events-none ${emojiLabelClass}`}>{e.name}</span>
                                         </button>
                                     ))}
                                 </div>
@@ -386,17 +434,24 @@ className={emojiTileClass}
                         </>
                     )}
 
-                    {/* Actions Panel */}
+                    {/* Actions Panel (paginated: page 0 = 内置功能, page 1 = 外部服务) */}
                     {showPanel === 'actions' && (
-                        <div className="p-6 grid grid-cols-4 gap-8 overflow-y-auto">
-<button onClick={() => onPanelAction('transfer')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                        <div
+                            className="overflow-y-auto"
+                            onTouchStart={handleActionsSwipeStart}
+                            onTouchMove={handleActionsSwipeMove}
+                            onTouchEnd={handleActionsSwipeEnd}
+                            onClickCapture={handleActionsClickCapture}
+                        >
+                          <div className={`p-6 grid grid-cols-4 gap-8 ${actionsPage === 0 ? '' : 'hidden'}`}>
+                            <button onClick={() => onPanelAction('transfer')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-orange-300 border-orange-400/20' : 'bg-orange-50 text-orange-400 border-orange-100'}`}>
                                     <Money className="w-6 h-6" weight="bold" />
                                 </div>
                                 <span className="text-xs font-bold">转账</span>
                             </button>
                             
-<button onClick={() => onPanelAction('poke')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                            <button onClick={() => onPanelAction('poke')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 border-sky-400/20' : 'bg-sky-50 border-sky-100'}`}><img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f449.png" alt="poke" className="w-6 h-6" /></div>
                                 <span className="text-xs font-bold">戳一戳</span>
                             </button>
@@ -407,41 +462,14 @@ className={emojiTileClass}
                                 </div>
                                 <span className="text-xs font-bold">{isSummarizing ? '归档中...' : '记忆归档'}</span>
                             </button>
-
-                            {/* 写 Notion：与 1ca749d 一致 — NotePencil + violet，输入中禁用 */}
-                            <button
-                                type="button"
-                                onClick={() => onPanelAction('notion-diary-quick')}
-                                disabled={isTyping}
-                                className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${
-                                    isTyping
-                                        ? 'text-slate-300 opacity-50 pointer-events-none'
-                                        : isDiscordStyle
-                                          ? 'text-slate-200'
-                                          : 'text-slate-600'
-                                }`}
-                            >
-                                <div
-                                    className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${
-                                        isDiscordStyle
-                                            ? 'bg-slate-800 text-violet-300 border-violet-400/25'
-                                            : isPixelStyle
-                                              ? 'bg-[#f8f0e0] text-violet-800 border-2 border-[#8f674a]'
-                                              : 'bg-violet-50 text-violet-500 border-violet-100'
-                                    }`}
-                                >
-                                    <NotePencil className="w-6 h-6" weight="bold" />
-                                </div>
-                                <span className="text-xs font-bold">写 Notion</span>
-                            </button>
                             
-<button onClick={() => onPanelAction('settings')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                            <button onClick={() => onPanelAction('settings')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-slate-300 border-white/10' : 'bg-slate-50 text-slate-500 border-slate-100'}`}>
                                     <GearSix className="w-6 h-6" weight="bold" /></div>
                                 <span className="text-xs font-bold">设置</span>
                             </button>
                             
-<button onClick={() => chatImageInputRef.current?.click()} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                            <button onClick={() => chatImageInputRef.current?.click()} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-pink-300 border-pink-400/20' : 'bg-pink-50 text-pink-400 border-pink-100'}`}>
                                     <Image className="w-6 h-6" weight="bold" />
                                 </div>
@@ -449,7 +477,7 @@ className={emojiTileClass}
                             </button>
                             <input type="file" ref={chatImageInputRef} className="hidden" accept="image/*" onChange={(e) => handleImageChange(e, 'chat')} />
 
-{/* Regenerate Button */}
+                            {/* Regenerate Button */}
                             <button onClick={onReroll} disabled={!canReroll} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${canReroll ? (isDiscordStyle ? 'text-slate-200' : 'text-slate-600') : 'text-slate-300 opacity-50'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${canReroll ? (isDiscordStyle ? 'bg-slate-800 text-emerald-300 border-emerald-400/20' : 'bg-emerald-50 text-emerald-400 border-emerald-100') : (isDiscordStyle ? 'bg-slate-800 text-slate-600 border-white/10' : 'bg-slate-50 text-slate-300 border-slate-100')}`}>
                                     <ArrowsClockwise className="w-6 h-6" weight="bold" />
@@ -457,7 +485,7 @@ className={emojiTileClass}
                                 <span className="text-xs font-bold">重新生成</span>
                             </button>
 
-{/* Proactive Message Button */}
+                            {/* Proactive Message Button */}
                             <button onClick={() => onPanelAction('proactive')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform relative ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isProactiveActive ? (isDiscordStyle ? 'bg-violet-500/15 text-violet-300 border-violet-400/30' : 'bg-violet-50 text-violet-500 border-violet-200') : (isDiscordStyle ? 'bg-slate-800 text-slate-400 border-white/10' : 'bg-slate-50 text-slate-400 border-slate-100')}`}>
                                     <ChatCircleDots className="w-6 h-6" weight="bold" />
@@ -466,23 +494,88 @@ className={emojiTileClass}
                                 {isProactiveActive && <span className={`absolute top-0 right-1 w-2.5 h-2.5 rounded-full border-2 ${isDiscordStyle ? 'bg-violet-400 border-slate-900' : 'bg-violet-500 border-white'}`} />}
                             </button>
 
-                            <button onClick={() => onPanelAction('proactive2')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform relative ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
-                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isActiveMsg2Enabled && activeMsg2Available ? (isDiscordStyle ? 'bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-400/30' : 'bg-fuchsia-50 text-fuchsia-500 border-fuchsia-200') : (isDiscordStyle ? 'bg-slate-800 text-slate-400 border-white/10' : 'bg-slate-50 text-slate-400 border-slate-100')}`}>
-                                    <BellRinging className="w-6 h-6" weight="bold" />
+                            {/* 情绪按钮已并入日程 — 情绪/意识流与日程强制同步，配置面板在日程 Modal 下方 */}
+
+                            {/* Schedule Button */}
+                            <button onClick={() => onPanelAction('schedule')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-cyan-300 border-cyan-400/20' : 'bg-cyan-50 text-cyan-500 border-cyan-100'}`}>
+                                    <CalendarBlank className="w-6 h-6" weight="bold" />
                                 </div>
-                                <span className="text-xs font-bold">主动消息 2.0</span>
-                                {isActiveMsg2Enabled && activeMsg2Available && <span className={`absolute top-0 right-1 w-2.5 h-2.5 rounded-full border-2 ${isDiscordStyle ? 'bg-fuchsia-400 border-slate-900' : 'bg-fuchsia-500 border-white'}`} />}
+                                <span className="text-xs font-bold">日程</span>
                             </button>
 
-                            {/* Emotion Button */}
-                            <button onClick={() => onPanelAction('emotion')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform relative ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
-                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isEmotionEnabled ? (isDiscordStyle ? 'bg-pink-500/15 text-pink-300 border-pink-400/30' : 'bg-pink-50 text-pink-500 border-pink-200') : (isDiscordStyle ? 'bg-slate-800 text-slate-400 border-white/10' : 'bg-slate-50 text-slate-400 border-slate-100')}`}>
-                                    <SmileyWink className="w-6 h-6" weight="bold" />
-                                </div>
-                                <span className="text-xs font-bold">情绪</span>
-                                {isEmotionEnabled && <span className={`absolute top-0 right-1 w-2.5 h-2.5 rounded-full border-2 ${isDiscordStyle ? 'bg-pink-400 border-slate-900' : 'bg-pink-500 border-white'}`} />}
+                          </div>
+
+                          {/* Page 1: 外部服务 */}
+                          <div className={`p-6 grid grid-cols-4 gap-8 ${actionsPage === 1 ? '' : 'hidden'}`}>
+                            <button
+                              onClick={() => {
+                                if (!mcdConfigured) { onPanelAction('mcd-not-configured'); return; }
+                                onPanelAction(mcdActivated ? 'mcd-end' : 'mcd-request');
+                              }}
+                              className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'} ${!mcdConfigured ? 'opacity-50' : ''}`}
+                            >
+                              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border relative ${
+                                  mcdActivated
+                                    ? (isDiscordStyle ? 'bg-yellow-500/20 text-yellow-300 border-yellow-400/40' : 'bg-yellow-100 text-yellow-700 border-yellow-300')
+                                    : (isDiscordStyle ? 'bg-slate-800 text-yellow-300 border-yellow-400/20' : 'bg-yellow-50 text-yellow-600 border-yellow-100')
+                              }`}>
+                                  <ForkKnife className="w-6 h-6" weight="bold" />
+                                  {mcdActivated && <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isDiscordStyle ? 'bg-yellow-300 border-slate-900' : 'bg-yellow-500 border-white'}`} />}
+                              </div>
+                              <span className="text-xs font-bold">{mcdActivated ? '结束麦请求' : '麦当劳'}</span>
                             </button>
-                         </div>
+
+                            {/* HTML 模块模式：tap = 切换开关 (注入提示词); 长按打开自定义提示词设置 */}
+                            <button
+                              onClick={() => onPanelAction('html-mode-toggle')}
+                              onContextMenu={(e) => { e.preventDefault(); onPanelAction('html-mode-settings'); }}
+                              className={`flex flex-col items-center gap-2 active:scale-95 transition-transform relative ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}
+                            >
+                              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border relative ${
+                                  htmlModeEnabled
+                                    ? (isDiscordStyle ? 'bg-fuchsia-500/20 text-fuchsia-300 border-fuchsia-400/40' : 'bg-fuchsia-100 text-fuchsia-600 border-fuchsia-200')
+                                    : (isDiscordStyle ? 'bg-slate-800 text-fuchsia-300 border-fuchsia-400/20' : 'bg-fuchsia-50 text-fuchsia-500 border-fuchsia-100')
+                              }`}>
+                                  <Code className="w-6 h-6" weight="bold" />
+                                  {htmlModeEnabled && <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isDiscordStyle ? 'bg-fuchsia-400 border-slate-900' : 'bg-fuchsia-500 border-white'}`} />}
+                              </div>
+                              <span className="text-xs font-bold">{htmlModeEnabled ? 'HTML已开' : 'HTML模式'}</span>
+                            </button>
+
+                            {/* 「展示思考」按钮：tap → 直接打开思考链设置弹窗（含开关），不再做 inline toggle */}
+                            <button
+                              onClick={() => onPanelAction('thinking-settings')}
+                              className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}
+                            >
+                              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border relative ${
+                                  showThinkingChain
+                                    ? (isDiscordStyle ? 'bg-indigo-500/20 text-indigo-300 border-indigo-400/40' : 'bg-indigo-100 text-indigo-600 border-indigo-200')
+                                    : (isDiscordStyle ? 'bg-slate-800 text-indigo-300 border-indigo-400/20' : 'bg-indigo-50 text-indigo-500 border-indigo-100')
+                              }`}>
+                                  <Brain className="w-6 h-6" weight="bold" />
+                                  {showThinkingChain && <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isDiscordStyle ? 'bg-indigo-400 border-slate-900' : 'bg-indigo-500 border-white'}`} />}
+                              </div>
+                              <span className="text-xs font-bold">{showThinkingChain ? '思考已开' : '展示思考'}</span>
+                            </button>
+                          </div>
+
+                          {/* 翻页指示器 */}
+                          <div className="flex items-center justify-center gap-3 pb-3 -mt-2">
+                            <button
+                              type="button"
+                              aria-label="第 1 页"
+                              onClick={() => setActionsPage(0)}
+                              className={`w-2 h-2 rounded-full transition-all ${actionsPage === 0 ? (isDiscordStyle ? 'bg-slate-200 w-5' : 'bg-slate-500 w-5') : (isDiscordStyle ? 'bg-slate-600' : 'bg-slate-300')}`}
+                            />
+                            <button
+                              type="button"
+                              aria-label="第 2 页"
+                              onClick={() => setActionsPage(1)}
+                              className={`w-2 h-2 rounded-full transition-all ${actionsPage === 1 ? (isDiscordStyle ? 'bg-slate-200 w-5' : 'bg-slate-500 w-5') : (isDiscordStyle ? 'bg-slate-600' : 'bg-slate-300')}`}
+                            />
+                          </div>
+                        </div>
                      )}
                      {showPanel === 'chars' && (
                         <div className="p-5 space-y-6 overflow-y-auto no-scrollbar">
