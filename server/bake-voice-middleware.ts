@@ -1,8 +1,25 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 
-const MINIMAX_T2A_URL = 'https://api.minimaxi.com/v1/t2a_v2';
-const MINIMAX_UPLOAD_URL = 'https://api.minimaxi.com/v1/files/upload';
-const MINIMAX_CLONE_URL = 'https://api.minimaxi.com/v1/voice_clone';
+const DOMESTIC_BASE = 'https://api.minimaxi.com';
+const OVERSEAS_BASE = 'https://api.minimax.io';
+
+type MinimaxUrls = { t2a: string; upload: string; clone: string };
+
+const resolveMinimaxUrls = (req: IncomingMessage, bodyRegion: unknown): MinimaxUrls => {
+  const bodyR = typeof bodyRegion === 'string' ? bodyRegion.trim().toLowerCase() : '';
+  const headerRaw = req.headers['x-minimax-region'];
+  const headerR = typeof headerRaw === 'string' ? headerRaw.trim().toLowerCase() : '';
+  const envR = typeof process.env.MINIMAX_REGION === 'string'
+    ? process.env.MINIMAX_REGION.trim().toLowerCase()
+    : '';
+  const region = bodyR || headerR || envR;
+  const base = region === 'overseas' ? OVERSEAS_BASE : DOMESTIC_BASE;
+  return {
+    t2a: `${base}/v1/t2a_v2`,
+    upload: `${base}/v1/files/upload`,
+    clone: `${base}/v1/voice_clone`,
+  };
+};
 
 const CLONE_SOURCE_TEXT = '在一个阳光明媚的早晨，小鸟在枝头欢快地歌唱，微风轻轻拂过脸庞，带来了花朵的芬芳。远处的山峦在薄雾中若隐若现，宛如一幅水墨画。人们漫步在林荫小道上，享受着这难得的宁静时光。孩子们在草地上奔跑嬉戏，笑声回荡在空气中，让人感到无比温暖和幸福。';
 
@@ -25,7 +42,7 @@ function readBody(req: IncomingMessage): Promise<string> {
 export async function bakeVoiceMiddleware(req: IncomingMessage, res: ServerResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,X-MiniMax-Region');
 
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
@@ -41,11 +58,13 @@ export async function bakeVoiceMiddleware(req: IncomingMessage, res: ServerRespo
 
   try {
     const body = JSON.parse(await readBody(req));
-    const { apiKey, voiceId, model, ttsPayload, groupId } = body;
+    const { apiKey, voiceId, model, ttsPayload, groupId, region } = body;
 
     if (!apiKey) throw new Error('Missing apiKey');
     if (!voiceId) throw new Error('Missing voiceId');
     if (!ttsPayload) throw new Error('Missing ttsPayload');
+
+    const urls = resolveMinimaxUrls(req, region);
 
     // Step 1: Synthesize long audio with timber_weights
     const t2aBody = {
@@ -57,8 +76,8 @@ export async function bakeVoiceMiddleware(req: IncomingMessage, res: ServerRespo
     };
     if (groupId) t2aBody.group_id = groupId;
 
-    console.log('[bake-voice] step 1: synthesizing long audio sample...');
-    const t2aRes = await fetch(MINIMAX_T2A_URL, {
+    console.log('[bake-voice] step 1: synthesizing long audio sample...', { target: urls.t2a });
+    const t2aRes = await fetch(urls.t2a, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -102,7 +121,7 @@ export async function bakeVoiceMiddleware(req: IncomingMessage, res: ServerRespo
     const multipartBody = Buffer.concat(parts);
 
     console.log('[bake-voice] step 2: uploading audio for cloning...');
-    const uploadRes = await fetch(MINIMAX_UPLOAD_URL, {
+    const uploadRes = await fetch(urls.upload, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -120,7 +139,7 @@ export async function bakeVoiceMiddleware(req: IncomingMessage, res: ServerRespo
 
     // Step 3: Clone voice
     console.log('[bake-voice] step 3: cloning voice...');
-    const cloneRes = await fetch(MINIMAX_CLONE_URL, {
+    const cloneRes = await fetch(urls.clone, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

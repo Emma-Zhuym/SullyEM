@@ -3,14 +3,14 @@
 
 import {
     CharacterProfile, ChatTheme, Message, UserProfile,
-    Task, Anniversary, AgendaItem, DiaryEntry, RoomTodo, RoomNote,
+    Task, Anniversary, DiaryEntry, RoomTodo, RoomNote, DailySchedule,
     GalleryImage, FullBackupData, GroupProfile, SocialPost, StudyCourse, GameSession, Worldbook, NovelBook, Emoji, EmojiCategory,
     BankTransaction, SavingsGoal, BankFullState, DollhouseState, XhsStockImage, XhsActivityRecord, SongSheet, QuizSession, GuidebookSession,
-    LifeSimState
+    LifeSimState, HandbookEntry, Tracker, TrackerEntry
 } from '../types';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 40; // LifeSim (都市人生)
+const DB_VERSION = 50; // Bumped: v50 add 'trackers' + 'tracker_entries' stores (手账 tracker 引擎)
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -42,6 +42,10 @@ const STORE_QUIZZES = 'quizzes';
 const STORE_GUIDEBOOK = 'guidebook';
 const STORE_AGENDA = 'agenda';
 const STORE_LIFE_SIM = 'life_sim';
+const STORE_DAILY_SCHEDULE = 'daily_schedule';
+const STORE_HANDBOOK = 'handbook'; // 跨角色聚合手账，每天一条 entry，id = 'YYYY-MM-DD'
+const STORE_TRACKERS = 'trackers';                // 手账打卡 tracker 定义
+const STORE_TRACKER_ENTRIES = 'tracker_entries';  // tracker 每日打卡数据
 
 export interface ScheduledMessage {
     id: string;
@@ -64,7 +68,7 @@ const SULLY_PRESET_EMOJIS = [
     { name: 'Sully等你消息', url: 'https://sharkpan.xyz/f/5nrJsj/wait.png', categoryId: SULLY_CATEGORY_ID },
 ];
 
-const openDB = (): Promise<IDBDatabase> => {
+export const openDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     
@@ -155,6 +159,117 @@ const openDB = (): Promise<IDBDatabase> => {
       createStore(STORE_GUIDEBOOK, { keyPath: 'id' });
       createStore(STORE_AGENDA, { keyPath: 'id' });
       createStore(STORE_LIFE_SIM, { keyPath: 'id' });
+      createStore(STORE_DAILY_SCHEDULE, { keyPath: 'id' });
+      createStore(STORE_HANDBOOK, { keyPath: 'id' });
+
+      createStore(STORE_TRACKERS, { keyPath: 'id' });
+      if (!db.objectStoreNames.contains(STORE_TRACKER_ENTRIES)) {
+          const teStore = db.createObjectStore(STORE_TRACKER_ENTRIES, { keyPath: 'id' });
+          teStore.createIndex('trackerId', 'trackerId', { unique: false });
+          teStore.createIndex('date', 'date', { unique: false });
+      }
+
+      // ─── Memory Palace (记忆宫殿) stores ───
+      if (!db.objectStoreNames.contains('memory_nodes')) {
+          const mnStore = db.createObjectStore('memory_nodes', { keyPath: 'id' });
+          mnStore.createIndex('charId', 'charId', { unique: false });
+          mnStore.createIndex('room', 'room', { unique: false });
+          mnStore.createIndex('embedded', 'embedded', { unique: false });
+          mnStore.createIndex('boxId', 'boxId', { unique: false }); // deprecated，保留索引兼容旧数据
+          mnStore.createIndex('eventBoxId', 'eventBoxId', { unique: false });
+      } else {
+          // Migration: 为已有 memory_nodes 表补建 eventBoxId 索引（v47 新增）
+          const mnStore = (event.target as IDBOpenDBRequest).transaction?.objectStore('memory_nodes');
+          if (mnStore && !mnStore.indexNames.contains('eventBoxId')) {
+              try { mnStore.createIndex('eventBoxId', 'eventBoxId', { unique: false }); }
+              catch (e) { console.log('memory_nodes eventBoxId index migration skipped'); }
+          }
+      }
+
+      if (!db.objectStoreNames.contains('memory_vectors')) {
+          const mvStore = db.createObjectStore('memory_vectors', { keyPath: 'memoryId' });
+          mvStore.createIndex('charId', 'charId', { unique: false });
+      } else {
+          // Migration: add charId index to existing memory_vectors store
+          const mvStore = (event.target as IDBOpenDBRequest).transaction?.objectStore('memory_vectors');
+          if (mvStore && !mvStore.indexNames.contains('charId')) {
+              try { mvStore.createIndex('charId', 'charId', { unique: false }); } catch (e) { console.log('memory_vectors charId index migration skipped'); }
+          }
+      }
+
+      if (!db.objectStoreNames.contains('memory_links')) {
+          const mlStore = db.createObjectStore('memory_links', { keyPath: 'id' });
+          mlStore.createIndex('sourceId', 'sourceId', { unique: false });
+          mlStore.createIndex('targetId', 'targetId', { unique: false });
+      }
+
+      if (!db.objectStoreNames.contains('memory_batches')) {
+          const mbStore = db.createObjectStore('memory_batches', { keyPath: 'id' });
+          mbStore.createIndex('charId', 'charId', { unique: false });
+      }
+
+      if (!db.objectStoreNames.contains('topic_boxes')) {
+          const tbStore = db.createObjectStore('topic_boxes', { keyPath: 'id' });
+          tbStore.createIndex('charId', 'charId', { unique: false });
+          tbStore.createIndex('status', 'status', { unique: false });
+      }
+
+      if (!db.objectStoreNames.contains('anticipations')) {
+          const antStore = db.createObjectStore('anticipations', { keyPath: 'id' });
+          antStore.createIndex('charId', 'charId', { unique: false });
+          antStore.createIndex('status', 'status', { unique: false });
+      }
+
+      // ─── EventBox（事件盒，v47 新增） ───────────────
+      if (!db.objectStoreNames.contains('event_boxes')) {
+          const ebStore = db.createObjectStore('event_boxes', { keyPath: 'id' });
+          ebStore.createIndex('charId', 'charId', { unique: false });
+      }
+
+      // ─── v48 一次性强制清空记忆宫殿（EventBox 体系，旧 boxId 数据不兼容） ───
+      //     oldVersion === 0 = 全新安装，没东西可清
+      //     oldVersion >= 48 = 已经清过，跳过
+      //     0 < oldVersion < 48 = 现有用户升级 → 清一次
+      const oldVersion = event.oldVersion || 0;
+      if (oldVersion > 0 && oldVersion < 48) {
+          const upgradeTx = (event.target as IDBOpenDBRequest).transaction;
+          const MP_STORES_TO_CLEAR = [
+              'memory_nodes', 'memory_vectors', 'memory_links',
+              'memory_batches', 'topic_boxes', 'anticipations', 'event_boxes',
+          ];
+          let cleared = 0;
+          for (const name of MP_STORES_TO_CLEAR) {
+              if (db.objectStoreNames.contains(name) && upgradeTx) {
+                  try {
+                      upgradeTx.objectStore(name).clear();
+                      cleared++;
+                  } catch (e) {
+                      console.warn(`[DB v48 wipe] skip ${name}:`, e);
+                  }
+              }
+          }
+          // 同步清理 localStorage 里的高水位标记
+          let hwmCleared = 0;
+          try {
+              const toRemove: string[] = [];
+              for (let i = 0; i < localStorage.length; i++) {
+                  const key = localStorage.key(i);
+                  if (key && key.startsWith('mp_lastMsgId_')) toRemove.push(key);
+              }
+              for (const key of toRemove) { localStorage.removeItem(key); hwmCleared++; }
+          } catch { /* ignore */ }
+          console.log(`🗑️ [DB v48] 一次性清空完成：${cleared} 个 store，${hwmCleared} 个高水位（oldVersion=${oldVersion}）`);
+      }
+
+      // ─── Pixel Home（像素家园）stores ───────────────
+      if (!db.objectStoreNames.contains('pixel_home_assets')) {
+          const phaStore = db.createObjectStore('pixel_home_assets', { keyPath: 'id' });
+          phaStore.createIndex('createdAt', 'createdAt', { unique: false });
+      }
+      if (!db.objectStoreNames.contains('pixel_home_layouts')) {
+          const phlStore = db.createObjectStore('pixel_home_layouts', { keyPath: ['charId', 'roomId'] });
+          phlStore.createIndex('charId', 'charId', { unique: false });
+      }
     };
   });
 };
@@ -192,7 +307,12 @@ export const DB = {
     transaction.objectStore(STORE_CHARACTERS).delete(id);
   },
 
-  getMessagesByCharId: async (charId: string): Promise<Message[]> => {
+  /**
+   * 获取角色的私聊消息。
+   * @param includeProcessed 是否包含已被记忆宫殿处理的消息（默认 false，即自动过滤）。
+   *                         记忆归档、批量总结等需要完整历史的场景应传 true。
+   */
+  getMessagesByCharId: async (charId: string, includeProcessed: boolean = false): Promise<Message[]> => {
     const db = await openDB();
     return new Promise((resolve, reject) => {
       const transaction = db.transaction(STORE_MESSAGES, 'readonly');
@@ -200,7 +320,16 @@ export const DB = {
       const index = store.index('charId');
       const request = index.getAll(IDBKeyRange.only(charId));
       request.onsuccess = () => {
-          const results = (request.result || []).filter((m: Message) => !m.groupId);
+          let results = (request.result || []).filter((m: Message) => !m.groupId);
+          // 记忆宫殿：过滤已处理的消息（高水位标记之前的），用向量记忆替代
+          if (!includeProcessed) {
+              try {
+                  const hwm = parseInt(localStorage.getItem(`mp_lastMsgId_${charId}`) || '0', 10);
+                  if (hwm > 0) {
+                      results = results.filter((m: Message) => m.id > hwm);
+                  }
+              } catch {}
+          }
           resolve(results);
       };
       request.onerror = () => reject(request.error);
@@ -208,23 +337,24 @@ export const DB = {
   },
 
   // Performance: Load only the most recent N messages for a character
-  getRecentMessagesByCharId: async (charId: string, limit: number): Promise<Message[]> => {
+  getRecentMessagesByCharId: async (charId: string, limit: number, includeProcessed: boolean = false): Promise<Message[]> => {
     const db = await openDB();
+    const hwm = includeProcessed ? 0 : (() => {
+        try { return parseInt(localStorage.getItem(`mp_lastMsgId_${charId}`) || '0', 10) || 0; } catch { return 0; }
+    })();
     return new Promise((resolve, reject) => {
       const transaction = db.transaction(STORE_MESSAGES, 'readonly');
       const store = transaction.objectStore(STORE_MESSAGES);
       const index = store.index('charId');
-      // Use reverse cursor to only collect the last N messages without loading all into memory
       const collected: Message[] = [];
       const cursorReq = index.openCursor(IDBKeyRange.only(charId), 'prev');
       cursorReq.onsuccess = () => {
           const cursor = cursorReq.result;
           if (cursor && collected.length < limit) {
               const m = cursor.value as Message;
-              if (!m.groupId) collected.push(m);
+              if (!m.groupId && (includeProcessed || m.id > hwm)) collected.push(m);
               cursor.continue();
           } else {
-              // Reverse to chronological order
               resolve(collected.reverse());
           }
       };
@@ -310,6 +440,27 @@ export const DB = {
             const data = req.result as Message;
             if (data) {
                 data.content = content;
+                store.put(data);
+                resolve();
+            } else {
+                reject(new Error('Message not found'));
+            }
+        };
+        req.onerror = () => reject(req.error);
+    });
+  },
+
+  updateMessageMetadata: async (id: number, updater: (prev: any) => any): Promise<void> => {
+    const db = await openDB();
+    const transaction = db.transaction(STORE_MESSAGES, 'readwrite');
+    const store = transaction.objectStore(STORE_MESSAGES);
+
+    return new Promise((resolve, reject) => {
+        const req = store.get(id);
+        req.onsuccess = () => {
+            const data = req.result as Message | undefined;
+            if (data) {
+                (data as any).metadata = updater((data as any).metadata);
                 store.put(data);
                 resolve();
             } else {
@@ -958,6 +1109,149 @@ export const DB = {
       transaction.objectStore(STORE_ROOM_NOTES).delete(id);
   },
 
+  // ─── Daily Schedule (角色日程表) ───
+  getDailySchedule: async (charId: string, date: string): Promise<DailySchedule | null> => {
+      const db = await openDB();
+      const id = `${charId}_${date}`;
+      return new Promise((resolve, reject) => {
+          if (!db.objectStoreNames.contains(STORE_DAILY_SCHEDULE)) { resolve(null); return; }
+          const transaction = db.transaction(STORE_DAILY_SCHEDULE, 'readonly');
+          const store = transaction.objectStore(STORE_DAILY_SCHEDULE);
+          const req = store.get(id);
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  saveDailySchedule: async (schedule: DailySchedule): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_DAILY_SCHEDULE, 'readwrite');
+      transaction.objectStore(STORE_DAILY_SCHEDULE).put(schedule);
+  },
+
+  getScheduleCoverImage: async (charId: string): Promise<string | null> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          if (!db.objectStoreNames.contains(STORE_DAILY_SCHEDULE)) { resolve(null); return; }
+          const transaction = db.transaction(STORE_DAILY_SCHEDULE, 'readonly');
+          const store = transaction.objectStore(STORE_DAILY_SCHEDULE);
+          const req = store.openCursor();
+          req.onsuccess = () => {
+              const cursor = req.result;
+              if (cursor) {
+                  const val = cursor.value as DailySchedule;
+                  if (val.charId === charId && val.coverImage) {
+                      resolve(val.coverImage);
+                      return;
+                  }
+                  cursor.continue();
+              } else {
+                  resolve(null);
+              }
+          };
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  // ─── Handbook (手账) ───
+  getHandbook: async (date: string): Promise<HandbookEntry | null> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          if (!db.objectStoreNames.contains(STORE_HANDBOOK)) { resolve(null); return; }
+          const transaction = db.transaction(STORE_HANDBOOK, 'readonly');
+          const store = transaction.objectStore(STORE_HANDBOOK);
+          const req = store.get(date);
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  getAllHandbooks: async (): Promise<HandbookEntry[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_HANDBOOK)) return [];
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_HANDBOOK, 'readonly');
+          const store = transaction.objectStore(STORE_HANDBOOK);
+          const req = store.getAll();
+          req.onsuccess = () => resolve(req.result || []);
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  saveHandbook: async (entry: HandbookEntry): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_HANDBOOK, 'readwrite');
+      transaction.objectStore(STORE_HANDBOOK).put(entry);
+  },
+
+  deleteHandbook: async (date: string): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_HANDBOOK, 'readwrite');
+      transaction.objectStore(STORE_HANDBOOK).delete(date);
+  },
+
+  // ─── Trackers (手账打卡引擎) ───
+  getAllTrackers: async (): Promise<Tracker[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_TRACKERS)) return [];
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_TRACKERS, 'readonly');
+          const req = tx.objectStore(STORE_TRACKERS).getAll();
+          req.onsuccess = () => resolve(req.result || []);
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  saveTracker: async (tracker: Tracker): Promise<void> => {
+      const db = await openDB();
+      const tx = db.transaction(STORE_TRACKERS, 'readwrite');
+      tx.objectStore(STORE_TRACKERS).put(tracker);
+  },
+
+  deleteTracker: async (id: string): Promise<void> => {
+      const db = await openDB();
+      // 同时删掉该 tracker 的所有 entries
+      const tx = db.transaction([STORE_TRACKERS, STORE_TRACKER_ENTRIES], 'readwrite');
+      tx.objectStore(STORE_TRACKERS).delete(id);
+      const teStore = tx.objectStore(STORE_TRACKER_ENTRIES);
+      const idx = teStore.index('trackerId');
+      const req = idx.openCursor(IDBKeyRange.only(id));
+      req.onsuccess = () => {
+          const cursor = req.result;
+          if (cursor) { cursor.delete(); cursor.continue(); }
+      };
+  },
+
+  getTrackerEntriesByTracker: async (trackerId: string): Promise<TrackerEntry[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_TRACKER_ENTRIES)) return [];
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_TRACKER_ENTRIES, 'readonly');
+          const idx = tx.objectStore(STORE_TRACKER_ENTRIES).index('trackerId');
+          const req = idx.getAll(IDBKeyRange.only(trackerId));
+          req.onsuccess = () => resolve(req.result || []);
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  getTrackerEntry: async (trackerId: string, date: string): Promise<TrackerEntry | null> => {
+      // 复合查询:用 tracker 索引,客户端再过滤 date(简单且足够快)
+      const all = await DB.getTrackerEntriesByTracker(trackerId);
+      return all.find(e => e.date === date) || null;
+  },
+
+  saveTrackerEntry: async (entry: TrackerEntry): Promise<void> => {
+      const db = await openDB();
+      const tx = db.transaction(STORE_TRACKER_ENTRIES, 'readwrite');
+      tx.objectStore(STORE_TRACKER_ENTRIES).put(entry);
+  },
+
+  deleteTrackerEntry: async (id: string): Promise<void> => {
+      const db = await openDB();
+      const tx = db.transaction(STORE_TRACKER_ENTRIES, 'readwrite');
+      tx.objectStore(STORE_TRACKER_ENTRIES).delete(id);
+  },
+
   getAllCourses: async (): Promise<StudyCourse[]> => {
       const db = await openDB();
       if (!db.objectStoreNames.contains(STORE_COURSES)) return [];
@@ -1258,7 +1552,7 @@ export const DB = {
           });
       };
 
-      const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, songs, quizzes, guidebookSessions, scheduledMessages, lifeSimStates] = await Promise.all([
+      const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, songs, quizzes, guidebookSessions, scheduledMessages, lifeSimStates, handbooks, trackers, trackerEntries] = await Promise.all([
           getAllFromStore(STORE_CHARACTERS),
           getAllFromStore(STORE_MESSAGES),
           getAllFromStore(STORE_THEMES),
@@ -1288,6 +1582,9 @@ export const DB = {
           getAllFromStore(STORE_GUIDEBOOK),
           getAllFromStore(STORE_SCHEDULED),
           getAllFromStore(STORE_LIFE_SIM),
+          getAllFromStore(STORE_HANDBOOK),
+          getAllFromStore(STORE_TRACKERS),
+          getAllFromStore(STORE_TRACKER_ENTRIES),
       ]);
 
       const userProfile = userProfiles.length > 0 ? {
@@ -1310,7 +1607,10 @@ export const DB = {
           quizSessions: quizzes,
           guidebookSessions,
           scheduledMessages,
-          lifeSimState: lifeSimStates[0] || null
+          lifeSimState: lifeSimStates[0] || null,
+          handbooks,
+          trackers,
+          trackerEntries,
       };
   },
 
@@ -1327,7 +1627,13 @@ export const DB = {
           STORE_QUIZZES,
           STORE_GUIDEBOOK,
           STORE_SCHEDULED,
-          STORE_LIFE_SIM
+          STORE_LIFE_SIM,
+          STORE_DAILY_SCHEDULE,
+          STORE_HANDBOOK,
+          STORE_TRACKERS,
+          STORE_TRACKER_ENTRIES,
+          'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes',
+          'memory_batches', 'pixel_home_assets', 'pixel_home_layouts'
       ].filter(name => db.objectStoreNames.contains(name));
 
       const tx = db.transaction(availableStores, 'readwrite');
@@ -1349,29 +1655,34 @@ export const DB = {
           items.forEach(item => store.put(item));
       };
 
+      const applyMediaToChar = (c: CharacterProfile, media: NonNullable<FullBackupData['mediaAssets']>[number]): CharacterProfile => {
+          return {
+              ...c,
+              avatar: media.avatar || c.avatar,
+              sprites: media.sprites || c.sprites,
+              dateSkinSets: media.dateSkinSets || c.dateSkinSets,
+              activeSkinSetId: media.activeSkinSetId || c.activeSkinSetId,
+              customDateSprites: media.customDateSprites || c.customDateSprites,
+              spriteConfig: media.spriteConfig || c.spriteConfig,
+              chatBackground: media.backgrounds?.chat || c.chatBackground,
+              dateBackground: media.backgrounds?.date || c.dateBackground,
+              roomConfig: c.roomConfig ? {
+                  ...c.roomConfig,
+                  wallImage: media.backgrounds?.roomWall || c.roomConfig.wallImage,
+                  floorImage: media.backgrounds?.roomFloor || c.roomConfig.floorImage,
+                  items: c.roomConfig.items.map(item => {
+                      const img = media.roomItems?.[item.id];
+                      return img ? { ...item, image: img } : item;
+                  })
+              } : c.roomConfig
+          } as CharacterProfile;
+      };
+
       if (data.characters) {
           if (data.mediaAssets) {
               data.characters = data.characters.map(c => {
                   const media = data.mediaAssets?.find(m => m.charId === c.id);
-                  if (media) {
-                      return {
-                          ...c,
-                          avatar: media.avatar || c.avatar, 
-                          sprites: media.sprites || c.sprites,
-                          chatBackground: media.backgrounds?.chat || c.chatBackground,
-                          dateBackground: media.backgrounds?.date || c.dateBackground,
-                          roomConfig: c.roomConfig ? {
-                              ...c.roomConfig,
-                              wallImage: media.backgrounds?.roomWall || c.roomConfig.wallImage,
-                              floorImage: media.backgrounds?.roomFloor || c.roomConfig.floorImage,
-                              items: c.roomConfig.items.map(item => {
-                                  const img = media.roomItems?.[item.id];
-                                  return img ? { ...item, image: img } : item;
-                              })
-                          } : c.roomConfig
-                      } as CharacterProfile;
-                  }
-                  return c;
+                  return media ? applyMediaToChar(c, media) : c;
               });
           }
           clearAndAdd(STORE_CHARACTERS, data.characters);
@@ -1383,25 +1694,7 @@ export const DB = {
               if (existingChars && existingChars.length > 0) {
                   const updatedChars = existingChars.map(c => {
                       const media = data.mediaAssets?.find(m => m.charId === c.id);
-                      if (media) {
-                          return {
-                              ...c,
-                              avatar: media.avatar || c.avatar, 
-                              sprites: media.sprites || c.sprites, 
-                              chatBackground: media.backgrounds?.chat || c.chatBackground,
-                              dateBackground: media.backgrounds?.date || c.dateBackground,
-                              roomConfig: c.roomConfig ? {
-                                  ...c.roomConfig,
-                                  wallImage: media.backgrounds?.roomWall || c.roomConfig.wallImage,
-                                  floorImage: media.backgrounds?.roomFloor || c.roomConfig.floorImage,
-                                  items: c.roomConfig.items.map(item => {
-                                      const img = media.roomItems?.[item.id];
-                                      return img ? { ...item, image: img } : item;
-                                  })
-                              } : c.roomConfig
-                          } as CharacterProfile;
-                      }
-                      return c;
+                      return media ? applyMediaToChar(c, media) : c;
                   });
                   updatedChars.forEach(c => charStore.put(c));
               }
@@ -1455,6 +1748,38 @@ export const DB = {
       if (data.bankTransactions) clearAndAdd(STORE_BANK_TX, data.bankTransactions);
       if (data.xhsActivities) clearAndAdd(STORE_XHS_ACTIVITIES, data.xhsActivities);
       if (data.xhsStockImages) clearAndAdd(STORE_XHS_STOCK, data.xhsStockImages);
+
+      // Memory Palace (记忆宫殿)
+      if (data.memoryNodes) clearAndAdd('memory_nodes', data.memoryNodes);
+      if (data.memoryVectors) {
+          // 备份里的 vector 是 number[]（JSON 兼容形态）。直接还原写回 Uint8Array
+          // 把磁盘占用立刻降下来 — 不然要等下次读这个角色的向量时 lazy 迁移才生效。
+          const upgraded = data.memoryVectors.map((v: any) => {
+              if (!v || !v.vector || !Array.isArray(v.vector)) return v;
+              const f32 = new Float32Array(v.vector);
+              return { ...v, vector: new Uint8Array(f32.buffer, f32.byteOffset, f32.byteLength) };
+          });
+          clearAndAdd('memory_vectors', upgraded);
+      }
+      if (data.memoryLinks) clearAndAdd('memory_links', data.memoryLinks);
+      if (data.topicBoxes) clearAndAdd('topic_boxes', data.topicBoxes);
+      if (data.anticipations) clearAndAdd('anticipations', data.anticipations);
+      if (data.eventBoxes && db.objectStoreNames.contains('event_boxes')) clearAndAdd('event_boxes', data.eventBoxes);
+      if (data.memoryBatches && db.objectStoreNames.contains('memory_batches')) clearAndAdd('memory_batches', data.memoryBatches);
+
+      // 角色日程表（每日日程 + 意识流）
+      if (data.dailySchedules) clearAndAdd(STORE_DAILY_SCHEDULE, data.dailySchedules);
+
+      // 手账（跨角色聚合留痕本）
+      if (data.handbooks) clearAndAdd(STORE_HANDBOOK, data.handbooks);
+
+      // 手账 Tracker（健康/生活打卡引擎）
+      if (data.trackers) clearAndAdd(STORE_TRACKERS, data.trackers);
+      if (data.trackerEntries) clearAndAdd(STORE_TRACKER_ENTRIES, data.trackerEntries);
+
+      // Pixel Home（小屋像素界面）
+      if (data.pixelHomeAssets && db.objectStoreNames.contains('pixel_home_assets')) clearAndAdd('pixel_home_assets', data.pixelHomeAssets);
+      if (data.pixelHomeLayouts && db.objectStoreNames.contains('pixel_home_layouts')) clearAndAdd('pixel_home_layouts', data.pixelHomeLayouts);
 
       if (data.userProfile) {
           if (availableStores.includes(STORE_USER)) {

@@ -8,7 +8,10 @@ import { Task, Anniversary, AgendaItem, CharacterProfile } from '../types';
 import Modal from '../components/os/Modal';
 import { ContextBuilder } from '../utils/context';
 import { safeResponseJson } from '../utils/safeApi';
-import { sortAnniversariesByNextOccurrence } from '../utils/anniversaryNext';
+import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
+
+const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
+const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
 
 type ThemeMode = 'cyber' | 'soft' | 'minimal';
 
@@ -174,7 +177,11 @@ const ScheduleApp: React.FC = () => {
         if (!supervisor || !apiConfig.apiKey) { addToast('任务已完成', 'success'); return; }
         addToast(`${supervisor.name} 正在确认你的成果...`, 'info');
         try {
+            // 1. Build Persona Context
+            // RESTORED: Full context
+            await injectMemoryPalace(supervisor, undefined, task.title);
             const baseContext = ContextBuilder.buildCoreContext(supervisor, userProfile);
+
             const userPrompt = `
 ### 场景：任务完成 (Task Completed)
 用户 (${userProfile.name}) 刚刚在现实生活中完成了一个任务/契约： "${task.title}"。
@@ -219,10 +226,22 @@ const ScheduleApp: React.FC = () => {
     const generateAnniversaryThought = async (anni: Anniversary) => {
         const char = characters.find(c => c.id === anni.charId);
         if (!char || !apiConfig.apiKey) return;
-        if (anni.aiThought && anni.lastThoughtGeneratedAt && Date.now() - anni.lastThoughtGeneratedAt < 24 * 3600 * 1000) return;
-        if (Date.now() - (anni.lastThoughtGeneratedAt || 0) > 10000) addToast(`${char.name} 正在查阅日历...`, 'info');
-        const daysDiff = Math.ceil((new Date(anni.date).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-        const dayText = daysDiff > 0 ? `还有 ${daysDiff} 天` : daysDiff === 0 ? '就是今天!' : `已经过去 ${Math.abs(daysDiff)} 天了`;
+
+        // Check cache (24h)
+        if (anni.aiThought && anni.lastThoughtGeneratedAt && (Date.now() - anni.lastThoughtGeneratedAt < 24 * 60 * 60 * 1000)) {
+            return;
+        }
+
+        // FEEDBACK: Show loading state if explicit call
+        if (Date.now() - (anni.lastThoughtGeneratedAt || 0) > 10000) {
+             addToast(`${char.name} 正在查阅日历...`, 'info');
+        }
+
+        const daysDiff = Math.ceil((new Date(anni.date).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+        const dayText = daysDiff > 0 ? `还有 ${daysDiff} 天` : (daysDiff === 0 ? '就是今天!' : `已经过去 ${Math.abs(daysDiff)} 天了`);
+
+        // RESTORED: Full context
+        await injectMemoryPalace(char, undefined, anni.title);
         const baseContext = ContextBuilder.buildCoreContext(char, userProfile);
         const userPrompt = `
 ### 场景：纪念日提醒

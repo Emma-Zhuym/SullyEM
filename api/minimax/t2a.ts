@@ -1,4 +1,18 @@
-const TARGET_URL = 'https://api.minimaxi.com/v1/t2a_v2';
+const DOMESTIC_BASE = 'https://api.minimaxi.com';
+const OVERSEAS_BASE = 'https://api.minimax.io';
+const T2A_PATH = '/v1/t2a_v2';
+
+const resolveTargetUrl = (req: any): string => {
+  const header = typeof req?.headers?.['x-minimax-region'] === 'string'
+    ? req.headers['x-minimax-region'].trim().toLowerCase()
+    : '';
+  const envRegion = typeof process.env.MINIMAX_REGION === 'string'
+    ? process.env.MINIMAX_REGION.trim().toLowerCase()
+    : '';
+  const region = header || envRegion;
+  const base = region === 'overseas' ? OVERSEAS_BASE : DOMESTIC_BASE;
+  return `${base}${T2A_PATH}`;
+};
 
 const resolveGroupId = (req: any): string => {
   const bodyGroupId = typeof req?.body?.group_id === 'string' ? req.body.group_id : '';
@@ -10,7 +24,7 @@ const resolveGroupId = (req: any): string => {
 function setCors(res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-MiniMax-API-Key,X-MiniMax-Group-Id');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-MiniMax-API-Key,X-MiniMax-Group-Id,X-MiniMax-Region');
 }
 
 function normalizeApiKey(raw?: string): string {
@@ -49,6 +63,7 @@ export default async function handler(req: any, res: any) {
     const groupId = resolveGroupId(req);
     const requestBody = { ...(req.body || {}) };
     if (groupId && !requestBody.group_id) requestBody.group_id = groupId;
+    const targetUrl = resolveTargetUrl(req);
     const requestStartedAt = Date.now();
     const reqPreview = typeof requestBody.text === 'string' ? requestBody.text.slice(0, 80) : '';
 
@@ -58,11 +73,12 @@ export default async function handler(req: any, res: any) {
       output_format: requestBody.output_format,
       voice_id: requestBody?.voice_setting?.voice_id,
       group_id: requestBody.group_id || '',
+      target: targetUrl,
       text_length: typeof requestBody.text === 'string' ? requestBody.text.length : 0,
       text_preview: reqPreview,
     });
 
-    const upstream = await fetch(TARGET_URL, {
+    const upstream = await fetch(targetUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

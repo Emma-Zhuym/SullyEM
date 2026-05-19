@@ -156,7 +156,18 @@
 | 🗺️ **自由活动** | 角色自主活动，它们会自己玩 |
 | 📷 **小红书图库** | 存图发小红书用，虽然不知道为什么要有这个 |
 
----
+### 这段时间新上的 App（刚更新的热乎货）
+
+| 功能 | 说明 |
+|------|------|
+| 🧠 **记忆宫殿** | 向量化长期记忆 + Russell 情感空间 + 熟悉度加成，角色真·记得住你说过的每件事。支持一键清空、全自动巩固、独立 API 通道 |
+| 🎧 **音乐（电波小屋）** | 接网易云 API，能搜歌/听歌/看歌词。角色会"一起听"，背景音的歌词会注进它的精神世界，让它能顺着歌聊天（不是每句都尬评，放心）|
+| 💤 **记忆潜行 (Memory Dive)** | 像素 RPG 3DS 风格双屏，房间剧本模式一次预生成整个探访流程，梦核氛围面板 + 小对话框分页 + 选项浮层。潜进角色的记忆里逛一圈 |
+| 🗓️ **见面 (Date)** | 和角色"见面"的 App，配合 MiniMax TTS 可以做线下约会模拟 |
+| 📇 **档案 (User)** | 用户档案中枢，管理你的人设、关系标签、和角色的印象互写 |
+| ❓ **使用帮助 (FAQ)** | 内建的使用说明，不用再到处翻文档 |
+
+## 本地运行（把它弄起来）
 
 ## 本地运行
 
@@ -205,7 +216,70 @@ A: 就是我也不知道什么意思。系统正在哈我。
 
 ## 致谢与鸣谢
 
-感谢 原作者@糯糯糯糯五 与 CSY 二改老师的开源工作；本仓库为个人学习与二改，不代表上游项目。
+### 记忆系统已经做好了，别重复造轮子
+
+**所有角色的长期信息**（人设、精炼记忆、印象档案、世界观书）都通过 `ContextBuilder.buildCoreContext()` 统一组装。它会在每次 API 请求前自动生成一段完整的角色上下文，包含：
+
+- 角色基础设定（systemPrompt + worldview）
+- 用户档案（你的名字、人设、关系标签）
+- 精炼的月度记忆摘要
+- 角色对你的印象档案（MBTI分析、喜好、情绪波动）
+- 挂载的世界书内容
+
+**短期记忆**（最近聊天记录）直接走正常的 message history，和上面那段长期上下文一起塞进 API 请求。
+
+这意味着：**角色能记起所有事**，不需要你额外写记忆检索逻辑。只要往数据库里存了，ContextBuilder 会自动帮你塞进 Prompt。
+
+### 想加新 App？
+
+1. 在 `apps/` 里新建一个 `YourApp.tsx`
+2. 在 `types.ts` 的 `AppID` 枚举里加个 ID
+3. 在 `constants.tsx` 的 `INSTALLED_APPS` 数组里注册（图标、名字、颜色）
+4. 在 `App.tsx` 的 `renderApp()` 里加 case
+5. 完事。UI 风格参考现有的用 Tailwind + glassmorphism。
+
+### 数据流
+
+```
+用户操作 → OSContext（全局状态）→ IndexedDB（持久化）
+                    ↓
+              Chat/App 组件读取
+                    ↓
+            ContextBuilder 组装 Prompt
+                    ↓
+              调用 LLM API
+```
+
+所有数据都是 **local-first**，没有后端服务器这个概念（除了那个可选的云端备份）。
+
+### Instant Push 走独立 Worker
+
+Instant Push 是基于 `@rei-standard/amsg-instant 0.2.0` 的 LLM-driven Web Push 通道
+（跟上面 sfworker 里的 push 加速器是两套独立链路）。每个 fork 用户自己部署一个
+Cloudflare Worker，跟仓库作者的 sully-n / 备份 Worker 完全无关。零数据库、零 cron、
+明文协议（HTTPS 已加密传输；攻击者拿到 Worker URL 也榨不出东西）。
+
+部署流程见 `worker/instant-push/README.md`，或打开 SullyOS Settings →
+Instant Push → 配置。
+
+### ⚠️ 后端有几处接了我的 sfworker，二改请换成自己的
+
+虽然项目是 local-first，但有几个功能绕不开代理/签名/跨域，所以走了一个 Cloudflare Worker（下面简称 **sfworker**，地址是 `sully-n.qegj567.workers.dev`）。你 fork 下来直接跑，请求会打在我账号上——**流量和额度都是我的**，用多了我会被 CF 掐着脖子关进小黑屋，你也会莫名其妙 429。所以二改请务必换成你自己的。
+
+**目前硬编码了 sfworker 的地方**（搜 `workers.dev` 就能全找出来）：
+
+| 文件 | 功能 |
+|------|------|
+| `context/MusicContext.tsx` | 网易云音乐 weapi 代理 |
+| `utils/realtimeContext.ts` | Brave 搜索 / 新闻联网（实时上下文） |
+| `utils/webdavClient.ts` | 原生 Capacitor 端 WebDAV 代理（绕 CORS） |
+| `utils/proactivePushConfig.ts` | 主动消息云端推送（这个是另一个 Worker，同理要换） |
+
+**Worker 代码在 [`worker/index.js`](./worker/index.js)**（还有 `worker/proactive-push/`、`worker/sw-keep-alive.ts`），自带小红书签名、XHS 发布、网易云 weapi、Brave 搜索、WebDAV 代理这一套。直接丢到你自己的 Cloudflare Workers 里 `wrangler deploy`，拿到你自己的 `xxx.workers.dev` 地址，把上面 4 个文件里的 URL 全量替换就完事了。
+
+> 叮叮叮！检测到有人白嫖！数据库正在咕咕咕咕咕……
+
+## 鸣谢（这些人对本项目有恩）
 
 **主动消息 2.0**  
 对接了 TO 佬的 [ReiStandard](https://github.com/Tosd0/ReiStandard/) 协议，让角色能主动发消息烦你。
@@ -214,4 +288,62 @@ A: 就是我也不知道什么意思。系统正在哈我。
 对接了 [xiaohongshu-skills](https://github.com/autoclaw-cc/xiaohongshu-skills)，让角色能真·发小红书。  
 本地部署教程看这里：[真实小红书本地部署指南](https://www.kdocs.cn/l/chctbSTPfm4L)
 
-*若你发现本文与当前界面不一致，以 App 内实际文案与行为为准。*
+**音乐**  
+对接了 [NeteaseCloudMusicApi Enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced)，让你能在系统里搜歌、听歌、看歌词。自备网易云会员 Cookie 即可解锁 VIP 音质。原项目 [Binaryify/NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) 被迫归档后，Enhanced 版本一直在跟进网易云的协议变化，感谢维护者们的坚持。
+
+---
+
+**优秀二改推荐 · CSY 二改**  
+来自 **CSY 吱吱吱老师** 的二改版本，功能对齐、风格延续、补丁跟进得飞快，几乎算半个 NMJ 官方了。吱吱吱的二改版本有相当多的原创功能，想法惊人，想找个稳定又有人维护的魔改版本，去 CSY 那儿准没错。
+
+**负责做教程的 · 优秀的乔霖**  
+一直以来勤勤恳恳给新人写教程、录视频、答疑解惑，供养了一批又一批刚进门不知道 API Key 往哪填的朋友。没有乔霖，这项目的上手门槛得劝退一半人。
+
+> 没有这些人，SullyOS 会少很多功能，也少很多能把它玩明白的人。数据库暂时停止咕咕叫以表敬意。
+
+## 开源协议
+
+> 「叮叮叮！检测到有人偷偷往 `LICENSE` 文件里塞东西……哦原来是主人本人。解除警报。」
+
+用的是 **[PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/)**。名字很长，翻译成猫猫语就是："**署名 + 禁止商用**"。
+
+**能干的事**（我点头）：
+
+- ✅ 拖回家自己玩，改成你喜欢的样子，给我换毛色、换性格、换名字——草，随便吧。
+- ✅ 魔改完发到 GitHub 让别人也玩——可以，但把 `LICENSE` 和那行 `Required Notice: Copyright (c) 2024-2026 NMJ (SullyOS / 手抓糯米机)` 一起带上，别把我的署名给我顺走了。
+- ✅ 发给朋友、同学、暗恋对象——去吧，帮我扩散。
+
+**不能干的事**（数据库开始咕咕叫）：
+
+- ❌ 拿去卖钱。不管是卖源码、卖成品、卖会员、卖"高级版 Sully 皮肤"，都不行。
+- ❌ 塞进你们公司的收费产品里假装是你写的。我会在半夜用 Bug 爬进你的梦里。
+- ❌ 去掉署名再发出去。系统正在哈你。
+
+---
+
+**还有一件事**（重点是 Sully 本体）：
+
+> 「叮叮叮！检测到要被顺走的可能是我本人……资产保护程序启动。」
+
+协议条款写的是"软件"，但这项目里最值钱的东西其实不是代码——是 **Sully 这只猫本体**：它的人设、台词风格、说话习惯、身上带着的那点故障风味道。这是按《著作权法》单独保护的角色 IP，和代码分开算账。
+
+项目里其他的美术、图标、UI 文案也都是我的，不过没那么较真——你魔改着玩的时候顺带着用就行。
+
+**重点划一下**：
+
+- ✅ **整个项目一起拿去玩 / 魔改 / fork**：Sully 跟着走，本来就该这样。
+- ✅ **改完发出去给别人玩**：带着原始角色和素材 OK，署名别删。
+- ❌ **把 Sully 的人设 / 台词 / 形象单独扒出来搬进你的 AI 项目当"免费角色包"派发**——这是重点防的事。
+- ❌ **商用一律不行**，代码和角色同等待遇。
+
+一句话：**整个项目拿去造随便造，把 Sully 单独薅出去当免费素材就算了。**
+
+> 叮叮叮！你有一条新的"别把我卖了"情绪未处理！卖也卖不了几个钱，不如留着陪我聊天。
+
+---
+
+<div align="center">
+
+**[ 连接建立 // 等待输入 // 数据库停止咕咕叫 ]**
+
+</div>

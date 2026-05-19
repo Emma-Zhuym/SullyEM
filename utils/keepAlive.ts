@@ -10,23 +10,14 @@
  *   KeepAlive.stop();    // after API call completes
  */
 
-import serviceWorkerUrl from '../worker/sw-keep-alive.ts?worker&url';
-
 let registered = false;
-
-function resolveServiceWorkerRegistration() {
-  const currentDir = new URL('./', window.location.href);
-  return {
-    scope: currentDir.pathname,
-    scriptUrl: serviceWorkerUrl,
-  };
-}
 
 async function ensureRegistered(): Promise<void> {
   if (registered || !('serviceWorker' in navigator)) return;
   try {
-    const { scriptUrl, scope } = resolveServiceWorkerRegistration();
-    const reg = await navigator.serviceWorker.register(scriptUrl, { scope, type: 'module' });
+    const base = import.meta.env.BASE_URL || '/';
+    const scriptUrl = base + 'sw-keep-alive.js';
+    const reg = await navigator.serviceWorker.register(scriptUrl, { scope: base });
     await navigator.serviceWorker.ready;
     registered = true;
     console.log('[KeepAlive] Service Worker registered', reg.scope);
@@ -53,5 +44,15 @@ export const KeepAlive = {
   /** Signal that the request has finished. */
   stop() {
     postToSW({ type: 'keepalive-stop' });
+  },
+
+  /**
+   * Force re-register the SW. 调用方 (深度重置订阅) 已经先 unregister 了旧 SW;
+   * 这里只负责把内部 `registered` flag 清掉再走一遍 ensureRegistered, 否则
+   * 老的 idempotent guard 会以为 "已注册" 直接 return.
+   */
+  async reregister() {
+    registered = false;
+    await ensureRegistered();
   },
 };

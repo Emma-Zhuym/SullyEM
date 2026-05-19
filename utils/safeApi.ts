@@ -26,6 +26,14 @@ export async function safeResponseJson(response: Response): Promise<any> {
         throw new Error(`API返回了空响应 (HTTP ${response.status})`);
     }
 
+    // SSE / 流式响应（有些 OpenAI 兼容代理无视 stream:false 强行流式返回）：
+    // 形如 "data: {...}\ndata: {...}\ndata: [DONE]\n"，把 deltas 拼成完整 content
+    if (trimmed.startsWith('data:')) {
+        const assembled = parseSseToCompletion(text);
+        if (assembled) return assembled;
+        // 解析不出来 → 继续往下尝试当普通 JSON 抛错，保留原 preview
+    }
+
     try {
         return JSON.parse(text);
     } catch (e) {
@@ -38,21 +46,109 @@ export async function safeResponseJson(response: Response): Promise<any> {
 }
 
 /**
+ * 把 OpenAI 兼容的 SSE 流响应合成一个普通 chat/completion 响应对象。
+ *
+ * 支持两种形态：
+ *  1. delta 流：每个 chunk 的 choices[0].delta.content 是增量片段，拼接起来
+ *  2. 一次性 SSE：choices[0].message.content 直接就是全部内容（少见）
+ *
+ * 返回 { choices: [{ message: { content, role }, finish_reason }], ... } 方便上游
+ * 用现有的 data.choices[0].message.content 路径消费，无需改调用点。
+ */
+function parseSseToCompletion(raw: string): any | null {
+    let assembled = '';
+    let role = 'assistant';
+    let finishReason: string | null = null;
+    let firstChunk: any = null;
+    let usage: any = undefined;
+    let gotAnyChunk = false;
+
+    // 按行切，逐行找 "data: " 开头（允许 \r\n、空行分隔）
+    const lines = raw.split(/\r?\n/);
+    for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === '[DONE]') continue;
+        let chunk: any;
+        try { chunk = JSON.parse(payload); } catch { continue; }
+        gotAnyChunk = true;
+        if (!firstChunk) firstChunk = chunk;
+        // OpenAI 流式 usage 在最后一个 chunk（include_usage=true 时），也可能出现在中途；
+        // 始终取最后一个非空的 usage，兼容各家代理。
+        if (chunk.usage) usage = chunk.usage;
+        const choice = chunk.choices?.[0];
+        if (!choice) continue;
+        // delta 路径（OpenAI 流式常见）
+        if (choice.delta) {
+            if (typeof choice.delta.content === 'string') assembled += choice.delta.content;
+            if (choice.delta.role) role = choice.delta.role;
+        }
+        // message 路径（一次性 SSE，不常见但兼容）
+        else if (choice.message) {
+            if (typeof choice.message.content === 'string') {
+                assembled += choice.message.content;
+            }
+            if (choice.message.role) role = choice.message.role;
+        }
+        if (choice.finish_reason) finishReason = choice.finish_reason;
+    }
+
+    if (!gotAnyChunk) return null;
+
+    // 合成兼容结构
+    return {
+        id: firstChunk?.id || 'sse-assembled',
+        object: 'chat.completion',
+        created: firstChunk?.created || Math.floor(Date.now() / 1000),
+        model: firstChunk?.model || '',
+        choices: [{
+            index: 0,
+            message: { role, content: assembled },
+            finish_reason: finishReason,
+        }],
+        usage: usage || firstChunk?.usage,
+    };
+}
+
+/**
  * Fetch with automatic retry for transient errors.
  * Retries on: 429, 500, 502, 503, 504 and network failures.
  * Returns the parsed JSON data directly.
+ *
+ * `timeoutMs`：每次尝试的硬超时。如果调用方没在 options.signal 里自带 AbortController，
+ * 这里会给每次 attempt 起一个内部 AbortController，超时就 abort，避免提供方 stall
+ * 住整个页面（用户误以为卡死，只能重新打开网页）。0 / 未传 = 不超时。
  */
 export async function safeFetchJson(
     url: string,
     options: RequestInit,
-    maxRetries: number = 2
+    maxRetries: number = 2,
+    timeoutMs: number = 0,
 ): Promise<any> {
     const retryableStatuses = new Set([429, 500, 502, 503, 504]);
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        // 每次 attempt 建一个独立的 AbortController（仅用于 timeout）
+        // 调用方自己的 options.signal 仍然有效，两者任一触发就 abort
+        let attemptOptions = options;
+        let timeoutHandle: any = null;
+        if (timeoutMs > 0) {
+            const ac = new AbortController();
+            timeoutHandle = setTimeout(() => ac.abort(new Error(`timeout ${timeoutMs}ms`)), timeoutMs);
+            if (options.signal) {
+                // 串联外部 signal：外部 abort 也触发内部
+                if (options.signal.aborted) {
+                    clearTimeout(timeoutHandle);
+                    throw new Error('aborted');
+                }
+                options.signal.addEventListener('abort', () => ac.abort(), { once: true });
+            }
+            attemptOptions = { ...options, signal: ac.signal };
+        }
         try {
-            const response = await fetch(url, options);
+            const response = await fetch(url, attemptOptions);
+            if (timeoutHandle) clearTimeout(timeoutHandle);
 
             if (!response.ok) {
                 // For retryable status codes, retry before giving up
@@ -71,12 +167,16 @@ export async function safeFetchJson(
 
             return await safeResponseJson(response);
         } catch (e: any) {
+            if (timeoutHandle) clearTimeout(timeoutHandle);
             lastError = e;
 
+            // AbortError（含 timeout）：是否重试看上层策略，先按可重试处理（网络层面）
+            const isAbort = e?.name === 'AbortError' || /aborted|timeout/i.test(e?.message || '');
+
             // Network errors (fetch itself failed) are retryable
-            if (e.name === 'TypeError' && attempt < maxRetries) {
+            if ((e.name === 'TypeError' || isAbort) && attempt < maxRetries) {
                 const delay = Math.pow(2, attempt) * 1000;
-                console.warn(`[SafeAPI] Network error, retry ${attempt + 1}/${maxRetries} in ${delay}ms:`, e.message);
+                console.warn(`[SafeAPI] ${isAbort ? 'Timeout/Abort' : 'Network error'}, retry ${attempt + 1}/${maxRetries} in ${delay}ms:`, e.message);
                 await new Promise(r => setTimeout(r, delay));
                 continue;
             }
@@ -99,9 +199,19 @@ export async function safeFetchJson(
 /**
  * Safely extract the AI content string from an OpenAI-compatible response.
  * Returns '' instead of crashing when the structure is unexpected.
+ *
+ * Handles thinking models (DeepSeek-R1, GLM-4.5, QwQ, Qwen3, ...):
+ *  - Falls back to `reasoning_content` when `content` is missing/empty
+ *  - Strips hidden <think>...</think> chain-of-thought blocks
  */
 export function extractContent(data: any): string {
-    return data?.choices?.[0]?.message?.content?.trim() || '';
+    const msg = data?.choices?.[0]?.message;
+    let text: string = msg?.content || '';
+    if (!text.trim()) text = msg?.reasoning_content || '';
+    // Strip hidden chain-of-thought blocks: <think> / <thinking> / <thought>
+    text = text.replace(/<(think|thinking|thought)>[\s\S]*?<\/\1>/gi, '');
+    text = text.replace(/<(?:think|thinking|thought)>[\s\S]*$/gi, '');
+    return text.trim();
 }
 
 /**

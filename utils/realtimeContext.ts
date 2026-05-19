@@ -161,7 +161,7 @@ export const RealtimeContextManager = {
     fetchBraveNews: async (apiKey: string): Promise<NewsItem[]> => {
         try {
             // 使用自建的 Cloudflare Worker 代理
-            const workerUrl = 'https://sully-n.qegj567.workers.dev/news?q=热点新闻&count=5&country=cn';
+            const workerUrl = 'https://sullymeow.ccwu.cc/news?q=热点新闻&count=5&country=cn';
 
             const response = await fetch(workerUrl, {
                 headers: {
@@ -439,7 +439,7 @@ export const RealtimeContextManager = {
 
         try {
             // 使用自建的 Cloudflare Worker 代理
-            const workerUrl = `https://sully-n.qegj567.workers.dev/search?q=${encodeURIComponent(query)}&count=5`;
+            const workerUrl = `https://sullymeow.ccwu.cc/search?q=${encodeURIComponent(query)}&count=5`;
 
             const response = await fetch(workerUrl, {
                 method: 'GET',
@@ -638,7 +638,7 @@ export interface DiaryPreview {
 export const NotionManager = {
 
     // Worker 代理地址
-    WORKER_URL: 'https://sully-n.qegj567.workers.dev',
+    WORKER_URL: 'https://sullymeow.ccwu.cc',
 
     /**
      * 测试 Notion 连接（通过 Worker 代理）
@@ -1709,7 +1709,56 @@ function parseMarkdownToNotionBlocks(content: string, mood?: string, characterNa
         });
     }
 
-    return blocks;
+    return normalizeBlocksForNotion(blocks);
+}
+
+// Notion API 硬限制：单个 rich_text content ≤ 2000 字符；单次 POST children ≤ 100。
+// 留点 buffer 防 emoji / 双字节边界拼接。
+const NOTION_MAX_RICH_TEXT_LEN = 1900;
+const NOTION_MAX_CHILDREN = 100;
+
+function splitRichTextItem(item: any): any[] {
+    const content = item?.text?.content;
+    if (typeof content !== 'string' || content.length <= NOTION_MAX_RICH_TEXT_LEN) return [item];
+    const chunks: any[] = [];
+    for (let i = 0; i < content.length; i += NOTION_MAX_RICH_TEXT_LEN) {
+        chunks.push({
+            ...item,
+            text: { ...item.text, content: content.slice(i, i + NOTION_MAX_RICH_TEXT_LEN) }
+        });
+    }
+    return chunks;
+}
+
+function normalizeBlocksForNotion(blocks: any[]): any[] {
+    // 1. 每个 block 的 rich_text 切 2000 字符
+    const safe = blocks.map(block => {
+        const payload = block[block.type];
+        if (payload && Array.isArray(payload.rich_text)) {
+            const split: any[] = [];
+            for (const item of payload.rich_text) split.push(...splitRichTextItem(item));
+            return { ...block, [block.type]: { ...payload, rich_text: split } };
+        }
+        return block;
+    });
+
+    // 2. 总 block 数限制 100；超出截断并附提示
+    if (safe.length <= NOTION_MAX_CHILDREN) return safe;
+    const truncated = safe.slice(0, NOTION_MAX_CHILDREN - 1);
+    truncated.push({
+        object: 'block',
+        type: 'callout',
+        callout: {
+            rich_text: [{
+                type: 'text',
+                text: { content: `（日记内容过长，已截断 ${safe.length - (NOTION_MAX_CHILDREN - 1)} 个段落）` },
+                annotations: { italic: true, color: 'gray' }
+            }],
+            icon: { emoji: '✂️' },
+            color: 'gray_background'
+        }
+    });
+    return truncated;
 }
 
 // ============================================
@@ -1913,7 +1962,7 @@ function formatFeishuDiaryContent(content: string, mood?: string, characterName?
 
 export const FeishuManager = {
 
-    WORKER_URL: 'https://sully-n.qegj567.workers.dev',
+    WORKER_URL: 'https://sullymeow.ccwu.cc',
 
     /**
      * 获取飞书 tenant_access_token（通过 Worker 代理，带缓存）

@@ -438,10 +438,18 @@ addToast('重播对话', 'info');
     };
 
     const handleSend = async () => {
-        if (!input.trim() || isTyping) return;
-        const text = input.trim();
-        setInput('');
-        setShowInputBox(false);
+        if (isTyping) return;
+        const inputText = input.trim();
+        // 重发模式：输入为空但最后一条是 user 消息（说明上一轮 API 没回，可能错误中断或网络抖动），
+        // 让发送键直接拿 DB 里那条 user 的内容重新触发 LLM，不必让用户重打。与 chat app 行为对齐。
+        const lastMsg = messages[messages.length - 1];
+        const canRetry = !inputText && lastMsg?.role === 'user';
+        if (!inputText && !canRetry) return;
+        const text = inputText || lastMsg.content;
+        if (inputText) {
+            setInput('');
+            setShowInputBox(false);
+        }
         setIsTyping(true);
         setIsShowingOpening(false); // First user interaction - opening phase is over
 
@@ -613,7 +621,8 @@ addToast('重播对话', 'info');
                     </button>
                 )}
                 
-                {/* Voice Toggle — tap to enable/disable, long-press or second tap when enabled to show lang picker */}
+                {/* Voice Toggle — tap opens the language picker (where the off switch lives);
+                    double-click / long-press are kept as shortcuts to disable voice directly. */}
                 <div className="relative">
                     <button onClick={(e) => {
                             e.stopPropagation();
@@ -627,7 +636,7 @@ addToast('重播对话', 'info');
                         }}
                         onDoubleClick={(e) => { e.stopPropagation(); if (voiceEnabled) { updateCharacter(char.id, { dateVoiceEnabled: false }); setShowVoiceLangPicker(false); addToast('语音已关闭', 'info'); } }}
                         className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all shadow-lg active:scale-95 ${voiceEnabled ? 'bg-white/20 backdrop-blur-md border-white/30 text-white/80' : 'bg-black/30 backdrop-blur-md border-white/20 text-white/50 hover:bg-white/20'}`}
-                        title={voiceEnabled ? '点击切换语种 / 双击关闭' : '开启语音'}
+                        title={voiceEnabled ? '点击展开：选语种 / 关闭语音' : '开启语音'}
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
                             {voiceEnabled
@@ -636,7 +645,8 @@ addToast('重播对话', 'info');
                         </svg>
                         {voiceEnabled && voiceLang && <span className="absolute -bottom-1 -right-1 text-[8px] font-bold bg-white/30 text-white rounded-full px-1 leading-tight">{VOICE_LANG_OPTIONS.find(o => o.v === voiceLang)?.l || ''}</span>}
                     </button>
-                    {/* Collapsible Language Picker */}
+                    {/* Collapsible Language Picker — includes an always-visible off switch
+                        so users aren't stuck guessing that the button needs a double-click. */}
                     {voiceEnabled && showVoiceLangPicker && (
                         <div className="absolute top-12 right-0 flex flex-col gap-1 animate-fade-in">
                             {VOICE_LANG_OPTIONS.map(opt => (
@@ -645,6 +655,11 @@ addToast('重播对话', 'info');
                                     {opt.l}
                                 </button>
                             ))}
+                            <button onClick={(e) => { e.stopPropagation(); updateCharacter(char.id, { dateVoiceEnabled: false }); setShowVoiceLangPicker(false); addToast('语音已关闭', 'info'); }}
+                                className="h-7 px-2.5 rounded-full text-[10px] font-bold transition-all active:scale-95 whitespace-nowrap bg-red-500/50 text-white border border-red-300/40 shadow-md flex items-center gap-1 justify-center">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-2.5 h-2.5"><path fillRule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16ZM8.28 7.22a.75.75 0 0 0-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 1 0 1.06 1.06L10 11.06l1.72 1.72a.75.75 0 1 0 1.06-1.06L11.06 10l1.72-1.72a.75.75 0 0 0-1.06-1.06L10 8.94 8.28 7.22Z" clipRule="evenodd" /></svg>
+                                关闭
+                            </button>
                         </div>
                     )}
                 </div>
@@ -814,7 +829,19 @@ addToast('重播对话', 'info');
                 {showInputBox && (
                     <div className={`w-[90%] max-w-lg backdrop-blur-xl rounded-2xl p-2 flex gap-2 shadow-2xl animate-fade-in mb-8 pointer-events-auto ${char.dateLightReading ? 'bg-stone-100 border border-stone-300' : 'bg-white/10 border border-white/20'}`} onClick={(e) => e.stopPropagation()}>
                         <textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder={isTyping ? "等待回应..." : "输入对话..."} disabled={isTyping} className={`flex-1 bg-transparent px-4 py-3 outline-none font-light resize-none h-14 no-scrollbar leading-tight ${char.dateLightReading ? 'text-stone-800 placeholder:text-stone-400' : 'text-white placeholder:text-white/30'}`} autoFocus />
-                        <button onClick={handleSend} disabled={!input.trim() || isTyping} className="px-6 bg-white text-black rounded-xl font-bold text-sm hover:bg-slate-200 disabled:opacity-50 transition-colors h-14 flex items-center justify-center">SEND</button>
+                        {(() => {
+                            const lastMsg = messages[messages.length - 1];
+                            const canRetry = !input.trim() && !isTyping && lastMsg?.role === 'user';
+                            return (
+                                <button
+                                    onClick={handleSend}
+                                    disabled={(!input.trim() && !canRetry) || isTyping}
+                                    className="px-6 bg-white text-black rounded-xl font-bold text-sm hover:bg-slate-200 disabled:opacity-50 transition-colors h-14 flex items-center justify-center"
+                                >
+                                    {canRetry ? 'RETRY' : 'SEND'}
+                                </button>
+                            );
+                        })()}
                     </div>
                 )}
             </div>

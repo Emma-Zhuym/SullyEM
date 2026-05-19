@@ -5,21 +5,15 @@ import { ActiveMsgRuntime } from './utils/activeMsgRuntime';
 import { KeepAlive } from './utils/keepAlive';
 import { ProactiveChat } from './utils/proactiveChat';
 import { installIOSStandaloneWorkaround } from './utils/iosStandalone';
+import { installWakeListener } from './utils/proactivePushConfig';
 
 // Register the keep-alive Service Worker early so it's ready before any AI calls
 KeepAlive.init().then(() => {
   // Resume any active proactive schedule after SW is ready
   ProactiveChat.resume();
-  // 主动消息 2.0 需在设置中启用才会初始化
-  try {
-    const raw = localStorage.getItem('os_realtime_config');
-    const cfg = raw ? JSON.parse(raw) : {};
-    if (cfg.activeMsg2Enabled === true) {
-      void ActiveMsgRuntime.init();
-    }
-  } catch {
-    // 不启用 2.0
-  }
+  void ActiveMsgRuntime.init();
+  // Record every wake the SW reports so the diagnostic panel can show "last received".
+  installWakeListener();
 });
 
 installIOSStandaloneWorkaround();

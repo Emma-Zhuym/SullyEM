@@ -4,7 +4,12 @@
  * A) Keep-alive: prevent browser from suspending during long AI fetch requests
  * B) Proactive timers: periodically notify the main thread to trigger AI messages
  *    for any number of characters independently.
+ *
+ * SW_VERSION: 改 SW 实质行为时（push handler / message protocol / 通知策略）
+ * 手工 bump。前端 BuildBadge 通过 GET_SW_VERSION postMessage 协议读取并显示，
+ * 用来确认线上跑的是哪一版 SW（PWA 缓存了旧 SW 时一眼能看出来）。
  */
+const SW_VERSION = '1.3.0';
 
 const PING_INTERVAL = 15_000;
 const MAX_MANUAL_ALIVE_MS = 5 * 60_000;
@@ -156,14 +161,210 @@ self.addEventListener('message', (event) => {
     case 'proactive-sync':
       syncProactive(event.data.configs || []);
       break;
+    case 'GET_SW_VERSION':
+      // 前端 BuildBadge 查询，回 MessageChannel
+      if (event.ports && event.ports[0]) {
+        event.ports[0].postMessage({ version: SW_VERSION });
+      }
+      break;
   }
 });
 
+// --- Push Notifications (ActiveMsg 2.0) ---
+var ACTIVE_MSG_DB_NAME = 'ActiveMsg';
+var ACTIVE_MSG_DB_VERSION = 1;
+var ACTIVE_MSG_INBOX_STORE = 'inbox';
+
+function openInboxDb() {
+  return new Promise(function (resolve, reject) {
+    var request = indexedDB.open(ACTIVE_MSG_DB_NAME, ACTIVE_MSG_DB_VERSION);
+    request.onerror = function () { reject(request.error); };
+    request.onsuccess = function () { resolve(request.result); };
+    request.onupgradeneeded = function () {
+      var db = request.result;
+      if (!db.objectStoreNames.contains(ACTIVE_MSG_INBOX_STORE)) {
+        db.createObjectStore(ACTIVE_MSG_INBOX_STORE, { keyPath: 'messageId' });
+      }
+    };
+  });
+}
+
+async function saveIncomingActiveMessage(payload) {
+  var charId = payload && payload.metadata && payload.metadata.charId;
+  var charName = (payload && payload.contactName) || (payload && payload.metadata && payload.metadata.charName) || '主动消息';
+  var body = String((payload && payload.message) || (payload && payload.body) || '').trim();
+  var messageId = String((payload && payload.messageId) || ((charId || 'unknown') + '-' + Date.now()));
+  var payloadTimestamp = payload && payload.timestamp;
+  var parsedSentAt = payloadTimestamp ? new Date(payloadTimestamp).getTime() : NaN;
+  var sentAt = Number.isFinite(parsedSentAt) ? parsedSentAt : Date.now();
+
+  if (!charId || !body) return;
+
+  var db = await openInboxDb();
+  await new Promise(function (resolve, reject) {
+    var tx = db.transaction(ACTIVE_MSG_INBOX_STORE, 'readwrite');
+    tx.objectStore(ACTIVE_MSG_INBOX_STORE).put({
+      messageId: messageId,
+      charId: charId,
+      charName: charName,
+      body: body,
+      avatarUrl: payload && payload.avatarUrl,
+      source: payload && payload.source,
+      messageType: payload && payload.messageType,
+      messageSubtype: payload && payload.messageSubtype,
+      taskId: (payload && payload.taskId) || null,
+      metadata: (payload && payload.metadata) || {},
+      sentAt: sentAt,
+      receivedAt: Date.now(),
+    });
+    tx.oncomplete = function () { resolve(); };
+    tx.onerror = function () { reject(tx.error); };
+  });
+
+  await notifyClients({
+    type: 'active-msg-received',
+    charId: charId,
+    charName: charName,
+    body: body,
+    avatarUrl: payload && payload.avatarUrl,
+    sentAt: sentAt,
+  });
+}
+
+// --- Proactive wake-up (main-thread runs AI locally) ---
+// When the Cloudflare Worker cron fires at a scheduled time, it sends a
+// tiny `{type:'proactive-wake', charId}` push.
+//
+// Two branches:
+//  A) Live tab present → postMessage to main thread, which runs runProactive()
+//     locally (calls AI, saves messages).  No system notification — the user
+//     will see the message inside the app once generation finishes; the
+//     in-app "正在送达消息" indicator covers the wait.
+//  B) No live tab → spec-compliance silent notification.  We can't run the
+//     LLM here (the SW doesn't have the app's full context stack), and the
+//     user has explicitly said a "open the app to read" doorbell is more
+//     annoying than helpful.  So we satisfy the browser's "every push must
+//     show *something*" rule with an empty silent notification that's torn
+//     down immediately.  Catch-up runs naturally next time the user opens
+//     the app — `checkOverdueSchedules()` in proactiveChat.ts handles that.
+async function handleProactiveWake(payload) {
+  var charId = payload && payload.charId;
+  if (!charId) return;
+  var receivedAt = Date.now();
+
+  var clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  if (clients.length > 0) {
+    for (var i = 0; i < clients.length; i++) {
+      clients[i].postMessage({ type: 'proactive-trigger', charId: charId, source: 'push' });
+      clients[i].postMessage({ type: 'proactive-wake-received', charId: charId, t: receivedAt, hadLiveClient: true });
+    }
+    return;
+  }
+
+  // No live tab — silent compliance notification, immediately dismissed so
+  // it doesn't show in any tray / panel.  Browsers (esp. Chrome) require
+  // some visible result per push or they revoke the subscription over time;
+  // an immediately-closed notification counts as "shown" without bothering
+  // the user.
+  var tag = 'proactive-wake-silent-' + charId;
+  await self.registration.showNotification('', {
+    body: '',
+    silent: true,
+    tag: tag,
+    requireInteraction: false,
+  });
+  var notifs = await self.registration.getNotifications({ tag: tag });
+  for (var j = 0; j < notifs.length; j++) notifs[j].close();
+}
+
+self.addEventListener('push', function (event) {
+  var payload = null;
+  if (event.data) {
+    try { payload = event.data.json(); } catch (e) {
+      try { payload = { message: event.data.text() }; } catch (e2) { /* ignore */ }
+    }
+  }
+  console.log('[SW] push received', payload);
+  if (!payload) return;
+
+  // Branch A: proactive wake-up — main thread handles AI generation.
+  if (payload.type === 'proactive-wake') {
+    event.waitUntil(handleProactiveWake(payload));
+    return;
+  }
+
+  // Branch A2: developer-triggered test ping — show a visible notification
+  // confirming the round-trip works.  No app-level side effects.
+  if (payload.type === 'proactive-test') {
+    event.waitUntil(self.registration.showNotification('推送测试成功', {
+      body: '后端 → 浏览器这条链路是通的。',
+      icon: './icons/icon-192.png',
+      badge: './icons/icon-192.png',
+      tag: 'proactive-test',
+      data: { proactiveTest: true, t: Date.now() },
+    }));
+    return;
+  }
+
+  // Branch B: instant push / ActiveMsg 2.0 — server included the generated
+  // message body; save + notify.
+  //
+  // 有 focused client (用户在前台) 时直接跳过 showNotification —— Push spec
+  // 明确 "if any client is focused" 满足 user-visible 要求, 不算 silent push,
+  // 配额不扣权重不掉。proactive-wake 分支同模式 (line 244-250) 已在线跑数月
+  // 验证。之前用 silent empty + close 模式 iOS 会渲染 "xxx from xxx" 默认
+  // 内容（因为 iOS 不允许真正空通知, 会自动填 site name + origin），所以
+  // 改成"有 client 就完全不调 showNotification"。
+  // 消息由 OSContext 的 in-app toast + unread badge + 聊天页气泡兜底。
+  // 不在前台才弹真实系统通知。
+  //
+  // 例外: payload.metadata.test === true 时永远 showNotification —— 测试
+  // 推送就是要验证系统通知能不能弹, 前台静默会让用户以为"没送达"。
+  var title = (payload && payload.contactName) || '新消息';
+  var body = String((payload && payload.message) || (payload && payload.body) || '').trim();
+  var isTest = !!(payload && payload.metadata && payload.metadata.test === true);
+  event.waitUntil((async function () {
+    var clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    var hasFocused = clients.some(function (c) { return c.focused; });
+    await saveIncomingActiveMessage(payload);
+    if (!hasFocused || isTest) {
+      await self.registration.showNotification(title, {
+        body: body,
+        icon: './icons/icon-192.png',
+        badge: './icons/icon-192.png',
+        data: { payload: payload },
+      });
+    }
+    // 前台且非测试: 跳过通知, 由 in-app UI 兜底
+  })());
+});
+
+self.addEventListener('notificationclick', function (event) {
+  var data = event.notification.data || {};
+  var payload = data.payload || data;
+  var charId = (payload.metadata && payload.metadata.charId) || payload.charId || data.charId || '';
+  event.notification.close();
+
+  event.waitUntil((async function () {
+    var clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    if (clients.length > 0) {
+      var client = clients[0];
+      await client.focus();
+      client.postMessage({ type: 'active-msg-open', charId: charId });
+      return;
+    }
+    var openUrl = new URL(self.registration.scope || self.location.origin);
+    openUrl.searchParams.set('openApp', 'chat');
+    if (charId) openUrl.searchParams.set('activeMsgCharId', charId);
+    await self.clients.openWindow(openUrl.toString());
+  })());
+});
+
 // --- Lifecycle ---
-self.addEventListener('install', () => {
+self.addEventListener('install', function () {
   self.skipWaiting();
 });
 
-self.addEventListener('activate', (event) => {
+self.addEventListener('activate', function (event) {
   event.waitUntil(self.clients.claim());
 });

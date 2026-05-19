@@ -30,7 +30,10 @@ export enum AppID {
   Call = 'call', // 语音电话测试（MiniMax TTS）
   VoiceDesigner = 'voice_designer', // 捏声音 — MiniMax 音色设计器
   Guidebook = 'guidebook', // 攻略本 — 角色攻略用户小游戏
-  LifeSim = 'lifesim', // 模拟人生 — 都市人生
+  LifeSim = 'lifesim', // 模拟人生 — 与角色共同经营的小世界
+  MemoryPalace = 'memory_palace', // 记忆宫殿 — 七个房间可视化
+  Handbook = 'handbook', // 手账 — 跨角色聚合的生活留痕本（LLM 代笔 + 角色生活流陪伴）
+  QQBridge = 'qq_bridge', // QQ 桥接 — 通过 NapCat 把 QQ 私聊接入当前角色，共享 IndexedDB 上下文
 }
 
 export interface SystemLog {
@@ -69,8 +72,8 @@ export interface OSTheme {
   wallpaper: string;
   darkMode: boolean;
   contentColor?: string;
-  launcherWidgetImage?: string; // kept for backward compat, migrated to launcherWidgets['wide']
-  launcherWidgets?: Record<string, string>; // slots: 'tl' | 'tr' | 'wide'
+  launcherWidgetImage?: string; // DEPRECATED: always stripped on load — never renders.
+  launcherWidgets?: Record<string, string>; // slots: 'tl' | 'tr' | 'wide' | 'dsq' (legacy 'bl' / 'br' are banned)
   desktopDecorations?: DesktopDecoration[];
   customFont?: string;
   hideStatusBar?: boolean;
@@ -89,6 +92,8 @@ export interface OSTheme {
   chatHeaderDensity?: 'compact' | 'default' | 'airy';
   chatStatusStyle?: 'subtle' | 'pill' | 'dot';
   chatSendButtonStyle?: 'circle' | 'pill' | 'minimal';
+  /** Instant Push 用户气泡左侧的"准备中"圆点动画。默认开启。 */
+  chatPendingIndicator?: boolean;
 }
 
 /** 外观预设：保存/导入导出完整桌面+聊天外观 */
@@ -129,12 +134,34 @@ export interface VirtualTime {
   day: string;
 }
 
+export type MinimaxRegion = 'domestic' | 'overseas';
+
 export interface APIConfig {
   baseUrl: string;
   apiKey: string;
   minimaxApiKey?: string;
   minimaxGroupId?: string;
+  // 'domestic' → https://api.minimaxi.com (国内站)
+  // 'overseas' → https://api.minimax.io  (海外站)
+  // Missing / unknown falls back to domestic.
+  minimaxRegion?: MinimaxRegion;
+  // Replicate token (r8_xxx) for ACE-Step song generation in 写歌 App.
+  aceStepApiKey?: string;
   model: string;
+  // Per-API streaming toggle. Some endpoints only support stream:true.
+  // Missing → false (默认非流式).
+  stream?: boolean;
+  // Per-API temperature for chat / 约会 main calls. Missing → 0.85.
+  temperature?: number;
+}
+
+export interface InstantPushConfig {
+  enabled: boolean;
+  workerUrl: string;        // https://your-instant.workers.dev
+  // VAPID 公私钥已迁移到 utils/pushVapid.ts (push_vapid_v1)，与 Proactive Push
+  // 共享同一份，避免两边互相 unsubscribe 抢同一个 pushManager 订阅。
+  clientToken?: string;     // 对应 Worker 的 AMSG_CLIENT_TOKEN
+  updatedAt?: number;
 }
 
 export type ActiveMsg2DbDriver = 'pg' | 'neon';
@@ -316,6 +343,30 @@ export interface RoomNote {
     content: string;
     type: 'lyric' | 'doodle' | 'thought' | 'search' | 'gossip';
     relatedMessageId?: number; 
+}
+
+export interface ScheduleSlot {
+    startTime: string;    // "08:00"
+    activity: string;     // "晨跑"
+    description?: string; // "在河边慢跑"
+    emoji?: string;       // "🏃"
+    location?: string;    // "河边"
+    innerThought?: string; // 该时段的内心独白，生成时由AI写好，运行时直接注入
+}
+
+export interface DailySchedule {
+    id: string;           // `${charId}_${date}`
+    charId: string;
+    date: string;         // YYYY-MM-DD
+    slots: ScheduleSlot[];
+    generatedAt: number;
+    coverImage?: string;  // 用户自定义角色看板图 (持久化)
+    /**
+     * 按时段生成的意识流独白。
+     * key = slot 的 startTime（如 "08:00"），value = 截止该时段的完整内心独白。
+     * 注入时根据当前时间找到最近的 key，直接使用整段文本，不做拼接。
+     */
+    flowNarrative?: Record<string, string>;
 }
 
 export interface RoomGeneratedState {
@@ -532,6 +583,28 @@ export interface SongArrangement {
     drumPattern: 'basic' | 'upbeat' | 'halftime' | 'shuffle';
 }
 
+// Provider identifier for AI-generated audio. Each one has its own pricing
+// / length cap / API path; the actual call site decides which to use.
+//   - 'minimax-free' → music-2.6-free, free tier, 60s cap
+//   - 'minimax-paid' → music-2.6, Token-Plan price, 60s cap
+//   - 'ace-step'     → Replicate lucataco/ace-step, $0.015/song, 4-min cap
+export type MusicProvider = 'minimax-free' | 'minimax-paid' | 'ace-step';
+
+// AI-rendered audio attached to a SongSheet.
+// Audio blob lives in the IndexedDB assets store keyed by `assetKey`,
+// so the sheet itself stays small and JSON-serializable for sync/export.
+export interface SongAudio {
+    assetKey: string;          // DB.getAssetRaw / saveAssetRaw key
+    mimeType: string;          // e.g. "audio/mpeg", "audio/wav"
+    durationSec?: number;
+    generatedAt: number;
+    provider: MusicProvider;
+    // Snapshot of the inputs used so we can show "regenerate when lyrics changed"
+    promptHash: string;
+    tagsUsed: string;
+    lyricsLineCount: number;
+}
+
 export interface SongSheet {
     id: string;
     title: string;
@@ -549,6 +622,16 @@ export interface SongSheet {
     lastActiveAt: number;
     completedAt?: number;
     arrangement?: SongArrangement;
+    audio?: SongAudio;
+    // Custom style prompt — when set, overrides the preset/genre/mood-derived tags.
+    // Plain comma-separated English string the user (or LLM helper) authored.
+    // Reused by both ACE-Step (`tags` field) and MiniMax music (`prompt` field).
+    aceStepCustomTags?: string;
+    // Last-used music provider for this song — drives the modal's default selection.
+    musicProvider?: MusicProvider;
+    // Lyric structure template chosen at creation. Drives the structure-guide
+    // banner shown in the write view so user/char don't write randomly.
+    lyricTemplate?: string;
 }
 
 // --- DATE APP TYPES ---
@@ -716,6 +799,92 @@ export interface BankFullState {
 }
 // ---------------------------------
 
+// --- CHAR MUSIC PROFILE (网易云风格 · 角色的音乐人格) ---
+
+/** 角色本地歌单里的轻量歌曲快照 — 字段与 MusicContext 的 Song 对齐（无运行时 url） */
+export interface CharPlaylistSong {
+    id: number;
+    name: string;
+    artists: string;
+    album: string;
+    albumPic: string;
+    duration: number;
+    fee: number;
+    /**
+     * 'user' = 这首是从 user 那里"抄"过来的（user 在听 → char 加进自己歌单）。
+     * 'discovered' = char 自己探索 / 初始化时找到的。
+     * 不写默认按 'discovered' 处理（向后兼容已有数据）。
+     * 用途：当 char 后续"在听"这首时，prompt 会告诉 LLM "这是从 user 那儿收来的"，
+     * 让记忆/对话能自然带上这层关系，而不是当成一首中立的歌。
+     */
+    source?: 'user' | 'discovered';
+    /** 加入歌单时间，用来排序 / 显示"最近收藏" */
+    addedAt?: number;
+}
+
+export interface CharPlaylist {
+    id: string;                 // 本地 id (不与网易云 playlistId 冲突)
+    title: string;
+    description: string;        // 角色自己写的歌单简介
+    coverStyle: string;         // 渐变色标识 or 第一首歌封面
+    songs: CharPlaylistSong[];
+    mood?: SongMood;
+    createdAt: number;
+    updatedAt: number;
+}
+
+export interface CharPlayRecord {
+    song: CharPlaylistSong;
+    at: number;                 // 播放时间戳（真实时间）
+    context?: string;           // 该时刻的心境备注，如 "失眠的时候"
+}
+
+export interface CharMusicReview {
+    id: string;
+    targetType: 'song' | 'user_playlist' | 'user_record';
+    targetId: string;           // songId or playlistId as string
+    targetTitle: string;        // 歌名 / 歌单名
+    content: string;            // 评论正文
+    createdAt: number;
+}
+
+/** 运行时"此刻在听" — 根据 Schedule 决定，不必持久化（可以随时 recompute） */
+export interface CharCurrentListening {
+    songId: number;
+    songName: string;
+    artists: string;
+    albumPic: string;
+    /** 心境 / 选曲理由（来自 slot.innerThought 或 description） */
+    vibe?: string;
+    startedAt: number;
+}
+
+export interface CharMusicProfile {
+    /** 音乐品味简介（LLM 初始化生成） */
+    bio: string;
+    /** 曲风标签（可随听歌演化） */
+    genreTags: string[];
+    /** 偏爱的艺人 */
+    signatureArtists: { name: string; artistId?: number }[];
+    /** 本地歌单列表 */
+    playlists: CharPlaylist[];
+    /** 仿 likelist */
+    likedSongIds: number[];
+    /** 最近在听（仿 user/record） */
+    recentPlays: CharPlayRecord[];
+    /** 私人 FM 关键词种子（留给未来做 char FM） */
+    fmSeed?: string;
+    /** 角色对歌/user 歌单的点评 */
+    reviews?: CharMusicReview[];
+    /** 此刻在听（Schedule 运行时填充，UI 展示用） */
+    currentListening?: CharCurrentListening;
+    /** 是否允许 char 读取 user 的网易云数据（默认 true） */
+    canReadUserMusic?: boolean;
+    /** 初始化时间 */
+    initializedAt?: number;
+    updatedAt: number;
+}
+
 export interface CharacterProfile {
   id: string;
   name: string;
@@ -831,14 +1000,97 @@ export interface CharacterProfile {
       model: string;
     };
   };
+
+  // 记忆宫殿 (Memory Palace)
+  memoryPalaceEnabled?: boolean;
+  /**
+   * 是否启用"palace 提取后自动同步归档"：开启后每次 buffer 处理成功都会把新记忆按日期
+   * 合成 YAML MemoryFragment 追加到 char.memories，并推 hideBeforeMessageId 自动隐藏
+   * 已处理的聊天。默认 false（opt-in）——首次启用建议让用户做一次 force 追平历史。
+   */
+  autoArchiveEnabled?: boolean;
+  embeddingConfig?: {
+    baseUrl: string;
+    apiKey: string;
+    model: string;        // 默认 text-embedding-3-small
+    dimensions: number;   // 默认 1024
+  };
+  personalityStyle?: 'emotional' | 'narrative' | 'imagery' | 'analytical';
+  ruminationTendency?: number;  // 反刍倾向 0-1，默认 0.3
+  memoryPalaceInjection?: string;  // 记忆宫殿检索结果，注入到 System Prompt（运行时填充，不持久化）
+
+  // 自我领悟词条：消化过程中 self_room 反刍产生的常驻认知
+  // 像情绪 buff 一样注入到 contextBuilder 的角色设定下方
+  selfInsights?: string[];
+
+  // 音乐人格 — 角色自己的网易云式歌单 / 品味 / 正在听
+  // 在音乐 App 里以"拜访"形式访问
+  musicProfile?: CharMusicProfile;
+
+  /**
+   * 日程风格：
+   * - 'lifestyle'（生活系，默认）：虚构角色，拥有日常物理生活（晨跑、做饭、逛街……）
+   * - 'mindful'（意识系）：角色诚实面对自身存在，内心活动基于真实能力（回忆对话、整理想法、等待用户……），不虚构物理行为
+   */
+  scheduleStyle?: 'lifestyle' | 'mindful';
+
+  /**
+   * 日程 / 情绪 Buff 总开关。
+   * - true：启用日程生成、意识流、情绪 buff 评估与注入（消耗副 API）。
+   * - false：完全关闭，不调副 API，不注入情绪，不生成日程。
+   * - undefined：向后兼容——若 scheduleStyle 已设（老用户已隐式选风格）视为开启；否则默认关闭。
+   */
+  scheduleFeatureEnabled?: boolean;
+
+  /**
+   * HTML 模块模式（per-character）。
+   * - htmlModeEnabled：开启后，给 LLM 注入"用 [html]...[/html] 包裹的富 HTML 卡片"提示词，
+   *   AI 输出里的 [html] 块会被解析成单独的 html_card 消息（沙盒 iframe 渲染）。
+   * - htmlModeCustomPrompt：用户自定义内容，**追加**在内置提示词之后（不会覆盖内置内容）。
+   * - 上下文 / 归档 总结读到的 html_card 消息内容是已剥离 HTML 的纯文字摘要，避免 token 浪费。
+   */
+  htmlModeEnabled?: boolean;
+  htmlModeCustomPrompt?: string;
+
+  /**
+   * 思考过程展示（per-character / 会话级）。
+   * - true：把 LLM 返回的 reasoning_content 与 <think>...</think> 抽出来，
+   *   作为 metadata.thinkingChain 落库到 assistant 消息上，
+   *   MessageItem 在气泡顶部渲染可折叠"💭 思考过程"区块。
+   * - false / undefined：依然按旧逻辑剥离，不展示。
+   * - 仅影响开关切到 true 之后产生的新消息；旧消息没有 thinkingChain，
+   *   UI 自然不会显示，符合"打开后才看"的预期。
+   */
+  showThinkingChain?: boolean;
+  /**
+   * 思考链卡片视觉风格（per-character）。
+   * - 'echo' (default)：暗紫底 + 暖金描边「回响」二次元卡牌
+   * - 'whisper'：米色羊皮纸「心声」轻盈版
+   * - 'minimal'：无装饰单色简洁版
+   * - 'custom'：使用 thinkingChainCustomColors 给的配色
+   */
+  thinkingChainStyle?: 'echo' | 'whisper' | 'minimal' | 'custom';
+  /** 自定义风格用的配色组（仅 thinkingChainStyle === 'custom' 生效） */
+  thinkingChainCustomColors?: {
+    bg?: string;       // 卡片背景
+    accent?: string;   // 边框/标题点缀
+    text?: string;     // 正文颜色
+  };
+  /** 用户追加的思考提示词（不替换原生，只在最后追加一段「用户额外要求」） */
+  thinkingChainCustomPrompt?: string;
 }
 
 export interface GroupProfile {
     id: string;
     name: string;
-    members: string[]; 
-    avatar?: string; 
+    members: string[];
+    avatar?: string;
     createdAt: number;
+    /**
+     * 私聊里"近期群活动"上下文从这个群最多取最后多少条消息。
+     * 不设默认 80。设大点能让活跃群更完整，设小点节省 token、避免某个活跃群把其他群挤掉。
+     */
+    privateContextCap?: number;
 }
 
 export interface CharacterExportData extends Omit<CharacterProfile, 'id' | 'memories' | 'refinedMemories' | 'activeMemoryMonths' | 'impression'> {
@@ -904,6 +1156,253 @@ export interface DiaryEntry {
     isArchived: boolean;
 }
 
+// ─── HANDBOOK / 手账 (跨角色聚合·零负担留痕本) ───
+//
+// 设计哲学（user 共识）:
+//   - 主体是 user 自己的一天,LLM 读今天跨角色聊天后用 user 的口吻替 ta 写一份草稿
+//     (user 不必模仿,后续会二次编辑)
+//   - 即便 user 一天没说话,生活系角色们也会"过自己的小生活",自动填一两页陪伴页
+//     (绝不能写成 AI 捧场 / 等 user / 想 user)
+//   - 反完美主义:留白即真实,不强制每天生成,不显示连续天数,不做 streak
+//   - 一日一 entry,id 直接是 'YYYY-MM-DD'
+//
+// Section / tag 模型留位但暂不在 UI 实装(等 user 想清楚)。
+export type HandbookPageType =
+    | 'user_diary'       // LLM 代笔 user 第一人称当日日记
+    | 'character_life'   // 生活系角色今日的生活流(陪伴页)
+    | 'user_note'        // user 自己手写/补充的一页
+    | 'free';            // 自由格式,未来扩展用
+
+export interface HandbookPage {
+    id: string;
+    type: HandbookPageType;
+    charId?: string;          // type=character_life 时绑定的角色
+    title?: string;
+    content: string;          // 主体文本(也是编辑/兜底渲染用)
+    /**
+     * 碎片化展示:LLM 生成时若返回 JSON 数组(社媒碎碎念体),解析出来存这里。
+     * 前端有 fragments 走 FragmentCollage 拼贴渲染,无则走 content 段落渲染。
+     * user 编辑后会清空 fragments,回退到 content 段落形态。
+     */
+    fragments?: HandbookFragment[];
+    paperStyle?: string;      // 'plain' | 'grid' | 'lined' | 'dot' | 'pink' | 'dark'
+    tags?: string[];          // 预留:section/标签(生理期/饮食/项目…),v1 不渲染
+    generatedBy?: 'llm' | 'user';
+    generatedAt?: number;
+    excluded?: boolean;       // user 把这页标记为不入册
+    isPinned?: boolean;
+}
+
+export interface HandbookFragment {
+    id: string;
+    text: string;             // 30~80 字社媒碎碎念体
+    time?: string;            // 可选时段标签,如 "上午 10 点" / "下午" / "10:23"
+    // ─── v2 槽位元数据 (新版式才有) ─────────────────────
+    /** 来自 LayoutTemplate 的槽 id */
+    slotId?: string;
+    /** 槽语义角色 — 渲染时按这个分发 */
+    slotRole?: SlotRole;
+    /** 谁写的 — 'user' 或某 charId */
+    authorKind?: 'user' | 'char';
+    /** 若是反应型槽 (sticky-reaction), 引用的目标 slotId */
+    refersTo?: string;
+    /** 结构化数据 (todo / gratitude / mood-card 等需要) */
+    payload?: SlotPayload;
+}
+
+/**
+ * 结构化 slot 数据。普通文本槽不用,
+ * 仅 todo/gratitude/mood-card/timeline-plan 这种"列表/打分"才填。
+ */
+export type SlotPayload =
+    | { kind: 'todo'; items: { text: string; done?: boolean }[] }
+    | { kind: 'gratitude'; items: string[] }
+    | { kind: 'timeline'; items: { time: string; text: string; emoji?: string }[] }
+    | { kind: 'mood'; rating: number; tag?: string }       // rating 1~5
+    | { kind: 'photo'; src?: string; caption: string };   // src 由 user 贴, 也可暂缺
+
+// ─── 单页拼贴排版 ──────────────────────────────────────
+//
+// v2 设计 (2026-05): "版式优先"。先 roll 一份 layout template (pre-baked JSON),
+// 它已包含每个槽的 {位置, 视觉角色, 字数预算, 可写者} —— LLM 只填空,不排版。
+// 角色按顺序看到 "已填的槽 + 剩余槽 + 自己人格", 选一个槽写,或 pass。
+//
+// 旧的 'main'|'side'|'corner'|'margin' 仍然保留 (老数据回放兼容),
+// 新版式用更语义化的 SlotRole, 渲染时按 role 分发到专门组件。
+//
+// 坐标都用百分比,固定比例的纸面 → 任意尺寸下都不破。
+
+/** v1 旧角色 — 仅为兼容历史 entry 数据保留, 新版式不要再产出 */
+export type LayoutRole =
+    | 'main'        // 主区,大块,正放或微旋转
+    | 'side'        // 侧栏,中等尺寸
+    | 'corner'      // 角落,小卡片,大旋转
+    | 'margin';     // 页边,极小尺寸,可以纵向
+
+/**
+ * v2 槽角色 —— 一个 role = 一种 "内容类型 + 视觉皮肤 + 写作约束"。
+ * Renderer 按 role 分发, prompt 按 role 出 hint。
+ *
+ * - hero-diary       主日记本体, 当天主叙事 (80~180 字)
+ * - timeline-plan    时间表 / 今日计划 (6~10 行)
+ * - todo             待办清单 (3~6 项)
+ * - gratitude        今日感恩 / 三件好事 (3 项)
+ * - mood-card        心情卡 + 评分 (20~50 字 + 1~5 ★)
+ * - photo-caption    照片 + 短描述 (8~25 字, 图由 user 贴)
+ * - sticky-reaction  反应便签 (15~50 字, char-only, 必须引用已填槽)
+ * - corner-note      边角独白小字 (6~20 字)
+ */
+export type SlotRole =
+    | 'hero-diary'
+    | 'timeline-plan'
+    | 'todo'
+    | 'gratitude'
+    | 'mood-card'
+    | 'photo-caption'
+    | 'sticky-reaction'
+    | 'corner-note';
+
+/** 谁能填这个槽 */
+export type SlotAuthorKind = 'user' | 'char';
+
+/**
+ * 槽定义 —— template 里的一个空位, 渲染时也是 placement 的扩展。
+ * 比 v1 的 LayoutPlacement 多: charBudget / eligibleAuthors / slotRole / hint
+ */
+export interface SlotDef {
+    /** 槽 id, 在一份 template 内唯一 */
+    id: string;
+    /** 视觉 + 内容类型 */
+    slotRole: SlotRole;
+    /** 字数预算 [min, max] —— 给 LLM, 也给渲染器估高度 */
+    charBudget: [number, number];
+    /** 谁能填: ['user'] / ['char'] / ['user', 'char'] */
+    eligibleAuthors: SlotAuthorKind[];
+    /** 给 LLM 的一句话目的 (作为 prompt hint) */
+    hint: string;
+    /** 位置 — 整页百分比 */
+    xPct: number;
+    yPct: number;
+    widthPct: number;
+    /** 高度上限 (% of page) — 渲染器超出截断, 估高用 */
+    maxHeightPct: number;
+    rotate?: number;             // 默认 0
+    zIndex?: number;             // 默认 10
+    /** 是否本页 hero — 每页 ≤ 1, 字号最大, 视觉权重最高 */
+    isHero?: boolean;
+    /** 视觉皮肤变体 (例: sticky-reaction 的便签底色) */
+    skinVariant?: string;
+}
+
+/** 一份预置版式 = 一组 SlotDef + 一些视觉装饰 */
+export interface LayoutTemplate {
+    id: string;                  // 'plan-day' / 'reflective-day' / 'photo-day' / ...
+    name: string;                // 中文显示名
+    /** 每页 SlotDef 列表; index 0 = page 1, 1 = page 2 ... */
+    pages: SlotDef[][];
+    /** 推荐使用条件提示 (orchestrator 选模板用) */
+    suitFor?: string;
+    /** 默认纸张底纹: 'plain' | 'grid' | 'lined' | 'dot' */
+    paperStyle?: string;
+}
+
+/** v2 placement —— LayoutPlacement 的扩展, 携带 slot 元数据。
+ *  老数据没有 slotRole 时, 渲染器走 v1 的 JournalFragmentCard。 */
+export interface LayoutPlacement {
+    pageId: string;             // 对应 HandbookPage.id
+    fragmentId?: string;        // 对应 HandbookFragment.id;手写整页留空
+    xPct: number;               // 0~100,左上角 x
+    yPct: number;               // 0~100,左上角 y
+    widthPct: number;           // 10~95,卡片宽度占页面百分比
+    rotate: number;             // -10 ~ 10,角落可到 ±15
+    zIndex: number;             // 越大越压上面
+    role: LayoutRole;           // v1 角色 (兼容)
+    /** 该页 hero — 字号最大、视觉最显眼。每页最多 1 个。 */
+    isHero?: boolean;
+    // ─── v2 字段 (新版式才有, 老数据为 undefined) ───
+    /** 来自 template 的槽 id */
+    slotId?: string;
+    /** v2 语义角色 (有则按 SlotRole 分发渲染) */
+    slotRole?: SlotRole;
+    /** 高度上限 % */
+    maxHeightPct?: number;
+    /** 视觉变体 (跟随 SlotDef.skinVariant) */
+    skinVariant?: string;
+}
+
+export interface HandbookLayout {
+    pageNumber: number;         // 一张纸,1-based;超量时可有 page 2
+    placements: LayoutPlacement[];
+    generatedAt: number;
+    /** v2 版式来源 template id (用于重生成时复用相同 template) */
+    templateId?: string;
+}
+
+// ─── HANDBOOK TRACKER（自定义健康/生活打卡引擎）───
+//
+// 设计:
+// - Tracker = 用户自定义的"打卡项"(生理期 / 饮食 / 喝水 / 心情 / 体重 / 服药 / 自定义……)
+// - 每个 Tracker 有 schema(字段定义),系统提供模板,user 可改可建
+// - TrackerEntry = 某 tracker 在某天的一条打卡记录,values 按 schema 存
+// - 跟 HandbookPage 解耦:tracker 是结构化数据,page 是自由文本/碎片
+//
+export type TrackerFieldKind =
+    | 'rating'       // 1~5 等级(滑块 / emoji 选择)
+    | 'number'       // 数字(体重 / ml)
+    | 'options'      // 多选 / 单选(经期流量:无/少/中/多)
+    | 'photo'        // 一张图(饮食拍照)
+    | 'text'         // 一句话备注
+    | 'boolean';     // 是/否(今天有没有头痛)
+
+export interface TrackerField {
+    key: string;                     // values 字典里的 key
+    label: string;                   // 显示名("评分" / "备注" / "流量")
+    kind: TrackerFieldKind;
+    required?: boolean;
+    /** rating: 1~max 整数;number: 自由数字 */
+    max?: number;
+    min?: number;
+    unit?: string;                   // 'kg' / 'ml' / '小时'
+    /** options 时的可选项 */
+    choices?: { value: string; label: string; emoji?: string }[];
+    placeholder?: string;
+}
+
+export interface Tracker {
+    id: string;
+    name: string;                    // "心情" / "经期" / "今天有没有偏头痛"
+    icon?: string;                   // emoji 或 sticker 名
+    color: string;                   // tab/标记 底色
+    schema: TrackerField[];
+    createdAt: number;
+    updatedAt: number;
+    /** 系统预设 vs 用户自建（系统预设 user 可禁用但不可彻底删除）*/
+    isBuiltin?: boolean;
+    /** 在月历单元格上如何"一眼看到"今日 entry —— 默认显示主字段值 */
+    cellRenderField?: string;        // schema field key
+    sortOrder?: number;              // 在 tab 列表里的排序
+}
+
+export interface TrackerEntry {
+    id: string;
+    trackerId: string;
+    date: string;                    // YYYY-MM-DD
+    values: Record<string, any>;
+    note?: string;
+    createdAt: number;
+    updatedAt: number;
+}
+
+export interface HandbookEntry {
+    id: string;               // = date 'YYYY-MM-DD'
+    date: string;
+    pages: HandbookPage[];
+    /** 二次 LLM 生成的整页排版;一天可能跨多张纸 */
+    layouts?: HandbookLayout[];
+    generatedAt?: number;     // 最后一次自动生成的时间
+    updatedAt: number;
+}
+
 export interface Task {
     id: string;
     title: string;
@@ -933,7 +1432,9 @@ export interface SocialComment {
     authorAvatar?: string;
     content: string;
     likes: number;
-    isCharacter?: boolean; 
+    isCharacter?: boolean;
+    authorType?: 'user' | 'character' | 'stranger';
+    authorCharId?: string;
 }
 
 export interface SocialPost {
@@ -942,14 +1443,16 @@ export interface SocialPost {
     authorAvatar: string;
     title: string;
     content: string;
-    images: string[]; 
+    images: string[];
     likes: number;
     isCollected: boolean;
     isLiked: boolean;
     comments: SocialComment[];
     timestamp: number;
     tags: string[];
-    bgStyle?: string; 
+    bgStyle?: string;
+    authorType?: 'user' | 'character' | 'stranger';
+    authorCharId?: string;
 }
 
 export interface SubAccount {
@@ -1067,7 +1570,7 @@ export interface GameSession {
     lastPlayedAt: number;
 }
 
-export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card';
+export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'html_card';
 
 export interface Message {
     id: number;
@@ -1356,6 +1859,10 @@ export interface FullBackupData {
         charId: string;
         avatar?: string;
         sprites?: Record<string, string>;
+        dateSkinSets?: SkinSet[];
+        activeSkinSetId?: string;
+        customDateSprites?: string[];
+        spriteConfig?: SpriteConfig;
         roomItems?: Record<string, string>;
         backgrounds?: { chat?: string; date?: string; roomWall?: string; roomFloor?: string };
     }[];
@@ -1384,6 +1891,85 @@ export interface FullBackupData {
 
     // LifeSim (都市人生)
     lifeSimState?: LifeSimState | null;
+
+    // Memory Palace (记忆宫殿)
+    memoryNodes?: any[];
+    memoryVectors?: any[];
+    memoryLinks?: any[];
+    topicBoxes?: any[];
+    anticipations?: any[];
+    eventBoxes?: any[];
+    memoryPalaceHighWaterMarks?: Record<string, number>; // charId → lastProcessedMsgId
+    memoryPalaceFlags?: Record<string, string>; // mp_personality_tried_* / mp_first_archive_notice_* 等 UI 标记
+    cloudBackupConfig?: CloudBackupConfig;
+    remoteVectorConfig?: { enabled: boolean; supabaseUrl: string; supabaseAnonKey: string; initialized: boolean };
+
+    // Character daily schedule (角色日程表 — daily_schedule store)
+    dailySchedules?: DailySchedule[];
+
+    // 手账（跨角色聚合留痕本 — handbook store）
+    handbooks?: HandbookEntry[];
+
+    // 手账 Tracker（健康/生活打卡引擎）
+    trackers?: Tracker[];
+    trackerEntries?: TrackerEntry[];
+
+    // Memory Palace 批次处理元数据
+    memoryBatches?: any[];
+
+    // Pixel Home（小屋像素界面）
+    pixelHomeAssets?: any[];
+    pixelHomeLayouts?: any[];
+
+    // Chat 设置（翻译 / 归档 / 润色 prompts）
+    chatTranslateSourceLang?: string;
+    chatTranslateTargetLang?: string;
+    chatTranslateEnabledByChar?: Record<string, boolean>;
+    chatArchivePrompts?: any;
+    chatActiveArchivePromptId?: string;
+    characterRefinePrompts?: any;
+    characterActiveRefinePromptId?: string;
+
+    // 其它 UI / 偏好
+    scheduleAppTheme?: string;
+    groupchatContextLimit?: number;
+    browserConfig?: { braveKey?: string; useRealSearch?: boolean };
+    bm25Mode?: string;
+    lastActiveCharId?: string;
+    eventNotifFlags?: Record<string, string>;  // sullyos_* 事件通知标记
+}
+
+// --- CLOUD BACKUP TYPES ---
+// Two providers share one config: WebDAV (legacy) and GitHub Releases (new,
+// no GFW friction for most users — just paste a Personal Access Token).
+export type CloudBackupProvider = 'webdav' | 'github';
+
+export interface CloudBackupConfig {
+    enabled: boolean;
+    provider?: CloudBackupProvider;     // undefined = 'webdav' (back-compat)
+
+    // WebDAV
+    webdavUrl: string;          // e.g. https://dav.jianguoyun.com/dav/
+    username: string;
+    password: string;           // App-specific password
+    remotePath: string;         // e.g. /SullyBackup/
+
+    // GitHub Releases — uses a Personal Access Token. Owner is resolved from
+    // GET /user during connect; repo defaults to 'sully-backup' (private).
+    githubToken?: string;
+    githubOwner?: string;
+    githubRepo?: string;
+    githubUseProxy?: boolean;   // route through Cloudflare Worker (for GFW)
+
+    lastBackupTime?: number;    // timestamp
+    lastBackupSize?: number;    // bytes
+}
+
+export interface CloudBackupFile {
+    name: string;
+    size: number;
+    lastModified: string;       // ISO date string
+    href: string;               // WebDAV: remote path. GitHub: 'releaseId:assetId'
 }
 
 // --- GUIDEBOOK (攻略本) APP TYPES ---
@@ -1481,9 +2067,132 @@ export interface XhsMcpConfig {
 export interface AgendaItem {
     id: string;
     title: string;
-    dateTime: string;       // "YYYY-MM-DDTHH:mm"（精确到分钟）
-    charId?: string;
-    reminderMinutes?: number | null;  // null = 不提醒；0 = 准时；15/30 = 提前 N 分钟
-    note?: string;
+    summary: string;
+    detail?: string;
+    visualPrompt?: string;
+    rarity?: SimStoryAttachmentRarity;
+}
+
+export interface SimStoryAttachment {
+    id: string;
+    kind: SimStoryAttachmentKind;
+    title: string;
+    summary: string;
+    detail?: string;
+    imageUrl?: string;
+    rarity?: SimStoryAttachmentRarity;
+}
+
+export interface SimAction {
+    id: string;
+    turnNumber: number;
+    actor: string;       // 'user' | char.name
+    actorAvatar: string; // char.avatar or '🧑'
+    actorId: string;     // 'user' | char.id | 'system' | 'autonomous'
+    type: SimActionType;
+    description: string;      // 自然语言，CHAR们读这个
+    immediateResult: string;  // 即时后果描述
+    reasoning?: string;       // 角色内心独白（完整原文）
+    reactionToUser?: string;  // 角色对玩家操作的评价
+    narrative?: CharNarrative; // 角色叙事层（LLM回合使用）
+    chainFromId?: string;     // 由哪个事件链引发
+    storyKind?: SimStoryKind;
+    headline?: string;
+    involvedNpcIds?: string[];
+    attachments?: SimStoryAttachment[];
+    timestamp: number;
+}
+
+export interface SimPendingEffect {
+    id: string;
+    triggerTurn: number;
+    npcId?: string;
+    familyId?: string;
+    description: string;
+    effectCode: SimEffectCode;
+    effectValue?: number;
+    chainFrom?: string;        // 产生此效果的事件ID
+    severity?: number;         // 1-5 严重程度
+    involvedNpcIds?: string[]; // 涉及的NPC
+}
+
+export interface SimNPC {
+    id: string;
+    name: string;
+    emoji: string;       // 角色头像 emoji（后续替换为像素头像seed）
+    personality: string[]; // ["暴躁","善良","好奇"]
+    mood: number;        // -100 ~ 100
+    familyId: string | null; // null = 独立
+    profession?: SimProfession; // 纯身份标签
+    gold?: number;              // 财富指标
+    // 人物故事系统
+    gender?: SimGender;         // 性别（每局随机）
+    bio?: string;               // 人物简介（1-2句）
+    backstory?: string;         // 背景故事（2-3句）
+    // 内驱力系统
+    desires?: NPCDesire[];      // 当前欲望
+    grudges?: string[];         // 记仇对象 NPC IDs
+    crushes?: string[];         // 暗恋对象 NPC IDs
+    // 向后兼容旧存档（迁移时删除）
+    energy?: number;
+    skills?: SimSkills;
+    inventory?: Record<string, number>;
+    currentActivity?: SimActivity;
+    activityResult?: string;
+}
+
+export interface SimFamily {
+    id: string;
+    name: string;
+    emoji: string;       // 家庭标志 emoji
+    memberIds: string[];
+    relationships: Record<string, Record<string, number>>; // npcId -> npcId -> [-100,100]
+    homeX: number;       // 0-100 percent
+    homeY: number;
+}
+
+// ── LifeSim 基础类型 ──────────────────────────────────────────
+
+export type SimSeason = 'spring' | 'summer' | 'fall' | 'winter';
+export type SimWeather = 'sunny' | 'cloudy' | 'rainy' | 'stormy' | 'snowy' | 'windy';
+export type SimTimeOfDay = 'dawn' | 'morning' | 'afternoon' | 'evening' | 'night';
+export type SimProfession = 'programmer' | 'designer' | 'finance' | 'influencer' | 'lawyer' | 'freelancer' | 'barista' | 'musician'
+    | 'internet_troll' | 'fanfic_writer' | 'fan_artist' | 'college_student' | 'tired_worker' | 'old_fashioned' | 'fashion_designer';
+
+export type SimGender = 'male' | 'female' | 'nonbinary';
+
+// 保留但不再使用的旧类型（存档兼容）
+export type SimActivity = 'farming' | 'mining' | 'fishing' | 'crafting' | 'socializing' | 'resting' | 'foraging' | 'trading';
+export interface SimSkills { farming: number; mining: number; fishing: number; crafting: number; social: number; foraging: number; }
+export interface SimBuilding { id: string; type: string; name: string; x: number; y: number; level: number; familyId?: string; }
+
+export interface SimFestival {
+    name: string;
+    season: SimSeason;
+    day: number;
+    emoji: string;
+    description: string;
+    moodBonus: number;
+    relBonus: number;
+    chaosChange: number;
+}
+
+// 离线回顾事件
+export interface OfflineRecapEvent {
+    day: number;
+    season: SimSeason;
+    timeOfDay: SimTimeOfDay;
+    headline: string;          // 戏剧性标题
+    description: string;       // 事件描述
+    involvedNpcs: { name: string; emoji: string }[];
+    eventType: SimEventType | SimEffectCode;
+    moodChanges?: Record<string, number>;   // npcId -> delta
+    relChanges?: { a: string; b: string; delta: number }[];
+    chaosChange?: number;
+    narrativeQuote?: string;   // 离线模板旁白
+}
+
+export interface LifeSimState {
+    id: string;
     createdAt: number;
 }

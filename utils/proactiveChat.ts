@@ -7,7 +7,22 @@
  *     with the relevant charId.
  *  3. The main thread receives the trigger and runs the normal AI flow.
  *  4. If the app was backgrounded, visibility-change catch-up fires any overdue roles.
+ *  5. If the optional Cloudflare Worker accelerator is configured (see
+ *     `utils/proactivePushConfig.ts`), `start`/`stop` also register/unregister
+ *     a Web Push wake-up schedule on the Worker.  The Worker's cron sends a
+ *     `{type:'proactive-wake', charId}` push at interval time; the SW routes
+ *     it through the same `proactive-trigger` channel so the main-thread AI
+ *     flow runs exactly once per trigger regardless of source.
  */
+
+import {
+  loadPushConfig,
+  isPushConfigReady,
+  registerScheduleOnWorker,
+  unregisterScheduleOnWorker,
+  startHeartbeat,
+  stopHeartbeat,
+} from './proactivePushConfig';
 
 export interface ProactiveSchedule {
   charId: string;
@@ -114,19 +129,48 @@ function syncSchedulesToSW() {
 let triggerCallback: ((charId: string) => void | Promise<void>) | null = null;
 let swListener: ((e: MessageEvent) => void) | null = null;
 let visibilityListener: (() => void) | null = null;
+let focusListener: (() => void) | null = null;
+let mainThreadTimer: ReturnType<typeof setInterval> | null = null;
+let preciseTimer: ReturnType<typeof setTimeout> | null = null;
+
+// Main-thread polling acts as the bottom-line safety net in case Service
+// Worker timers get terminated by the browser AND the precise setTimeout gets
+// throttled in a background tab.  20 s is cheap (just a localStorage read)
+// and keeps the worst-case delay under one bucket for hidden-tab throttling.
+const MAIN_THREAD_CHECK_INTERVAL = 20_000;
 
 function handleSWMessage(e: MessageEvent) {
-  if (e.data?.type !== 'proactive-trigger' || !triggerCallback) return;
+  if (e.data?.type !== 'proactive-trigger') return;
   const charId = e.data.charId;
   const schedule = loadSchedules()[charId];
   if (!schedule) return;
+  if (!triggerCallback) {
+    // Callback not ready yet — leave lastFire untouched so the main-thread
+    // polling will fire once the callback is registered.
+    return;
+  }
 
-  setLastFireTime(charId, Date.now());
+  // De-dupe: when both the Worker's push and the main-thread catch-up fire
+  // within a small window of each other (happens when the user returns after
+  // an offline gap), the first one to land wins and the other gets silently
+  // dropped.  Without this guard the character would send two proactive
+  // messages back-to-back.
+  const now = Date.now();
+  const lastFire = getLastFireTime(charId);
+  const minGap = Math.min(60_000, schedule.intervalMs * 0.1);
+  if (lastFire > 0 && now - lastFire < minGap) {
+    console.log(`[ProactiveChat] Ignoring duplicate trigger for ${charId} (fired ${Math.round((now - lastFire) / 1000)}s ago)`);
+    return;
+  }
+
+  setLastFireTime(charId, now);
+  schedulePreciseTimer();
   void triggerCallback(charId);
 }
 
-function handleVisibility() {
-  if (document.visibilityState !== 'visible' || !triggerCallback) return;
+/** Check all schedules and fire any that are overdue. */
+function checkOverdueSchedules() {
+  if (!triggerCallback) return;
 
   const schedules = Object.values(loadSchedules());
   const now = Date.now();
@@ -136,11 +180,72 @@ function handleVisibility() {
     const elapsed = now - lastFire;
 
     if (lastFire > 0 && elapsed >= schedule.intervalMs) {
-      console.log(`[ProactiveChat] Catch-up: ${schedule.charId}, ${Math.round(elapsed / 60000)}min elapsed`);
+      console.log(`[ProactiveChat] Main-thread trigger: ${schedule.charId}, ${Math.round(elapsed / 60000)}min elapsed`);
       setLastFireTime(schedule.charId, now);
       syncSchedulesToSW();
       void triggerCallback(schedule.charId);
     }
+  }
+
+  schedulePreciseTimer();
+}
+
+/**
+ * Schedule a single setTimeout to fire exactly at the next due moment across
+ * all active schedules.  This is the primary delivery mechanism while the tab
+ * is visible — setInterval / setTimeout are accurate in the foreground, and
+ * the user's specific complaint is "在角色也不给我发消息" (messages don't fire
+ * when I'm sitting on the character screen).  Backs up the Service Worker
+ * timer, which the browser may terminate at any time.
+ */
+function schedulePreciseTimer() {
+  if (preciseTimer) {
+    clearTimeout(preciseTimer);
+    preciseTimer = null;
+  }
+  if (!triggerCallback) return;
+
+  const schedules = Object.values(loadSchedules());
+  if (schedules.length === 0) return;
+
+  const now = Date.now();
+  let nextDue = Infinity;
+  for (const schedule of schedules) {
+    const lastFire = getLastFireTime(schedule.charId);
+    const base = lastFire > 0 ? lastFire : now;
+    const due = base + schedule.intervalMs;
+    if (due < nextDue) nextDue = due;
+  }
+  if (!Number.isFinite(nextDue)) return;
+
+  // Clamp: at least 500ms to avoid tight loops, at most ~24d to fit a 32-bit timer.
+  const delay = Math.min(Math.max(nextDue - now, 500), 2_147_000_000);
+  preciseTimer = setTimeout(() => {
+    preciseTimer = null;
+    checkOverdueSchedules();
+  }, delay);
+}
+
+function handleVisibility() {
+  if (document.visibilityState !== 'visible') return;
+  // When the page becomes visible again, do an immediate overdue check and
+  // re-arm the precise timer (background throttling may have delayed it).
+  checkOverdueSchedules();
+}
+
+function handleFocus() {
+  checkOverdueSchedules();
+}
+
+function startMainThreadTimer() {
+  if (mainThreadTimer) return;
+  mainThreadTimer = setInterval(checkOverdueSchedules, MAIN_THREAD_CHECK_INTERVAL);
+}
+
+function stopMainThreadTimer() {
+  if (mainThreadTimer) {
+    clearInterval(mainThreadTimer);
+    mainThreadTimer = null;
   }
 }
 
@@ -150,6 +255,10 @@ function attachListeners() {
   navigator.serviceWorker?.addEventListener('message', swListener);
   visibilityListener = handleVisibility;
   document.addEventListener('visibilitychange', visibilityListener);
+  focusListener = handleFocus;
+  window.addEventListener('focus', focusListener);
+  startMainThreadTimer();
+  schedulePreciseTimer();
 }
 
 function detachListeners() {
@@ -160,6 +269,15 @@ function detachListeners() {
   if (visibilityListener) {
     document.removeEventListener('visibilitychange', visibilityListener);
     visibilityListener = null;
+  }
+  if (focusListener) {
+    window.removeEventListener('focus', focusListener);
+    focusListener = null;
+  }
+  stopMainThreadTimer();
+  if (preciseTimer) {
+    clearTimeout(preciseTimer);
+    preciseTimer = null;
   }
 }
 
@@ -172,6 +290,10 @@ export const ProactiveChat = {
   onTrigger(callback: (charId: string) => void | Promise<void>) {
     triggerCallback = callback;
     attachListeners();
+    // Catch up anything that came due while the callback wasn't registered
+    // yet (e.g. between `ProactiveChat.resume()` on boot and OSContext
+    // finishing its first render).
+    checkOverdueSchedules();
   },
 
   /**
@@ -179,16 +301,21 @@ export const ProactiveChat = {
    * intervalMinutes: 最小 15 分钟，会按 15 分钟取整（如 20→15, 60→60）（二改）
    */
   start(charId: string, intervalMinutes: number) {
-    const clamped = Math.max(15, Math.round(intervalMinutes / 15) * 15);
+    const clamped = Math.max(30, Math.round(intervalMinutes / 30) * 30);
+    const intervalMs = clamped * 60 * 1000;
     const schedules = loadSchedules();
-    schedules[charId] = {
-      charId,
-      intervalMs: clamped * 60 * 1000,
-    };
+    schedules[charId] = { charId, intervalMs };
     saveSchedules(schedules);
     setLastFireTime(charId, Date.now());
     syncSchedulesToSW();
     attachListeners();
+
+    // Cloud accelerator — fire-and-forget; if not configured, this no-ops.
+    if (isPushConfigReady(loadPushConfig())) {
+      void registerScheduleOnWorker(charId, intervalMs);
+      startHeartbeat();
+    }
+
     console.log(`[ProactiveChat] Started: ${charId}, every ${clamped}min`);
   },
 
@@ -202,8 +329,15 @@ export const ProactiveChat = {
     removeLastFireTime(charId);
     syncSchedulesToSW();
 
+    if (isPushConfigReady(loadPushConfig())) {
+      void unregisterScheduleOnWorker(charId);
+    }
+
     if (Object.keys(schedules).length === 0) {
       detachListeners();
+      stopHeartbeat();
+    } else {
+      schedulePreciseTimer();
     }
 
     console.log(`[ProactiveChat] Stopped: ${charId}`);
@@ -220,6 +354,16 @@ export const ProactiveChat = {
     syncSchedulesToSW();
     attachListeners();
     handleVisibility();
+
+    // Re-register schedules on the Worker in case the client token, VAPID
+    // key, or push subscription has rotated since last run.  Also restart
+    // the heartbeat loop.
+    if (isPushConfigReady(loadPushConfig())) {
+      for (const schedule of schedules) {
+        void registerScheduleOnWorker(schedule.charId, schedule.intervalMs);
+      }
+      startHeartbeat();
+    }
   },
 
   /** Check if proactive is active for a given character */

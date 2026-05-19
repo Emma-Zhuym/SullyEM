@@ -1,13 +1,31 @@
 
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
-import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset } from '../types';
+import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset, CloudBackupConfig, CloudBackupFile } from '../types';
 import { DB } from '../utils/db';
 import { INSTALLED_APPS } from '../constants';
 import { migrateLegacyNotionNotesToExtra } from '../utils/notionExtraConfig';
 import { ProactiveChat } from '../utils/proactiveChat';
-import { ChatPrompts } from '../utils/chatPrompts';
 import { ChatParser } from '../utils/chatParser';
 import { safeFetchJson } from '../utils/safeApi';
+import { normalizeCharacterImpression, normalizeCharacterDefaults } from '../utils/impression';
+import { isScheduleFeatureOn } from '../utils/scheduleGenerator';
+import { evaluateEmotionBackground } from '../hooks/useChatAI';
+import { buildChatRequestPayload } from '../utils/chatRequestPayload';
+import { extractHtmlBlocks } from '../utils/htmlPrompt';
+import { loadMusicPlaybackSnapshot } from './MusicContext';
+import { setMinimaxRegion } from '../utils/minimaxEndpoint';
+import { LocalNotifications } from '@capacitor/local-notifications';
+import { Capacitor } from '@capacitor/core';
+
+const normalizeProactiveAiContent = (raw: string): string => {
+  let cleaned = raw;
+  cleaned = cleaned.replace(/\[(?:(?:你|User|用户|System)\s*)?发送了表情包[:：]\s*(.*?)\]/g, '[[SEND_EMOJI: $1]]');
+  cleaned = cleaned.replace(
+    /(^|\n)\s*(?:(?:你|User|用户|System)\s*)?发送了表情包[:：]\s*([^\n]+?)(?=\s*(?:\n|$))/g,
+    (_match, lineStart: string, emojiName: string) => `${lineStart}[[SEND_EMOJI: ${emojiName.trim()}]]`
+  );
+  return cleaned;
+};
 
 
 type JSZipLike = {
@@ -84,8 +102,36 @@ const defaultRealtimeConfig: RealtimeConfig = {
   cacheMinutes: 30
 };
 
-/** Dock Message：通讯录列表 vs 私聊会话；持久化到 localStorage */
-export type MessageSubView = 'contacts' | 'chat';
+// 记忆宫殿全局配置（所有角色共用 embedding、副 LLM 和 rerank）
+export interface MemoryPalaceGlobalConfig {
+  embedding: {
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+    dimensions: number;
+  };
+  lightLLM: {
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+  };
+  // Rerank 模型配置（可选增强，接 cross-encoder rerank API）
+  // 遵循 Cohere/Jina/SiliconFlow 通用协议：POST {baseUrl}/rerank
+  // { model, query, documents, top_n } → { results: [{index, relevance_score}] }
+  rerank: {
+    enabled: boolean;
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+    topN: number; // 额外召回条数（去重后追加到主 15 条后面）
+  };
+}
+
+const defaultMemoryPalaceConfig: MemoryPalaceGlobalConfig = {
+  embedding: { baseUrl: '', apiKey: '', model: 'BAAI/bge-m3', dimensions: 1024 },
+  lightLLM: { baseUrl: '', apiKey: '', model: '' },
+  rerank: { enabled: false, baseUrl: '', apiKey: '', model: 'BAAI/bge-reranker-v2-m3', topN: 5 },
+};
 
 interface OSContextType {
   activeApp: AppID;
@@ -147,6 +193,17 @@ interface OSContextType {
   realtimeConfig: RealtimeConfig;
   updateRealtimeConfig: (updates: Partial<RealtimeConfig>) => void;
 
+  // 记忆宫殿全局配置（所有角色共用）
+  memoryPalaceConfig: MemoryPalaceGlobalConfig;
+  updateMemoryPalaceConfig: (updates: Partial<MemoryPalaceGlobalConfig>) => void;
+
+  // 情绪 API（所有角色同步；是否启用仍各自独立）
+  syncEmotionApiToAllCharacters: (api: { baseUrl: string; apiKey: string; model: string } | undefined) => void;
+
+  // 远程向量存储配置 (Supabase pgvector)
+  remoteVectorConfig: import('../utils/memoryPalace/types').RemoteVectorConfig;
+  updateRemoteVectorConfig: (updates: Partial<import('../utils/memoryPalace/types').RemoteVectorConfig>) => void;
+
   customThemes: ChatTheme[];
   addCustomTheme: (theme: ChatTheme) => void;
   removeCustomTheme: (id: string) => void;
@@ -167,14 +224,38 @@ interface OSContextType {
   exportAppearancePreset: (id: string) => Promise<Blob>;
   importAppearancePreset: (file: File) => Promise<void>;
 
+  toasts: Toast[];
+  addToast: (message: string, type?: Toast['type']) => void;
+
+  // 长报错弹窗：toast 一行装不下 / 手机没法开 console 时, 用 showError 弹一个
+  // 多行预览框 + 复制按钮, 方便用户把原文反馈过来。
+  errorDialog: { title: string; details: string } | null;
+  showError: (title: string, details: string) => void;
+  dismissError: () => void;
+
+  // Icons
+  customIcons: Record<string, string>;
+  setCustomIcon: (appId: string, iconUrl: string | undefined) => void;
+
+  // Appearance Reset
+  resetAppearance: () => Promise<void>;
+
   // Global Message Signal
   lastMsgTimestamp: number; // New: Signal for Chat to refresh
   unreadMessages: Record<string, number>; // New: Track unread counts per character
   clearUnread: (charId: string) => void; // New: Method to clear unread
 
-  /** Message App：通讯录 / 私聊子视图（任务 6） */
-  messageSubView: MessageSubView;
-  setMessageSubView: (v: MessageSubView) => void;
+  // Set of charIds whose proactive AI generation is currently in flight.
+  // Chat UI subscribes to this to render a soft "正在送达消息…" indicator
+  // instead of having the message just pop in.
+  proactiveComposingChars: Record<string, true>;
+
+  // Cloud Backup
+  cloudBackupConfig: CloudBackupConfig;
+  updateCloudBackupConfig: (updates: Partial<CloudBackupConfig>) => void;
+  cloudBackupToWebDAV: (mode: 'text_only' | 'media_only' | 'full') => Promise<void>;
+  cloudRestoreFromWebDAV: (file: CloudBackupFile) => Promise<void>;
+  listCloudBackups: () => Promise<CloudBackupFile[]>;
 
   // System
   exportSystem: (mode: 'text_only' | 'media_only' | 'full') => Promise<Blob>;
@@ -201,21 +282,26 @@ interface OSContextType {
   setAppOrder: (order: string[]) => void;
 }
 
+export const DEFAULT_WALLPAPER = 'linear-gradient(135deg, #FFDEE9 0%, #B5FFFC 100%)';
+
 const defaultTheme: OSTheme = {
   hue: 245, // Default Indigo-ish
   saturation: 25,
-  lightness: 65, 
-  wallpaper: 'linear-gradient(135deg, #FFDEE9 0%, #B5FFFC 100%)', 
+  lightness: 65,
+  wallpaper: DEFAULT_WALLPAPER,
   darkMode: false,
   contentColor: '#ffffff', // Default white text
 };
 
 const defaultApiConfig: APIConfig = {
-  baseUrl: '', 
+  baseUrl: '',
   apiKey: '',
   minimaxApiKey: '',
   minimaxGroupId: '',
+  minimaxRegion: 'domestic',
   model: 'gpt-4o-mini',
+  stream: false,
+  temperature: 0.85,
 };
 
 const generateAvatar = (seed: string) => {
@@ -292,7 +378,7 @@ Sully是小手机的内置AI。
       'sad': 'https://sharkpan.xyz/f/3WnMce/03.png',
       'angry': 'https://sharkpan.xyz/f/5n1xSj/04.png',
       'shy': 'https://sharkpan.xyz/f/kdwet6/05.png',
-      'chibi': 'https://sharkpan.xyz/f/oWZQF4/S2.png' // Default Room Sprite
+      'chibi': 'https://sharkpan.xyz/f/oWZQF4/S2.png' // Default Room Sprite (家园 Sully chibi)
   },
   
   spriteConfig: {
@@ -434,8 +520,52 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       return () => clearInterval(timer);
   }, []);
 
+  // 启动后台扫描一次，把还停留在老 number[] 形态的向量记录升级到 Uint8Array
+  // 紧凑存储。完全无损，不影响召回质量。重度用户磁盘可省 ~12×（500MB → 40MB
+  // 量级）。fire-and-forget，不阻塞 UI；只在确实有数据被升级时弹一次 toast
+  // 让用户知道发生了什么。重复调用幂等，下次启动如果没有老数据就立刻退出。
+  useEffect(() => {
+      let cancelled = false;
+      const run = async () => {
+          try {
+              await new Promise(r => setTimeout(r, 2000)); // 让首屏渲染先呼吸一下
+              if (cancelled) return;
+              const { MemoryVectorDB } = await import('../utils/memoryPalace/db');
+              const migrated = await MemoryVectorDB.scanAndMigrateLegacy((m, s) => {
+                  if (cancelled || m === 0) return;
+                  if (s % 1000 === 0 && s > 0) {
+                      setSysOperation({
+                          status: 'processing',
+                          message: `正在压缩记忆向量到紧凑格式... ${m}/${s}`,
+                          progress: 0,
+                      });
+                  }
+              });
+              if (cancelled) return;
+              if (migrated > 0) {
+                  setSysOperation({ status: 'idle', message: '', progress: 0 });
+                  addToast(`已把 ${migrated} 条记忆向量压缩到紧凑格式，磁盘空间已释放`, 'success');
+              }
+          } catch (e) {
+              console.warn('[memory] vector migration scan failed', e);
+          }
+      };
+      run();
+      return () => { cancelled = true; };
+  // addToast / setSysOperation 是稳定引用，跑一次即可
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
   const [activeCharacterId, setActiveCharacterId] = useState<string>('');
+
+  // 刷新后能恢复"上一次聊的角色"：所有调用方（聊天切换/通知 onclick/记忆宫殿 handleSwitchChar）
+  // 都走裸 setActiveCharacterId，集中在这里同步到 localStorage，避免每个调用点各写一遍
+  useEffect(() => {
+    if (activeCharacterId) {
+      try { localStorage.setItem('os_last_active_char_id', activeCharacterId); } catch {}
+    }
+  }, [activeCharacterId]);
   
   const [groups, setGroups] = useState<GroupProfile[]>([]); 
   const [worldbooks, setWorldbooks] = useState<Worldbook[]>([]); 
@@ -448,39 +578,37 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [apiPresets, setApiPresets] = useState<ApiPreset[]>([]);
   const [realtimeConfig, setRealtimeConfig] = useState<RealtimeConfig>(defaultRealtimeConfig);
+  const [memoryPalaceConfig, setMemoryPalaceConfig] = useState<MemoryPalaceGlobalConfig>(() => {
+    try { const s = localStorage.getItem('os_memory_palace_config'); return s ? { ...defaultMemoryPalaceConfig, ...JSON.parse(s) } : defaultMemoryPalaceConfig; } catch { return defaultMemoryPalaceConfig; }
+  });
+  const defaultRemoteVectorConfig = { enabled: false, supabaseUrl: '', supabaseAnonKey: '', initialized: false };
+  const [remoteVectorConfig, setRemoteVectorConfig] = useState(() => {
+    try { const s = localStorage.getItem('os_remote_vector_config'); return s ? { ...defaultRemoteVectorConfig, ...JSON.parse(s) } : defaultRemoteVectorConfig; } catch { return defaultRemoteVectorConfig; }
+  });
   const [customThemes, setCustomThemes] = useState<ChatTheme[]>([]);
   const [customIcons, setCustomIcons] = useState<Record<string, string>>({});
   const [appearancePresets, setAppearancePresets] = useState<AppearancePreset[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [errorDialog, setErrorDialog] = useState<{ title: string; details: string } | null>(null);
   
   const [lastMsgTimestamp, setLastMsgTimestamp] = useState<number>(0);
   const [unreadMessages, setUnreadMessages] = useState<Record<string, number>>({});
-
-  const MESSAGE_SUB_VIEW_KEY = 'sullyos_message_sub_view';
-  const [messageSubView, setMessageSubViewState] = useState<MessageSubView>(() => {
-    try {
-      const v = localStorage.getItem(MESSAGE_SUB_VIEW_KEY);
-      if (v === 'contacts' || v === 'chat') return v;
-      return 'contacts';
-    } catch {
-      return 'contacts';
-    }
-  });
-  const messageSubViewRef = useRef<MessageSubView>(messageSubView);
-  messageSubViewRef.current = messageSubView;
-
-  const setMessageSubView = useCallback((v: MessageSubView) => {
-    setMessageSubViewState(v);
-    try {
-      localStorage.setItem(MESSAGE_SUB_VIEW_KEY, v);
-    } catch { /* ignore */ }
-  }, []);
+  const [proactiveComposingChars, setProactiveComposingChars] = useState<Record<string, true>>({});
   
   // LOGS
   const [systemLogs, setSystemLogs] = useState<SystemLog[]>([]);
   
   // Sys Operation Status
   const [sysOperation, setSysOperation] = useState<{ status: 'idle' | 'processing', message: string, progress: number }>({ status: 'idle', message: '', progress: 0 });
+
+  // Cloud Backup Config
+  const defaultCloudBackupConfig: CloudBackupConfig = {
+      enabled: false, webdavUrl: '', username: '', password: '',
+      remotePath: '/SullyBackup/',
+  };
+  const [cloudBackupConfig, setCloudBackupConfig] = useState<CloudBackupConfig>(() => {
+      try { const s = localStorage.getItem('os_cloud_backup_config'); return s ? { ...defaultCloudBackupConfig, ...JSON.parse(s) } : defaultCloudBackupConfig; } catch { return defaultCloudBackupConfig; }
+  });
 
   const schedulerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const interceptorsInitialized = useRef(false);
@@ -622,20 +750,18 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
              try {
                  const parsed = JSON.parse(savedThemeStr);
                  loadedTheme = { ...loadedTheme, ...parsed };
+                 // Strip the legacy Unsplash hard-coded wallpaper, keep user-imported http(s) URLs
                  if (
-                     loadedTheme.wallpaper.includes('unsplash') || 
-                     loadedTheme.wallpaper === '' || 
-                     loadedTheme.wallpaper.startsWith('http') && !loadedTheme.wallpaper.includes('data:')
+                     loadedTheme.wallpaper.includes('unsplash') ||
+                     loadedTheme.wallpaper === ''
                  ) {
-                     loadedTheme.wallpaper = 'linear-gradient(120deg, #e0c3fc 0%, #8ec5fc 100%)';
+                     loadedTheme.wallpaper = DEFAULT_WALLPAPER;
                  }
                  if (loadedTheme.wallpaper.startsWith('data:')) {
                      loadedTheme.wallpaper = defaultTheme.wallpaper;
                  }
-                 // Reset large data URI if loaded from legacy storage, we fetch from DB below
-                 if (loadedTheme.launcherWidgetImage && loadedTheme.launcherWidgetImage.startsWith('data:')) {
-                     loadedTheme.launcherWidgetImage = undefined;
-                 }
+                 // Deprecated legacy fields are forcibly stripped — they never render again.
+                 loadedTheme.launcherWidgetImage = undefined;
                  // Reset font too if it's data URI
                  if (loadedTheme.customFont && loadedTheme.customFont.startsWith('data:')) {
                      loadedTheme.customFont = undefined;
@@ -679,15 +805,17 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                     loadedTheme.wallpaper = assetMap['wallpaper'];
                 }
                 
+                // Deprecated legacy asset — purge silently so it can never be rendered again.
                 if (assetMap['launcherWidgetImage']) {
-                    loadedTheme.launcherWidgetImage = assetMap['launcherWidgetImage'];
+                    void DB.deleteAsset('launcherWidgetImage');
                 }
 
                 // If asset exists, it overrides LS (which is empty or old)
                 if (assetMap['custom_font_data']) {
                     loadedTheme.customFont = assetMap['custom_font_data'];
                 }
-                
+
+                const DEPRECATED_WIDGET_SLOTS = new Set(['bl', 'br']);
                 const loadedIcons: Record<string, string> = {};
                 const loadedWidgets: Record<string, string> = {};
                 Object.keys(assetMap).forEach(key => {
@@ -697,10 +825,20 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                     }
                     if (key.startsWith('widget_')) {
                         const slot = key.replace('widget_', '');
+                        if (DEPRECATED_WIDGET_SLOTS.has(slot)) {
+                            void DB.deleteAsset(key);
+                            return;
+                        }
                         loadedWidgets[slot] = assetMap[key];
                     }
                 });
                 setCustomIcons(loadedIcons);
+                // Strip deprecated slots that may have been imported via beautification packs.
+                if (loadedTheme.launcherWidgets) {
+                    for (const slot of DEPRECATED_WIDGET_SLOTS) {
+                        delete loadedTheme.launcherWidgets[slot];
+                    }
+                }
                 if (Object.keys(loadedWidgets).length > 0) {
                     loadedTheme.launcherWidgets = { ...(loadedTheme.launcherWidgets || {}), ...loadedWidgets };
                 }
@@ -715,6 +853,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                         } catch {}
                     }
                 });
+
                 loadedPresets.sort((a, b) => b.createdAt - a.createdAt);
                 setAppearancePresets(loadedPresets);
 
@@ -740,6 +879,13 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
     const initData = async () => {
       try {
+        // 请求持久化存储：标记后浏览器在磁盘压力时不会优先驱逐我们的 IndexedDB，
+        // 角色 / 聊天 / 资产这些大体积数据被默认随手清掉的概率显著降低。
+        // 接口未授权会直接 reject —— 我们不在乎结果，吞掉异常。
+        if (typeof navigator !== 'undefined' && navigator.storage && typeof navigator.storage.persist === 'function') {
+            navigator.storage.persist().catch(() => {});
+        }
+
         await loadSettings();
 
         const [dbChars, dbThemes, dbUser, dbGroups, dbWorldbooks, dbNovels, dbSongs] = await Promise.all([
@@ -765,8 +911,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                  const isCorrupted = !currentSprites['normal'] || !currentSprites['chibi'];
                  const needsWallUpdate = existingSully.roomConfig?.wallImage !== sullyV2.roomConfig?.wallImage;
                  const needsSkinSets = !existingSully.dateSkinSets || existingSully.dateSkinSets.length === 0;
+                 // 之前误把家园 chibi 替换成了像素小屋的像素立绘 → 还原为原版 sharkpan 立绘
+                 const hasMisplacedPixelChibi = typeof currentSprites['chibi'] === 'string'
+                     && currentSprites['chibi'].startsWith('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADUAAAA4CAYAAABdeLCu');
 
-                 if (isCorrupted || !existingSully.roomConfig || needsWallUpdate || needsSkinSets) {
+                 if (isCorrupted || !existingSully.roomConfig || needsWallUpdate || needsSkinSets || hasMisplacedPixelChibi) {
                      const restoredSprites = { ...sullyV2.sprites, ...currentSprites };
 
                      if (!restoredSprites['normal']) restoredSprites['normal'] = sullyV2.sprites!['normal'];
@@ -775,6 +924,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                      if (!restoredSprites['angry']) restoredSprites['angry'] = sullyV2.sprites!['angry'];
                      if (!restoredSprites['shy']) restoredSprites['shy'] = sullyV2.sprites!['shy'];
                      if (!restoredSprites['chibi']) restoredSprites['chibi'] = sullyV2.sprites!['chibi'];
+                     if (hasMisplacedPixelChibi) restoredSprites['chibi'] = sullyV2.sprites!['chibi'];
 
                      const updatedRoomConfig = existingSully.roomConfig ? {
                          ...existingSully.roomConfig,
@@ -806,6 +956,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
             }
         }
 
+        finalChars = finalChars.map(c => normalizeCharacterDefaults(normalizeCharacterImpression(c)));
+
         if (finalChars.length > 0) {
           setCharacters(finalChars);
           const lastActiveId = localStorage.getItem('os_last_active_char_id');
@@ -833,6 +985,26 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         console.error('Data init failed:', err);
       } finally {
         setIsDataLoaded(true);
+
+        // 检测：远程向量存储已配置但远程可能缺数据（导入备份后）
+        try {
+            const rvConfig = JSON.parse(localStorage.getItem('os_remote_vector_config') || '{}');
+            if (rvConfig.enabled && rvConfig.initialized && rvConfig.supabaseUrl) {
+                const { getVectorCount } = await import('../utils/memoryPalace/supabaseVector');
+                const remoteCount = await getVectorCount(rvConfig);
+                // 本地向量数量
+                const localDb = await import('../utils/db').then(m => m.openDB());
+                const localCount = await new Promise<number>((res) => {
+                    const tx = localDb.transaction('memory_vectors', 'readonly');
+                    const req = tx.objectStore('memory_vectors').count();
+                    req.onsuccess = () => res(req.result);
+                    req.onerror = () => res(0);
+                });
+                if (localCount > 0 && remoteCount < localCount * 0.5) {
+                    setTimeout(() => addToast(`本地有 ${localCount} 条向量，远程仅 ${remoteCount} 条。建议去设置页同步到远程。`, 'info'), 3000);
+                }
+            }
+        } catch { /* 静默 */ }
       }
     };
 
@@ -1015,6 +1187,24 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   awayProactiveCount += 1;
               }
               setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
+              const preview = (body || `${charName} sent a proactive message`).replace(/\s+/g, ' ').trim() || `${charName} sent a proactive message`;
+              void sendProactiveNativeNotification(charId, charName, preview);
+
+              // Web Notification —— 走 Service Worker 的 showNotification（和"测试推送"
+              // 同一条链路）。页面级 `new Notification(...)` 在标签后台 / PWA / 移动端会
+              // 静默失败，必须走 SW registration 才稳定。
+              if (!Capacitor.isNativePlatform() && 'serviceWorker' in navigator && window.Notification && Notification.permission === 'granted') {
+                  const char = characters.find(c => c.id === charId);
+                  navigator.serviceWorker.ready.then(reg => {
+                      reg.showNotification(charName, {
+                          body: preview,
+                          icon: char?.avatar || './icons/icon-192.png',
+                          badge: './icons/icon-192.png',
+                          tag: `proactive-${charId}`,
+                          data: { charId, kind: 'proactive-1.0' },
+                      }).catch(() => { /* notification failed */ });
+                  }).catch(() => { /* SW not ready */ });
+              }
           }
       };
       const onVisible = () => {
@@ -1032,11 +1222,85 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           window.removeEventListener('proactive-message-sent', handler);
           document.removeEventListener('visibilitychange', onVisible);
       };
-  }, []);
+  }, [characters, sendProactiveNativeNotification]);
+
+  // ─── Global Proactive Message Handler ───
+  // Registered at OS level so it works even when Chat is not open.
+  useEffect(() => {
+      let awayActiveMsgCount = 0;
+
+      const handler = (e: Event) => {
+          const { charId, charName, body } = (e as CustomEvent).detail as { charId: string; charName: string; body?: string };
+          setLastMsgTimestamp(Date.now());
+
+          const isChattingWithThisChar = activeAppRef.current === AppID.Chat && activeCharIdScheduleRef.current === charId;
+          if (!isChattingWithThisChar) {
+              const isVisible = document.visibilityState === 'visible';
+              if (isVisible) {
+                  addToast(`${charName} 给你发了消息`, 'success');
+              } else {
+                  awayActiveMsgCount += 1;
+              }
+              setUnreadMessages(prev => ({ ...prev, [charId]: (prev[charId] || 0) + 1 }));
+              const preview = (body || `${charName} sent an active message`).replace(/\s+/g, ' ').trim() || `${charName} sent an active message`;
+              void sendProactiveNativeNotification(charId, charName, preview);
+              // SW push handler 已经 fire 过系统通知（不在前台时露出真实内容、在前台时
+              // silent + close 静默），这里不再补一次，避免重复弹窗。
+          }
+      };
+
+      const openHandler = (e: Event) => {
+          const { charId } = (e as CustomEvent).detail as { charId?: string };
+          if (!charId) return;
+          setActiveApp(AppID.Chat);
+          setActiveCharacterId(charId);
+      };
+
+      const onVisible = () => {
+          if (document.visibilityState !== 'visible') return;
+          if (awayActiveMsgCount > 0) {
+              addToast(`你离开期间收到 ${awayActiveMsgCount} 条新消息`, 'success');
+              awayActiveMsgCount = 0;
+          }
+      };
+
+      window.addEventListener('active-msg-received', handler);
+      window.addEventListener('active-msg-open', openHandler);
+      document.addEventListener('visibilitychange', onVisible);
+      return () => {
+          window.removeEventListener('active-msg-received', handler);
+          window.removeEventListener('active-msg-open', openHandler);
+          document.removeEventListener('visibilitychange', onVisible);
+      };
+  }, [sendProactiveNativeNotification]);
 
   // 主动发消息 1.0：runProactive 处理 proactive-trigger
   const proactiveRunningRef = useRef(false);
   const proactiveQueueRef = useRef<string[]>([]);
+  // Per-character innerState cache for proactive turns — mirrors useChatAI's
+  // evolvedNarrative state so consecutive proactive triggers carry continuity.
+  const proactiveInnerStateRef = useRef<Map<string, string>>(new Map());
+
+  // Refs to avoid stale closures in proactive callback
+  const charactersRef = useRef(characters);
+  charactersRef.current = characters;
+  const apiConfigRef = useRef(apiConfig);
+  apiConfigRef.current = apiConfig;
+
+  // Keep the MiniMax endpoint module in sync with the user's region choice
+  // so every minimaxFetch() call reads the latest preference.
+  useEffect(() => {
+    setMinimaxRegion(apiConfig.minimaxRegion);
+  }, [apiConfig.minimaxRegion]);
+  const userProfileRef = useRef(userProfile);
+  userProfileRef.current = userProfile;
+  const groupsRef = useRef(groups);
+  groupsRef.current = groups;
+  const realtimeConfigRef = useRef(realtimeConfig);
+  realtimeConfigRef.current = realtimeConfig;
+  const memoryPalaceConfigRef = useRef(memoryPalaceConfig);
+  memoryPalaceConfigRef.current = memoryPalaceConfig;
+
   useEffect(() => {
       if (!isDataLoaded) return;
 
@@ -1055,7 +1319,14 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               return;
           }
 
-          const char = characters.find(c => c.id === charId);
+          // Read from refs to always get latest values
+          const currentCharacters = charactersRef.current;
+          const currentApiConfig = apiConfigRef.current;
+          const currentUserProfile = userProfileRef.current;
+          const currentGroups = groupsRef.current;
+          const currentRealtimeConfig = realtimeConfigRef.current;
+
+          const char = currentCharacters.find(c => c.id === charId);
           if (!char) {
               drainQueuedProactive();
               return;
@@ -1069,14 +1340,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
           const pCfg = char.proactiveConfig;
           const useSecondary = pCfg?.useSecondaryApi && pCfg.secondaryApi?.baseUrl;
-          const api = useSecondary ? pCfg!.secondaryApi! : apiConfig;
+          const api = useSecondary ? pCfg!.secondaryApi! : currentApiConfig;
           if (!api.baseUrl) {
               drainQueuedProactive();
               return;
           }
 
           proactiveRunningRef.current = true;
-          console.log(`🔔 [Proactive] Trigger for ${char.name}${useSecondary ? ' (副API)' : ''}`);
+          setProactiveComposingChars(prev => prev[charId] ? prev : { ...prev, [charId]: true });
+          console.log(`🔔 [Proactive/Global] Trigger fired for ${char.name}${useSecondary ? ' (副API)' : ''}`);
 
           try {
               const recentMsgs = await DB.getRecentMessagesByCharId(charId, 200);
@@ -1096,8 +1368,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   else timeSinceUser = `${Math.floor(gapMin / 1440)}天${Math.floor((gapMin % 1440) / 60)}小时`;
               }
 
-              const userName = userProfile?.name || '对方';
-              const longGapHint = timeSinceUser && gapMin > 120 ? `（${userName}挺久没找你了，你也可以表达想念、好奇${userName}在干嘛、或者小小地抱怨一下。）` : '';
+              // 2. Save hidden system hint
+              const userName = currentUserProfile?.name || '对方';
               await DB.saveMessage({
                   charId,
                   role: 'user',
@@ -1106,64 +1378,290 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   metadata: { proactiveHint: true, hidden: true }
               });
 
+              // 3. Build prompt & message history — 走和 useChatAI / emotion eval 同一个 helper，
+              //    保证三家拿到的"材料"完全一致；区别只在前面追加的"现在主动找用户"那条 hint。
               const allMsgs = await DB.getRecentMessagesByCharId(charId, char.contextLimit || 500);
               const emojis = await DB.getEmojis();
               const categories = await DB.getEmojiCategories();
-              const systemPrompt = await ChatPrompts.buildSystemPrompt(char, userProfile, groups, emojis, categories, allMsgs, realtimeConfig);
-              const { apiMessages } = ChatPrompts.buildMessageHistory(allMsgs, char.contextLimit || 500, char, userProfile, emojis);
-              const fullMessages = [{ role: 'system', content: systemPrompt }, ...apiMessages];
+
+              // 上一轮缓存的意识流独白 —— 主路径用 React state，主动消息这里用 ref Map
+              const cachedInnerState = proactiveInnerStateRef.current.get(charId) || undefined;
+
+              const payload = await buildChatRequestPayload({
+                  char, userProfile: currentUserProfile!, groups: currentGroups,
+                  emojis, categories,
+                  historyMsgs: allMsgs,
+                  contextLimit: char.contextLimit || 500,
+                  realtimeConfig: currentRealtimeConfig,
+                  innerState: cachedInnerState,
+                  // 实时音乐播放状态 —— OSContext 在 MusicProvider 上层用不了 useMusic()，
+                  // 走 MusicContext 暴露的模块级快照（Provider mount 后会持续写入）
+                  musicSnapshot: loadMusicPlaybackSnapshot(),
+                  // translationConfig / mcdMiniSnap 是 chat-app 会话级 UI 状态，主动消息触发时
+                  // 不存在；保持 undefined 即可，与"用户当时根本没在 chat 界面"的语义一致
+                  htmlMode: { enabled: !!(char as any).htmlModeEnabled, customPrompt: (char as any).htmlModeCustomPrompt },
+                  thinkingChain: { enabled: !!(char as any).showThinkingChain, customPrompt: (char as any).thinkingChainCustomPrompt },
+              });
+              const systemPrompt = payload.systemPrompt;
+              const apiMessages = payload.cleanedApiMessages;
+              const fullMessages = payload.fullMessages;
+
+              // 3c. 情绪评估 fire-and-forget — 与主 API 并行，沿用 useChatAI 的 API 选择逻辑：
+              //     角色专属情绪 API > 主 apiConfig（与记忆宫殿副 API 完全独立）
+              if (isScheduleFeatureOn(char) && char.emotionConfig?.enabled) {
+                  const emotionApi = (char.emotionConfig.api?.baseUrl)
+                      ? char.emotionConfig.api
+                      : { baseUrl: apiConfigRef.current.baseUrl, apiKey: apiConfigRef.current.apiKey, model: apiConfigRef.current.model };
+                  if (emotionApi.baseUrl && currentUserProfile) {
+                      evaluateEmotionBackground(char, currentUserProfile, systemPrompt, apiMessages, emotionApi)
+                          .then((innerState) => {
+                              if (innerState) proactiveInnerStateRef.current.set(charId, innerState);
+                          })
+                          .catch(() => {});
+                  }
+              }
 
               const baseUrl = api.baseUrl.replace(/\/+$/, '');
               const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${api.apiKey || 'sk-none'}` };
+              const reqBody: any = { model: api.model, messages: fullMessages, temperature: 0.85, stream: false };
+              // 思考链开启时显式向后端请求 extended thinking — 与 useChatAI 同步,
+              // 不同代理认不同入口,全都试一遍,代理不识别的会自动忽略
+              if ((char as any).showThinkingChain) {
+                  const m: string = reqBody.model || '';
+                  if (/^claude-/i.test(m) && !/-thinking$/i.test(m)) {
+                      reqBody.model = `${m}-thinking`;
+                  }
+                  reqBody.thinking = { type: 'enabled', budget_tokens: 4000 };
+                  reqBody.reasoning_effort = 'medium';
+                  reqBody.extra_body = { ...(reqBody.extra_body || {}), thinking: { type: 'enabled', budget_tokens: 4000 } };
+              }
               const data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                   method: 'POST', headers,
-                  body: JSON.stringify({ model: api.model, messages: fullMessages, temperature: 0.85, stream: false })
+                  body: JSON.stringify(reqBody)
               });
 
               let aiContent = data.choices?.[0]?.message?.content || '';
+              // 思考链抽取 — 与 useChatAI 保持一致:reasoning_content 字段 + 主 content 里的 <think>/<thinking>/<thought> 块,
+              // 拼接后挂到本回合首条 assistant 消息的 metadata.thinkingChain
+              let pendingThinkingChain: string | null = null;
+              if ((char as any).showThinkingChain) {
+                  const lastReasoning = (data?.choices?.[0]?.message?.reasoning_content || '').trim();
+                  const thinkBlocks: string[] = [];
+                  const thinkPat = /<(think|thinking|thought)>([\s\S]*?)<\/\1>/gi;
+                  let tm: RegExpExecArray | null;
+                  while ((tm = thinkPat.exec(aiContent)) !== null) {
+                      const t = tm[2].trim();
+                      if (t) thinkBlocks.push(t);
+                  }
+                  if (!/<\/(?:think|thinking|thought)>/i.test(aiContent)) {
+                      const openOnly = aiContent.match(/<(?:think|thinking|thought)>([\s\S]*$)/i);
+                      if (openOnly && openOnly[1].trim()) thinkBlocks.push(openOnly[1].trim());
+                  }
+                  const chain = [lastReasoning, ...thinkBlocks].filter(s => !!s).join('\n\n').trim();
+                  if (chain) pendingThinkingChain = chain;
+              }
               aiContent = aiContent.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<think>[\s\S]*$/gi, '');
               aiContent = aiContent.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, '');
               aiContent = aiContent.replace(/^[\w一-龥]+:\s*/, '');
               aiContent = aiContent.replace(/\s*\[(?:聊天|通话|约会)\]\s*/g, '\n').trim();
 
+              aiContent = normalizeProactiveAiContent(aiContent);
+
+              const savedPreviewChunks: string[] = [];
+              const baseTimestamp = Date.now();
+              let offset = 0;
+              // 思考链只挂到本回合首条 assistant 消息上,避免每个气泡重复
+              const consumeThinkingMeta = (): { thinkingChain: string } | undefined => {
+                  if (!pendingThinkingChain) return undefined;
+                  const meta = { thinkingChain: pendingThinkingChain };
+                  pendingThinkingChain = null;
+                  return meta;
+              };
+
+              // HTML 卡片：在 sanitize 之前抽出 [html]...[/html] 块,与 useChatAI 保持一致。
+              // 没这一步主动消息会把整段 [html] 当纯文本落库,前端只能渲染成乱码。
+              if ((char as any).htmlModeEnabled && /\[html\]/i.test(aiContent)) {
+                  const { blocks, cleanedContent } = extractHtmlBlocks(aiContent);
+                  for (const blk of blocks) {
+                      try {
+                          const meta = consumeThinkingMeta();
+                          await DB.saveMessage({
+                              charId,
+                              role: 'assistant',
+                              type: 'html_card',
+                              content: blk.textPreview ? `[HTML卡片] ${blk.textPreview}` : '[HTML卡片]',
+                              timestamp: baseTimestamp + offset,
+                              metadata: {
+                                  htmlSource: blk.html,
+                                  htmlTextPreview: blk.textPreview,
+                                  ...(meta || {}),
+                              },
+                          } as any);
+                          if (blk.textPreview) savedPreviewChunks.push(blk.textPreview);
+                          offset += 1;
+                      } catch (e) {
+                          console.error('[Proactive/HTML] 落库 html_card 失败', e);
+                      }
+                  }
+                  aiContent = cleanedContent;
+              }
+
               aiContent = ChatParser.sanitize(aiContent);
 
               if (aiContent) {
-                  const responseParts = ChatParser.splitResponse(aiContent);
-                  const savedPreviewChunks: string[] = [];
-                  const baseTimestamp = Date.now();
-                  let offset = 0;
+                  // 双语翻译:沿用 useChatAI 的 <翻译><原文>..</原文><译文>..</译文></翻译> 协议,
+                  // 把每对原文/译文落成一条 text 消息,内容用 `\n%%BILINGUAL%%\n` 串联供渲染端识别。
+                  const hasTranslationTags = /<翻译>\s*<原文>[\s\S]*?<\/原文>\s*<译文>[\s\S]*?<\/译文>\s*<\/翻译>/.test(aiContent);
 
-                  for (const part of responseParts) {
-                      if (part.type === 'emoji') {
-                          await DB.saveMessage({
-                              charId,
-                              role: 'assistant',
-                              type: 'emoji',
-                              content: part.content,
-                              timestamp: baseTimestamp + offset,
-                          });
-                          offset += 1;
-                          continue;
+                  if (hasTranslationTags) {
+                      // 表情独立抽出,放在文本之后发送
+                      const bilingualEmojis: string[] = [];
+                      let bEm;
+                      const bEmojiPat = /\[\[SEND_EMOJI:\s*(.*?)\]\]/g;
+                      while ((bEm = bEmojiPat.exec(aiContent)) !== null) {
+                          const name = bEm[1].trim();
+                          if (!bilingualEmojis.includes(name)) bilingualEmojis.push(name);
+                      }
+                      aiContent = aiContent.replace(/\[\[SEND_EMOJI:\s*.*?\]\]/g, '').trim();
+
+                      const tagPattern = /<翻译>\s*<原文>([\s\S]*?)<\/原文>\s*<译文>([\s\S]*?)<\/译文>\s*<\/翻译>/g;
+                      let lastIndex = 0;
+                      let tagMatch;
+                      while ((tagMatch = tagPattern.exec(aiContent)) !== null) {
+                          const textBefore = aiContent.slice(lastIndex, tagMatch.index).trim();
+                          if (textBefore) {
+                              const cleaned = ChatParser.sanitize(textBefore);
+                              if (cleaned && ChatParser.hasDisplayContent(cleaned)) {
+                                  for (const chunk of ChatParser.chunkText(cleaned)) {
+                                      if (!chunk) continue;
+                                      const meta = consumeThinkingMeta();
+                                      await DB.saveMessage({
+                                          charId,
+                                          role: 'assistant',
+                                          type: 'text',
+                                          content: chunk,
+                                          timestamp: baseTimestamp + offset,
+                                          ...(meta ? { metadata: meta } : {}),
+                                      });
+                                      savedPreviewChunks.push(chunk);
+                                      offset += 1;
+                                  }
+                              }
+                          }
+
+                          const originalText = ChatParser.sanitize(tagMatch[1].trim());
+                          const translatedText = ChatParser.sanitize(tagMatch[2].trim());
+                          if (originalText || translatedText) {
+                              const biContent = originalText && translatedText
+                                  ? `${originalText}\n%%BILINGUAL%%\n${translatedText}`
+                                  : (originalText || translatedText);
+                              const meta = consumeThinkingMeta();
+                              await DB.saveMessage({
+                                  charId,
+                                  role: 'assistant',
+                                  type: 'text',
+                                  content: biContent,
+                                  timestamp: baseTimestamp + offset,
+                                  ...(meta ? { metadata: meta } : {}),
+                              });
+                              savedPreviewChunks.push(originalText || translatedText);
+                              offset += 1;
+                          }
+
+                          lastIndex = tagMatch.index + tagMatch[0].length;
                       }
 
-                      const textChunks = ChatParser.chunkText(part.content)
-                          .map(chunk => ChatParser.sanitize(chunk))
-                          .filter(chunk => ChatParser.hasDisplayContent(chunk));
+                      const textAfter = aiContent.slice(lastIndex).trim();
+                      if (textAfter) {
+                          const cleaned = ChatParser.sanitize(textAfter.replace(/<\/?翻译>|<\/?原文>|<\/?译文>/g, '').trim());
+                          if (cleaned && ChatParser.hasDisplayContent(cleaned)) {
+                              for (const chunk of ChatParser.chunkText(cleaned)) {
+                                  if (!chunk) continue;
+                                  const meta = consumeThinkingMeta();
+                                  await DB.saveMessage({
+                                      charId,
+                                      role: 'assistant',
+                                      type: 'text',
+                                      content: chunk,
+                                      timestamp: baseTimestamp + offset,
+                                      ...(meta ? { metadata: meta } : {}),
+                                  });
+                                  savedPreviewChunks.push(chunk);
+                                  offset += 1;
+                              }
+                          }
+                      }
 
-                      for (const chunk of textChunks) {
-                          await DB.saveMessage({
-                              charId,
-                              role: 'assistant',
-                              type: 'text',
-                              content: chunk,
-                              timestamp: baseTimestamp + offset,
-                          });
-                          savedPreviewChunks.push(chunk);
-                          offset += 1;
+                      for (const emojiName of bilingualEmojis) {
+                          const foundEmoji = emojis.find(e => e.name === emojiName);
+                          if (foundEmoji?.url) {
+                              const meta = consumeThinkingMeta();
+                              await DB.saveMessage({
+                                  charId,
+                                  role: 'assistant',
+                                  type: 'emoji',
+                                  content: foundEmoji.url,
+                                  timestamp: baseTimestamp + offset,
+                                  ...(meta ? { metadata: meta } : {}),
+                              });
+                              offset += 1;
+                          }
+                      }
+                  } else {
+                      const responseParts = ChatParser.splitResponse(aiContent);
+
+                      for (const part of responseParts) {
+                          if (part.type === 'emoji') {
+                              const foundEmoji = emojis.find(e => e.name === part.content);
+                              if (foundEmoji?.url) {
+                                  const meta = consumeThinkingMeta();
+                                  await DB.saveMessage({
+                                      charId,
+                                      role: 'assistant',
+                                      type: 'emoji',
+                                      content: foundEmoji.url,
+                                      timestamp: baseTimestamp + offset,
+                                      ...(meta ? { metadata: meta } : {}),
+                                  });
+                              } else {
+                                  const fallbackText = `发送了表情包：${part.content}`;
+                                  const meta = consumeThinkingMeta();
+                                  await DB.saveMessage({
+                                      charId,
+                                      role: 'assistant',
+                                      type: 'text',
+                                      content: fallbackText,
+                                      timestamp: baseTimestamp + offset,
+                                      ...(meta ? { metadata: meta } : {}),
+                                  });
+                                  savedPreviewChunks.push(fallbackText);
+                              }
+                              offset += 1;
+                              continue;
+                          }
+
+                          const textChunks = ChatParser.chunkText(part.content)
+                              .map(chunk => ChatParser.sanitize(chunk))
+                              .filter(chunk => ChatParser.hasDisplayContent(chunk));
+
+                          for (const chunk of textChunks) {
+                              const meta = consumeThinkingMeta();
+                              await DB.saveMessage({
+                                  charId,
+                                  role: 'assistant',
+                                  type: 'text',
+                                  content: chunk,
+                                  timestamp: baseTimestamp + offset,
+                                  ...(meta ? { metadata: meta } : {}),
+                              });
+                              savedPreviewChunks.push(chunk);
+                              offset += 1;
+                          }
                       }
                   }
+              }
 
+              if (offset > 0) {
                   const previewSource = savedPreviewChunks.join(' ').trim();
                   const preview = previewSource.replace(/\s+/g, ' ').trim().slice(0, 120) || `${char.name} sent a proactive message`;
 
@@ -1175,6 +1673,12 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               console.error(`[Proactive] Error for ${char.name}:`, err);
           } finally {
               proactiveRunningRef.current = false;
+              setProactiveComposingChars(prev => {
+                  if (!prev[charId]) return prev;
+                  const next = { ...prev };
+                  delete next[charId];
+                  return next;
+              });
               drainQueuedProactive();
           }
       };
@@ -1186,11 +1690,24 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       return () => {
           ProactiveChat.onTrigger(() => {});
       };
-  }, [isDataLoaded, characters, apiConfig, userProfile, groups, realtimeConfig]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDataLoaded]);
 
   const updateTheme = async (updates: Partial<OSTheme>) => {
     const { wallpaper, launcherWidgetImage, launcherWidgets, desktopDecorations, customFont, ...styleUpdates } = updates;
-    const newTheme = { ...theme, ...updates };
+    // Legacy slots are banned — never let them enter state, regardless of caller intent.
+    const sanitizedWidgets = launcherWidgets !== undefined
+        ? Object.fromEntries(Object.entries(launcherWidgets).filter(([k]) => k !== 'bl' && k !== 'br'))
+        : undefined;
+    const sanitizedUpdates: Partial<OSTheme> = { ...updates, launcherWidgetImage: undefined };
+    if (sanitizedWidgets !== undefined) sanitizedUpdates.launcherWidgets = sanitizedWidgets;
+    const newTheme = { ...theme, ...sanitizedUpdates, launcherWidgetImage: undefined };
+    if (newTheme.launcherWidgets) {
+        const w = { ...newTheme.launcherWidgets };
+        delete w['bl'];
+        delete w['br'];
+        newTheme.launcherWidgets = Object.keys(w).length > 0 ? w : undefined;
+    }
     setTheme(newTheme);
 
     // Persist large assets to IndexedDB
@@ -1202,25 +1719,23 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         }
     }
 
-    if (launcherWidgetImage !== undefined) {
-        if (launcherWidgetImage && launcherWidgetImage.startsWith('data:')) {
-            await DB.saveAsset('launcherWidgetImage', launcherWidgetImage);
-        } else {
-            await DB.deleteAsset('launcherWidgetImage');
-        }
-    }
+    // Legacy single-image asset is permanently banned — always delete, never save.
+    await DB.deleteAsset('launcherWidgetImage');
 
     // Save widget images to IndexedDB (each slot is a separate asset)
     if (launcherWidgets !== undefined) {
-        const slots = ['tl', 'tr', 'wide', 'bl', 'br'];
+        const slots = ['tl', 'tr', 'wide', 'dsq'];
         for (const slot of slots) {
-            const val = launcherWidgets[slot];
+            const val = sanitizedWidgets?.[slot];
             if (val && val.startsWith('data:')) {
                 await DB.saveAsset(`widget_${slot}`, val);
             } else if (!val) {
                 await DB.deleteAsset(`widget_${slot}`);
             }
         }
+        // Always purge deprecated slot assets so old data can never resurface.
+        await DB.deleteAsset('widget_bl');
+        await DB.deleteAsset('widget_br');
     }
 
     // Save desktop decoration images to IndexedDB
@@ -1242,7 +1757,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     }
 
     // Logic for Font: Differentiate between Data URI (Blob) and URL (Web Font)
-    if (customFont !== undefined) {
+    // Use `in` check so an explicit `customFont: undefined` (user-initiated reset)
+    // still triggers the reset branch — `customFont !== undefined` would skip it.
+    if ('customFont' in updates) {
         if (customFont && customFont.startsWith('data:')) {
             // Blob: Save to DB, Apply
             await DB.saveAsset('custom_font_data', customFont);
@@ -1261,11 +1778,13 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     // Save lightweight settings to LocalStorage (strip data URIs)
     const lsTheme = { ...newTheme };
     if (lsTheme.wallpaper && lsTheme.wallpaper.startsWith('data:')) lsTheme.wallpaper = '';
-    if (lsTheme.launcherWidgetImage && lsTheme.launcherWidgetImage.startsWith('data:')) lsTheme.launcherWidgetImage = '';
-    // Strip data URIs from widget slots for LS
+    // Banned legacy field — never persist.
+    lsTheme.launcherWidgetImage = undefined;
+    // Strip data URIs and deprecated slots from widgets for LS
     if (lsTheme.launcherWidgets) {
         const cleanWidgets: Record<string, string> = {};
         for (const [k, v] of Object.entries(lsTheme.launcherWidgets)) {
+            if (k === 'bl' || k === 'br') continue;
             cleanWidgets[k] = (v && v.startsWith('data:')) ? '' : v;
         }
         lsTheme.launcherWidgets = cleanWidgets;
@@ -1286,12 +1805,139 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   };
   const updateApiConfig = (updates: Partial<APIConfig>) => { const newConfig = { ...apiConfig, ...updates }; setApiConfig(newConfig); localStorage.setItem('os_api_config', JSON.stringify(newConfig)); };
   const updateRealtimeConfig = (updates: Partial<RealtimeConfig>) => { const newConfig = { ...realtimeConfig, ...updates }; setRealtimeConfig(newConfig); localStorage.setItem('os_realtime_config', JSON.stringify(newConfig)); };
+
+  // Cloud Backup functions
+  const updateCloudBackupConfig = (updates: Partial<CloudBackupConfig>) => {
+      const newConfig = { ...cloudBackupConfig, ...updates };
+      setCloudBackupConfig(newConfig);
+      localStorage.setItem('os_cloud_backup_config', JSON.stringify(newConfig));
+  };
+
+  // Backup provider router — picks the right client module based on
+  // cloudBackupConfig.provider ('github' or 'webdav', defaulting to webdav
+  // for back-compat with users who configured before the GitHub option).
+  const loadBackupProvider = async () => {
+      if (cloudBackupConfig.provider === 'github') {
+          return await import('../utils/githubClient');
+      }
+      return await import('../utils/webdavClient');
+  };
+
+  const cloudBackupToWebDAV = async (mode: 'text_only' | 'media_only' | 'full') => {
+      const { uploadBackup, cleanupOldBackups } = await loadBackupProvider();
+      try {
+          setSysOperation({ status: 'processing', message: '正在打包备份数据...', progress: 0 });
+          const blob = await exportSystem(mode);
+
+          setSysOperation({ status: 'processing', message: '正在上传到云端...', progress: 50 });
+          const filename = `Sully_Backup_${mode}_${Date.now()}.zip`;
+          const result = await uploadBackup(cloudBackupConfig, blob, filename, (pct) => {
+              setSysOperation(prev => ({ ...prev, message: `上传中 ${pct}%...`, progress: 50 + pct * 0.45 }));
+          });
+
+          if (!result.ok) {
+              throw new Error(result.message);
+          }
+
+          // Update last backup time
+          updateCloudBackupConfig({ lastBackupTime: Date.now(), lastBackupSize: blob.size });
+
+          // Cleanup old backups (keep latest 5)
+          await cleanupOldBackups(cloudBackupConfig, 5).catch(() => {});
+
+          setSysOperation({ status: 'idle', message: '', progress: 100 });
+          addToast('云端备份完成', 'success');
+      } catch (e: any) {
+          setSysOperation({ status: 'idle', message: '', progress: 0 });
+          addToast(`云端备份失败: ${e.message}`, 'error');
+          throw e;
+      }
+  };
+
+  const cloudRestoreFromWebDAV = async (file: CloudBackupFile) => {
+      const { downloadBackup } = await loadBackupProvider();
+      try {
+          setSysOperation({ status: 'processing', message: '正在从云端下载...', progress: 0 });
+          const blob = await downloadBackup(cloudBackupConfig, file, (pct) => {
+              setSysOperation(prev => ({ ...prev, message: `下载中 ${pct}%...`, progress: pct * 0.5 }));
+          });
+
+          if (!blob) throw new Error('下载失败');
+
+          setSysOperation({ status: 'processing', message: '正在恢复数据...', progress: 50 });
+          const zipFile = new File([blob], file.name, { type: 'application/zip' });
+          await importSystem(zipFile);
+      } catch (e: any) {
+          setSysOperation({ status: 'idle', message: '', progress: 0 });
+          addToast(`云端恢复失败: ${e.message}`, 'error');
+          throw e;
+      }
+  };
+
+  const listCloudBackups = async (): Promise<CloudBackupFile[]> => {
+      const { listBackups } = await loadBackupProvider();
+      return listBackups(cloudBackupConfig);
+  };
+
+  const updateMemoryPalaceConfig = (updates: Partial<MemoryPalaceGlobalConfig>) => {
+    const newConfig: MemoryPalaceGlobalConfig = {
+      embedding: { ...memoryPalaceConfig.embedding, ...(updates.embedding || {}) },
+      lightLLM: { ...memoryPalaceConfig.lightLLM, ...(updates.lightLLM || {}) },
+      rerank: { ...memoryPalaceConfig.rerank, ...(updates.rerank || {}) },
+    };
+    setMemoryPalaceConfig(newConfig);
+    localStorage.setItem('os_memory_palace_config', JSON.stringify(newConfig));
+  };
+
+  // 情绪 API 同步到所有角色：API 字段（baseUrl/apiKey/model）所有角色共用，
+  // 各角色自身的 enabled 标志保持不变。
+  // 注意：与记忆宫殿副 API（memoryPalaceConfig.lightLLM）完全独立，两者各管各的。
+  const syncEmotionApiToAllCharacters = (api: { baseUrl: string; apiKey: string; model: string } | undefined) => {
+    setCharacters(prev => {
+      const updated = prev.map(c => {
+        const prevEmotion = c.emotionConfig;
+        const nextEmotion = {
+          enabled: !!prevEmotion?.enabled,
+          ...(api && api.baseUrl ? { api: { baseUrl: api.baseUrl, apiKey: api.apiKey, model: api.model } } : {}),
+        };
+        const next = normalizeCharacterImpression({ ...c, emotionConfig: nextEmotion });
+        DB.saveCharacter(next);
+        return next;
+      });
+      return updated;
+    });
+  };
+  const updateRemoteVectorConfig = (updates: Partial<typeof defaultRemoteVectorConfig>) => {
+    const newConfig = { ...remoteVectorConfig, ...updates };
+    setRemoteVectorConfig(newConfig);
+    localStorage.setItem('os_remote_vector_config', JSON.stringify(newConfig));
+  };
   const saveModels = (models: string[]) => { setAvailableModels(models); localStorage.setItem('os_available_models', JSON.stringify(models)); };
   const addApiPreset = (name: string, config: APIConfig) => { setApiPresets(prev => { const next = [...prev, { id: Date.now().toString(), name, config }]; localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
   const removeApiPreset = (id: string) => { setApiPresets(prev => { const next = prev.filter(p => p.id !== id); localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
   const savePresets = (presets: ApiPreset[]) => { setApiPresets(presets); localStorage.setItem('os_api_presets', JSON.stringify(presets)); };
-  const addCharacter = async () => { const name = 'New Character'; const newChar: CharacterProfile = { id: `char-${Date.now()}`, name: name, avatar: generateAvatar(name), description: '点击编辑设定...', systemPrompt: '', memories: [], contextLimit: 500 }; setCharacters(prev => [...prev, newChar]); setActiveCharacterId(newChar.id); await DB.saveCharacter(newChar); };
-  const updateCharacter = async (id: string, updates: Partial<CharacterProfile>) => { setCharacters(prev => { const updated = prev.map(c => c.id === id ? { ...c, ...updates } : c); const target = updated.find(c => c.id === id); if (target) DB.saveCharacter(target); return updated; }); };
+  const addCharacter = async () => {
+    const name = 'New Character';
+    // 默认开启 emotionConfig.enabled，让"开日程 = 开情绪"这条隐含约定对新角色也成立。
+    // 真正的闸门是 (isScheduleFeatureOn && emotionConfig.enabled)，schedule 没开
+    // 时副 API 不会触发，所以这里默认 true 安全。
+    // 注意：memoryPalaceEnabled 不在这里默认开 —— 那是用户在记忆宫殿 App 显式 opt-in
+    // 的功能，自动开会替用户决策。
+    const newChar: CharacterProfile = {
+      id: `char-${Date.now()}`,
+      name,
+      avatar: generateAvatar(name),
+      description: '点击编辑设定...',
+      systemPrompt: '',
+      memories: [],
+      contextLimit: 500,
+      emotionConfig: { enabled: true },
+    };
+    setCharacters(prev => [...prev, newChar]);
+    setActiveCharacterId(newChar.id);
+    await DB.saveCharacter(newChar);
+  };
+  const updateCharacter = async (id: string, updates: Partial<CharacterProfile>) => { setCharacters(prev => { const updated = prev.map(c => c.id === id ? normalizeCharacterImpression({ ...c, ...updates }) : c); const target = updated.find(c => c.id === id); if (target) DB.saveCharacter(target); return updated; }); };
   const deleteCharacter = async (id: string) => { setCharacters(prev => { const remaining = prev.filter(c => c.id !== id); if (remaining.length > 0 && activeCharacterId === id) { setActiveCharacterId(remaining[0].id); } return remaining; }); await DB.deleteCharacter(id); };
   
   // Group Methods
@@ -1319,51 +1965,47 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   };
 
   const updateWorldbook = async (id: string, updates: Partial<Worldbook>) => {
+      // Compute the updated entity up-front. Relying on a closure side-effect
+      // inside a setState updater is unsafe — React calls updaters lazily
+      // during reconciliation, so the closure variable would still be
+      // undefined when the synchronous code below runs, silently skipping
+      // the DB persist + character cache sync (causing the saved content
+      // to revert on reload).
+      const existing = worldbooks.find(wb => wb.id === id);
+      if (!existing) return;
+      const fullUpdatedWb: Worldbook = { ...existing, ...updates, updatedAt: Date.now() };
+
       // 1. Optimistic Update Local State
-      let fullUpdatedWb: Worldbook | undefined;
-      setWorldbooks(prev => {
-          const next = prev.map(wb => {
-              if (wb.id === id) {
-                  fullUpdatedWb = { ...wb, ...updates, updatedAt: Date.now() };
-                  return fullUpdatedWb;
-              }
-              return wb;
-          });
-          return next;
-      });
+      setWorldbooks(prev => prev.map(wb => (wb.id === id ? fullUpdatedWb : wb)));
 
       // 2. Persist to DB
-      if (fullUpdatedWb) {
-          await DB.saveWorldbook(fullUpdatedWb);
+      await DB.saveWorldbook(fullUpdatedWb);
 
-          // 3. AUTO-SYNC: Update Characters that have this book mounted
-          // This ensures data redundancy is kept fresh
-          const charsToSync = characters.filter(c => c.mountedWorldbooks?.some(m => m.id === id));
-          
-          if (charsToSync.length > 0) {
-              const updatedChars = characters.map(char => {
-                  if (char.mountedWorldbooks?.some(m => m.id === id)) {
-                      const newMounted = char.mountedWorldbooks.map(m => 
-                          m.id === id 
-                              // Updated to sync category as well
-                              ? { 
-                                  id: fullUpdatedWb!.id, 
-                                  title: fullUpdatedWb!.title, 
-                                  content: fullUpdatedWb!.content,
-                                  category: fullUpdatedWb!.category
-                                } 
-                              : m
-                      );
-                      // Side effect: Save individual char to DB
-                      const newChar = { ...char, mountedWorldbooks: newMounted };
-                      DB.saveCharacter(newChar); 
-                      return newChar;
-                  }
-                  return char;
-              });
-              setCharacters(updatedChars);
-              addToast(`已同步更新 ${charsToSync.length} 个相关角色的缓存`, 'info');
-          }
+      // 3. AUTO-SYNC: Update Characters that have this book mounted
+      // This ensures data redundancy is kept fresh
+      const charsToSync = characters.filter(c => c.mountedWorldbooks?.some(m => m.id === id));
+
+      if (charsToSync.length > 0) {
+          const updatedChars = characters.map(char => {
+              if (char.mountedWorldbooks?.some(m => m.id === id)) {
+                  const newMounted = char.mountedWorldbooks.map(m =>
+                      m.id === id
+                          ? {
+                              id: fullUpdatedWb.id,
+                              title: fullUpdatedWb.title,
+                              content: fullUpdatedWb.content,
+                              category: fullUpdatedWb.category,
+                            }
+                          : m
+                  );
+                  const newChar = { ...char, mountedWorldbooks: newMounted };
+                  DB.saveCharacter(newChar);
+                  return newChar;
+              }
+              return char;
+          });
+          setCharacters(updatedChars);
+          addToast(`已同步更新 ${charsToSync.length} 个相关角色的缓存`, 'info');
       }
   };
 
@@ -1429,6 +2071,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const addCustomTheme = async (theme: ChatTheme) => { setCustomThemes(prev => { const exists = prev.find(t => t.id === theme.id); if (exists) return prev.map(t => t.id === theme.id ? theme : t); return [...prev, theme]; }); await DB.saveTheme(theme); };
   const removeCustomTheme = async (id: string) => { setCustomThemes(prev => prev.filter(t => t.id !== id)); await DB.deleteTheme(id); };
   const setCustomIcon = async (appId: string, iconUrl: string | undefined) => { setCustomIcons(prev => { const next = { ...prev }; if (iconUrl) next[appId] = iconUrl; else delete next[appId]; return next; }); if (iconUrl) { await DB.saveAsset(`icon_${appId}`, iconUrl); } else { await DB.deleteAsset(`icon_${appId}`); } };
+  const addToast = (message: string, type: Toast['type'] = 'info') => { const id = Date.now().toString(); setToasts(prev => [...prev, { id, message, type }]); setTimeout(() => { setToasts(prev => prev.filter(t => t.id !== id)); }, 3000); };
+  const showError = (title: string, details: string) => { setErrorDialog({ title, details }); };
+  const dismissError = () => { setErrorDialog(null); };
 
   // --- 外观预设 ---
   const saveAppearancePreset = async (name: string) => {
@@ -1448,8 +2093,41 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const applyAppearancePreset = async (id: string) => {
       const preset = appearancePresets.find(p => p.id === id);
       if (!preset) return;
-      setTheme(preset.theme);
-      localStorage.setItem('os_theme', JSON.stringify(preset.theme));
+      // Strip banned legacy widget data from preset before applying — old beautification packs
+      // may still carry launcherWidgetImage / bl / br, and they must never reach the UI.
+      const sanitizedPresetTheme: any = { ...preset.theme, launcherWidgetImage: undefined };
+      if (sanitizedPresetTheme.launcherWidgets) {
+          const w = { ...sanitizedPresetTheme.launcherWidgets } as Record<string, string>;
+          delete w['bl'];
+          delete w['br'];
+          sanitizedPresetTheme.launcherWidgets = Object.keys(w).length > 0 ? w : undefined;
+      }
+      // Apply theme
+      setTheme(sanitizedPresetTheme);
+      // 写 LS 前必须剥 data URI，否则 base64 壁纸会撑爆 5MB quota
+      const lsTheme: any = { ...sanitizedPresetTheme };
+      if (lsTheme.wallpaper && typeof lsTheme.wallpaper === 'string' && lsTheme.wallpaper.startsWith('data:')) lsTheme.wallpaper = '';
+      lsTheme.launcherWidgetImage = undefined;
+      if (lsTheme.launcherWidgets) {
+          const cleanWidgets: Record<string, string> = {};
+          for (const [k, v] of Object.entries(lsTheme.launcherWidgets as Record<string, string>)) {
+              if (k === 'bl' || k === 'br') continue;
+              cleanWidgets[k] = (v && v.startsWith('data:')) ? '' : v;
+          }
+          lsTheme.launcherWidgets = cleanWidgets;
+      }
+      if (lsTheme.desktopDecorations) {
+          lsTheme.desktopDecorations = lsTheme.desktopDecorations.map((d: any) => ({
+              ...d,
+              content: (d.content && typeof d.content === 'string' && d.content.startsWith('data:') && d.type === 'image') ? '' : d.content,
+          }));
+      }
+      if (lsTheme.customFont && typeof lsTheme.customFont === 'string' && lsTheme.customFont.startsWith('data:')) lsTheme.customFont = '';
+      try {
+          localStorage.setItem('os_theme', JSON.stringify(lsTheme));
+      } catch (e) {
+          console.warn('[applyAppearancePreset] localStorage 写入失败，已跳过', e);
+      }
       applyCustomFont(preset.theme.customFont);
       if (preset.customIcons) {
           setCustomIcons(preset.customIcons);
@@ -1490,6 +2168,48 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       addToast('预设已删除', 'info');
   };
 
+  // 一键还原外观：把主题、图标、壁纸、小组件、装饰、字体全部回到出厂状态。
+  // 用户在不同版本/不同备份之间反复导入时，customIcons 与 IndexedDB 里的 widget_/deco_/icon_
+  // 残留经常导致图标错乱，这里直接整体清空再写回 default。
+  // 已保存的外观预设不动，用户随时还能切回去。
+  const resetAppearance = async () => {
+      try {
+          setTheme(defaultTheme);
+          applyCustomFont(undefined);
+
+          const iconAppIds = Object.keys(customIcons);
+          setCustomIcons({});
+          for (const appId of iconAppIds) {
+              await DB.deleteAsset(`icon_${appId}`);
+          }
+
+          const allAssets = await DB.getAllAssets();
+          for (const asset of allAssets) {
+              const id = asset.id;
+              if (
+                  id === 'wallpaper' ||
+                  id === 'launcherWidgetImage' ||
+                  id === 'custom_font_data' ||
+                  id.startsWith('widget_') ||
+                  id.startsWith('deco_') ||
+                  id.startsWith('icon_')
+              ) {
+                  await DB.deleteAsset(id);
+              }
+          }
+
+          try {
+              localStorage.setItem('os_theme', JSON.stringify(defaultTheme));
+          } catch (e) {
+              console.warn('[resetAppearance] localStorage 写入失败', e);
+          }
+
+          addToast('外观已还原为初始状态', 'success');
+      } catch (e: any) {
+          addToast(e?.message || '还原失败', 'error');
+      }
+  };
+
   const renameAppearancePreset = async (id: string, name: string) => {
       setAppearancePresets(prev => prev.map(p => {
           if (p.id !== id) return p;
@@ -1503,13 +2223,32 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const exportAppearancePreset = async (id: string): Promise<Blob> => {
       const preset = appearancePresets.find(p => p.id === id);
       if (!preset) throw new Error('预设不存在');
+      // 保留原始壁纸画质，把整个预设 JSON 塞进 zip 包压体积
       const data = JSON.stringify({ type: 'sully_appearance_preset', version: 1, ...preset }, null, 2);
-      return new Blob([data], { type: 'application/json' });
+      const JSZip = await loadJSZip();
+      const zip = new JSZip();
+      (zip as any).file('preset.json', data);
+      return (zip as any).generateAsync(
+          { type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 9 } },
+      );
   };
 
   const importAppearancePreset = async (file: File): Promise<void> => {
-      const text = await file.text();
-      const raw = JSON.parse(text);
+      // 兼容两种格式：新版 .zip（内含 preset.json）/ 旧版 .json 明文
+      let raw: any;
+      const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+      const isZip = head[0] === 0x50 && head[1] === 0x4b && (head[2] === 0x03 || head[2] === 0x05 || head[2] === 0x07);
+      if (isZip) {
+          const JSZip = await loadJSZip();
+          const zip = await JSZip.loadAsync(file);
+          const entry = zip.file('preset.json') || Object.values((zip as any).files || {}).find((f: any) => !f.dir && /\.json$/i.test(f.name));
+          if (!entry) throw new Error('压缩包内未找到 preset.json');
+          const text = await (entry as any).async('string');
+          raw = JSON.parse(text);
+      } else {
+          const text = await file.text();
+          raw = JSON.parse(text);
+      }
       if (raw.type !== 'sully_appearance_preset') throw new Error('无效的外观预设文件');
       const preset: AppearancePreset = {
           id: `ap_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -1536,6 +2275,12 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const zip = new JSZip();
           const assetsFolder = zip.folder("assets");
           let assetCount = 0;
+
+          // Dedup table — same base64 payload reused across stores (角色头像在
+          // 多个 chat / handbook / room 里被嵌入) gets stored exactly once. Key
+          // is the base64 string itself, value is the assets/* path. For a
+          // heavy user with 50 chats sharing a 200KB avatar this trims ~10MB.
+          const assetDedupMap = new Map<string, string>();
 
           // Strip Base64 Images (Recursive) - Used for Text Only Mode
           const stripBase64 = (obj: any): any => {
@@ -1572,13 +2317,20 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       let value = obj[key];
                       if (typeof value === 'string' && value.startsWith('data:image/')) {
                           try {
-                              const extMatch = value.match(/data:image\/([a-zA-Z0-9]+);base64,/);
-                              if (extMatch) {
-                                  const ext = extMatch[1] === 'jpeg' ? 'jpg' : extMatch[1];
-                                  const filename = `asset_${Date.now()}_${assetCount++}.${ext}`;
-                                  const base64Data = value.split(',')[1];
-                                  assetsFolder?.file(filename, base64Data, { base64: true });
-                                  value = `assets/${filename}`;
+                              const cached = assetDedupMap.get(value);
+                              if (cached) {
+                                  value = cached;
+                              } else {
+                                  const extMatch = value.match(/data:image\/([a-zA-Z0-9]+);base64,/);
+                                  if (extMatch) {
+                                      const ext = extMatch[1] === 'jpeg' ? 'jpg' : extMatch[1];
+                                      const filename = `asset_${Date.now()}_${assetCount++}.${ext}`;
+                                      const base64Data = value.split(',')[1];
+                                      assetsFolder?.file(filename, base64Data, { base64: true });
+                                      const path = `assets/${filename}`;
+                                      assetDedupMap.set(value, path);
+                                      value = path;
+                                  }
                               }
                           } catch (e) {
                               console.warn("Failed to process asset", e);
@@ -1600,7 +2352,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               'room_notes', 'groups', 'journal_stickers', 'social_posts', 'courses', 'games', 'worldbooks', 'novels', 'songs',
               'bank_transactions', 'bank_data',
               'xhs_activities', 'xhs_stock',
-              'quizzes'
+              'quizzes', 'guidebook', 'scheduled_messages', 'life_sim',
+              'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes',
+              'daily_schedule', 'memory_batches',
+              'pixel_home_assets', 'pixel_home_layouts'
           ];
 
           if (mode === 'full') {
@@ -1609,7 +2364,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               storesToProcess = allStores.filter(s => s !== 'assets'); // Exclude raw assets store
           } else if (mode === 'media_only') {
               // media_only now includes themes/assets for complete media backup
-              storesToProcess = ['gallery', 'emojis', 'emoji_categories', 'journal_stickers', 'user_profile', 'characters', 'messages', 'themes', 'assets', 'bank_data'];
+              storesToProcess = ['gallery', 'emojis', 'emoji_categories', 'journal_stickers', 'user_profile', 'characters', 'messages', 'themes', 'assets', 'bank_data',
+                  'pixel_home_assets', 'pixel_home_layouts', 'daily_schedule'];
           }
 
           // Fetch Social App & Room Assets (Optional, depends on mode)
@@ -1624,6 +2380,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               apiPresets: (mode === 'text_only' || mode === 'full') ? apiPresets : undefined,
               availableModels: (mode === 'text_only' || mode === 'full') ? availableModels : undefined,
               realtimeConfig: (mode === 'text_only' || mode === 'full') ? realtimeConfig : undefined,
+              memoryPalaceConfig: (mode === 'text_only' || mode === 'full') ? memoryPalaceConfig : undefined,
               theme: theme, // Include theme in all modes (text/media)
               
               socialAppData: (mode === 'text_only' || mode === 'media_only' || mode === 'full') ? {
@@ -1639,6 +2396,80 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               // Study Room settings (localStorage)
               studyApiConfig: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('study_api_config'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
               studyTutorPresets: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('study_tutor_presets'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
+
+              // 云端配置
+              cloudBackupConfig: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('os_cloud_backup_config'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
+              remoteVectorConfig: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('os_remote_vector_config'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
+
+              // Memory Palace 水位线
+              memoryPalaceHighWaterMarks: (mode === 'text_only' || mode === 'full') ? (() => {
+                  const hwm: Record<string, number> = {};
+                  for (let i = 0; i < localStorage.length; i++) {
+                      const key = localStorage.key(i);
+                      if (key?.startsWith('mp_lastMsgId_')) {
+                          const charId = key.replace('mp_lastMsgId_', '');
+                          hwm[charId] = parseInt(localStorage.getItem(key) || '0', 10);
+                      }
+                  }
+                  return Object.keys(hwm).length > 0 ? hwm : undefined;
+              })() : undefined,
+
+              // Memory Palace 每角色的 UI 标记（人格检测已跑过、首次归档 banner 已看过等）
+              // 丢了会导致重弹一次人格确认 / 首次 banner，体验噪声但不丢数据，仍然应该备份
+              memoryPalaceFlags: (mode === 'text_only' || mode === 'full') ? (() => {
+                  const flags: Record<string, string> = {};
+                  for (let i = 0; i < localStorage.length; i++) {
+                      const key = localStorage.key(i);
+                      if (!key) continue;
+                      if (key.startsWith('mp_personality_tried_')
+                          || key.startsWith('mp_first_archive_notice_')) {
+                          flags[key] = localStorage.getItem(key) || '';
+                      }
+                  }
+                  return Object.keys(flags).length > 0 ? flags : undefined;
+              })() : undefined,
+
+              // Chat 翻译 / 归档 / 润色相关设置
+              chatTranslateSourceLang: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('chat_translate_source_lang') || undefined) : undefined,
+              chatTranslateTargetLang: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('chat_translate_lang') || undefined) : undefined,
+              chatTranslateEnabledByChar: (mode === 'text_only' || mode === 'full') ? (() => {
+                  const map: Record<string, boolean> = {};
+                  for (let i = 0; i < localStorage.length; i++) {
+                      const key = localStorage.key(i);
+                      if (!key || !key.startsWith('chat_translate_enabled_')) continue;
+                      const charId = key.replace('chat_translate_enabled_', '');
+                      map[charId] = localStorage.getItem(key) === 'true';
+                  }
+                  return Object.keys(map).length > 0 ? map : undefined;
+              })() : undefined,
+              chatArchivePrompts: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('chat_archive_prompts'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
+              chatActiveArchivePromptId: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('chat_active_archive_prompt_id') || undefined) : undefined,
+              characterRefinePrompts: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('character_refine_prompts'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
+              characterActiveRefinePromptId: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('character_active_refine_prompt_id') || undefined) : undefined,
+
+              // UI / 偏好
+              scheduleAppTheme: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('schedule_app_theme') || undefined) : undefined,
+              groupchatContextLimit: (mode === 'text_only' || mode === 'full') ? (() => { const v = localStorage.getItem('groupchat_context_limit'); const n = v ? parseInt(v, 10) : NaN; return Number.isFinite(n) ? n : undefined; })() : undefined,
+              browserConfig: (mode === 'text_only' || mode === 'full') ? (() => {
+                  const braveKey = localStorage.getItem('browser_brave_key') || undefined;
+                  const useReal = localStorage.getItem('browser_use_real_search');
+                  const useRealSearch = useReal === null ? undefined : useReal === 'true';
+                  if (!braveKey && useRealSearch === undefined) return undefined;
+                  return { braveKey, useRealSearch };
+              })() : undefined,
+              bm25Mode: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('bm25_mode') || undefined) : undefined,
+              lastActiveCharId: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('os_last_active_char_id') || undefined) : undefined,
+              eventNotifFlags: (mode === 'text_only' || mode === 'full') ? (() => {
+                  const flags: Record<string, string> = {};
+                  for (let i = 0; i < localStorage.length; i++) {
+                      const key = localStorage.key(i);
+                      if (!key) continue;
+                      if (key.startsWith('sullyos_')) {
+                          flags[key] = localStorage.getItem(key) || '';
+                      }
+                  }
+                  return Object.keys(flags).length > 0 ? flags : undefined;
+              })() : undefined,
           };
 
           const totalSteps = storesToProcess.length + 3;
@@ -1673,21 +2504,74 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               }
           }
 
+          // Stores that never contain base64 image data — skip recursive traversal
+          const noImageStores = new Set([
+              'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes',
+              'bank_transactions', 'scheduled_messages', 'memory_batches'
+          ]);
+
+          // Chunked processObject for large arrays — yields to main thread every 200 items
+          const processArrayChunked = async (arr: any[], fn: (item: any) => any, chunkSize = 200): Promise<any[]> => {
+              if (arr.length <= chunkSize) return arr.map(fn);
+              const result: any[] = [];
+              for (let i = 0; i < arr.length; i += chunkSize) {
+                  const chunk = arr.slice(i, i + chunkSize).map(fn);
+                  result.push(...chunk);
+                  if (i + chunkSize < arr.length) {
+                      await new Promise(r => setTimeout(r, 0));
+                  }
+              }
+              return result;
+          };
+
           for (const storeName of storesToProcess) {
               currentStep++;
-              setSysOperation({ 
-                  status: 'processing', 
-                  message: `正在打包: ${storeName} ...`, 
-                  progress: (currentStep / totalSteps) * 100 
+              setSysOperation({
+                  status: 'processing',
+                  message: `正在打包: ${storeName} ...`,
+                  progress: (currentStep / totalSteps) * 100
               });
 
-              let rawData = await DB.getRawStoreData(storeName); 
+              let rawData = await DB.getRawStoreData(storeName);
               let processedData: any;
 
               // --- MODE SPECIFIC FILTERING ---
 
-              if (mode === 'text_only') {
-                  processedData = stripBase64(rawData);
+              if (storeName === 'assets' && Array.isArray(rawData)) {
+                  rawData = rawData.filter((asset: { id?: string } | null | undefined) => {
+                      if (!asset || typeof asset.id !== 'string') return true;
+                      return !isRedundantManagedAssetId(asset.id);
+                  });
+              }
+
+              // Fast path: stores with no image data skip expensive recursive traversal
+              if (noImageStores.has(storeName)) {
+                  if (storeName === 'memory_vectors' && Array.isArray(rawData)) {
+                      // 向量在 IndexedDB 里是 Uint8Array（Float32 原始字节）或老
+                      // number[]，JSON.stringify 没法序列化 Uint8Array（结果是 {}）
+                      // 所以这里统一解码成 plain number[]，让备份能 JSON 圆规一周。
+                      // 重做时 MemoryVectorDB.saveMany 会把 number[] 重新压回
+                      // Uint8Array，磁盘还是省的。
+                      processedData = rawData.map((v: any) => {
+                          if (!v || !v.vector) return v;
+                          let arr: number[];
+                          if (v.vector instanceof Uint8Array) {
+                              const f32 = new Float32Array(v.vector.buffer, v.vector.byteOffset, v.vector.byteLength >>> 2);
+                              arr = Array.from(f32);
+                          } else if (v.vector instanceof Float32Array) {
+                              arr = Array.from(v.vector);
+                          } else {
+                              arr = v.vector;
+                          }
+                          return { ...v, vector: arr };
+                      });
+                  } else {
+                      processedData = rawData;
+                  }
+              } else if (mode === 'text_only') {
+                  processedData = Array.isArray(rawData) && rawData.length > 200
+                      ? await processArrayChunked(rawData, stripBase64)
+                      : stripBase64(rawData);
               } else {
                   // Media & Theme Mode: Extract Images
                   
@@ -1702,8 +2586,14 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       const mediaList = rawData.map((c: CharacterProfile) => {
                           const extracted = {
                               charId: c.id,
-                              avatar: c.avatar, 
+                              avatar: c.avatar,
                               sprites: c.sprites,
+                              // Date app sprite data: skin sets carry alternate sprite maps,
+                              // and customDateSprites/activeSkinSetId are required to wire them up.
+                              dateSkinSets: c.dateSkinSets,
+                              activeSkinSetId: c.activeSkinSetId,
+                              customDateSprites: c.customDateSprites,
+                              spriteConfig: c.spriteConfig,
                               roomItems: c.roomConfig?.items?.reduce((acc: any, item: any) => {
                                   if (item.image && item.image.startsWith('data:')) {
                                       acc[item.id] = item.image;
@@ -1723,7 +2613,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       continue; // Skip standard assignment
                   }
 
-                  processedData = processObject(rawData);
+                  processedData = Array.isArray(rawData) && rawData.length > 200
+                      ? await processArrayChunked(rawData, processObject)
+                      : processObject(rawData);
               }
 
               // Assign to Backup Data
@@ -1762,20 +2654,89 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   case 'xhs_activities': backupData.xhsActivities = processedData; break;
                   case 'xhs_stock': backupData.xhsStockImages = processedData; break;
                   case 'quizzes': backupData.quizSessions = processedData; break;
+                  case 'guidebook': backupData.guidebookSessions = processedData; break;
+                  case 'scheduled_messages': backupData.scheduledMessages = processedData; break;
+                  case 'life_sim': backupData.lifeSimState = Array.isArray(processedData) ? (processedData[0] || null) : (processedData || null); break;
+                  case 'memory_nodes': backupData.memoryNodes = processedData; break;
+                  case 'memory_vectors': backupData.memoryVectors = processedData; break;
+                  case 'memory_links': backupData.memoryLinks = processedData; break;
+                  case 'topic_boxes': backupData.topicBoxes = processedData; break;
+                  case 'anticipations': backupData.anticipations = processedData; break;
+                  case 'event_boxes': backupData.eventBoxes = processedData; break;
+                  case 'daily_schedule': backupData.dailySchedules = processedData; break;
+                  case 'memory_batches': backupData.memoryBatches = processedData; break;
+                  case 'pixel_home_assets': backupData.pixelHomeAssets = processedData; break;
+                  case 'pixel_home_layouts': backupData.pixelHomeLayouts = processedData; break;
               }
 
               await new Promise(resolve => setTimeout(resolve, 10));
           }
 
-          setSysOperation({ status: 'processing', message: '正在生成压缩包...', progress: 95 });
-          
-          zip.file("data.json", JSON.stringify(backupData));
-          
-          const content = await zip.generateAsync({ type: "blob" }, (metadata) => {
-              if (Math.random() > 0.8) {
-                  setSysOperation(prev => ({ ...prev, message: `压缩中 ${metadata.percent.toFixed(0)}%...` }));
+          // 进度条停在 70% 让用户看到接下来的"压缩中 X%"实际推进，而不是
+          // 卡在 95% 干等。level 9 压几十 MB 数据可能要好几秒。
+          setSysOperation({ status: 'processing', message: '正在生成压缩包（最高压缩级别）...', progress: 70 });
+
+          // --- MEMORY-OPTIMIZED INCREMENTAL SERIALIZATION ---
+          // Instead of JSON.stringify(entire backupData) which doubles peak memory,
+          // we serialize large arrays separately and build the JSON incrementally.
+          const largeArrayKeys = ['characters', 'messages', 'assets', 'galleryImages',
+              'savedEmojis', 'memoryNodes', 'memoryVectors', 'memoryLinks',
+              'socialPosts', 'diaries', 'worldbooks', 'novels', 'xhsActivities',
+              'bankTransactions', 'quizSessions', 'guidebookSessions',
+              'topicBoxes', 'anticipations', 'eventBoxes', 'roomCustomAssets', 'mediaAssets',
+              'customThemes', 'appearancePresets', 'courses', 'games', 'songs',
+              'roomTodos', 'roomNotes', 'tasks', 'anniversaries', 'groups',
+              'savedJournalStickers', 'emojiCategories', 'xhsStockImages',
+              'scheduledMessages',
+              'dailySchedules', 'memoryBatches', 'pixelHomeAssets', 'pixelHomeLayouts'] as const;
+
+          // Build metadata (small fields) separately
+          const metadata: Record<string, any> = {};
+          const largeKeySet = new Set(largeArrayKeys as readonly string[]);
+          for (const key of Object.keys(backupData)) {
+              if (!largeKeySet.has(key)) {
+                  metadata[key] = (backupData as any)[key];
               }
-          });
+          }
+
+          // Build JSON string incrementally: "{metadata..., largeKey1:[...], largeKey2:[...]}"
+          const metaStr = JSON.stringify(metadata);
+          const jsonParts: string[] = [metaStr.slice(0, -1)]; // Remove trailing '}'
+
+          let addedLarge = false;
+          for (const key of largeArrayKeys) {
+              const value = (backupData as any)[key];
+              if (value === undefined || value === null) continue;
+              jsonParts.push(`${addedLarge || metaStr.length > 2 ? ',' : ''}"${key}":${JSON.stringify(value)}`);
+              addedLarge = true;
+              // Release reference immediately to allow GC
+              (backupData as any)[key] = undefined;
+              // Yield to let GC run
+              await new Promise(r => setTimeout(r, 0));
+          }
+          jsonParts.push('}');
+
+          zip.file("data.json", jsonParts.join(''));
+          // Release parts
+          jsonParts.length = 0;
+
+          // 进度提示：每 ~5% 更新一次（避免高频 React 重渲染），同时让进度
+          // 条从 70% 平滑爬到 99%，用户能确切看到"在动"。
+          let lastReportedPercent = -10;
+          const content = await zip.generateAsync(
+              { type: "blob", streamFiles: true, compression: "DEFLATE", compressionOptions: { level: 9 } },
+              (metadata) => {
+                  const p = metadata.percent;
+                  if (p - lastReportedPercent >= 5 || p >= 99) {
+                      lastReportedPercent = p;
+                      setSysOperation({
+                          status: 'processing',
+                          message: `正在压缩备份数据 ${p.toFixed(0)}%...`,
+                          progress: Math.min(99, 70 + Math.floor(p * 0.29)),
+                      });
+                  }
+              }
+          );
 
           setSysOperation({ status: 'idle', message: '', progress: 100 });
           return content;
@@ -1814,51 +2775,77 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               }
           }
 
-          const restoreAssets = async (obj: any): Promise<any> => {
-              if (obj === null || typeof obj !== 'object') return obj;
-              
-              if (Array.isArray(obj)) {
-                  const arr = [];
-                  for (const item of obj) {
-                      arr.push(await restoreAssets(item));
+          // Walk the tree once to collect every "assets/<name>" reference, then
+          // decode them in parallel batches. The previous version awaited each
+          // base64 decode sequentially, which made a 42 MB backup take 5+
+          // minutes and left the UI frozen at 50% — users assumed it had
+          // hung and refreshed before the success toast / reload could fire.
+          const restoreAssetsInPlace = async (root: any): Promise<void> => {
+              if (!zip) return;
+
+              type Ref = { parent: any; key: string | number; filename: string };
+              const refs: Ref[] = [];
+              const seen = new WeakSet<object>();
+              const stack: any[] = [root];
+              while (stack.length) {
+                  const node = stack.pop();
+                  if (node === null || typeof node !== 'object') continue;
+                  if (seen.has(node)) continue;
+                  seen.add(node);
+                  if (Array.isArray(node)) {
+                      for (let i = 0; i < node.length; i++) {
+                          const v = node[i];
+                          if (typeof v === 'string' && v.startsWith('assets/')) {
+                              refs.push({ parent: node, key: i, filename: v.split('/')[1] });
+                          } else if (v && typeof v === 'object') {
+                              stack.push(v);
+                          }
+                      }
+                  } else {
+                      for (const k in node) {
+                          if (!Object.prototype.hasOwnProperty.call(node, k)) continue;
+                          const v = node[k];
+                          if (typeof v === 'string' && v.startsWith('assets/')) {
+                              refs.push({ parent: node, key: k, filename: v.split('/')[1] });
+                          } else if (v && typeof v === 'object') {
+                              stack.push(v);
+                          }
+                      }
                   }
-                  return arr;
               }
 
-              const newObj: any = {};
-              for (const key in obj) {
-                  if (Object.prototype.hasOwnProperty.call(obj, key)) {
-                      let value = obj[key];
-                      if (typeof value === 'string' && value.startsWith('assets/') && zip) {
-                          try {
-                              const filename = value.split('/')[1];
-                              const fileInZip = zip.file(`assets/${filename}`);
-                              if (fileInZip) {
-                                  const base64 = await fileInZip.async("base64");
-                                  const ext = filename.split('.').pop() || 'png';
-                                  let mime = 'image/png';
-                                  if (ext === 'jpg' || ext === 'jpeg') mime = 'image/jpeg';
-                                  if (ext === 'gif') mime = 'image/gif';
-                                  if (ext === 'webp') mime = 'image/webp';
-                                  
-                                  value = `data:${mime};base64,${base64}`;
-                              }
-                          } catch (e) {
-                              console.warn(`Failed to restore asset: ${value}`);
-                          }
-                      } else {
-                          value = await restoreAssets(value);
+              const total = refs.length;
+              if (total === 0) return;
+
+              const BATCH = 8;
+              let done = 0;
+              for (let i = 0; i < total; i += BATCH) {
+                  const batch = refs.slice(i, i + BATCH);
+                  await Promise.all(batch.map(async ({ parent, key, filename }) => {
+                      try {
+                          const fileInZip = zip!.file(`assets/${filename}`);
+                          if (!fileInZip) return;
+                          const base64 = await fileInZip.async("base64");
+                          const ext = (filename.split('.').pop() || 'png').toLowerCase();
+                          const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+                              : ext === 'gif' ? 'image/gif'
+                              : ext === 'webp' ? 'image/webp'
+                              : 'image/png';
+                          parent[key] = `data:${mime};base64,${base64}`;
+                      } catch {
+                          console.warn(`Failed to restore asset: assets/${filename}`);
                       }
-                      newObj[key] = value;
-                  }
+                  }));
+                  done += batch.length;
+                  const pct = 50 + Math.floor((done / total) * 40);
+                  setSysOperation({ status: 'processing', message: `正在恢复素材 ${Math.min(done, total)}/${total}...`, progress: pct });
               }
-              return newObj;
           };
 
           setSysOperation({ status: 'processing', message: '正在恢复数据与素材...', progress: 50 });
-          
+
           if (zip) {
-              data = await restoreAssets(data);
+              await restoreAssetsInPlace(data);
           }
 
           await DB.importFullData(data);
@@ -1882,10 +2869,68 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (data.availableModels) saveModels(data.availableModels);
           if (data.apiPresets) savePresets(data.apiPresets);
           if (data.realtimeConfig) updateRealtimeConfig(data.realtimeConfig); // 恢复实时感知配置
+          if (data.memoryPalaceConfig) updateMemoryPalaceConfig(data.memoryPalaceConfig); // 恢复记忆宫殿全局配置
 
           // Restore Study Room settings
           if (data.studyApiConfig) localStorage.setItem('study_api_config', JSON.stringify(data.studyApiConfig));
           if (data.studyTutorPresets) localStorage.setItem('study_tutor_presets', JSON.stringify(data.studyTutorPresets));
+
+          // Restore 云端配置
+          if (data.cloudBackupConfig) localStorage.setItem('os_cloud_backup_config', JSON.stringify(data.cloudBackupConfig));
+          if (data.remoteVectorConfig) localStorage.setItem('os_remote_vector_config', JSON.stringify(data.remoteVectorConfig));
+
+          // Restore Memory Palace 水位线
+          if (data.memoryPalaceHighWaterMarks) {
+              for (const [charId, hwm] of Object.entries(data.memoryPalaceHighWaterMarks)) {
+                  if (typeof hwm === 'number' && hwm > 0) {
+                      localStorage.setItem(`mp_lastMsgId_${charId}`, String(hwm));
+                  }
+              }
+          }
+
+          // Restore Memory Palace UI flags（人格检测已跑过 / 首次 banner 已见等）
+          if (data.memoryPalaceFlags && typeof data.memoryPalaceFlags === 'object') {
+              for (const [key, val] of Object.entries(data.memoryPalaceFlags)) {
+                  if (typeof val === 'string') {
+                      // 只允许恢复 mp_ 前缀的键，避免导入数据污染其它 localStorage
+                      if (key.startsWith('mp_personality_tried_')
+                          || key.startsWith('mp_first_archive_notice_')) {
+                          localStorage.setItem(key, val);
+                      }
+                  }
+              }
+          }
+
+          // Restore Chat 翻译 / 归档 / 润色设置
+          if (typeof data.chatTranslateSourceLang === 'string') localStorage.setItem('chat_translate_source_lang', data.chatTranslateSourceLang);
+          if (typeof data.chatTranslateTargetLang === 'string') localStorage.setItem('chat_translate_lang', data.chatTranslateTargetLang);
+          if (data.chatTranslateEnabledByChar && typeof data.chatTranslateEnabledByChar === 'object') {
+              for (const [charId, enabled] of Object.entries(data.chatTranslateEnabledByChar)) {
+                  localStorage.setItem(`chat_translate_enabled_${charId}`, enabled ? 'true' : 'false');
+              }
+          }
+          if (data.chatArchivePrompts !== undefined) localStorage.setItem('chat_archive_prompts', JSON.stringify(data.chatArchivePrompts));
+          if (typeof data.chatActiveArchivePromptId === 'string') localStorage.setItem('chat_active_archive_prompt_id', data.chatActiveArchivePromptId);
+          if (data.characterRefinePrompts !== undefined) localStorage.setItem('character_refine_prompts', JSON.stringify(data.characterRefinePrompts));
+          if (typeof data.characterActiveRefinePromptId === 'string') localStorage.setItem('character_active_refine_prompt_id', data.characterActiveRefinePromptId);
+
+          // Restore UI / 偏好
+          if (typeof data.scheduleAppTheme === 'string') localStorage.setItem('schedule_app_theme', data.scheduleAppTheme);
+          if (typeof data.groupchatContextLimit === 'number') localStorage.setItem('groupchat_context_limit', String(data.groupchatContextLimit));
+          if (data.browserConfig && typeof data.browserConfig === 'object') {
+              if (typeof data.browserConfig.braveKey === 'string') localStorage.setItem('browser_brave_key', data.browserConfig.braveKey);
+              if (typeof data.browserConfig.useRealSearch === 'boolean') localStorage.setItem('browser_use_real_search', data.browserConfig.useRealSearch ? 'true' : 'false');
+          }
+          if (typeof data.bm25Mode === 'string') localStorage.setItem('bm25_mode', data.bm25Mode);
+          if (typeof data.lastActiveCharId === 'string') localStorage.setItem('os_last_active_char_id', data.lastActiveCharId);
+          if (data.eventNotifFlags && typeof data.eventNotifFlags === 'object') {
+              for (const [key, val] of Object.entries(data.eventNotifFlags)) {
+                  // 只允许 sullyos_ 前缀，避免污染其它键
+                  if (typeof val === 'string' && key.startsWith('sullyos_')) {
+                      localStorage.setItem(key, val);
+                  }
+              }
+          }
           
           if (data.socialAppData) {
               if (data.socialAppData.charHandles) localStorage.setItem('spark_char_handles', JSON.stringify(data.socialAppData.charHandles));
@@ -1923,7 +2968,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               setCustomIcons(loadedIcons);
           }
 
-          if (chars.length > 0) setCharacters(chars);
+          if (chars.length > 0) setCharacters(chars.map(c => normalizeCharacterDefaults(normalizeCharacterImpression(c))));
           if (groupsList.length > 0) setGroups(groupsList);
           if (themes.length > 0) setCustomThemes(themes);
           if (user) setUserProfile(user);
@@ -2034,6 +3079,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     removeApiPreset,
     realtimeConfig,
     updateRealtimeConfig,
+    memoryPalaceConfig,
+    updateMemoryPalaceConfig,
+    syncEmotionApiToAllCharacters,
+    remoteVectorConfig,
+    updateRemoteVectorConfig,
     customThemes,
     addCustomTheme,
     removeCustomTheme,
@@ -2048,11 +3098,23 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     renameAppearancePreset,
     exportAppearancePreset,
     importAppearancePreset,
+    toasts,
+    addToast,
+    errorDialog,
+    showError,
+    dismissError,
+    customIcons,
+    setCustomIcon,
+    resetAppearance,
     lastMsgTimestamp,
     unreadMessages,
     clearUnread,
-    messageSubView,
-    setMessageSubView,
+    proactiveComposingChars,
+    cloudBackupConfig,
+    updateCloudBackupConfig,
+    cloudBackupToWebDAV,
+    cloudRestoreFromWebDAV,
+    listCloudBackups,
     exportSystem,
     importSystem,
     resetSystem,

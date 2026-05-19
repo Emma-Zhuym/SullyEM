@@ -1,9 +1,13 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { CharacterProfile, Message, DateState } from '../types';
 import { ContextBuilder } from '../utils/context';
+import { ChatPrompts } from '../utils/chatPrompts';
+import { injectMemoryPalace, processNewMessages, mergePalaceFragmentsIntoMemories } from '../utils/memoryPalace/pipeline';
+import type { PipelineResult } from '../utils/memoryPalace/pipeline';
+import { incrementDigestRound, runCognitiveDigestion } from '../utils/memoryPalace';
 import { safeResponseJson } from '../utils/safeApi';
 import Modal from '../components/os/Modal';
 import DateSession from '../components/date/DateSession';
@@ -11,7 +15,19 @@ import DateSettings from '../components/date/DateSettings';
 import { BookOpen } from '@phosphor-icons/react';
 
 const DateApp: React.FC = () => {
-    const { closeApp, characters, activeCharacterId, setActiveCharacterId, apiConfig, addToast, updateCharacter, virtualTime, userProfile } = useOS();
+    const { closeApp, characters, activeCharacterId, setActiveCharacterId, apiConfig, addToast, updateCharacter, virtualTime, userProfile, memoryPalaceConfig } = useOS();
+
+    // 记忆宫殿（与聊天侧共用同一套上下文：同 charId、同高水位线）
+    // 见面流也需要在 AI 回复后跑一次缓冲区检查 + 自动归档，否则只有"读"没有"写"。
+    const [memoryPalaceStatus, setMemoryPalaceStatus] = useState<string>('');
+    const [memoryPalaceResult, setMemoryPalaceResult] = useState<PipelineResult | null>(null);
+    const memoryPalaceStatusRef = useRef(memoryPalaceStatus);
+    memoryPalaceStatusRef.current = memoryPalaceStatus;
+
+    // characters ref：见面 hook 跑完后用户可能已经在 MemoryPalaceApp 里关掉了宫殿，
+    // 直接闭包里的 charForHook 是回复开始时捕获的，会读到 stale memoryPalaceEnabled=true。
+    const charactersRef = useRef(characters);
+    charactersRef.current = characters;
     
     // Modes: 'select' -> 'peek' -> 'session' | 'settings' | 'history'
     const [mode, setMode] = useState<'select' | 'peek' | 'session' | 'settings' | 'history'>('select');
@@ -23,6 +39,13 @@ const DateApp: React.FC = () => {
     
     // History State
     const [historySessions, setHistorySessions] = useState<{date: string, msgs: Message[]}[]>([]);
+    // History long-press context menu
+    const [historyMenuMsg, setHistoryMenuMsg] = useState<Message | null>(null);
+    const [historyMenuPos, setHistoryMenuPos] = useState<{x: number, y: number}>({x: 0, y: 0});
+    const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // History edit modal
+    const [historyEditMsg, setHistoryEditMsg] = useState<Message | null>(null);
+    const [historyEditContent, setHistoryEditContent] = useState('');
     
     // Resume Logic State
     const [pendingSessionChar, setPendingSessionChar] = useState<CharacterProfile | null>(null);
@@ -41,7 +64,9 @@ const DateApp: React.FC = () => {
     // --- Data Loading ---
     const loadDateMessages = async () => {
         if (char) {
-            const msgs = await DB.getMessagesByCharId(char.id);
+            // includeProcessed=true：见面记录有自己的 source 维度，
+            // 不能被聊天侧的 memoryPalace 高水位静默吃掉
+            const msgs = await DB.getMessagesByCharId(char.id, true);
             // 只筛选 source='date' 的消息用于小说模式显示
             const filtered = msgs.filter(m => m.metadata?.source === 'date').sort((a,b) => a.timestamp - b.timestamp);
             setDateMessages(filtered);
@@ -152,22 +177,25 @@ const DateApp: React.FC = () => {
         setHasSavedOpening(false); 
 
         try {
-            const msgs = await DB.getMessagesByCharId(c.id);
-            const limit = c.contextLimit || 500; 
-            const peekLimit = Math.min(limit, 50); 
+            const msgs = await DB.getMessagesByCharId(c.id, true);
+            const limit = c.contextLimit || 500;
+            const peekLimit = Math.min(limit, 50);
             const lastMsg = msgs[msgs.length - 1];
             const gapHint = getTimeGapHint(lastMsg?.timestamp);
 
             const recentMsgs = msgs.slice(-peekLimit).map(m => {
                 const content = m.type === 'image' ? '[User sent an image]' : m.content;
-                return `${m.role}: ${content}`;
+                const source = m.metadata?.source === 'call' ? '[通话]' : m.metadata?.source === 'date' ? '[约会]' : '[聊天]';
+                return `${m.role} ${source}: ${content}`;
             }).join('\n');
-            
-            const timeStr = `${virtualTime.day} ${formatTime()}`;
-            const baseContext = ContextBuilder.buildCoreContext(c, userProfile, false); 
 
-            // 强制分隔符，让 AI 意识到这是新的一场戏
-            const contextSeparator = gapHint ? `\n\n--- [TIME SKIP: ${gapHint}] ---\n\n` : `\n\n--- [NEW SCENE START] ---\n\n`;
+            const timeStr = `${virtualTime.day} ${formatTime()}`;
+            const baseContext = ContextBuilder.buildCoreContext(c, userProfile, false);
+
+            // 根据时间间隔选择合适的分隔符
+            const contextSeparator = gapHint
+                ? `\n\n--- [TIME SKIP: ${gapHint}] ---\n\n`
+                : `\n\n--- [SCENE CONTINUATION: 刚刚还在聊天，现在来到了面对面的场景] ---\n\n`;
 
             const peekInstructions = `
 ### 场景：感知 (Sense Presence)
@@ -180,8 +208,8 @@ const DateApp: React.FC = () => {
 描述：${c.name} 此时此刻正在做什么？周围环境是怎样的？状态如何？
 
 ### 逻辑检查
-1. **上下文连贯性**: 参考 [最近记录]，但**必须**注意 [TIME SKIP]。如果是很久没见，不要接着上一次的话题聊，而是开启新场景。
-2. **状态一致性**: ${gapHint.includes('很久') ? '因为很久没见，可能在发呆、忙碌或者有点落寞。' : '根据之前的聊天状态决定。'}
+1. **上下文连贯性**: 参考 [最近记录]（注意消息来源标签：[聊天]是文字聊天、[约会]是面对面、[通话]是语音通话）。如果有 [TIME SKIP] 且间隔很久，开启新场景；如果是 [SCENE CONTINUATION]，说明刚刚还在聊天，**必须**自然衔接最近的聊天话题和情绪状态，不要无视之前的对话内容。
+2. **状态一致性**: ${gapHint.includes('很久') ? '因为很久没见，可能在发呆、忙碌或者有点落寞。' : '根据最近的聊天内容和情绪来决定当前状态。如果刚聊完，角色的状态应该与聊天内容相呼应。'}
 3. **描写风格**: 电影感，沉浸式，细节丰富。不要输出任何前缀，直接输出描写内容。`;
 
             const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -193,7 +221,8 @@ const DateApp: React.FC = () => {
                         { role: "system", content: baseContext },
                         { role: "user", content: `[最近记录 (Previous Context)]:${recentMsgs}${contextSeparator}${peekInstructions}\n\n(Start sensing...)` }
                     ],
-                    temperature: 0.85
+                    temperature: apiConfig.temperature ?? 0.85,
+                    stream: apiConfig.stream ?? false,
                 })
             });
 
@@ -209,37 +238,116 @@ const DateApp: React.FC = () => {
         }
     };
 
+    // 与聊天侧 useChatAI 完全一致的 Memory Palace 后台流程：
+    // 触发缓冲区处理 + 自动归档（如开启） + 50 轮认知消化。
+    const runMemoryPalacePostHook = useCallback(async (charForHook: CharacterProfile) => {
+        // 用 charactersRef 读最新状态，避免见面流程中用户去 MemoryPalaceApp 关掉宫殿后
+        // 这里仍然按 charForHook 闭包里的旧 enabled 触发一次 LLM 总结
+        const liveBefore = charactersRef.current.find(c => c.id === charForHook.id) || null;
+        if (!liveBefore?.memoryPalaceEnabled) return;
+        const mpEmb = memoryPalaceConfig?.embedding;
+        const mpLLMConfigured = memoryPalaceConfig?.lightLLM;
+        const mpLLM = (mpLLMConfigured?.baseUrl)
+            ? mpLLMConfigured
+            : { baseUrl: apiConfig.baseUrl, apiKey: apiConfig.apiKey, model: apiConfig.model };
+        if (!mpEmb?.baseUrl || !mpEmb?.apiKey || !mpLLM.baseUrl) return;
+
+        const recentMsgs = await DB.getRecentMessagesByCharId(charForHook.id, 50);
+        try {
+            const pipelineResult = await processNewMessages(
+                recentMsgs,
+                charForHook.id,
+                charForHook.name,
+                mpEmb,
+                mpLLM,
+                userProfile?.name || '',
+                false,
+                (stage) => setMemoryPalaceStatus(stage),
+            );
+
+            // pipeline 跑的过程中用户可能又关了宫殿，再 check 一次
+            const liveAfter = charactersRef.current.find(c => c.id === charForHook.id) || null;
+            if (!liveAfter?.memoryPalaceEnabled) return;
+
+            if (pipelineResult && pipelineResult.stored > 0) {
+                setMemoryPalaceResult(pipelineResult);
+            }
+
+            if (pipelineResult?.autoArchive && (liveAfter as any).autoArchiveEnabled) {
+                try {
+                    const mergedMemories = mergePalaceFragmentsIntoMemories(
+                        liveAfter.memories || [],
+                        pipelineResult.autoArchive.fragments,
+                    );
+                    updateCharacter(charForHook.id, {
+                        memories: mergedMemories,
+                        hideBeforeMessageId: pipelineResult.autoArchive.hideBeforeMessageId,
+                    } as any);
+                } catch (e: any) {
+                    console.warn(`📚 [DateApp AutoArchive] 失败: ${e?.message || e}`);
+                }
+            }
+
+            // 50 轮自动认知消化（与聊天侧共享计数器，按 charId 持久化）
+            const shouldAutoDigest = incrementDigestRound(charForHook.id);
+            if (shouldAutoDigest) {
+                setMemoryPalaceStatus(`${charForHook.name}闭上眼睛，开始整理内心…`);
+                const persona = [liveAfter.systemPrompt || '', liveAfter.worldview || ''].filter(Boolean).join('\n');
+                await runCognitiveDigestion(charForHook.id, charForHook.name, persona, mpLLM, false, userProfile?.name, mpEmb);
+            }
+        } catch (e: any) {
+            console.error('❌ [DateApp MemoryPalace] 后台处理异常:', e?.message || e);
+            addToast('记忆整理失败', 'error');
+        } finally {
+            const current = memoryPalaceStatusRef.current;
+            if (current && current.includes('完成')) {
+                addToast(current, 'success');
+            }
+            setMemoryPalaceStatus('');
+        }
+    }, [memoryPalaceConfig, apiConfig, userProfile?.name, updateCharacter, addToast]);
+
     // --- Session API Logic ---
     const handleSendMessage = async (text: string): Promise<string> => {
         if (!char) throw new Error("No char");
-        
-        // 1. Save User Msg
-        await DB.saveMessage({ charId: char.id, role: 'user', type: 'text', content: text, metadata: { source: 'date' } });
+
+        // 重发场景：如果 DB 里最后一条已经是这条 user 消息（上一轮发送后 API 失败 / 网络抖动等），
+        // 就跳过重复落库，直接走 API。与 chat app 行为对齐，让用户按发送键即可重新触发 LLM。
+        const recentCheck = await DB.getRecentMessagesByCharId(char.id, 1, true);
+        const isRetry = recentCheck.length > 0
+            && recentCheck[0].role === 'user'
+            && recentCheck[0].content === text
+            && recentCheck[0].metadata?.source === 'date';
+
+        if (!isRetry) {
+            // 1. Save User Msg
+            await DB.saveMessage({ charId: char.id, role: 'user', type: 'text', content: text, metadata: { source: 'date' } });
+        }
         
         // 2. Prepare Context
-        // Re-fetch messages. Since we saved the opening in handleEnterSession, 
+        // Re-fetch messages. Since we saved the opening in handleEnterSession,
         // 'allMsgs' will now correctly contain: [History..., Opening, UserMsg]
-        const allMsgs = await DB.getMessagesByCharId(char.id);
+        const allMsgs = await DB.getMessagesByCharId(char.id, true);
         
         // Update local state for display
         const dateFiltered = allMsgs.filter(m => m.metadata?.source === 'date').sort((a,b) => a.timestamp - b.timestamp);
         setDateMessages(dateFiltered);
 
         const limit = char.contextLimit || 500;
-        
-        // Construct History for AI
-        // We exclude the very last message (UserMsg we just sent) from history array 
-        // because we'll pass it as the explicit user prompt "content".
-        // BUT, we must ensure the Opening (Assistant) is included in history.
-        const historyMsgs = allMsgs.slice(-limit, -1).map(m => {
-            const timeAxis = `[${new Date(m.timestamp).toLocaleString('zh-CN')}]`;
-            const source = m.metadata?.source === 'call' ? '[通话]' : m.metadata?.source === 'date' ? '[约会]' : '[聊天]';
-            return {
-                role: m.role,
-                content: m.type === 'image' ? `${timeAxis} ${source} [User sent an image]` : `${timeAxis} ${source} ${m.content}`
-            };
-        });
 
+        // 与 chat app 完全对齐的历史构建：
+        // 1. 开了记忆宫殿 → 按高水位线过滤掉已被向量记忆替代的旧消息（chat 是在 DB 层做的；这里 allMsgs
+        //    用 includeProcessed=true 因为 dateFiltered 显示 + injectMemoryPalace 还要全集，所以手动过一遍）
+        // 2. 复用 ChatPrompts.buildMessageHistory：emoji / html_card / mcd_card / chat_forward / score_card
+        //    等都会被压成短摘要，不再像旧版 mapper 那样把 m.content 原样塞，避免 prompt 暴涨。
+        // 3. 排除最后一条（刚保存的 user msg），下面单独追加带 System Note 的版本。
+        const hwm = parseInt(localStorage.getItem(`mp_lastMsgId_${char.id}`) || '0', 10);
+        const palaceFiltered = hwm > 0 ? allMsgs.filter(m => m.id > hwm) : allMsgs;
+        const historyForBuild = palaceFiltered.slice(0, -1);
+        const emojis = await DB.getEmojis();
+        const { apiMessages: historyMsgs } = ChatPrompts.buildMessageHistory(historyForBuild, limit, char, userProfile || ({} as any), emojis);
+
+        await injectMemoryPalace(char, allMsgs);
         let systemPrompt = ContextBuilder.buildCoreContext(char, userProfile);
         const REQUIRED_EMOTIONS = ['normal', 'happy', 'angry', 'sad', 'shy'];
         const dateEmotions = [...REQUIRED_EMOTIONS, ...(char.customDateSprites || [])];
@@ -289,7 +397,8 @@ const DateApp: React.FC = () => {
                     ...historyMsgs,
                     { role: 'user', content: `${text}\n\n(System Note: 严格遵守 VN 格式。每一行都要以 [emotion] 开头，根据内容逐行切换情绪标签，不要整段只用同一个。叙述行写出场景的呼吸感，不要罗列动作。)` }
                 ],
-                temperature: 0.85
+                temperature: apiConfig.temperature ?? 0.85,
+                stream: apiConfig.stream ?? false,
             })
         });
 
@@ -299,10 +408,13 @@ const DateApp: React.FC = () => {
 
         // 3. Save AI Response
         await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: content, metadata: { source: 'date' } });
-        
+
         // Refresh local state
-        const freshMsgs = await DB.getMessagesByCharId(char.id);
+        const freshMsgs = await DB.getMessagesByCharId(char.id, true);
         setDateMessages(freshMsgs.filter(m => m.metadata?.source === 'date').sort((a,b) => a.timestamp - b.timestamp));
+
+        // Memory Palace 后台流程（不阻塞返回，与聊天侧一致）
+        runMemoryPalacePostHook(char);
 
         return content;
     };
@@ -317,19 +429,21 @@ const DateApp: React.FC = () => {
         await DB.deleteMessage(lastMsg.id);
         
         // 2. Find the user input that triggered it
-        const allMsgs = await DB.getMessagesByCharId(char.id);
+        const allMsgs = await DB.getMessagesByCharId(char.id, true);
         const validMsgs = allMsgs.filter(m => m.id !== lastMsg.id);
         const lastUserMsg = validMsgs[validMsgs.length - 1];
         
         if (!lastUserMsg || lastUserMsg.role !== 'user') throw new Error("Context lost");
 
-        // 3. Call API logic
+        // 3. Call API logic（与 handleSendMessage 同款：水位线 + 复用 ChatPrompts.buildMessageHistory）
         const limit = char.contextLimit || 500;
-        const historyMsgs = validMsgs.slice(-limit, -1).map(m => ({
-            role: m.role,
-            content: m.type === 'image' ? '[User sent an image]' : m.content
-        }));
+        const hwm = parseInt(localStorage.getItem(`mp_lastMsgId_${char.id}`) || '0', 10);
+        const palaceFiltered = hwm > 0 ? validMsgs.filter(m => m.id > hwm) : validMsgs;
+        const historyForBuild = palaceFiltered.slice(0, -1);
+        const emojis = await DB.getEmojis();
+        const { apiMessages: historyMsgs } = ChatPrompts.buildMessageHistory(historyForBuild, limit, char, userProfile || ({} as any), emojis);
 
+        await injectMemoryPalace(char, allMsgs);
         let systemPrompt = ContextBuilder.buildCoreContext(char, userProfile);
         const REQUIRED_EMOTIONS_R = ['normal', 'happy', 'angry', 'sad', 'shy'];
         const dateEmotionsR = [...REQUIRED_EMOTIONS_R, ...(char.customDateSprites || [])];
@@ -356,7 +470,9 @@ const DateApp: React.FC = () => {
                     ...historyMsgs,
                     { role: 'user', content: `${lastUserMsg.content}\n\n(System Note: Reroll. 用不同的角度重写，叙述行保持场景感。)` }
                 ],
-                temperature: 0.9 
+                // Reroll 略调高温度求多样性，但绝不低于用户配置的基线。
+                temperature: Math.max(apiConfig.temperature ?? 0.85, 0.9),
+                stream: apiConfig.stream ?? false,
             })
         });
 
@@ -365,10 +481,13 @@ const DateApp: React.FC = () => {
         const content = data.choices[0].message.content;
 
         await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: content, metadata: { source: 'date' } });
-        
+
         // Sync
-        const freshMsgs = await DB.getMessagesByCharId(char.id);
+        const freshMsgs = await DB.getMessagesByCharId(char.id, true);
         setDateMessages(freshMsgs.filter(m => m.metadata?.source === 'date').sort((a,b) => a.timestamp - b.timestamp));
+
+        // Memory Palace 后台流程（Reroll 也算一轮新输出）
+        runMemoryPalacePostHook(char);
 
         return content;
     };
@@ -395,6 +514,50 @@ const DateApp: React.FC = () => {
         addToast('已修改', 'success');
     };
 
+    // --- History Long Press ---
+    const handleHistoryLongPressStart = useCallback((msg: Message, e: React.TouchEvent | React.MouseEvent) => {
+        const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+        const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+        longPressTimer.current = setTimeout(() => {
+            setHistoryMenuMsg(msg);
+            setHistoryMenuPos({ x: clientX, y: clientY });
+        }, 500);
+    }, []);
+
+    const handleHistoryLongPressEnd = useCallback(() => {
+        if (longPressTimer.current) {
+            clearTimeout(longPressTimer.current);
+            longPressTimer.current = null;
+        }
+    }, []);
+
+    const handleHistoryDelete = async (msg: Message) => {
+        await DB.deleteMessage(msg.id);
+        setHistorySessions(prev => prev.map(s => ({
+            ...s,
+            msgs: s.msgs.filter(m => m.id !== msg.id)
+        })).filter(s => s.msgs.length > 0));
+        setHistoryMenuMsg(null);
+        addToast('已删除', 'success');
+    };
+
+    const handleHistoryEditOpen = (msg: Message) => {
+        setHistoryEditMsg(msg);
+        setHistoryEditContent(msg.content);
+        setHistoryMenuMsg(null);
+    };
+
+    const handleHistoryEditConfirm = async () => {
+        if (!historyEditMsg) return;
+        await DB.updateMessage(historyEditMsg.id, historyEditContent);
+        setHistorySessions(prev => prev.map(s => ({
+            ...s,
+            msgs: s.msgs.map(m => m.id === historyEditMsg.id ? { ...m, content: historyEditContent } : m)
+        })));
+        setHistoryEditMsg(null);
+        addToast('已修改', 'success');
+    };
+
     const onExitSession = (finalState: DateState) => {
         if (char) {
             updateCharacter(char.id, { savedDateState: finalState });
@@ -407,7 +570,9 @@ const DateApp: React.FC = () => {
 
     const openHistory = async (c: CharacterProfile) => {
         setActiveCharacterId(c.id);
-        const msgs = await DB.getMessagesByCharId(c.id);
+        // includeProcessed=true：见面历史完全独立于聊天侧高水位，
+        // 否则用户开了向量记忆后老的见面记录会全部"消失"
+        const msgs = await DB.getMessagesByCharId(c.id, true);
         // dateMsgs sorted DESCENDING (newest first)
         const dateMsgs = msgs.filter(m => m.metadata?.source === 'date').sort((a, b) => b.timestamp - a.timestamp);
         
@@ -490,7 +655,7 @@ const DateApp: React.FC = () => {
 
     if (mode === 'history') {
         return (
-            <div className="h-full w-full bg-slate-50 flex flex-col font-light">
+            <div className="h-full w-full bg-slate-50 flex flex-col font-light" onClick={() => historyMenuMsg && setHistoryMenuMsg(null)}>
                 <div className="h-16 flex items-center justify-between px-4 border-b border-slate-200 bg-white sticky top-0 z-10">
                     <button onClick={handleBack} className="p-2 -ml-2 rounded-full hover:bg-slate-100"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg></button>
                     <span className="font-bold text-slate-700">见面记录</span>
@@ -504,13 +669,66 @@ const DateApp: React.FC = () => {
                                 {session.msgs.map(m => {
                                     const text = (m.content || '').replace(/\[.*?\]/g, '').trim();
                                     return (
-                                        <div key={m.id} className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}><div className={`max-w-[90%] text-sm leading-relaxed whitespace-pre-wrap ${m.role === 'user' ? 'text-slate-500 text-right italic' : 'text-slate-800'}`}>{m.role === 'user' ? <span className="bg-slate-100 px-3 py-2 rounded-xl rounded-tr-none inline-block">{text}</span> : <span>{text || '(无内容)'}</span>}</div></div>
+                                        <div
+                                            key={m.id}
+                                            className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'} select-none`}
+                                            onTouchStart={(e) => handleHistoryLongPressStart(m, e)}
+                                            onTouchEnd={handleHistoryLongPressEnd}
+                                            onTouchMove={handleHistoryLongPressEnd}
+                                            onMouseDown={(e) => handleHistoryLongPressStart(m, e)}
+                                            onMouseUp={handleHistoryLongPressEnd}
+                                            onMouseLeave={handleHistoryLongPressEnd}
+                                            onContextMenu={(e) => { e.preventDefault(); setHistoryMenuMsg(m); setHistoryMenuPos({ x: e.clientX, y: e.clientY }); }}
+                                        >
+                                            <div className={`max-w-[90%] text-sm leading-relaxed whitespace-pre-wrap ${m.role === 'user' ? 'text-slate-500 text-right italic' : 'text-slate-800'}`}>
+                                                {m.role === 'user' ? <span className="bg-slate-100 px-3 py-2 rounded-xl rounded-tr-none inline-block">{text}</span> : <span>{text || '(无内容)'}</span>}
+                                            </div>
+                                        </div>
                                     );
                                 })}
                             </div>
                         </div>
                     ))}
                 </div>
+
+                {/* Long-press context menu */}
+                {historyMenuMsg && (
+                    <div
+                        className="fixed z-50 bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden animate-fade-in"
+                        style={{ top: Math.min(historyMenuPos.y, window.innerHeight - 120), left: Math.min(historyMenuPos.x, window.innerWidth - 140) }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <button
+                            onClick={() => handleHistoryEditOpen(historyMenuMsg)}
+                            className="w-full px-5 py-3 text-sm text-left text-slate-700 hover:bg-slate-50 active:bg-slate-100 flex items-center gap-2"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Z" /></svg>
+                            编辑
+                        </button>
+                        <div className="border-t border-slate-100" />
+                        <button
+                            onClick={() => handleHistoryDelete(historyMenuMsg)}
+                            className="w-full px-5 py-3 text-sm text-left text-red-500 hover:bg-red-50 active:bg-red-100 flex items-center gap-2"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
+                            删除
+                        </button>
+                    </div>
+                )}
+
+                {/* History edit modal */}
+                <Modal isOpen={!!historyEditMsg} title="编辑消息" onClose={() => setHistoryEditMsg(null)} footer={
+                    <div className="flex gap-3 w-full">
+                        <button onClick={() => setHistoryEditMsg(null)} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">取消</button>
+                        <button onClick={handleHistoryEditConfirm} className="flex-1 py-3 bg-blue-500 text-white rounded-2xl font-bold shadow-lg shadow-blue-200">保存</button>
+                    </div>
+                }>
+                    <textarea
+                        value={historyEditContent}
+                        onChange={(e) => setHistoryEditContent(e.target.value)}
+                        className="w-full h-48 p-3 border border-slate-200 rounded-xl text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-300"
+                    />
+                </Modal>
             </div>
         );
     }
@@ -549,7 +767,7 @@ const DateApp: React.FC = () => {
     if (mode === 'session') {
         return (
             <>
-                <DateSession 
+                <DateSession
                     char={char}
                     userProfile={userProfile}
                     messages={dateMessages}
@@ -563,7 +781,141 @@ const DateApp: React.FC = () => {
                     onDeleteMessages={handleDeleteMessages}
                     onSettings={() => {}} // Removed parent state change, DateSession handles it internally now
                 />
-                
+
+                {/* 记忆整理中 — 顶部浮动胶囊（与聊天侧外观一致） */}
+                {memoryPalaceStatus && (
+                    <div
+                        className="absolute top-[76px] left-1/2 z-[150] animate-fade-in"
+                        style={{ transform: 'translateX(-50%)', pointerEvents: 'none', willChange: 'transform, opacity' }}
+                    >
+                        <div
+                            className="flex items-center gap-2.5 pl-2.5 pr-3.5 py-2 max-w-[18rem]"
+                            style={{
+                                background: 'rgba(255,255,255,0.88)',
+                                borderRadius: 999,
+                                border: '1px solid rgba(99,102,241,0.18)',
+                                boxShadow: '0 6px 18px -6px rgba(15,23,42,0.22)',
+                            }}
+                        >
+                            <span
+                                className="shrink-0 inline-block w-3.5 h-3.5 rounded-full border-2 border-slate-200 animate-spin"
+                                style={{ borderTopColor: '#6366f1', animationDuration: '0.9s' }}
+                            />
+                            <span className="text-[11px] font-semibold text-slate-700 whitespace-nowrap">
+                                {char.name}正在沉思
+                            </span>
+                            <span className="text-[10px] text-slate-400 truncate">{memoryPalaceStatus}</span>
+                        </div>
+                    </div>
+                )}
+
+                {/* 记忆整理结果 — 弹窗 */}
+                {memoryPalaceResult && (
+                    <div
+                        className="absolute inset-0 z-[200] flex items-center justify-center p-4 animate-fade-in"
+                        style={{ pointerEvents: 'all', background: 'rgba(15,23,42,0.55)' }}
+                        onClick={() => setMemoryPalaceResult(null)}
+                    >
+                        <div
+                            className="w-full max-w-sm max-h-[82vh] overflow-hidden flex flex-col relative"
+                            style={{
+                                background: 'linear-gradient(160deg, #ffffff 0%, #f8fafc 100%)',
+                                borderRadius: 28,
+                                border: '1px solid rgba(148,163,184,0.18)',
+                                boxShadow: '0 20px 50px -20px rgba(15,23,42,0.35)',
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div
+                                className="absolute top-0 left-0 right-0 h-[2px] pointer-events-none"
+                                style={{ background: 'linear-gradient(90deg, transparent, #6366f1, #a5b4fc, #6366f1, transparent)' }}
+                            />
+                            <div className="px-6 pt-7 pb-4 text-center">
+                                <div
+                                    className="w-14 h-14 mx-auto rounded-2xl flex items-center justify-center mb-3"
+                                    style={{
+                                        background: 'linear-gradient(135deg, rgba(99,102,241,0.12), rgba(129,140,248,0.06))',
+                                        border: '1px solid rgba(99,102,241,0.15)',
+                                    }}
+                                >
+                                    <span style={{ fontSize: 26 }}>🗂️</span>
+                                </div>
+                                <div className="text-[10px] tracking-[0.25em] uppercase font-semibold" style={{ color: '#6366f1' }}>Memory Palace</div>
+                                <p className="text-[17px] font-bold mt-1" style={{ color: '#0f172a' }}>记忆整理完成</p>
+                                <p className="text-[11px] text-slate-400 mt-1">
+                                    新增 {memoryPalaceResult.stored} 条 · 去重跳过 {memoryPalaceResult.skipped} 条
+                                    {memoryPalaceResult.batches.length > 1 && ` · ${memoryPalaceResult.batches.length} 批`}
+                                </p>
+                                {memoryPalaceResult.batches.some(b => !b.ok) && (
+                                    <p className="text-[10px] text-red-500 mt-1">
+                                        {memoryPalaceResult.batches.filter(b => !b.ok).map(b => `batch ${b.index} 失败`).join(', ')}
+                                    </p>
+                                )}
+                            </div>
+                            <div className="flex-1 overflow-y-auto px-5 pb-4 space-y-2 no-scrollbar">
+                                {memoryPalaceResult.memories.map((m, i) => {
+                                    const roomMeta: Record<string, { label: string; color: string }> = {
+                                        living_room: { label: '客厅', color: '#f59e0b' },
+                                        bedroom: { label: '卧室', color: '#8b5cf6' },
+                                        study: { label: '书房', color: '#0ea5e9' },
+                                        user_room: { label: '用户房间', color: '#ec4899' },
+                                        self_room: { label: '自我房间', color: '#10b981' },
+                                        attic: { label: '阁楼', color: '#6366f1' },
+                                        windowsill: { label: '窗台', color: '#14b8a6' },
+                                    };
+                                    const meta = roomMeta[m.room] || { label: m.room, color: '#64748b' };
+                                    return (
+                                        <div
+                                            key={i}
+                                            className="p-3 rounded-2xl"
+                                            style={{
+                                                background: 'rgba(255,255,255,0.75)',
+                                                border: `1px solid ${meta.color}22`,
+                                                boxShadow: `0 2px 8px ${meta.color}14, inset 0 1px 0 rgba(255,255,255,0.8)`,
+                                            }}
+                                        >
+                                            <div className="flex items-center gap-2 mb-1.5">
+                                                <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold"
+                                                    style={{ background: `${meta.color}18`, color: meta.color }}
+                                                >
+                                                    {meta.label}
+                                                </span>
+                                                <span className="text-[10px] text-slate-400">{m.mood}</span>
+                                                <span className="text-[10px] font-bold ml-auto" style={{ color: '#f59e0b' }}>{'★'.repeat(Math.min(m.importance, 5))}</span>
+                                            </div>
+                                            <p className="text-[12px] text-slate-700 leading-relaxed">{m.content}</p>
+                                            {m.tags.length > 0 && (
+                                                <div className="flex gap-1 mt-2 flex-wrap">
+                                                    {m.tags.map((t, j) => (
+                                                        <span key={j} className="text-[9px] px-1.5 py-0.5 rounded-full"
+                                                            style={{ background: 'rgba(148,163,184,0.15)', color: '#64748b' }}
+                                                        >{t}</span>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                                {memoryPalaceResult.memories.length === 0 && (
+                                    <p className="text-center text-xs text-slate-400 py-4">本次未提取到新记忆</p>
+                                )}
+                            </div>
+                            <div className="px-6 pb-6 pt-2">
+                                <button
+                                    onClick={() => setMemoryPalaceResult(null)}
+                                    className="w-full py-3 text-white text-[13px] font-bold rounded-2xl active:scale-[0.98] transition-transform"
+                                    style={{
+                                        background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
+                                        boxShadow: '0 6px 18px -6px rgba(79,70,229,0.5)',
+                                    }}
+                                >
+                                    确认
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* Global Message Edit Modal for Session Mode */}
                 <Modal isOpen={isEditModalOpen} title="编辑内容" onClose={() => setIsEditModalOpen(false)} footer={<><button onClick={() => setIsEditModalOpen(false)} className="flex-1 py-3 bg-slate-100 rounded-2xl">取消</button><button onClick={confirmEditMessage} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl">保存</button></>}>
                     <textarea value={editContent} onChange={e => setEditContent(e.target.value)} className="w-full h-32 bg-slate-100 rounded-2xl p-4 resize-none focus:ring-1 focus:ring-primary/20 transition-all text-sm leading-relaxed" />

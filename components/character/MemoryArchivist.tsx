@@ -16,9 +16,42 @@ interface MemoryArchivistProps {
     onToggleActiveMonth: (year: string, month: string) => void;
     onUpdateRefinedMemory: (year: string, month: string, newContent: string) => void;
     onDeleteRefinedMemory: (year: string, month: string) => void;
+    /**
+     * 按日期强制从原始聊天重总结（忽略 hideBefore）。日期格式 YYYY-MM-DD。
+     * overridePromptId 可选——用户在重总结小弹窗里选的模板 id。不提供则走调用方默认。
+     */
+    onForceArchiveDate?: (dateStr: string, overridePromptId?: string) => Promise<void>;
+    /** 可选：传入归档模板列表 + 默认选中 id，用于重总结前让用户选模板（避开和内部月度精炼模板 state 同名） */
+    forceArchiveTemplates?: { id: string; name: string; content: string }[];
+    forceArchiveDefaultPromptId?: string;
 }
 
-const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemories, activeMemoryMonths, charName, userName, onRefine, onDeleteMemories, onUpdateMemory, onToggleActiveMonth, onUpdateRefinedMemory, onDeleteRefinedMemory }) => {
+const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemories, activeMemoryMonths, charName, userName, onRefine, onDeleteMemories, onUpdateMemory, onToggleActiveMonth, onUpdateRefinedMemory, onDeleteRefinedMemory, onForceArchiveDate, forceArchiveTemplates, forceArchiveDefaultPromptId }) => {
+    // 每个日期的"强制重总结"运行状态
+    const [forcingDate, setForcingDate] = useState<string | null>(null);
+    // 重总结前弹出模板选择器：把 date 存起来打开 modal
+    const [forcePickerDate, setForcePickerDate] = useState<string | null>(null);
+    const [forcePickerPromptId, setForcePickerPromptId] = useState<string>(forceArchiveDefaultPromptId || '');
+
+    const openForcePicker = (date: string) => {
+        if (!onForceArchiveDate || forcingDate) return;
+        // 如果没有模板数据，就退回到原行为——直接跑
+        if (!forceArchiveTemplates || forceArchiveTemplates.length === 0) {
+            setForcingDate(date);
+            onForceArchiveDate(date).finally(() => setForcingDate(null));
+            return;
+        }
+        setForcePickerPromptId(forceArchiveDefaultPromptId || forceArchiveTemplates[0].id);
+        setForcePickerDate(date);
+    };
+    const confirmForcePicker = async () => {
+        if (!forcePickerDate || !onForceArchiveDate) return;
+        const date = forcePickerDate;
+        const promptId = forcePickerPromptId;
+        setForcePickerDate(null);
+        setForcingDate(date);
+        try { await onForceArchiveDate(date, promptId); } finally { setForcingDate(null); }
+    };
     const [viewState, setViewState] = useState<{
         level: 'root' | 'year' | 'month';
         selectedYear: string | null;
@@ -50,6 +83,8 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                 setArchivePrompts(merged);
             } catch(e) {}
         }
+        const savedId = localStorage.getItem('character_active_refine_prompt_id');
+        if (savedId) setSelectedPromptId(savedId);
     }, []);
 
     const { tree, stats } = useMemo(() => {
@@ -99,11 +134,14 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
         const templateObj = archivePrompts.find(p => p.id === selectedPromptId);
         if (templateObj) {
             const dateStr = `${viewState.selectedYear}-${viewState.selectedMonth}`;
+            // ${rawLog} 不再当场替换成 combinedText：rawText 由 handleRefineMonth 以
+            // role:user 单独投喂（Gemini 3.1 preview 对"规则/身份 → 迟到 rawLog"
+            // 的 all-in-one user 消息会静默拒答，拆开再发能解决）。这里只留占位提示。
             formattedPrompt = templateObj.content
                 .replace(/\$\{dateStr\}/g, dateStr)
                 .replace(/\$\{char\.name\}/g, charName)
                 .replace(/\$\{userProfile\.name\}/g, userName)
-                .replace(/\$\{rawLog.*?\}/g, combinedText);
+                .replace(/\$\{rawLog.*?\}/g, '<见 user 消息里的本月日记原件>');
             formattedPrompt = `[角色记忆精炼: ${charName} - ${dateStr}]\n${formattedPrompt}`;
         }
 
@@ -230,7 +268,7 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                             <label className="text-[9px] font-bold text-indigo-400 uppercase mb-2 block">选择总结提示词</label>
                             <div className="flex flex-col gap-1.5">
                                 {archivePrompts.map(p => (
-                                    <div key={p.id} onClick={() => setSelectedPromptId(p.id)} className={`px-3 py-2 rounded-lg border cursor-pointer text-xs font-bold transition-all ${selectedPromptId === p.id ? 'bg-indigo-50 border-indigo-400 text-indigo-700 shadow-sm' : 'bg-white/50 border-indigo-100 text-slate-500 hover:bg-white'}`}>
+                                    <div key={p.id} onClick={() => { setSelectedPromptId(p.id); localStorage.setItem('character_active_refine_prompt_id', p.id); }} className={`px-3 py-2 rounded-lg border cursor-pointer text-xs font-bold transition-all ${selectedPromptId === p.id ? 'bg-indigo-50 border-indigo-400 text-indigo-700 shadow-sm' : 'bg-white/50 border-indigo-100 text-slate-500 hover:bg-white'}`}>
                                         {p.name}
                                     </div>
                                 ))}
@@ -268,7 +306,20 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                         <div key={date} className="relative pl-8 pb-8 last:pb-0 border-l-[2px] border-slate-100 last:border-l-0 last:border-image-source-none">
                             <div className="absolute left-[-2px] top-0 bottom-0 w-[2px] bg-slate-100"></div>
                             <div className="absolute left-[-7px] top-0 w-3.5 h-3.5 bg-slate-300 rounded-full border-4 border-slate-50 z-10"></div>
-                            <div className="mb-3 -mt-1.5 flex items-center gap-2"><span className="text-xs font-bold text-slate-500 font-mono tracking-tight">{date}</span>{dayMemories.length > 1 && <span className="text-[9px] px-1.5 py-0.5 bg-slate-100 rounded-md text-slate-400 font-normal">{dayMemories.length} 记录</span>}</div>
+                            <div className="mb-3 -mt-1.5 flex items-center gap-2">
+                                <span className="text-xs font-bold text-slate-500 font-mono tracking-tight">{date}</span>
+                                {dayMemories.length > 1 && <span className="text-[9px] px-1.5 py-0.5 bg-slate-100 rounded-md text-slate-400 font-normal">{dayMemories.length} 记录</span>}
+                                {onForceArchiveDate && (
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); openForcePicker(date); }}
+                                        disabled={forcingDate === date}
+                                        title={`从原始聊天重新总结 ${date}（忽略已隐藏状态）`}
+                                        className="ml-auto text-[10px] font-normal text-slate-400 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-md px-2 py-0.5 transition-colors disabled:opacity-50"
+                                    >
+                                        {forcingDate === date ? '总结中…' : '重新总结'}
+                                    </button>
+                                )}
+                            </div>
                             <div className="space-y-3">
                                 {dayMemories.map((mem) => (
                                     <div 
@@ -361,6 +412,37 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
             {/* Core Memory Delete Confirm */}
             <Modal isOpen={showCoreDeleteConfirm} title="删除确认" onClose={() => setShowCoreDeleteConfirm(false)} footer={<div className="flex gap-2 w-full"><button onClick={() => setShowCoreDeleteConfirm(false)} className="flex-1 py-3 bg-slate-100 font-bold rounded-2xl">取消</button><button onClick={confirmCoreDelete} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl">确认删除</button></div>}>
                 <p className="text-center text-sm text-slate-600 py-4">确定要删除该月的核心记忆吗？<br/><span className="text-xs text-red-400">删除后将丢失该月的 AI 上下文摘要。</span></p>
+            </Modal>
+
+            {/* 重新总结 —— 模板选择弹窗 */}
+            <Modal
+                isOpen={!!forcePickerDate}
+                title="重新总结"
+                onClose={() => setForcePickerDate(null)}
+                footer={<div className="flex gap-2 w-full">
+                    <button onClick={() => setForcePickerDate(null)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl">取消</button>
+                    <button onClick={confirmForcePicker} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl">开始总结</button>
+                </div>}
+            >
+                <div className="space-y-3">
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                        即将从原始聊天重新总结 <b className="text-slate-700">{forcePickerDate}</b> 这一天。
+                        此操作忽略隐藏起点，直接读当天全部原始消息。选择你想用的提示词风格：
+                    </p>
+                    <div className="space-y-1.5 max-h-[40vh] overflow-y-auto">
+                        {(forceArchiveTemplates || []).map(p => (
+                            <div
+                                key={p.id}
+                                onClick={() => setForcePickerPromptId(p.id)}
+                                className={`p-3 rounded-xl border cursor-pointer transition-colors ${forcePickerPromptId === p.id ? 'bg-primary/5 border-primary ring-1 ring-primary/30' : 'bg-white border-slate-200 hover:bg-slate-50'}`}
+                            >
+                                <div className={`text-xs font-bold ${forcePickerPromptId === p.id ? 'text-primary' : 'text-slate-600'}`}>
+                                    {p.name}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
             </Modal>
         </div>
     );

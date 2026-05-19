@@ -2,13 +2,16 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { RoomItem, CharacterProfile, RoomTodo, RoomNote } from '../types';
+import { RoomItem, CharacterProfile, RoomTodo, RoomNote, DailySchedule } from '../types';
+import ScheduleCard from '../components/schedule/ScheduleCard';
 import { ContextBuilder } from '../utils/context';
+import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { processImage } from '../utils/file';
 import Modal from '../components/os/Modal';
 import { safeResponseJson } from '../utils/safeApi';
 import { Door, Sparkle, Image, GearSix, Camera } from '@phosphor-icons/react';
 import { FURNITURE_ICONS } from '../utils/furnitureIcons';
+import PixelHomeView from './pixelHome/PixelHomeView';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
 const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
@@ -237,7 +240,8 @@ const RoomApp: React.FC = () => {
     const { closeApp, characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, addToast, userProfile } = useOS();
     
     // Core State
-    const [viewState, setViewState] = useState<'select' | 'room'>('select');
+    const [viewState, setViewState] = useState<'select' | 'room' | 'pixelHome'>('select');
+    const [homeTab, setHomeTab] = useState<'room' | 'pixelHome'>('room');
     const [mode, setMode] = useState<'view' | 'edit'>('view');
     const [items, setItems] = useState<RoomItem[]>([]);
     
@@ -245,7 +249,8 @@ const RoomApp: React.FC = () => {
     const [todaysTodo, setTodaysTodo] = useState<RoomTodo | null>(null);
     const [notebookEntries, setNotebookEntries] = useState<RoomNote[]>([]);
     const [showSidebar, setShowSidebar] = useState(false);
-    const [activePanel, setActivePanel] = useState<'todo' | 'notebook'>('todo');
+    const [activePanel, setActivePanel] = useState<'todo' | 'notebook' | 'schedule'>('todo');
+    const [roomSchedule, setRoomSchedule] = useState<DailySchedule | null>(null);
     const [notebookPage, setNotebookPage] = useState(0);
 
     // UI State
@@ -397,9 +402,11 @@ const RoomApp: React.FC = () => {
             
             const existingTodo = await DB.getRoomTodo(c.id, today);
             const existingNotes = await DB.getRoomNotes(c.id);
+            const existingSchedule = await DB.getDailySchedule(c.id, today);
             setTodaysTodo(existingTodo);
             setNotebookEntries(existingNotes.sort((a, b) => b.timestamp - a.timestamp));
-            
+            setRoomSchedule(existingSchedule);
+
             addToast('已恢复今日房间状态', 'info');
         } else {
             initializeRoomState(c, loadedItems || []);
@@ -487,7 +494,9 @@ const RoomApp: React.FC = () => {
             
             let existingTodo = await DB.getRoomTodo(c.id, todayStr);
             const existingNotes = await DB.getRoomNotes(c.id);
+            const existingSchedule = await DB.getDailySchedule(c.id, todayStr);
             setNotebookEntries(existingNotes.sort((a, b) => b.timestamp - a.timestamp));
+            setRoomSchedule(existingSchedule);
             
             const shouldGenerateTodo = !existingTodo;
             if (existingTodo) {
@@ -505,6 +514,7 @@ const RoomApp: React.FC = () => {
             const lastMsg = recentMsgs[recentMsgs.length - 1];
             const timeGapHint = getTimeGapHint(lastMsg?.timestamp);
 
+            await injectMemoryPalace(c, recentMsgs);
             const baseContext = ContextBuilder.buildCoreContext(c, userProfile, true); // Keep Full Context
             
             // DEBUG FIX: Sanitize and truncate interactables context to prevent huge Base64 leakage
@@ -1029,23 +1039,71 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
 
     // --- Renderers ---
 
+    // PIXEL HOME SCREEN
+    if (viewState === 'pixelHome' && char) {
+        return (
+            <PixelHomeView
+                charId={char.id}
+                charName={char.name}
+                charAvatar={char.avatar}
+                userName={userProfile?.name || '用户'}
+                onBack={() => setViewState('select')}
+            />
+        );
+    }
+
     // SELECT SCREEN
     if (viewState === 'select') {
         return (
             <div className="h-full w-full bg-slate-50 flex flex-col font-light">
-                <div className="pt-12 pb-4 px-6 border-b border-slate-200 bg-white sticky top-0 z-20 flex items-center justify-between shrink-0 h-24 box-border">
-                    <button onClick={closeApp} className="p-2 -ml-2 rounded-full hover:bg-slate-100 active:scale-90 transition-transform">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6 text-slate-600"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
-                    </button>
-                    <span className="font-bold text-slate-700 text-lg tracking-wide">拜访谁的房间?</span>
-                    <div className="w-8"></div>
+                <div className="pt-12 pb-3 px-6 bg-white sticky top-0 z-20 shrink-0">
+                    <div className="flex items-center justify-between h-12">
+                        <button onClick={closeApp} className="p-2 -ml-2 rounded-full hover:bg-slate-100 active:scale-90 transition-transform">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6 text-slate-600"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
+                        </button>
+                        <span className="font-bold text-slate-700 text-lg tracking-wide">
+                            {homeTab === 'room' ? '拜访谁的房间?' : '谁的像素家园?'}
+                        </span>
+                        <div className="w-8"></div>
+                    </div>
+                    {/* Tab 切换 */}
+                    <div className="flex gap-1 mt-2 bg-slate-100 rounded-xl p-1">
+                        <button
+                            onClick={() => setHomeTab('room')}
+                            className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
+                                homeTab === 'room' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400'
+                            }`}
+                        >
+                            🏠 小小窝
+                        </button>
+                        <button
+                            onClick={() => setHomeTab('pixelHome')}
+                            className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
+                                homeTab === 'pixelHome' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400'
+                            }`}
+                        >
+                            🎮 像素家园
+                        </button>
+                    </div>
                 </div>
                <div className="p-6 grid grid-cols-2 gap-4 overflow-y-auto pb-20 no-scrollbar">
     {characters.map(c => (
-        <div key={c.id} onClick={() => handleEnterRoom(c)} className="min-h-[180px] bg-white rounded-2xl shadow-sm border border-slate-100 p-4 flex flex-col items-center justify-center gap-3 cursor-pointer active:scale-95 transition-all relative overflow-hidden group hover:shadow-md">
+        <div key={c.id} onClick={() => {
+            if (homeTab === 'pixelHome') {
+                setActiveCharacterId(c.id);
+                setViewState('pixelHome');
+            } else {
+                handleEnterRoom(c);
+            }
+        }} className="min-h-[180px] bg-white rounded-2xl shadow-sm border border-slate-100 p-4 flex flex-col items-center justify-center gap-3 cursor-pointer active:scale-95 transition-all relative overflow-hidden group hover:shadow-md">
                             <div className="w-20 h-20 rounded-full p-1 border-2 border-slate-100 relative">
                                 <img src={c.avatar} className="w-full h-full rounded-full object-cover" />
-<div className="absolute bottom-0 right-0 w-6 h-6 bg-green-400 rounded-full border-2 border-white flex items-center justify-center"><img src={twemojiUrl('1f3e0')} alt="home" className="w-3 h-3" /></div>
+                                <div className="absolute bottom-0 right-0 w-6 h-6 bg-green-400 rounded-full border-2 border-white flex items-center justify-center">
+                                    {homeTab === 'pixelHome'
+                                        ? <span className="text-[10px]">🎮</span>
+                                        : <img src={twemojiUrl('1f3e0')} alt="home" className="w-3 h-3" />
+                                    }
+                                </div>
                             </div>
                             <span className="font-bold text-slate-700 text-sm">{c.name}</span>
                         </div>
@@ -1151,6 +1209,7 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                 </div>
                 <div className="flex p-2 bg-slate-50 border-b border-slate-100">
                     <button onClick={() => setActivePanel('todo')} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-colors ${activePanel === 'todo' ? 'bg-white shadow text-primary' : 'text-slate-400 hover:bg-white/50'}`}>今日计划</button>
+                    <button onClick={() => setActivePanel('schedule')} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-colors ${activePanel === 'schedule' ? 'bg-white shadow text-primary' : 'text-slate-400 hover:bg-white/50'}`}>日程</button>
                     <button onClick={() => setActivePanel('notebook')} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-colors ${activePanel === 'notebook' ? 'bg-white shadow text-primary' : 'text-slate-400 hover:bg-white/50'}`}>私密记事</button>
                 </div>
                 
@@ -1169,6 +1228,18 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                                 </li>
                             ))}</ul> : <div className="text-center py-10 text-slate-400 text-xs">生成中...</div>}
 <div className="mt-8 p-4 bg-yellow-50 rounded-xl border border-yellow-100 text-xs text-yellow-800 leading-relaxed italic relative"><span className="absolute -top-3 left-4"><img src={twemojiUrl('1f4cc')} alt="pin" className="w-6 h-6" /></span>这是 {char?.name} 今天的自动行程表。虽然你不能帮TA做，但可以监督TA哦。</div>
+                        </div>
+                    )}
+                    {activePanel === 'schedule' && (
+                        <div className="space-y-4">
+                            <ScheduleCard
+                                schedule={roomSchedule}
+                                character={char || null}
+                                compact={true}
+                            />
+                            {!roomSchedule && (
+                                <p className="text-center text-xs text-slate-400 py-4">日程将在首次聊天时自动生成</p>
+                            )}
                         </div>
                     )}
                     {activePanel === 'notebook' && (

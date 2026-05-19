@@ -19,17 +19,8 @@ import { CharacterProfile, SpecialMomentRecord } from '../types';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
-import { WhiteDaySession } from './WhiteDayEvent';
-import { isWhiteDayEventAvailable, WHITEDAY_RECORD_KEY } from '../utils/whiteDayEventUtils';
-import {
-    VALENTINE_DISMISSED_KEY,
-    VALENTINE_COMPLETED_KEY,
-    VALENTINE_RECORD_KEY,
-    isValentineEventAvailable,
-    isValentinePast,
-    shouldShowValentinePopup,
-} from '../utils/valentineEventUtils';
-export { shouldShowValentinePopup };
+import { WhiteDaySession, isWhiteDayEventAvailable, WHITEDAY_RECORD_KEY } from './WhiteDayEvent';
+import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 
 // ============================================================
 // 情人节立绘 Sprite 映射 (占位 emoji，等图片整理好后替换为图床URL)
@@ -489,6 +480,7 @@ export const ValentineSession: React.FC<ValentineSessionProps> = ({ charId, onCl
                 return `${m.role}: ${content}`;
             }).join('\n');
 
+            await injectMemoryPalace(c, undefined, '情人节 我们在一起的回忆');
             const baseContext = ContextBuilder.buildCoreContext(c, userProfile, true);
 
             // 根据角色获取可用表情列表

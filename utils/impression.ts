@@ -97,3 +97,14 @@ export const normalizeCharacterImpression = (char: CharacterProfile): CharacterP
         impression: normalizedImpression,
     };
 };
+
+/**
+ * 历史脏数据兜底：早期 addCharacter 没初始化 emotionConfig，导致一批"新角色"该字段
+ * 为 undefined，情绪闸门 (useChatAI:761) 永远过不去。
+ * 此处只把 undefined 补成默认 enabled，用户显式关掉 (false) 的不动。
+ * memoryPalaceEnabled 是用户显式 opt-in 的功能，不在这里替用户开。
+ */
+export const normalizeCharacterDefaults = (char: CharacterProfile): CharacterProfile => {
+    if (char.emotionConfig !== undefined) return char;
+    return { ...char, emotionConfig: { enabled: true } };
+};

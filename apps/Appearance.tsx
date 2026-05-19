@@ -1,11 +1,76 @@
 
-import React, { useState, useRef, useCallback } from 'react';
-import { useOS } from '../context/OSContext';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { useOS, DEFAULT_WALLPAPER } from '../context/OSContext';
 import { OSTheme, DesktopDecoration, AppearancePreset, Toast } from '../types';
 import { INSTALLED_APPS, Icons } from '../constants';
 import { processImage } from '../utils/file';
 import { ChatAppearanceEditor } from '../components/appearance/ChatAppearanceEditor';
 import { Sparkle } from '@phosphor-icons/react';
+import { ChatAppearanceEditor as ModularChatAppearanceEditor } from '../components/appearance/ChatAppearanceEditor';
+import { Capacitor } from '@capacitor/core';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
+
+// Touch-friendly long-press wrapper. `onContextMenu` alone misses iOS Safari /
+// Capacitor WebView, so we also wire pointer/touch timers to fire after ~550ms.
+// When a long-press fires, the subsequent click is suppressed.
+const LongPressArea: React.FC<{
+    onLongPress: () => void;
+    onClick?: () => void;
+    delay?: number;
+    className?: string;
+    style?: React.CSSProperties;
+    children?: React.ReactNode;
+}> = ({ onLongPress, onClick, delay = 550, className, style, children }) => {
+    const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const fired = useRef(false);
+    const startPos = useRef<{ x: number; y: number } | null>(null);
+
+    const clear = useCallback(() => {
+        if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+        startPos.current = null;
+    }, []);
+
+    useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+
+    const start = (x: number, y: number) => {
+        fired.current = false;
+        startPos.current = { x, y };
+        if (timer.current) clearTimeout(timer.current);
+        timer.current = setTimeout(() => {
+            fired.current = true;
+            onLongPress();
+        }, delay);
+    };
+    const move = (x: number, y: number) => {
+        const sp = startPos.current;
+        if (!sp) return;
+        if (Math.hypot(x - sp.x, y - sp.y) > 8) clear();
+    };
+
+    return (
+        <div
+            className={className}
+            style={style}
+            onContextMenu={(e) => { e.preventDefault(); onLongPress(); }}
+            onTouchStart={(e) => { const t = e.touches[0]; if (t) start(t.clientX, t.clientY); }}
+            onTouchMove={(e) => { const t = e.touches[0]; if (t) move(t.clientX, t.clientY); }}
+            onTouchEnd={clear}
+            onTouchCancel={clear}
+            onPointerDown={(e) => { if (e.pointerType !== 'touch') start(e.clientX, e.clientY); }}
+            onPointerMove={(e) => { if (e.pointerType !== 'touch') move(e.clientX, e.clientY); }}
+            onPointerUp={clear}
+            onPointerLeave={clear}
+            onPointerCancel={clear}
+            onClick={() => {
+                if (fired.current) { fired.current = false; return; }
+                onClick?.();
+            }}
+        >
+            {children}
+        </div>
+    );
+};
 
 const TwemojiImg: React.FC<{ code: string; alt?: string; className?: string }> = ({ code, alt, className = 'w-4 h-4 inline-block' }) => (
   <img src={`https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/${code}.png`} alt={alt || ''} className={className} draggable={false} />
@@ -20,16 +85,29 @@ interface PresetManagerProps {
     onRename: (id: string, name: string) => void;
     onExport: (id: string) => Promise<Blob>;
     onImport: (file: File) => Promise<void>;
+    onReset: () => Promise<void>;
     addToast: (msg: string, type?: Toast['type']) => void;
     currentTheme: OSTheme;
 }
 
-const PresetManager: React.FC<PresetManagerProps> = ({ presets, onSave, onApply, onDelete, onRename, onExport, onImport, addToast, currentTheme }) => {
+const PresetManager: React.FC<PresetManagerProps> = ({ presets, onSave, onApply, onDelete, onRename, onExport, onImport, onReset, addToast, currentTheme }) => {
     const [newName, setNewName] = useState('');
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editName, setEditName] = useState('');
     const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+    const [confirmReset, setConfirmReset] = useState(false);
+    const [resetting, setResetting] = useState(false);
     const importRef = useRef<HTMLInputElement>(null);
+
+    const handleReset = async () => {
+        setResetting(true);
+        try {
+            await onReset();
+        } finally {
+            setResetting(false);
+            setConfirmReset(false);
+        }
+    };
 
     const handleSave = () => {
         const name = newName.trim() || `预设 ${new Date().toLocaleDateString('zh-CN')}`;
@@ -41,12 +119,47 @@ const PresetManager: React.FC<PresetManagerProps> = ({ presets, onSave, onApply,
         try {
             const blob = await onExport(id);
             const preset = presets.find(p => p.id === id);
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `appearance_${preset?.name || 'preset'}.json`;
-            a.click();
-            URL.revokeObjectURL(url);
+            const fileName = `appearance_${preset?.name || 'preset'}.zip`;
+            const title = `外观预设 - ${preset?.name || 'preset'}`;
+
+            if (Capacitor.isNativePlatform()) {
+                // Native: 写到 Cache 再调系统分享
+                const base64 = await new Promise<string>((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve(String(reader.result).split(',')[1] || '');
+                    reader.onerror = () => reject(reader.error);
+                    reader.readAsDataURL(blob);
+                });
+                await Filesystem.writeFile({ path: fileName, data: base64, directory: Directory.Cache });
+                const uri = await Filesystem.getUri({ directory: Directory.Cache, path: fileName });
+                await Share.share({ title, files: [uri.uri] });
+            } else {
+                // Web: 先触发浏览器原生下载，再尝试拉起系统分享面板
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = fileName;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                try {
+                    const file = new File([blob], fileName, { type: 'application/zip' });
+                    if (
+                        typeof navigator !== 'undefined' &&
+                        typeof navigator.share === 'function' &&
+                        (typeof (navigator as any).canShare !== 'function' || (navigator as any).canShare({ files: [file] }))
+                    ) {
+                        await navigator.share({ title, files: [file] });
+                    }
+                } catch (shareErr: any) {
+                    // 用户取消分享是正常情况，吞掉
+                    if (shareErr?.name !== 'AbortError') {
+                        console.warn('[Appearance] share failed', shareErr);
+                    }
+                }
+            }
             addToast('预设已导出', 'success');
         } catch (e: any) {
             addToast(e.message || '导出失败', 'error');
@@ -74,6 +187,36 @@ const PresetManager: React.FC<PresetManagerProps> = ({ presets, onSave, onApply,
 
     return (
         <div className="space-y-5">
+            {/* One-click Reset */}
+            <section className="bg-gradient-to-br from-rose-50 to-orange-50 rounded-3xl p-5 shadow-sm border border-rose-100">
+                <div className="flex items-center gap-2 mb-2">
+                    <h2 className="text-sm font-bold text-rose-500 uppercase tracking-widest">一键还原外观</h2>
+                </div>
+                <p className="text-[10px] text-slate-500 mb-3 leading-relaxed">
+                    把主题色、壁纸、字体、应用图标、桌面小组件、装饰贴纸全部还原成最初始状态。在不同版本之间反复导入预设导致图标错乱时使用。<br/>
+                    <span className="text-slate-400">已保存的外观预设不会被删除，随时还能切回去。</span>
+                </p>
+                {!confirmReset ? (
+                    <button onClick={() => setConfirmReset(true)}
+                        className="w-full py-2.5 bg-white text-rose-500 font-bold text-xs rounded-xl border border-rose-200 active:scale-95 transition-transform flex items-center justify-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+                        还原为初始外观
+                    </button>
+                ) : (
+                    <div className="flex gap-2">
+                        <button onClick={handleReset} disabled={resetting}
+                            className="flex-1 py-2.5 bg-rose-500 text-white font-bold text-xs rounded-xl shadow-sm active:scale-95 transition-transform disabled:opacity-50">
+                            {resetting ? '正在还原...' : '确认还原'}
+                        </button>
+                        <button onClick={() => setConfirmReset(false)} disabled={resetting}
+                            className="flex-1 py-2.5 bg-white text-slate-500 font-bold text-xs rounded-xl border border-slate-200 active:scale-95 transition-transform disabled:opacity-50">
+                            取消
+                        </button>
+                    </div>
+                )}
+            </section>
+
+            {/* Save Current */}
             <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
                 <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">保存当前外观</h2>
                 <p className="text-[10px] text-slate-400 mb-3">将当前的主题色、壁纸、字体、图标、装饰等完整外观保存为预设，方便随时切换。</p>
@@ -94,8 +237,8 @@ const PresetManager: React.FC<PresetManagerProps> = ({ presets, onSave, onApply,
 
 <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
                 <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">导入外观预设</h2>
-                <p className="text-[10px] text-slate-400 mb-3">从 .json 文件导入他人分享的外观预设。系统整合备份也会包含当前外观设置，单独预设文件更适合分享。</p>
-                <input type="file" ref={importRef} className="hidden" accept=".json" onChange={handleImport} />
+                <p className="text-[10px] text-slate-400 mb-3">从 .zip 文件导入他人分享的外观预设（兼容旧版 .json）。系统整合备份也会包含当前外观设置，单独预设文件更适合分享。</p>
+                <input type="file" ref={importRef} className="hidden" accept=".zip,.json,application/zip,application/json" onChange={handleImport} />
                 <button onClick={() => importRef.current?.click()}
                     className="w-full py-2.5 bg-gradient-to-r from-blue-50 to-cyan-50 text-blue-500 font-bold text-xs rounded-xl border border-blue-200 active:scale-95 transition-transform flex items-center justify-center gap-2">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
@@ -118,11 +261,12 @@ const PresetManager: React.FC<PresetManagerProps> = ({ presets, onSave, onApply,
                             <div key={preset.id} className="bg-slate-50 rounded-2xl border border-slate-100 overflow-hidden">
                                 <div className="h-14 relative overflow-hidden"
                                     style={{
-                                        background: preset.theme.wallpaper && preset.theme.wallpaper.startsWith('data:')
-                                            ? `url(${preset.theme.wallpaper}) center/cover`
-                                            : preset.theme.wallpaper && preset.theme.wallpaper.startsWith('linear')
-                                            ? preset.theme.wallpaper
-                                            : `linear-gradient(135deg, hsl(${preset.theme.hue}, ${preset.theme.saturation}%, ${preset.theme.lightness}%), hsl(${preset.theme.hue + 30}, ${preset.theme.saturation}%, ${Math.max(preset.theme.lightness - 15, 10)}%))`,
+                                        background: (() => {
+                                            const wp = preset.theme.wallpaper;
+                                            if (!wp) return `linear-gradient(135deg, hsl(${preset.theme.hue}, ${preset.theme.saturation}%, ${preset.theme.lightness}%), hsl(${preset.theme.hue + 30}, ${preset.theme.saturation}%, ${Math.max(preset.theme.lightness - 15, 10)}%))`;
+                                            if (wp.startsWith('linear-gradient') || wp.startsWith('radial-gradient') || wp.startsWith('conic-gradient')) return wp;
+                                            return `url("${wp}") center/cover`;
+                                        })(),
                                     }}>
                                     <div className="absolute inset-0 bg-black/10" />
                                     <div className="absolute bottom-1.5 left-3 flex gap-1">
@@ -187,9 +331,10 @@ const PresetManager: React.FC<PresetManagerProps> = ({ presets, onSave, onApply,
 };
 
 const Appearance: React.FC = () => {
-  const { theme, updateTheme, closeApp, setCustomIcon, customIcons, addToast, appearancePresets, saveAppearancePreset, applyAppearancePreset, deleteAppearancePreset, renameAppearancePreset, exportAppearancePreset, importAppearancePreset } = useOS();
+  const { theme, updateTheme, closeApp, setCustomIcon, customIcons, addToast, appearancePresets, saveAppearancePreset, applyAppearancePreset, deleteAppearancePreset, renameAppearancePreset, exportAppearancePreset, importAppearancePreset, resetAppearance } = useOS();
   const [activeTab, setActiveTab] = useState<'theme' | 'icons' | 'presets' | 'chat'>('theme');
   const wallpaperInputRef = useRef<HTMLInputElement>(null);
+  const [wallpaperUrl, setWallpaperUrl] = useState('');
   const widgetInputRef = useRef<HTMLInputElement>(null);
   const [activeWidgetSlot, setActiveWidgetSlot] = useState<string | null>(null);
   const iconInputRef = useRef<HTMLInputElement>(null);
@@ -296,10 +441,22 @@ const Appearance: React.FC = () => {
       }
   };
 
+  const applyWallpaperUrl = () => {
+      const url = wallpaperUrl.trim();
+      if (!url) return;
+      if (!/^https?:\/\//i.test(url) && !url.startsWith('data:') && !url.startsWith('blob:')) {
+          addToast('请填写以 http(s):// 开头的图片地址', 'error');
+          return;
+      }
+      updateTheme({ wallpaper: url });
+      setWallpaperUrl('');
+      addToast('壁纸已应用', 'success');
+  };
+
   const handleWidgetUpload = async (file: File) => {
       if (!activeWidgetSlot) return;
       try {
-          const maxW = activeWidgetSlot === 'wide' ? 800 : 500;
+          const maxW = activeWidgetSlot === 'wide' ? 800 : activeWidgetSlot === 'dsq' ? 600 : 500;
           const dataUrl = await processImage(file, { maxWidth: maxW, quality: 0.9 });
           const current = theme.launcherWidgets || {};
           updateTheme({ launcherWidgets: { ...current, [activeWidgetSlot]: dataUrl } });
@@ -526,14 +683,91 @@ const Appearance: React.FC = () => {
                 {/* Wallpaper Section */}
                 <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
                     <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Wallpaper</h2>
-                    <div className="aspect-[9/16] w-1/2 mx-auto bg-slate-100 rounded-2xl overflow-hidden relative shadow-inner mb-4 group cursor-pointer" onClick={() => wallpaperInputRef.current?.click()}>
-                         <img src={theme.wallpaper} className="w-full h-full object-cover" />
+                    <LongPressArea
+                        className="aspect-[9/16] w-1/2 mx-auto bg-slate-100 rounded-2xl overflow-hidden relative shadow-inner mb-4 group cursor-pointer"
+                        onClick={() => wallpaperInputRef.current?.click()}
+                        onLongPress={() => {
+                            if (theme.wallpaper === DEFAULT_WALLPAPER) {
+                                addToast('当前已是默认壁纸', 'info');
+                                return;
+                            }
+                            updateTheme({ wallpaper: DEFAULT_WALLPAPER });
+                            addToast('已恢复默认壁纸', 'success');
+                        }}
+                    >
+                         <div
+                            className="w-full h-full"
+                            style={{
+                                background: !theme.wallpaper
+                                    ? '#e2e8f0'
+                                    : (theme.wallpaper.startsWith('linear-gradient') || theme.wallpaper.startsWith('radial-gradient') || theme.wallpaper.startsWith('conic-gradient'))
+                                        ? theme.wallpaper
+                                        : `url("${theme.wallpaper}") center/cover`,
+                            }}
+                         />
                          <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                              <span className="text-white text-xs font-bold bg-black/20 px-3 py-1 rounded-full backdrop-blur-md">更换壁纸</span>
                          </div>
-                    </div>
+                    </LongPressArea>
                     <input type="file" ref={wallpaperInputRef} className="hidden" accept="image/*" onChange={(e) => e.target.files?.[0] && handleWallpaperUpload(e.target.files[0])} />
-                    <p className="text-center text-[10px] text-slate-400">点击预览图上传新壁纸 (支持原画质)</p>
+                    <p className="text-center text-[10px] text-slate-400 mb-4">点击上传 / 长按恢复默认壁纸 (支持原画质)</p>
+
+                    <div className="border-t border-slate-100 pt-4 space-y-2">
+                        <p className="text-[11px] font-bold text-slate-500">从 URL 导入</p>
+                        <input
+                            value={wallpaperUrl}
+                            onChange={e => setWallpaperUrl(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') applyWallpaperUrl(); }}
+                            placeholder="输入图片地址 (https://...)"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs outline-none focus:border-primary transition-all"
+                        />
+                        <button
+                            onClick={applyWallpaperUrl}
+                            disabled={!wallpaperUrl.trim()}
+                            className="w-full py-2 bg-primary text-white font-bold text-xs rounded-xl shadow-md active:scale-95 transition-transform disabled:opacity-40 disabled:active:scale-100"
+                        >
+                            应用网络壁纸
+                        </button>
+                        <p className="text-[10px] text-slate-400">直接引用网络图片，不占用本地存储</p>
+                    </div>
+                </section>
+
+                {/* Page 1 Desktop Square Image */}
+                <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+                    <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-2">首页方形图片</h2>
+                    <p className="text-[10px] text-slate-400 mb-4">桌面首页右下角的方形图片槽位，长按移除</p>
+                    <div className="flex justify-center bg-slate-50 p-3 rounded-2xl border border-slate-100">
+                        {(() => {
+                            const slot = 'dsq';
+                            const img = (theme.launcherWidgets || {})[slot];
+                            return (
+                                <LongPressArea
+                                    className={`w-40 aspect-square rounded-2xl overflow-hidden relative cursor-pointer transition-transform active:scale-95 ${img ? 'shadow-sm' : 'border-2 border-dashed border-slate-200 bg-white flex items-center justify-center'}`}
+                                    onClick={() => { setActiveWidgetSlot(slot); widgetInputRef.current?.click(); }}
+                                    onLongPress={() => {
+                                        if (img) {
+                                            removeWidget(slot);
+                                            addToast('已移除方图', 'success');
+                                        }
+                                    }}
+                                >
+                                    {img ? (
+                                        <>
+                                            <img src={img} className="w-full h-full object-cover" />
+                                            <div className="absolute inset-0 bg-black/0 hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 hover:opacity-100">
+                                                <span className="text-white text-[10px] font-bold bg-black/40 px-2 py-0.5 rounded-full">更换</span>
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <div className="text-slate-300 text-center">
+                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-7 h-7 mx-auto mb-1"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                                            <span className="text-[10px]">方图</span>
+                                        </div>
+                                    )}
+                                </LongPressArea>
+                            );
+                        })()}
+                    </div>
                 </section>
 
                 {/* Page 2 Widget Images */}
@@ -546,9 +780,17 @@ const Appearance: React.FC = () => {
                             {['tl', 'tr'].map(slot => {
                                 const img = (theme.launcherWidgets || {})[slot];
                                 return (
-                                    <div key={slot} className={`flex-1 aspect-square rounded-xl overflow-hidden relative cursor-pointer transition-transform active:scale-95 ${img ? 'shadow-sm' : 'border-2 border-dashed border-slate-200 bg-white flex items-center justify-center'}`}
+                                    <LongPressArea
+                                        key={slot}
+                                        className={`flex-1 aspect-square rounded-xl overflow-hidden relative cursor-pointer transition-transform active:scale-95 ${img ? 'shadow-sm' : 'border-2 border-dashed border-slate-200 bg-white flex items-center justify-center'}`}
                                         onClick={() => { setActiveWidgetSlot(slot); widgetInputRef.current?.click(); }}
-                                        onContextMenu={(e) => { e.preventDefault(); if (img) removeWidget(slot); }}>
+                                        onLongPress={() => {
+                                            if (img) {
+                                                removeWidget(slot);
+                                                addToast('已移除小组件', 'success');
+                                            }
+                                        }}
+                                    >
                                         {img ? (
                                             <>
                                                 <img src={img} className="w-full h-full object-cover" />
@@ -562,7 +804,7 @@ const Appearance: React.FC = () => {
                                                 <span className="text-[9px]">图片</span>
                                             </div>
                                         )}
-                                    </div>
+                                    </LongPressArea>
                                 );
                             })}
                         </div>
@@ -570,9 +812,16 @@ const Appearance: React.FC = () => {
                             const slot = 'wide';
                             const img = (theme.launcherWidgets || {})[slot];
                             return (
-                                <div className={`w-full h-20 rounded-xl overflow-hidden relative cursor-pointer transition-transform active:scale-[0.98] ${img ? 'shadow-sm' : 'border-2 border-dashed border-slate-200 bg-white flex items-center justify-center'}`}
+                                <LongPressArea
+                                    className={`w-full h-20 rounded-xl overflow-hidden relative cursor-pointer transition-transform active:scale-[0.98] ${img ? 'shadow-sm' : 'border-2 border-dashed border-slate-200 bg-white flex items-center justify-center'}`}
                                     onClick={() => { setActiveWidgetSlot(slot); widgetInputRef.current?.click(); }}
-                                    onContextMenu={(e) => { e.preventDefault(); if (img) removeWidget(slot); }}>
+                                    onLongPress={() => {
+                                        if (img) {
+                                            removeWidget(slot);
+                                            addToast('已移除横幅', 'success');
+                                        }
+                                    }}
+                                >
                                     {img ? (
                                         <>
                                             <img src={img} className="w-full h-full object-cover" />
@@ -586,32 +835,10 @@ const Appearance: React.FC = () => {
                                             <span className="text-[9px]">横幅</span>
                                         </div>
                                     )}
-                                </div>
+                                </LongPressArea>
                             );
                         })()}
                     </div>
-                    {/* Legacy bl/br cleanup for old users */}
-                    {((theme.launcherWidgets || {})['bl'] || (theme.launcherWidgets || {})['br'] || theme.launcherWidgetImage) && (
-                        <div className="mt-3 p-3 bg-amber-50 rounded-xl border border-amber-200">
-                            <div className="flex items-center gap-2 mb-2">
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-amber-500"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" /></svg>
-                                <span className="text-[10px] font-bold text-amber-600">检测到旧版小组件数据</span>
-                            </div>
-                            <p className="text-[10px] text-amber-500 mb-2">旧版底部小组件已升级为自由装饰系统，点击清除旧数据释放空间。</p>
-                            <button onClick={() => {
-                                const current = { ...(theme.launcherWidgets || {}) };
-                                delete current['bl'];
-                                delete current['br'];
-                                updateTheme({
-                                    launcherWidgets: Object.keys(current).length > 0 ? current : undefined,
-                                    launcherWidgetImage: undefined
-                                });
-                                addToast('旧版数据已清除', 'success');
-                            }} className="w-full py-1.5 bg-amber-100 text-amber-700 text-[10px] font-bold rounded-lg active:scale-95 transition-transform">
-                                清除旧版小组件数据
-                            </button>
-                        </div>
-                    )}
                 </section>
 
                 {/* Desktop Decoration DIY Section */}
@@ -864,6 +1091,7 @@ const Appearance: React.FC = () => {
                 onRename={renameAppearancePreset}
                 onExport={exportAppearancePreset}
                 onImport={importAppearancePreset}
+                onReset={resetAppearance}
                 addToast={addToast}
                 currentTheme={theme}
             />

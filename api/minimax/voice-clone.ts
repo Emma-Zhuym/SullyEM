@@ -1,9 +1,23 @@
-const TARGET_URL = 'https://api.minimaxi.com/v1/voice_clone';
+const DOMESTIC_BASE = 'https://api.minimaxi.com';
+const OVERSEAS_BASE = 'https://api.minimax.io';
+const VOICE_CLONE_PATH = '/v1/voice_clone';
+
+const resolveTargetUrl = (req: any): string => {
+  const header = typeof req?.headers?.['x-minimax-region'] === 'string'
+    ? req.headers['x-minimax-region'].trim().toLowerCase()
+    : '';
+  const envRegion = typeof process.env.MINIMAX_REGION === 'string'
+    ? process.env.MINIMAX_REGION.trim().toLowerCase()
+    : '';
+  const region = header || envRegion;
+  const base = region === 'overseas' ? OVERSEAS_BASE : DOMESTIC_BASE;
+  return `${base}${VOICE_CLONE_PATH}`;
+};
 
 function setCors(res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-MiniMax-API-Key');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-MiniMax-API-Key,X-MiniMax-Region');
 }
 
 function normalizeApiKey(raw?: string): string {
@@ -45,7 +59,7 @@ export default async function handler(req: any, res: any) {
       model: req.body?.model,
     });
 
-    const upstream = await fetch(TARGET_URL, {
+    const upstream = await fetch(resolveTargetUrl(req), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

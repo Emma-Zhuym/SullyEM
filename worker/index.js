@@ -15,7 +15,8 @@ function corsHeaders(origin) {
   return {
     "Access-Control-Allow-Origin": origin || "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, X-Brave-API-Key, X-Notion-API-Key, X-Feishu-Token, X-Xhs-Cookie",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, Depth, X-Brave-API-Key, X-Notion-API-Key, X-Feishu-Token, X-Xhs-Cookie, X-Netease-Cookie, X-WebDAV-Method, X-WebDAV-Depth, X-WebDAV-Range, X-GitHub-Method, X-GitHub-Api-Version, Mcp-Session-Id, Accept, Range",
+    "Access-Control-Expose-Headers": "Mcp-Session-Id",
     "Access-Control-Max-Age": "86400",
   };
 }
@@ -559,6 +560,233 @@ async function uploadPlaceholderImage(cookie) {
   }
 }
 
+// ================================================================
+//  网易云音乐代理 — 转发到用户自部署的 api-enhanced
+//  api-enhanced: https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced
+//  一键部署到 Vercel, 得到一个类似 https://xxx.vercel.app 的地址后填到下面
+// ================================================================
+//
+// ⚠️ 多上游 —— 可以填 N 个 api-enhanced 部署地址, Worker 会随机挑选 + 自动容灾。
+// 推荐组合:
+//   1) Vercel (主) — 你现有的这个
+//   2) Deno Deploy (备) — 免费 100w req/天, 国外走这个最快
+//   3) 另一个 Vercel 账号的二部署 — 双倍配额
+// 见 notes/music-scaling.md 部署教程。
+const NETEASE_UPSTREAMS = [
+  "https://api-enhanced-ochre-kappa.vercel.app",
+  // "https://sully-music.deno.dev",          // ← 部署 Deno Deploy 后把 URL 粘贴到这里
+  // "https://api-enhanced-mirror.vercel.app", // ← 部署第二个 Vercel 后把 URL 粘贴到这里
+];
+
+// 国内 IP 伪装, 部分接口需要 realIP 参数才会返回内地版权数据
+const NETEASE_REAL_IP = "116.25.146.177";
+
+// ========== 边缘缓存 TTL 配置 ==========
+// 单位: 秒。0 或未列出的 action 不缓存（登录/用户数据等）。
+// 命中缓存 → 不打上游, 零成本。Cloudflare 免费 KV-like 缓存, 每 PoP 独立。
+const NETEASE_CACHE_TTL = {
+  // 长期稳定 — 激进缓存
+  'lyric':              30 * 24 * 3600, // 30天 (歌词几乎不变)
+  'lyric/new':          30 * 24 * 3600,
+  'song/detail':              3600,     // 1小时
+  'album':                    1800,     // 30分
+  'artists':                  1800,
+  'artist/songs':             1800,
+  'mv/detail':                1800,
+  // 中期
+  'search':                    600,     // 10分
+  'search/hot':               1800,
+  'search/hot/detail':        1800,
+  'search/default':            600,
+  'toplist':                   600,
+  'toplist/detail':            600,
+  'top/playlist':              600,
+  'playlist/detail':           600,
+  'playlist/track/all':        600,
+  'banner':                   1800,
+  'personalized':             1800,
+  'personalized/newsong':     1800,
+  'comment/music':             300,     // 5分
+  // 短期 — 签名链接有效期短
+  'song/url':                  180,     // 3分 (URL 5分钟过期, 留余量)
+  'mv/url':                    180,
+  // 用户专属: 不出现在本表 = 不缓存
+  //   login/*, captcha/*, user/*, likelist, like, logout,
+  //   recommend/songs, personal_fm, daily_signin, check/music
+};
+
+// 已知 action → 真实上游路径的特例映射（大多数 api-enhanced 路径和 action 同名，
+// 下面只处理名字不同 / 有特殊参数的那几个）。
+const NETEASE_ACTION_REWRITE = {
+  "search": "/cloudsearch",           // 用 cloudsearch 返回更完整的字段
+  "song/url": "/song/url/v1",
+  "user/detail": "/user/detail",
+  "user/playlist": "/user/playlist",
+  "user/record": "/user/record",
+  "user/cloud": "/user/cloud",
+  "user/subcount": "/user/subcount",
+  "likelist": "/likelist",
+  "like": "/like",
+  "playlist/detail": "/playlist/detail",
+  "playlist/track/all": "/playlist/track/all",
+  "personal_fm": "/personal_fm",
+  "recommend/songs": "/recommend/songs",
+  "recommend/resource": "/recommend/resource",
+  "daily_signin": "/daily_signin",
+  "toplist": "/toplist",
+  "toplist/detail": "/toplist/detail",
+  "top/playlist": "/top/playlist",
+  "personalized": "/personalized",
+  "personalized/newsong": "/personalized/newsong",
+  "banner": "/banner",
+  "login/status": "/login/status",
+  "login/cellphone": "/login/cellphone",
+  "login/qr/key": "/login/qr/key",
+  "login/qr/create": "/login/qr/create",
+  "login/qr/check": "/login/qr/check",
+  "captcha/sent": "/captcha/sent",
+  "captcha/verify": "/captcha/verify",
+  "logout": "/logout",
+  "song/detail": "/song/detail",
+  "lyric": "/lyric",
+  "lyric/new": "/lyric/new",
+  "comment/music": "/comment/music",
+  "album": "/album",
+  "artists": "/artists",
+  "artist/songs": "/artist/songs",
+  "mv/detail": "/mv/detail",
+  "mv/url": "/mv/url",
+};
+
+// action 白名单 — 只允许 api-enhanced 已知的安全接口（防止被当成开放代理）
+const NETEASE_ACTION_ALLOWED = new Set([
+  ...Object.keys(NETEASE_ACTION_REWRITE),
+  "song/url",
+  "search/suggest",
+  "search/hot",
+  "search/hot/detail",
+  "search/default",
+  "check/music",
+]);
+
+function buildNeteaseUpstream(action, body, cookie) {
+  if (!NETEASE_ACTION_ALLOWED.has(action)) return null;
+
+  const p = new URLSearchParams();
+  if (cookie && cookie.trim()) p.set("cookie", cookie.trim());
+  p.set("realIP", NETEASE_REAL_IP);
+  // cache-buster, 避免 Vercel 边缘缓存干扰登录态
+  p.set("timestamp", Date.now().toString());
+
+  // Special-case 几个需要重命名 / 默认值的字段
+  if (action === "search") {
+    p.set("keywords", body.keyword || body.keywords || "");
+    p.set("type", String(body.type || 1));
+    p.set("limit", String(body.limit || 30));
+    p.set("offset", String(body.offset || 0));
+  } else if (action === "song/url") {
+    const ids = Array.isArray(body.ids) ? body.ids : (body.id != null ? [body.id] : []);
+    if (ids.length) p.set("id", ids.join(","));
+    p.set("level", body.level || "exhigh");
+  } else if (action === "song/detail") {
+    const ids = Array.isArray(body.ids) ? body.ids : (body.id != null ? [body.id] : []);
+    if (ids.length) p.set("ids", ids.join(","));
+  } else if (action === "user/playlist") {
+    if (body.uid != null) p.set("uid", String(body.uid));
+    p.set("limit", String(body.limit || 30));
+    p.set("offset", String(body.offset || 0));
+  } else if (action === "user/record") {
+    if (body.uid != null) p.set("uid", String(body.uid));
+    p.set("type", String(body.type ?? 1)); // 0: 全部, 1: 最近一周
+  } else if (action === "user/cloud") {
+    p.set("limit", String(body.limit || 30));
+    p.set("offset", String(body.offset || 0));
+  } else {
+    // 通用：所有其余参数直接透传（字符串化）
+    for (const [k, v] of Object.entries(body || {})) {
+      if (v == null) continue;
+      if (Array.isArray(v)) p.set(k, v.join(","));
+      else p.set(k, String(v));
+    }
+  }
+
+  const upstream = NETEASE_ACTION_REWRITE[action] || `/${action}`;
+  return `${upstream}?${p}`;
+}
+
+// ========== 缓存 Key 构造 ==========
+// 使用"虚拟" URL 作为 Cache API 的 key。只包含业务参数（action + 过滤后的 body），
+// 故意剔除 cookie / realIP / timestamp / level(cookie 桶代替) 等不稳定参数。
+// 这样同一个 action 的相同查询跨 PoP / 多上游 都能命中同一个缓存条目。
+function buildCacheKey(action, body, cookieBucket) {
+  const p = new URLSearchParams();
+  const skip = new Set(['timestamp', 'realIP', 'cookie', '_']);
+  for (const [k, v] of Object.entries(body || {})) {
+    if (v == null || skip.has(k)) continue;
+    if (Array.isArray(v)) p.set(k, v.join(","));
+    else p.set(k, String(v));
+  }
+  // 排序保证确定性 (对象顺序 / 用户输入顺序不同也能命中同一 key)
+  const sorted = [...p.entries()].sort(([a], [b]) => a.localeCompare(b));
+  const qs = sorted.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+  return new Request(
+    `https://sully-netease-cache.internal/${action}/${cookieBucket}?${qs}`,
+    { method: 'GET' }
+  );
+}
+
+// ========== 多上游 fetch 带失败转移 ==========
+// 从 NETEASE_UPSTREAMS 随机打乱, 依次尝试, 任何一个成功(HTTP 2xx + code!=-460)就返回。
+// 自动屏蔽被网易风控的上游 (HTTP 200 但 body 里 code=-460 / -7 = 被限流)。
+function shuffleCopy(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+async function fetchFromAnyUpstream(upstreamPath, timeoutMs = 8000) {
+  const order = shuffleCopy(NETEASE_UPSTREAMS);
+  const errors = [];
+  for (const base of order) {
+    const upstreamUrl = base.replace(/\/+$/, '') + upstreamPath;
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), timeoutMs);
+      const res = await fetch(upstreamUrl, {
+        method: "GET",
+        headers: { "Accept": "application/json" },
+        signal: ctrl.signal,
+      });
+      clearTimeout(t);
+
+      const text = await res.text();
+      // HTTP 层挂了直接换下一个
+      if (!res.ok) {
+        errors.push(`${new URL(base).host} HTTP ${res.status}`);
+        continue;
+      }
+      // 应用层风控: 尝试识别 -460/-7 等明显失败码, 这种情况下换个上游可能成功
+      let shouldFailover = false;
+      try {
+        const j = JSON.parse(text);
+        if (j?.code === -460 || j?.code === -7) shouldFailover = true;
+      } catch { /* 不是 JSON, 当成功处理 */ }
+      if (shouldFailover && order.length > 1) {
+        errors.push(`${new URL(base).host} risk-control (code=-460/-7)`);
+        continue;
+      }
+      return { text, status: res.status, upstream: new URL(base).host, error: null };
+    } catch (e) {
+      errors.push(`${new URL(base).host} ${e.name === 'AbortError' ? 'timeout' : e.message}`);
+    }
+  }
+  return { text: '', status: 502, upstream: '', error: errors.join(' | ') };
+}
+
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -567,6 +795,154 @@ export default {
     // CORS preflight
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders(origin) });
+    }
+
+    // ========== WebDAV 代理 ==========
+    if (url.pathname === '/webdav') {
+      if (request.method !== 'POST') {
+        return jsonResponse({ error: 'Method not allowed' }, { status: 405, origin });
+      }
+      const targetUrl = url.searchParams.get('url');
+      if (!targetUrl) {
+        return jsonResponse({ error: 'Missing url parameter' }, { status: 400, origin });
+      }
+      let parsedTarget;
+      try {
+        parsedTarget = new URL(targetUrl);
+        if (parsedTarget.protocol !== 'https:') {
+          return jsonResponse({ error: 'Only HTTPS URLs allowed' }, { status: 400, origin });
+        }
+      } catch {
+        return jsonResponse({ error: 'Invalid URL' }, { status: 400, origin });
+      }
+      const webdavMethod = (request.headers.get('X-WebDAV-Method') || 'GET').toUpperCase();
+      const allowedMethods = ['GET', 'PUT', 'PROPFIND', 'MKCOL', 'DELETE'];
+      if (!allowedMethods.includes(webdavMethod)) {
+        return jsonResponse({ error: 'WebDAV method not allowed' }, { status: 400, origin });
+      }
+      const forwardHeaders = {};
+      const auth = request.headers.get('Authorization');
+      if (auth) forwardHeaders['Authorization'] = auth;
+      const contentType = request.headers.get('Content-Type');
+      if (contentType) forwardHeaders['Content-Type'] = contentType;
+      const depth = request.headers.get('X-WebDAV-Depth') || request.headers.get('Depth');
+      if (depth) forwardHeaders['Depth'] = depth;
+      const range = request.headers.get('X-WebDAV-Range') || request.headers.get('Range');
+      if (range) forwardHeaders['Range'] = range;
+      forwardHeaders['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+      forwardHeaders['Accept'] = '*/*';
+      try {
+        let body = null;
+        if (webdavMethod !== 'GET' && webdavMethod !== 'MKCOL') {
+          body = await request.arrayBuffer();
+          if (body.byteLength === 0) body = null;
+        }
+        const upstream = await fetch(targetUrl, {
+          method: webdavMethod,
+          headers: forwardHeaders,
+          body,
+        });
+        console.log('webdav', webdavMethod, targetUrl, '→', upstream.status);
+        const respHeaders = new Headers(corsHeaders(origin));
+        const rct = upstream.headers.get('Content-Type');
+        if (rct) respHeaders.set('Content-Type', rct);
+        // Only forward Content-Length for range responses (size is known and the
+        // chunk fully buffers). For full-file 200 streams, omit Content-Length
+        // and let chunked transfer-encoding handle it — otherwise a mid-stream
+        // disconnect surfaces as ERR_CONTENT_LENGTH_MISMATCH on the client.
+        if (upstream.status === 206) {
+          const rcl = upstream.headers.get('Content-Length');
+          if (rcl) respHeaders.set('Content-Length', rcl);
+        }
+        const rcr = upstream.headers.get('Content-Range');
+        if (rcr) respHeaders.set('Content-Range', rcr);
+        const rar = upstream.headers.get('Accept-Ranges');
+        if (rar) respHeaders.set('Accept-Ranges', rar);
+        respHeaders.set('X-Upstream-Status', String(upstream.status));
+        respHeaders.set('X-Upstream-Host', parsedTarget.host);
+        respHeaders.set('Access-Control-Expose-Headers', 'X-Upstream-Status, X-Upstream-Host, Content-Length, Content-Range, Accept-Ranges');
+        return new Response(upstream.body, {
+          status: upstream.status,
+          headers: respHeaders,
+        });
+      } catch (e) {
+        return jsonResponse({
+          error: `Proxy error: ${String(e && e.message || e)}`,
+          stack: String(e && e.stack || '').slice(0, 400),
+        }, { status: 502, origin });
+      }
+    }
+
+    // ========== GitHub 代理 ==========
+    // 给国内连不上 github.com 的用户兜底用。只放行 api.github.com 和
+    // uploads.github.com，方法用 X-GitHub-Method 头携带。
+    if (url.pathname === '/github') {
+      if (request.method !== 'POST') {
+        return jsonResponse({ error: 'Method not allowed' }, { status: 405, origin });
+      }
+      const targetUrl = url.searchParams.get('url');
+      if (!targetUrl) {
+        return jsonResponse({ error: 'Missing url parameter' }, { status: 400, origin });
+      }
+      let parsedGh;
+      try {
+        parsedGh = new URL(targetUrl);
+      } catch {
+        return jsonResponse({ error: 'Invalid URL' }, { status: 400, origin });
+      }
+      const allowedHosts = new Set(['api.github.com', 'uploads.github.com']);
+      if (parsedGh.protocol !== 'https:' || !allowedHosts.has(parsedGh.hostname)) {
+        return jsonResponse({ error: 'Host not allowed' }, { status: 400, origin });
+      }
+      const ghMethod = (request.headers.get('X-GitHub-Method') || 'GET').toUpperCase();
+      const ghAllowed = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+      if (!ghAllowed.includes(ghMethod)) {
+        return jsonResponse({ error: 'Method not allowed' }, { status: 400, origin });
+      }
+      const ghHeaders = {};
+      const ghAuth = request.headers.get('Authorization');
+      if (ghAuth) ghHeaders['Authorization'] = ghAuth;
+      const ghCt = request.headers.get('Content-Type');
+      if (ghCt) ghHeaders['Content-Type'] = ghCt;
+      const ghAccept = request.headers.get('Accept');
+      if (ghAccept) ghHeaders['Accept'] = ghAccept;
+      const ghApiVer = request.headers.get('X-GitHub-Api-Version');
+      if (ghApiVer) ghHeaders['X-GitHub-Api-Version'] = ghApiVer;
+      // GitHub 拒绝没有 UA 的请求
+      ghHeaders['User-Agent'] = 'sully-backup-proxy';
+      try {
+        let ghBody = null;
+        if (ghMethod !== 'GET' && ghMethod !== 'DELETE') {
+          ghBody = await request.arrayBuffer();
+          if (ghBody.byteLength === 0) ghBody = null;
+        }
+        const ghUpstream = await fetch(targetUrl, {
+          method: ghMethod,
+          headers: ghHeaders,
+          body: ghBody,
+          redirect: 'follow',
+        });
+        console.log('github', ghMethod, targetUrl, '→', ghUpstream.status);
+        const ghRespHeaders = new Headers(corsHeaders(origin));
+        const grct = ghUpstream.headers.get('Content-Type');
+        if (grct) ghRespHeaders.set('Content-Type', grct);
+        if (ghUpstream.status === 206) {
+          const grcl = ghUpstream.headers.get('Content-Length');
+          if (grcl) ghRespHeaders.set('Content-Length', grcl);
+        }
+        const grcr = ghUpstream.headers.get('Content-Range');
+        if (grcr) ghRespHeaders.set('Content-Range', grcr);
+        ghRespHeaders.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
+        return new Response(ghUpstream.body, {
+          status: ghUpstream.status,
+          headers: ghRespHeaders,
+        });
+      } catch (e) {
+        return jsonResponse({
+          error: `Proxy error: ${String(e && e.message || e)}`,
+          stack: String(e && e.stack || '').slice(0, 400),
+        }, { status: 502, origin });
+      }
     }
 
     // ========== Notion 代理 ==========
@@ -1473,6 +1849,215 @@ export default {
       }
 
       return jsonResponse({ error: "Unknown XHS endpoint. Use /xhs/profile, /xhs/upload-test, /xhs/search, /xhs/feed, /xhs/publish, /xhs/comment" }, { status: 404, origin });
+    }
+
+    // ========== Replicate 代理 (写歌 App 用，给 ACE-Step 等模型走) ==========
+    // 前端把 Authorization: Bearer r8_xxx 透传过来，Worker 只做路由 + CORS + CDN 兜底。
+    //   POST /replicate/predictions          → 起任务 (透传 body 到 api.replicate.com)
+    //   GET  /replicate/predictions/:id      → 轮询状态
+    //   POST /replicate/predictions/:id/cancel → 取消任务
+    //   GET  /replicate/file?url=...         → 下载 replicate.delivery 上的产物 (国内常超时)
+    if (url.pathname.startsWith('/replicate/')) {
+      // 1) 文件代下载：解决 replicate.delivery / pbxt.replicate.delivery 的国内访问问题
+      if (url.pathname === '/replicate/file' && request.method === 'GET') {
+        const targetUrl = url.searchParams.get('url');
+        if (!targetUrl) {
+          return jsonResponse({ error: 'Missing url parameter' }, { status: 400, origin });
+        }
+        let parsed;
+        try {
+          parsed = new URL(targetUrl);
+        } catch {
+          return jsonResponse({ error: 'Invalid URL' }, { status: 400, origin });
+        }
+        // 白名单：只放行 replicate 的产物 CDN
+        const allowed = (host) => host === 'replicate.delivery'
+          || host.endsWith('.replicate.delivery')
+          || host === 'pbxt.replicate.com'
+          || host.endsWith('.replicate.com');
+        if (parsed.protocol !== 'https:' || !allowed(parsed.hostname)) {
+          return jsonResponse({ error: 'Host not allowed' }, { status: 400, origin });
+        }
+        try {
+          const upstream = await fetch(targetUrl, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 sully-replicate-proxy',
+              'Accept': '*/*',
+            },
+          });
+          const respHeaders = new Headers(corsHeaders(origin));
+          const ct = upstream.headers.get('Content-Type');
+          if (ct) respHeaders.set('Content-Type', ct);
+          const cl = upstream.headers.get('Content-Length');
+          if (cl) respHeaders.set('Content-Length', cl);
+          respHeaders.set('Access-Control-Expose-Headers', 'Content-Length, Content-Type');
+          return new Response(upstream.body, { status: upstream.status, headers: respHeaders });
+        } catch (e) {
+          return jsonResponse({ error: 'Replicate CDN fetch failed', detail: String(e && e.message || e) }, { status: 502, origin });
+        }
+      }
+
+      // 2) API 转发：除 /file 外的所有路径，剥掉 /replicate 前缀转给 api.replicate.com
+      const auth = request.headers.get('Authorization');
+      if (!auth) {
+        return jsonResponse({ error: 'Missing Authorization header (Replicate token)' }, { status: 401, origin });
+      }
+      const apiPath = url.pathname.replace(/^\/replicate/, ''); // e.g. /predictions
+      const apiUrl = `https://api.replicate.com/v1${apiPath}${url.search || ''}`;
+      const allowedMethods = ['GET', 'POST', 'DELETE'];
+      if (!allowedMethods.includes(request.method)) {
+        return jsonResponse({ error: 'Method not allowed' }, { status: 405, origin });
+      }
+      try {
+        const forwardHeaders = {
+          'Authorization': auth,
+          'Content-Type': request.headers.get('Content-Type') || 'application/json',
+          'Accept': 'application/json',
+          'User-Agent': 'sully-replicate-proxy',
+        };
+        const init = { method: request.method, headers: forwardHeaders };
+        if (request.method === 'POST' || request.method === 'PUT' || request.method === 'PATCH') {
+          init.body = await request.text();
+        }
+        const upstream = await fetch(apiUrl, init);
+        const text = await upstream.text();
+        return new Response(text, {
+          status: upstream.status,
+          headers: {
+            'Content-Type': upstream.headers.get('Content-Type') || 'application/json; charset=utf-8',
+            ...corsHeaders(origin),
+          },
+        });
+      } catch (e) {
+        return jsonResponse({ error: 'Replicate upstream fetch failed', detail: String(e && e.message || e) }, { status: 502, origin });
+      }
+    }
+
+    // ========== 麦当劳 MCP 代理 (浏览器 CORS 兜底, 纯透传) ==========
+    // 前端 POST /mcp/mcd  + Authorization: Bearer <user_mcp_token>
+    // body 即 MCP JSON-RPC 报文 (initialize / tools/list / tools/call ...)
+    // Worker 不读不存 token, 只做 CORS + 转发 https://mcp.mcd.cn
+    if (url.pathname === '/mcp/mcd') {
+      if (request.method !== 'POST') {
+        return jsonResponse({ error: 'Method not allowed' }, { status: 405, origin });
+      }
+      const auth = request.headers.get('Authorization');
+      if (!auth) {
+        return jsonResponse({ error: 'Missing Authorization header (McDonald\'s MCP token)' }, { status: 401, origin });
+      }
+      try {
+        const fwdHeaders = {
+          'Authorization': auth,
+          'Content-Type': request.headers.get('Content-Type') || 'application/json',
+          'Accept': request.headers.get('Accept') || 'application/json, text/event-stream',
+          'User-Agent': 'aetheros-mcp-proxy/1.0',
+        };
+        const sid = request.headers.get('Mcp-Session-Id') || request.headers.get('mcp-session-id');
+        if (sid) fwdHeaders['Mcp-Session-Id'] = sid;
+        const upstream = await fetch('https://mcp.mcd.cn', {
+          method: 'POST',
+          headers: fwdHeaders,
+          body: await request.text(),
+        });
+        const text = await upstream.text();
+        const respHeaders = new Headers(corsHeaders(origin));
+        const ct = upstream.headers.get('Content-Type');
+        if (ct) respHeaders.set('Content-Type', ct);
+        else respHeaders.set('Content-Type', 'application/json; charset=utf-8');
+        const upSid = upstream.headers.get('Mcp-Session-Id') || upstream.headers.get('mcp-session-id');
+        if (upSid) respHeaders.set('Mcp-Session-Id', upSid);
+        return new Response(text, { status: upstream.status, headers: respHeaders });
+      } catch (e) {
+        return jsonResponse({ error: 'McDonald MCP upstream fetch failed', detail: String(e && e.message || e) }, { status: 502, origin });
+      }
+    }
+
+    // ========== 网易云音乐代理 (转发到 api-enhanced, 带边缘缓存 + 多上游容灾) ==========
+    // 前端 POST /netease/<action> { ...body }
+    // Worker 翻译成 api-enhanced 的 GET 参数形式并转发
+    if (url.pathname.startsWith('/netease/')) {
+      if (!NETEASE_UPSTREAMS || NETEASE_UPSTREAMS.length === 0) {
+        return jsonResponse({
+          error: "Worker 里 NETEASE_UPSTREAMS 还没配置",
+          hint: "把 api-enhanced 部署到 Vercel/Deno Deploy, 拿到 URL 后改 worker/index.js 开头的 NETEASE_UPSTREAMS 数组, 然后重新部署 Worker"
+        }, { status: 500, origin });
+      }
+
+      const action = url.pathname.replace('/netease/', '');
+      const cookie = request.headers.get("X-Netease-Cookie") || "";
+      let body = {};
+      if (request.method === 'POST') {
+        body = await request.json().catch(() => ({}));
+      } else if (request.method === 'GET') {
+        body = Object.fromEntries(url.searchParams.entries());
+      }
+
+      const upstreamPath = buildNeteaseUpstream(action, body, cookie);
+      if (!upstreamPath) {
+        return jsonResponse({
+          error: "Unknown or unallowed netease action",
+          hint: "支持: search, song/url, lyric, song/detail, login/status, login/cellphone, login/qr/key, login/qr/create, login/qr/check, captcha/sent, captcha/verify, user/detail, user/playlist, user/record, user/cloud, user/subcount, likelist, playlist/detail, playlist/track/all, recommend/songs, recommend/resource, personal_fm, daily_signin, toplist, toplist/detail, top/playlist, personalized, personalized/newsong, banner, comment/music, album, artists, artist/songs, mv/detail, mv/url 等"
+        }, { status: 404, origin });
+      }
+
+      // ── 边缘缓存: 对公共数据(歌词/搜索/song/url 等) 命中直接返回 ──
+      const ttl = NETEASE_CACHE_TTL[action] || 0;
+      // song/url 受 VIP cookie 影响 → 用 has-cookie 分桶; 其余公共接口 cookie 不影响结果
+      const cookieBucket = (action === 'song/url' && cookie) ? 'vip' : 'anon';
+      const cacheKey = ttl > 0 ? buildCacheKey(action, body, cookieBucket) : null;
+      if (cacheKey) {
+        const cached = await caches.default.match(cacheKey);
+        if (cached) {
+          const text = await cached.text();
+          return new Response(text, {
+            status: cached.status,
+            headers: {
+              'Content-Type': 'application/json; charset=utf-8',
+              'X-Sully-Cache': 'HIT',
+              ...corsHeaders(origin),
+            }
+          });
+        }
+      }
+
+      // ── 多上游 + 容灾: 随机打乱后依次尝试, 任意一个成功就返回 ──
+      const { text, status, upstream, error } = await fetchFromAnyUpstream(upstreamPath);
+      if (error) {
+        return jsonResponse({
+          error: "netease upstream fetch failed (all sources)",
+          detail: error,
+          tried: NETEASE_UPSTREAMS.length,
+        }, { status: 502, origin });
+      }
+
+      const response = new Response(text, {
+        status,
+        headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+          'X-Sully-Cache': 'MISS',
+          'X-Sully-Upstream': upstream,
+          ...corsHeaders(origin),
+        }
+      });
+
+      // ── 写回缓存 (异步, 不阻塞响应) ──
+      if (cacheKey && status >= 200 && status < 400) {
+        const cacheResp = new Response(text, {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': `public, max-age=${ttl}`,
+          }
+        });
+        if (ctx && typeof ctx.waitUntil === 'function') {
+          ctx.waitUntil(caches.default.put(cacheKey, cacheResp));
+        } else {
+          // dev 环境没有 ctx 时直接 fire-and-forget
+          caches.default.put(cacheKey, cacheResp).catch(() => {});
+        }
+      }
+
+      return response;
     }
 
     // ========== Brave Search 代理 ==========

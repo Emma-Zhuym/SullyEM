@@ -4,7 +4,9 @@ import { useOS } from '../context/OSContext';
 import { safeFetchJson } from '../utils/safeApi';
 import { minimaxFetch } from '../utils/minimaxEndpoint';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
+import { hashTtsParams, getCachedTts, saveCachedTts } from '../utils/ttsCache';
 import { ContextBuilder } from '../utils/context';
+import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { RealtimeContextManager } from '../utils/realtimeContext';
 import { DB } from '../utils/db';
 import { ChatPrompts } from '../utils/chatPrompts';
@@ -210,6 +212,19 @@ const fetchRemoteAudioBlob = async (sourceUrl: string): Promise<Blob> => {
   if (!blob.size) throw new Error('音频下载为空文件');
   return blob;
 };
+// Derive the shared TTS cache key from the MiniMax payload. Must match the
+// key used by `synthesizeSpeechDetailed` so chat/date/call can reuse each
+// other's cached audio when the effective request matches.
+const ttsCacheKeyFromPayload = (payload: any): string => hashTtsParams({
+  kind: 'minimax-t2a',
+  text: payload.text,
+  model: payload.model,
+  voice_setting: payload.voice_setting,
+  timber_weights: payload.timber_weights,
+  voice_modify: payload.voice_modify,
+  language_boost: payload.language_boost,
+  audio_setting: payload.audio_setting,
+});
 const splitTextForTts = (rawText: string, maxChunkLen = 120): string[] => {
   const normalized = rawText.replace(/\s+/g, ' ').trim();
   if (!normalized) return [];
@@ -500,28 +515,39 @@ const CallApp: React.FC = () => {
               ...buildTtsExtras(),
             };
             if (groupId) ttsPayload.group_id = groupId;
-            const response = await minimaxFetch('/api/minimax/t2a', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${minimaxApiKey}`, 'X-MiniMax-API-Key': minimaxApiKey, ...(groupId ? { 'X-MiniMax-Group-Id': groupId } : {}) },
-              body: JSON.stringify(ttsPayload),
-            });
-            const data = await response.json();
-            const rawAudio = data?.data?.audio;
-            if (rawAudio && typeof rawAudio === 'string') {
-              const normalizedAudio = rawAudio.trim();
-              let greetingAudioUrl = '';
-              if (/^https?:\/\//i.test(normalizedAudio)) {
-                try { greetingAudioUrl = URL.createObjectURL(await fetchRemoteAudioBlob(normalizedAudio)); } catch { greetingAudioUrl = normalizedAudio; }
-              } else {
-                greetingAudioUrl = URL.createObjectURL(convertHexAudioToBlob(normalizedAudio, 'audio/mpeg'));
+            const greetingCacheKey = ttsCacheKeyFromPayload(ttsPayload);
+            const cachedGreeting = await getCachedTts(greetingCacheKey);
+            let greetingAudioUrl = '';
+            if (cachedGreeting) {
+              greetingAudioUrl = URL.createObjectURL(cachedGreeting);
+            } else {
+              const response = await minimaxFetch('/api/minimax/t2a', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${minimaxApiKey}`, 'X-MiniMax-API-Key': minimaxApiKey, ...(groupId ? { 'X-MiniMax-Group-Id': groupId } : {}) },
+                body: JSON.stringify(ttsPayload),
+              });
+              const data = await response.json();
+              const rawAudio = data?.data?.audio;
+              if (rawAudio && typeof rawAudio === 'string') {
+                const normalizedAudio = rawAudio.trim();
+                let greetingBlob: Blob | null = null;
+                if (/^https?:\/\//i.test(normalizedAudio)) {
+                  try { greetingBlob = await fetchRemoteAudioBlob(normalizedAudio); } catch { greetingAudioUrl = normalizedAudio; }
+                } else {
+                  greetingBlob = convertHexAudioToBlob(normalizedAudio, 'audio/mpeg');
+                }
+                if (greetingBlob) {
+                  greetingAudioUrl = URL.createObjectURL(greetingBlob);
+                  saveCachedTts(greetingCacheKey, greetingBlob).catch(() => { /* ignore */ });
+                }
               }
-              if (greetingAudioUrl) {
-                if (greetingAudioUrl.startsWith('blob:')) currentBlobUrlRef.current = greetingAudioUrl;
-                setAudioUrl(greetingAudioUrl);
-                setBubbles(prev => prev.map(b => b.id === greetingBubble.id ? { ...b, audioUrl: greetingAudioUrl } : b));
-                setTimeout(() => playAudio(greetingAudioUrl), 0);
-                greetingAudioPlayed = true;
-              }
+            }
+            if (greetingAudioUrl) {
+              if (greetingAudioUrl.startsWith('blob:')) currentBlobUrlRef.current = greetingAudioUrl;
+              setAudioUrl(greetingAudioUrl);
+              setBubbles(prev => prev.map(b => b.id === greetingBubble.id ? { ...b, audioUrl: greetingAudioUrl } : b));
+              setTimeout(() => playAudio(greetingAudioUrl), 0);
+              greetingAudioPlayed = true;
             }
           } catch { /* 语音合成失败不影响文字开场白 */ }
         }
@@ -614,6 +640,7 @@ const CallApp: React.FC = () => {
         content: `通话结束 · ${selectedChar.name}｜${formatDuration(elapsedSeconds)}｜${Math.max(1, userTurns)}轮对话`,
         metadata: { source: 'call-end-popup', callSessionId: currentSessionId, ...payload },
       });
+      await loadCallRecords(selectedChar.id);
     }
     clearSuspendedCall();
     resetCurrentCall();
@@ -647,6 +674,10 @@ const CallApp: React.FC = () => {
     const baseUrl = apiConfig.baseUrl?.replace(/\/+$/, '');
     if (!baseUrl) throw new Error('请先在设置里配置聊天 API URL');
     const userName = userProfile?.name?.trim() || '用户';
+    if (selectedChar) {
+      const callMsgs = await DB.getMessagesByCharId(selectedChar.id);
+      await injectMemoryPalace(selectedChar, callMsgs);
+    }
     const systemPrompt = selectedChar
       ? buildCallPrompt(userName, selectedChar.name, ContextBuilder.buildCoreContext(selectedChar, userProfile, true), voiceLang || undefined)
       : buildCallPrompt(userName, selectedChar?.name, undefined, voiceLang || undefined);
@@ -752,6 +783,12 @@ audioRef.current.play().catch(() => addToast('音频已生成，自动播放被�
         };
         if (groupId) ttsPayload.group_id = groupId;
 
+        const chunkCacheKey = ttsCacheKeyFromPayload(ttsPayload);
+        const cachedChunk = await getCachedTts(chunkCacheKey);
+        if (cachedChunk) {
+          return { blob: cachedChunk, traceId: 'cache' };
+        }
+
         const response = await minimaxFetch('/api/minimax/t2a', {
           method: 'POST',
           headers: {
@@ -783,7 +820,9 @@ audioRef.current.play().catch(() => addToast('音频已生成，自动播放被�
 
         if (/^https?:\/\//i.test(normalizedAudio)) {
           try {
-            return { blob: await fetchRemoteAudioBlob(normalizedAudio), traceId };
+            const blob = await fetchRemoteAudioBlob(normalizedAudio);
+            saveCachedTts(chunkCacheKey, blob).catch(() => { /* ignore */ });
+            return { blob, traceId };
           } catch (downloadErr: any) {
             if (total === 1) {
               console.warn('[call] tts remote audio fetch failed, fallback to direct remote url', downloadErr?.message || downloadErr);
@@ -792,7 +831,9 @@ audioRef.current.play().catch(() => addToast('音频已生成，自动播放被�
             throw downloadErr;
           }
         }
-        return { blob: convertHexAudioToBlob(normalizedAudio, 'audio/mpeg'), traceId };
+        const blob = convertHexAudioToBlob(normalizedAudio, 'audio/mpeg');
+        saveCachedTts(chunkCacheKey, blob).catch(() => { /* ignore */ });
+        return { blob, traceId };
       };
 
       const traceIds: string[] = [];
@@ -944,33 +985,44 @@ audioRef.current.play().catch(() => addToast('音频已生成，自动播放被�
               ...buildTtsExtras(),
             };
             if (groupId) ttsPayload.group_id = groupId;
-            const response = await minimaxFetch('/api/minimax/t2a', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${minimaxApiKey}`,
-                'X-MiniMax-API-Key': minimaxApiKey,
-                ...(groupId ? { 'X-MiniMax-Group-Id': groupId } : {}),
-              },
-              body: JSON.stringify(ttsPayload),
-            });
-            const data = await response.json();
-            const rawAudio = data?.data?.audio;
-            if (rawAudio && typeof rawAudio === 'string') {
-              const normalizedAudio = rawAudio.trim();
-              let rerollAudioUrl = '';
-              if (/^https?:\/\//i.test(normalizedAudio)) {
-                try { rerollAudioUrl = URL.createObjectURL(await fetchRemoteAudioBlob(normalizedAudio)); } catch { rerollAudioUrl = normalizedAudio; }
-              } else {
-                rerollAudioUrl = URL.createObjectURL(convertHexAudioToBlob(normalizedAudio, 'audio/mpeg'));
+            const rerollCacheKey = ttsCacheKeyFromPayload(ttsPayload);
+            const cachedReroll = await getCachedTts(rerollCacheKey);
+            let rerollAudioUrl = '';
+            if (cachedReroll) {
+              rerollAudioUrl = URL.createObjectURL(cachedReroll);
+            } else {
+              const response = await minimaxFetch('/api/minimax/t2a', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${minimaxApiKey}`,
+                  'X-MiniMax-API-Key': minimaxApiKey,
+                  ...(groupId ? { 'X-MiniMax-Group-Id': groupId } : {}),
+                },
+                body: JSON.stringify(ttsPayload),
+              });
+              const data = await response.json();
+              const rawAudio = data?.data?.audio;
+              if (rawAudio && typeof rawAudio === 'string') {
+                const normalizedAudio = rawAudio.trim();
+                let rerollBlob: Blob | null = null;
+                if (/^https?:\/\//i.test(normalizedAudio)) {
+                  try { rerollBlob = await fetchRemoteAudioBlob(normalizedAudio); } catch { rerollAudioUrl = normalizedAudio; }
+                } else {
+                  rerollBlob = convertHexAudioToBlob(normalizedAudio, 'audio/mpeg');
+                }
+                if (rerollBlob) {
+                  rerollAudioUrl = URL.createObjectURL(rerollBlob);
+                  saveCachedTts(rerollCacheKey, rerollBlob).catch(() => { /* ignore */ });
+                }
               }
-              if (rerollAudioUrl) {
-                if (currentBlobUrlRef.current) URL.revokeObjectURL(currentBlobUrlRef.current);
-                if (rerollAudioUrl.startsWith('blob:')) currentBlobUrlRef.current = rerollAudioUrl;
-                setAudioUrl(rerollAudioUrl);
-                setBubbles(prev => prev.map(b => b.id === bubble.id ? { ...b, audioUrl: rerollAudioUrl } : b));
-                setTimeout(() => playAudio(rerollAudioUrl), 0);
-              }
+            }
+            if (rerollAudioUrl) {
+              if (currentBlobUrlRef.current) URL.revokeObjectURL(currentBlobUrlRef.current);
+              if (rerollAudioUrl.startsWith('blob:')) currentBlobUrlRef.current = rerollAudioUrl;
+              setAudioUrl(rerollAudioUrl);
+              setBubbles(prev => prev.map(b => b.id === bubble.id ? { ...b, audioUrl: rerollAudioUrl } : b));
+              setTimeout(() => playAudio(rerollAudioUrl), 0);
             }
           }
         } catch (ttsErr: any) {

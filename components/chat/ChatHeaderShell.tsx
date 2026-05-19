@@ -19,6 +19,8 @@ interface ChatHeaderShellProps {
     isTyping: boolean;
     isSummarizing: boolean;
     isEmotionEvaluating?: boolean;
+    isMemoryPalaceProcessing?: boolean;
+    memoryPalaceStatusText?: string;
     lastTokenUsage: number | null;
     tokenBreakdown?: TokenBreakdown | null;
     onClose: () => void;
@@ -55,6 +57,8 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     onCancelSelection,
     activeCharacter,
     isEmotionEvaluating,
+    isMemoryPalaceProcessing,
+    memoryPalaceStatusText,
     lastTokenUsage,
     tokenBreakdown,
     onClose,
@@ -170,11 +174,11 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
             resizeObserver?.disconnect();
             window.removeEventListener('resize', updateCollapsedCount);
         };
-    }, [activeCharacter.id, buffs]);
+    }, [activeCharacter.id, buffs.length]);
 
     const isDarkHeader = headerStyle === 'discord';
     const isPixelHeader = headerStyle === 'pixel';
-    const useCenteredLayout = headerAlign === 'center' || headerStyle === 'telegram' || headerStyle === 'minimal';
+    const useCenteredLayout = headerAlign === 'center';
     const avatarRadiusClass = avatarShape === 'square' ? 'rounded-sm' : avatarShape === 'rounded' ? 'rounded-xl' : 'rounded-full';
 
     const headerToneClass =
@@ -195,7 +199,9 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                         : chromeStyle === 'floating'
                           ? 'bg-white/85 backdrop-blur-xl border-b border-white/70 shadow-sm'
                           : 'bg-white/80 backdrop-blur-xl border-b border-slate-200/60 shadow-sm';
-    const headerDensityClass = headerDensity === 'compact' ? 'h-20 px-4 pb-3' : headerDensity === 'airy' ? 'h-28 px-6 pb-5' : 'h-24 px-5 pb-4';
+    const headerDensityClass = useCenteredLayout
+        ? (headerDensity === 'compact' ? 'min-h-20 px-4 py-2' : headerDensity === 'airy' ? 'min-h-28 px-6 py-4' : 'min-h-24 px-5 py-3')
+        : (headerDensity === 'compact' ? 'h-20 px-4 pb-3' : headerDensity === 'airy' ? 'h-28 px-6 pb-5' : 'h-24 px-5 pb-4');
     const primaryTextClass = isDarkHeader ? 'text-white' : isPixelHeader ? 'text-[#fff7ed]' : 'text-slate-800';
     const secondaryTextClass = isDarkHeader ? 'text-slate-400' : isPixelHeader ? 'text-[#f3ddc7]' : 'text-slate-400';
     const iconButtonClass = isDarkHeader
@@ -209,8 +215,9 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
           ? 'text-[#fff7ed] hover:bg-[#f8f0e0]/20 rounded-[4px] border-2 border-[#8f674a] bg-[#f8f0e0]/10'
           : 'text-indigo-500 hover:bg-indigo-50 rounded-full';
 
-    const onlineStatusNode =
-        statusStyle === 'pill' ? (
+    const onlineStatusNode = headerStyle === 'telegram'
+        ? null
+        : statusStyle === 'pill' ? (
             <div className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold border ${isDarkHeader ? 'bg-emerald-500/20 text-emerald-200 border-emerald-400/20' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/25' : 'bg-emerald-50 text-emerald-500 border-emerald-100'}`}>
                 online
             </div>
@@ -279,7 +286,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
         );
     };
 
-    const floatingStatusNodes = (lastTokenUsage || isEmotionEvaluating) ? (
+    const floatingStatusNodes = (lastTokenUsage || isEmotionEvaluating || isMemoryPalaceProcessing) ? (
         <div className="absolute right-12 top-1/2 -translate-y-1/2 flex items-center gap-1.5 pointer-events-none">
             {lastTokenUsage && (
                 <div className={`text-[9px] px-1.5 py-0.5 rounded-md font-mono border ${isDarkHeader ? 'bg-slate-800 text-slate-300 border-white/10' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/20' : 'bg-slate-100/95 text-slate-400 border-slate-200'}`}>
@@ -291,6 +298,11 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                     情绪分析中
                 </div>
             )}
+            {isMemoryPalaceProcessing && (
+                <div className={`text-[9px] px-1.5 py-0.5 rounded-md font-semibold border animate-pulse ${isDarkHeader ? 'bg-indigo-500/15 text-indigo-200 border-indigo-400/20' : isPixelHeader ? 'bg-[#f5f3ff] text-[#4338ca] border-[#4338ca]/20' : 'bg-indigo-50/95 text-indigo-600 border-indigo-200'}`}>
+                    {memoryPalaceStatusText || '记忆整理中'}
+                </div>
+            )}
         </div>
     ) : null;
 
@@ -298,12 +310,11 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
         <div className="flex w-full min-w-0 max-w-full flex-col items-center text-center">
             <img src={activeCharacter.avatar} className={`w-10 h-10 object-cover shadow-sm ${avatarRadiusClass}`} alt="avatar" />
             <div className={`mt-1 font-bold ${primaryTextClass}`}>{activeCharacter.name}</div>
-            <div className="mt-1 flex items-center justify-center gap-2 flex-wrap">
-                {onlineStatusNode}
-            </div>
-            <div className="mt-1 h-[18px] w-full">
-                {renderBuffRow(true)}
-            </div>
+            {buffs.length > 0 && (
+                <div className="mt-1 min-h-[18px] w-full">
+                    {renderBuffRow(true)}
+                </div>
+            )}
         </div>
     );
 
@@ -333,7 +344,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     );
 
     return (
-        <div className={`${headerDensityClass} flex items-end shrink-0 z-30 sticky top-0 relative ${headerToneClass}`}>
+        <div className={`${headerDensityClass} flex ${useCenteredLayout ? 'items-center' : 'items-end'} shrink-0 z-30 sticky top-0 relative ${headerToneClass}`}>
             {selectionMode ? (
                 <div className="flex items-center justify-between w-full">
                     <button onClick={onCancelSelection} className={`text-sm font-bold px-2 py-1 ${secondaryTextClass}`}>取消</button>
@@ -341,8 +352,8 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                     <div className="w-10" />
                 </div>
             ) : useCenteredLayout ? (
-                <div className="relative w-full min-h-[56px]">
-                    <button onClick={onClose} className={`absolute left-0 top-1/2 -translate-y-1/2 p-2 ${iconButtonClass}`}>
+                <div className="relative w-full min-h-[56px] flex items-end justify-center">
+                    <button onClick={onClose} className={`absolute left-0 bottom-2 p-2 ${iconButtonClass}`}>
                         <CaretLeft className="w-5 h-5" weight="bold" />
                     </button>
 
@@ -350,12 +361,12 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
 
                     <div
                         onClick={onShowCharsPanel}
-                        className="absolute left-1/2 top-1/2 flex w-[calc(100%-7rem)] max-w-[420px] -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center"
+                        className="flex w-[calc(100%-7rem)] max-w-[420px] cursor-pointer items-end justify-center"
                     >
                         {renderCenteredInfo()}
                     </div>
 
-                    <button onClick={onTriggerAI} className={`absolute right-0 top-1/2 -translate-y-1/2 p-2 ${actionButtonClass}`} title="触发 AI">
+                    <button onClick={onTriggerAI} className={`absolute right-0 bottom-2 p-2 ${actionButtonClass}`} title="触发 AI">
                         <Lightning className="w-5 h-5" weight="bold" />
                     </button>
                 </div>
