@@ -3153,7 +3153,14 @@ export const Like520Session: React.FC<SessionProps> = ({ charId, onClose }) => {
     }, [phase, callB]);
 
     // === 保存结果到 char.specialMomentRecords ===
+    // 自动保存：一旦 callA + callB + chibis 齐全就立即存档，防止闪退丢数据
     const savedRef = useRef(false);
+    useEffect(() => {
+        if (savedRef.current || sessionMode !== 'fresh') return;
+        if (!char || !callA || !callB || !charChibi || !userChibi || !chosenTucao) return;
+        saveRecord();
+    }, [callA, callB, charChibi, userChibi, chosenTucao, sessionMode, char]);
+
     const saveRecord = useCallback(async () => {
         if (savedRef.current) return;                          // 本次 session 已保存
         if (sessionMode !== 'fresh') return;                   // 回放/看信模式不重存
