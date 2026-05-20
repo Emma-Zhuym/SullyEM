@@ -552,17 +552,31 @@ export const RealtimeContextManager = {
                     [pool[i], pool[j]] = [pool[j], pool[i]];
                 }
                 const picks = pool.slice(0, 5);
-                parts.push('');
-                parts.push(`📰 【最近真实发生的热点 · 你的背景知识】`);
-                parts.push(`（以下是现实里真实在发生 / 被热议的事，是你认知的一部分，不是必须播报的清单。`);
-                parts.push(`拿捏分寸：当对方明显在放松、闲着打发时间、话头也淡下来时，可以自然地挑一两条你感兴趣的聊起来、活跃下气氛；`);
-                parts.push(`但如果对方正在说一件明确的事 / 在认真聊某个话题 / 带着情绪，就别硬插热点，安静当背景知识就好。）`);
+                const newsLines: string[] = [];
+                newsLines.push('');
+                newsLines.push(`📰 【最近真实发生的热点 · 你的背景知识】`);
+                newsLines.push(`（以下是现实里真实在发生 / 被热议的事，是你认知的一部分，不是必须播报的清单。`);
+                newsLines.push(`拿捏分寸：当对方明显在放松、闲着打发时间、话头也淡下来时，可以自然地挑一两条你感兴趣的聊起来、活跃下气氛；`);
+                newsLines.push(`但如果对方正在说一件明确的事 / 在认真聊某个话题 / 带着情绪，就别硬插热点，安静当背景知识就好。）`);
                 picks.forEach((n) => {
                     const source = n.source ? `（${n.source}）` : '';
-                    parts.push(`- ${n.title}${source}`);
+                    newsLines.push(`- ${n.title}${source}`);
                 });
-                parts.push('');
-                parts.push(`若你想主动把其中某条当作"新闻卡片"分享给对方，可单独输出一行：[[NEWS_CARD: 来源|标题]]（标题照抄上面的）。它会以卡片形式呈现，然后你再就此展开聊。别滥用，自然就好。`);
+                newsLines.push('');
+                newsLines.push(`若你想主动把其中某条当作"新闻卡片"分享给对方，可单独输出一行：[[NEWS_CARD: 来源|标题]]（标题照抄上面的）。它会以卡片形式呈现，然后你再就此展开聊。别滥用，自然就好。`);
+
+                // ── F12 探针：本轮真正注入 prompt 的热点 + 文本量（评估 token 用）──
+                try {
+                    const block = newsLines.join('\n');
+                    console.groupCollapsed(`%c[hot_news] 本轮注入 prompt：${picks.length} 条热点 · ${block.length} 字（池子共 ${news.length} 条）`, 'color:#7c3aed;font-weight:bold');
+                    if (typeof console.table === 'function') {
+                        console.table(picks.map((n, i) => ({ '#': i + 1, 平台: n.source || '', 标题: n.title })));
+                    }
+                    console.log(block);
+                    console.groupEnd();
+                } catch { /* 探针不影响主流程 */ }
+
+                parts.push(...newsLines);
             }
         }
 
@@ -575,7 +589,9 @@ export const RealtimeContextManager = {
         parts.push(`4. 如果用户问你"你怎么知道的"，可以说你刚刷到的/刚看到的`);
         parts.push(`5. 不要假装不知道这些信息，这是你真的能感知到的外部世界`);
 
-        return parts.join('\n');
+        const fullContext = parts.join('\n');
+        console.log(`%c[hot_news] 实时感知整段注入 ${fullContext.length} 字（含时间/天气/热点/指令）`, 'color:#7c3aed');
+        return fullContext;
     },
 
     /**

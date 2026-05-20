@@ -1141,20 +1141,46 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
         const title: string = md.title || '热点';
         const source: string = md.source || '热点';
         const url: string | undefined = md.url;
+        const dateStr = new Date(m.timestamp).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' });
         const card = (
             <div
-                className="w-60 rounded-xl overflow-hidden shadow-sm border border-stone-300 bg-[#f6f1e7] cursor-pointer active:opacity-90 transition-opacity"
+                className="w-60 cursor-pointer active:scale-[0.98] transition-transform"
                 onClick={() => { if (url) window.open(url, '_blank', 'noopener,noreferrer'); }}
-                style={{ fontFamily: `'Noto Serif','Georgia',serif` }}
+                style={{ fontFamily: `'Noto Serif','Songti SC','Georgia',serif` }}
             >
-                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-stone-800 text-stone-100">
-                    <span className="text-[10px] tracking-[0.25em] uppercase font-bold">热点 · {source}</span>
-                </div>
-                <div className="px-3 py-2.5">
-                    <p className="text-[13px] leading-snug text-stone-900 font-semibold">{title}</p>
-                    {url && (
-                        <p className="text-[10px] text-stone-400 mt-1.5">点击查看原文 ›</p>
-                    )}
+                <div
+                    className="rounded-lg overflow-hidden border border-stone-400/70 shadow-[0_3px_12px_rgba(60,50,30,0.18)]"
+                    style={{ background: 'linear-gradient(170deg,#faf6ec 0%,#f3ecdb 100%)' }}
+                >
+                    {/* 报头 */}
+                    <div className="px-3 pt-2 pb-1.5 border-b-2 border-double border-stone-500/60">
+                        <div className="flex items-center justify-between text-stone-500">
+                            <span className="text-[8.5px] tracking-[0.3em] uppercase font-bold">SullyOS Daily</span>
+                            <span className="text-[8.5px] tracking-wide">{dateStr} · 号外</span>
+                        </div>
+                    </div>
+                    {/* 栏目标签 */}
+                    <div className="px-3 pt-2.5">
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-white bg-red-700 px-1.5 py-[1px] tracking-wide shadow-sm">
+                            <span className="text-[8px]">▌</span>{source}
+                        </span>
+                    </div>
+                    {/* 标题 */}
+                    <div className="px-3 pt-1.5 pb-2">
+                        <p
+                            className="text-[15px] leading-[1.35] font-black text-stone-900"
+                            style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+                        >
+                            {title}
+                        </p>
+                    </div>
+                    {/* 页脚 */}
+                    <div className="px-3 py-1.5 flex items-center justify-between border-t border-stone-400/50">
+                        <span className="text-[9px] text-stone-500 italic">{charName || 'Ta'} 转给你看</span>
+                        {url
+                            ? <span className="text-[10px] text-red-700 font-bold tracking-wide">查看原文 ›</span>
+                            : <span className="text-[9px] text-stone-400">热点速读</span>}
+                    </div>
                 </div>
             </div>
         );
