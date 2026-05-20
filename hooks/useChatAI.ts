@@ -1145,7 +1145,8 @@ export const useChatAI = ({
                     const result = await NotionManager.createDiaryPage(
                         realtimeConfig.notionApiKey,
                         realtimeConfig.notionDatabaseId,
-                        { title, content, mood: mood || undefined, characterName: char.name }
+                        { title, content, mood: mood || undefined, characterName: (char.name || '').trim() || undefined },
+                        realtimeConfig.notionDiaryExtraProperties
                     );
 
                     if (result.success) {
@@ -1156,7 +1157,8 @@ export const useChatAI = ({
                             type: 'text',
                             content: `📔 ${char.name}写了一篇日记「${title}」`
                         });
-                        addToast(`📔 ${char.name}写了一篇日记!`, 'success');
+                        const extraHint = result.appliedExtrasHint ? ` ${result.appliedExtrasHint}` : '';
+                        addToast(`📔 ${char.name}写了一篇日记!${extraHint}`, 'success');
                     } else {
                         console.error('📔 [Diary] 写入失败:', result.message);
                         addToast(`日记写入失败: ${result.message}`, 'error');
