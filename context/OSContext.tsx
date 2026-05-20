@@ -85,6 +85,7 @@ const defaultRealtimeConfig: RealtimeConfig = {
   weatherCity: 'Beijing',
   newsEnabled: false,
   newsApiKey: '',
+  newsPlatforms: ['weibo', 'zhihu', 'baidu', 'bilibili', 'douyin'],
   notionEnabled: false,
   notionApiKey: '',
   notionDatabaseId: '',
