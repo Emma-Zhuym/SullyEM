@@ -66,7 +66,7 @@ function inferAvailability(slot: ScheduleSlot): CharAvailability {
 /**
  * 获取某个 slot 的 availability（手动设置优先，否则自动推断）
  */
-function getSlotAvailability(slot: ScheduleSlot): CharAvailability {
+export function getSlotAvailability(slot: ScheduleSlot): CharAvailability {
     if (slot.availability) return slot.availability;
     return inferAvailability(slot);
 }

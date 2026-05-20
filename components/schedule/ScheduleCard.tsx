@@ -1,6 +1,7 @@
 
 import React, { useState, useRef } from 'react';
 import { DailySchedule, ScheduleSlot, CharacterProfile } from '../../types';
+import { getSlotAvailability, type CharAvailability } from '../../utils/charStatus';
 
 interface ScheduleCardProps {
     schedule: DailySchedule | null;
@@ -244,7 +245,10 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
                                         <div className="flex items-center gap-1.5 mt-1.5">
                                             <span className="text-[10px] opacity-60 shrink-0">状态:</span>
                                             {(['', 'online', 'busy', 'offline'] as const).map(v => {
-                                                const labels: Record<string, string> = { '': '自动', online: '🟢', busy: '🟡', offline: '⚫' };
+                                                // "自动" shows the inferred result so user knows what it resolves to
+                                                const inferred = getSlotAvailability({ startTime: editTime, activity: editActivity, description: editDesc });
+                                                const inferIcon: Record<string, string> = { online: '🟢', busy: '🟡', offline: '⚫' };
+                                                const labels: Record<string, string> = { '': `自动→${inferIcon[inferred] || '🟢'}`, online: '🟢 有空', busy: '🟡 忙', offline: '⚫ 离线' };
                                                 const isActive = editAvailability === v;
                                                 return (
                                                     <button
@@ -327,8 +331,13 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
                                             {slot.emoji && <span className="text-sm flex-shrink-0">{slot.emoji}</span>}
                                             <span className={`text-sm font-bold ${isCurrent ? '' : ''}`}>{slot.activity}</span>
                                             {/* EM: 显示手动设置的状态标记 */}
-                                            {slot.availability === 'busy' && <span className="text-[9px] px-1 py-0.5 rounded bg-amber-400/20 text-amber-300 font-bold">忙</span>}
-                                            {slot.availability === 'offline' && <span className="text-[9px] px-1 py-0.5 rounded bg-slate-400/20 text-slate-400 font-bold">离线</span>}
+                                            {(() => {
+                                                const resolved = getSlotAvailability(slot);
+                                                const isManual = !!slot.availability;
+                                                if (resolved === 'busy') return <span className={`text-[9px] px-1 py-0.5 rounded bg-amber-400/20 text-amber-300 font-bold ${!isManual ? 'opacity-50' : ''}`}>忙</span>;
+                                                if (resolved === 'offline') return <span className={`text-[9px] px-1 py-0.5 rounded bg-slate-400/20 text-slate-400 font-bold ${!isManual ? 'opacity-50' : ''}`}>离线</span>;
+                                                return <span className={`text-[9px] px-1 py-0.5 rounded bg-emerald-400/20 text-emerald-300 font-bold ${!isManual ? 'opacity-50' : ''}`}>有空</span>;
+                                            })()}
                                         </div>
                                         {slot.description && (
                                             <p className="text-[11px] opacity-50 mt-0.5 leading-tight">{slot.description}</p>
