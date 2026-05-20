@@ -979,8 +979,6 @@ export interface CharacterProfile {
   proactiveConfig?: {
     enabled: boolean;
     intervalMinutes: number; // 15, 30, 60, 120, 240, 480, 720, 1440
-    /** 早安消息：每天 6–11 点首次打开 App 时发一条早安（需显式开启） */
-    morningGreetingEnabled?: boolean;
     useSecondaryApi?: boolean;
     secondaryApi?: {
       baseUrl: string;

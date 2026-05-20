@@ -28,8 +28,6 @@ const ProactiveSettingsModal: React.FC<ProactiveSettingsModalProps> = ({
 }) => {
     const saved = char.proactiveConfig;
     const [enabled, setEnabled] = useState(saved?.enabled ?? false);
-    const [morningGreetingEnabled, setMorningGreetingEnabled] = useState(saved?.morningGreetingEnabled ?? false);
-
     const [interval, setInterval_] = useState(saved?.intervalMinutes ?? 60);
     const [useSecondaryApi, setUseSecondaryApi] = useState(saved?.useSecondaryApi ?? false);
     const [secUrl, setSecUrl] = useState(saved?.secondaryApi?.baseUrl ?? '');
@@ -42,8 +40,6 @@ const ProactiveSettingsModal: React.FC<ProactiveSettingsModalProps> = ({
         if (isOpen) {
             const s = char.proactiveConfig;
             setEnabled(s?.enabled ?? false);
-            setMorningGreetingEnabled(s?.morningGreetingEnabled ?? false);
-
             setInterval_(s?.intervalMinutes ?? 60);
             setUseSecondaryApi(s?.useSecondaryApi ?? false);
             setSecUrl(s?.secondaryApi?.baseUrl ?? '');
@@ -57,8 +53,6 @@ const ProactiveSettingsModal: React.FC<ProactiveSettingsModalProps> = ({
         onSave({
             enabled,
             intervalMinutes: interval,
-            morningGreetingEnabled,
-
             useSecondaryApi: useSecondaryApi && !!secUrl,
             secondaryApi: useSecondaryApi && secUrl ? {
                 baseUrl: secUrl,
@@ -105,22 +99,6 @@ const ProactiveSettingsModal: React.FC<ProactiveSettingsModalProps> = ({
                         className={`w-12 h-7 rounded-full transition-colors relative ${enabled ? 'bg-violet-500' : 'bg-slate-200'}`}
                     >
                         <span className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow transition-all duration-200 ${enabled ? 'translate-x-5' : 'translate-x-0'}`} />
-                    </button>
-                </div>
-
-                <div className="flex items-center justify-between pt-2 border-t border-slate-100">
-                    <div>
-                        <span className="text-sm font-bold text-slate-700 block">早安消息</span>
-                        <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
-                            每天 6:00～11:00 首次打开 App 时，该角色会错开发一条早安（与上方「间隔主动消息」独立）
-                        </p>
-                    </div>
-                    <button
-                        type="button"
-                        onClick={() => setMorningGreetingEnabled(!morningGreetingEnabled)}
-                        className={`w-12 h-7 rounded-full transition-colors relative shrink-0 ${morningGreetingEnabled ? 'bg-amber-400' : 'bg-slate-200'}`}
-                    >
-                        <span className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow transition-all duration-200 ${morningGreetingEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
                     </button>
                 </div>
 
