@@ -1579,10 +1579,31 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
     // Voice-only messages (no display text, only voice bar): skip bubble styling
     const isVoiceOnlyMsg = !displayContent && hasVoiceContent && !isUser && m.type === 'text';
 
+    // Reply quote: separate bubble above, aligned to the original sender's side
+    const quotedByChar = m.replyTo ? m.replyTo.name === charName : false;
+    const quoteBlock = m.replyTo ? (() => {
+        const quoteBg = quotedByChar ? activeTheme.ai.backgroundColor : activeTheme.user.backgroundColor;
+        const quoteTextColor = quotedByChar ? activeTheme.ai.textColor : activeTheme.user.textColor;
+        const quoteLabel = quotedByChar ? `${charName}说` : '我说';
+        const quoteLabelColor = quotedByChar ? '#5b7395' : '#5f7a5b';
+        const quoteText = m.replyTo!.content.length > 30 ? m.replyTo!.content.slice(0, 30) + '…' : m.replyTo!.content;
+        // align to original sender's side; override the container's self-alignment
+        const alignSelf = quotedByChar ? 'self-start' : 'self-end';
+        return (
+            <div className={`${alignSelf} flex items-center gap-2 px-3 py-[6px] rounded-[14px] max-w-full mb-1`}
+                style={{ background: quoteBg, opacity: 0.65, color: quoteTextColor, fontSize: 12.5, lineHeight: '17px', boxShadow: '0 1px 3px rgba(31,26,42,0.06)' }}>
+                <span className="shrink-0 font-bold whitespace-nowrap" style={{ fontSize: 10.5 }}>{quoteLabel}</span>
+                <span className="truncate max-w-[160px]">{quoteText}</span>
+            </div>
+        );
+    })() : null;
+
     return commonLayout(
+        <>
+        {quoteBlock}
         <div className={isVoiceOnlyMsg
-            ? 'relative animate-fade-in'
-: `relative ${bubbleVariant === 'flat' || bubbleVariant === 'outline' || bubbleVariant === 'wechat' ? '' : 'shadow-sm '}px-5 py-3 animate-fade-in ${bubbleVariant === 'outline' ? '' : 'border border-black/5 '}active:scale-[0.98] transition-transform overflow-visible ${isUser ? 'sully-bubble-user' : 'sully-bubble-ai'}`}
+            ? `relative ${isUser ? 'animate-bubble-pop-right' : 'animate-bubble-pop-left'}`
+: `relative ${bubbleVariant === 'flat' || bubbleVariant === 'outline' || bubbleVariant === 'wechat' ? '' : 'shadow-sm '}px-5 py-3 ${isUser ? 'animate-bubble-pop-right' : 'animate-bubble-pop-left'} ${bubbleVariant === 'outline' ? '' : 'border border-black/5 '}active:scale-[0.98] transition-transform overflow-visible ${isUser ? 'sully-bubble-user' : 'sully-bubble-ai'}`}
             style={isVoiceOnlyMsg ? undefined : containerStyle}>
 
             {/* Layer 1: Background Image with Independent Opacity */}
@@ -1611,13 +1632,7 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
                 />
             )}
 
-            {/* Layer 3: Reply/Quote Block */}
-            {m.replyTo && (
-                <div className="relative z-10 mb-1 text-[10px] bg-black/5 p-1.5 rounded-md border-l-2 border-current opacity-60 flex flex-col gap-0.5 max-w-full overflow-hidden">
-                    <span className="font-bold opacity-90 truncate">{m.replyTo.name}</span>
-                    <span className="truncate italic">"{m.replyTo.content.length > 10 ? m.replyTo.content.slice(0, 10) + '...' : m.replyTo.content}"</span>
-                </div>
-            )}
+            {/* Layer 3: Reply/Quote — moved outside bubble, rendered above as quoteBlock */}
 
             {/* Layer 4: Text Content — shown when there's visible text after stripping voice tags */}
             {displayContent && (
@@ -1801,6 +1816,7 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
                 );
             })()}
         </div>
+        </>
     );
 }, (prev, next) => {
     return prev.msg.id === next.msg.id &&
