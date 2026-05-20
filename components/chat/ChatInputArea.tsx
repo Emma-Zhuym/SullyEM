@@ -343,7 +343,9 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             ) : (
                 <div className="p-3 px-4 flex gap-3 items-end">
                     <button onClick={() => setShowPanel(showPanel === 'actions' ? 'none' : 'actions')} className={actionButtonClass}>
-                        <Plus className="w-6 h-6" weight="bold" />
+                        <span style={{ display: 'inline-flex', transition: 'transform 300ms cubic-bezier(0.34, 1.56, 0.64, 1)', transform: showPanel === 'actions' ? 'rotate(45deg)' : 'rotate(0deg)' }}>
+                            <Plus className="w-6 h-6" weight="bold" />
+                        </span>
                     </button>
                     <div className={`flex-1 min-w-0 flex items-center px-1 transition-all ${useIOSStandaloneInputFix ? 'overflow-visible' : 'overflow-hidden'} ${inputWrapClass} ${isPixelStyle ? 'focus-within:bg-[#fff7ed]' : isDiscordStyle ? 'focus-within:bg-slate-800 focus-within:border-white/20' : 'border border-transparent focus-within:bg-white focus-within:border-primary/30'}`}>
                         <textarea 
@@ -444,39 +446,39 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                     {/* Actions Panel (paginated: page 0 = 内置功能, page 1 = 外部服务) */}
                     {showPanel === 'actions' && (
                         <div
-                            className="overflow-y-auto"
+                            className="actions-panel overflow-y-auto"
                             onTouchStart={handleActionsSwipeStart}
                             onTouchMove={handleActionsSwipeMove}
                             onTouchEnd={handleActionsSwipeEnd}
                             onClickCapture={handleActionsClickCapture}
                         >
                           <div className={`p-6 grid grid-cols-4 grid-rows-2 gap-8 ${actionsPage === 0 ? '' : 'hidden'}`}>
-                            <button onClick={() => onPanelAction('transfer')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                            <button onClick={() => onPanelAction('transfer')} className={`flex flex-col items-center gap-2 tool-btn ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-orange-300 border-orange-400/20' : 'bg-orange-50 text-orange-400 border-orange-100'}`}>
                                     <Money className="w-6 h-6" weight="bold" />
                                 </div>
                                 <span className="text-xs font-bold">转账</span>
                             </button>
                             
-                            <button onClick={() => onPanelAction('poke')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                            <button onClick={() => onPanelAction('poke')} className={`flex flex-col items-center gap-2 tool-btn ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 border-sky-400/20' : 'bg-sky-50 border-sky-100'}`}><img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f449.png" alt="poke" className="w-6 h-6" /></div>
                                 <span className="text-xs font-bold">戳一戳</span>
                             </button>
                             
-                            <button onClick={() => onPanelAction('archive')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                            <button onClick={() => onPanelAction('archive')} className={`flex flex-col items-center gap-2 tool-btn ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-indigo-300 border-indigo-400/20' : 'bg-indigo-50 text-indigo-400 border-indigo-100'}`}>
                                     <BookOpenText className="w-6 h-6" weight="bold" />
                                 </div>
                                 <span className="text-xs font-bold">{isSummarizing ? '归档中...' : '记忆归档'}</span>
                             </button>
                             
-                            <button onClick={() => onPanelAction('settings')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                            <button onClick={() => onPanelAction('settings')} className={`flex flex-col items-center gap-2 tool-btn ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-slate-300 border-white/10' : 'bg-slate-50 text-slate-500 border-slate-100'}`}>
                                     <GearSix className="w-6 h-6" weight="bold" /></div>
                                 <span className="text-xs font-bold">设置</span>
                             </button>
                             
-                            <button onClick={() => chatImageInputRef.current?.click()} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                            <button onClick={() => chatImageInputRef.current?.click()} className={`flex flex-col items-center gap-2 tool-btn ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-pink-300 border-pink-400/20' : 'bg-pink-50 text-pink-400 border-pink-100'}`}>
                                     <Image className="w-6 h-6" weight="bold" />
                                 </div>
@@ -485,7 +487,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             <input type="file" ref={chatImageInputRef} className="hidden" accept="image/*" onChange={(e) => handleImageChange(e, 'chat')} />
 
                             {/* Regenerate Button */}
-                            <button onClick={onReroll} disabled={!canReroll} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${canReroll ? (isDiscordStyle ? 'text-slate-200' : 'text-slate-600') : 'text-slate-300 opacity-50'}`}>
+                            <button onClick={onReroll} disabled={!canReroll} className={`flex flex-col items-center gap-2 tool-btn ${canReroll ? (isDiscordStyle ? 'text-slate-200' : 'text-slate-600') : 'text-slate-300 opacity-50'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${canReroll ? (isDiscordStyle ? 'bg-slate-800 text-emerald-300 border-emerald-400/20' : 'bg-emerald-50 text-emerald-400 border-emerald-100') : (isDiscordStyle ? 'bg-slate-800 text-slate-600 border-white/10' : 'bg-slate-50 text-slate-300 border-slate-100')}`}>
                                     <ArrowsClockwise className="w-6 h-6" weight="bold" />
                                 </div>
@@ -493,7 +495,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             </button>
 
                             {/* Proactive Message Button */}
-                            <button onClick={() => onPanelAction('proactive')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform relative ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                            <button onClick={() => onPanelAction('proactive')} className={`flex flex-col items-center gap-2 tool-btn relative ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isProactiveActive ? (isDiscordStyle ? 'bg-violet-500/15 text-violet-300 border-violet-400/30' : 'bg-violet-50 text-violet-500 border-violet-200') : (isDiscordStyle ? 'bg-slate-800 text-slate-400 border-white/10' : 'bg-slate-50 text-slate-400 border-slate-100')}`}>
                                     <ChatCircleDots className="w-6 h-6" weight="bold" />
                                 </div>
@@ -504,7 +506,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             {/* 情绪按钮已并入日程 — 情绪/意识流与日程强制同步，配置面板在日程 Modal 下方 */}
 
                             {/* Schedule Button */}
-                            <button onClick={() => onPanelAction('schedule')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                            <button onClick={() => onPanelAction('schedule')} className={`flex flex-col items-center gap-2 tool-btn ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-cyan-300 border-cyan-400/20' : 'bg-cyan-50 text-cyan-500 border-cyan-100'}`}>
                                     <CalendarBlank className="w-6 h-6" weight="bold" />
                                 </div>
@@ -516,7 +518,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                           {/* Page 1: 外部服务 */}
                           <div className={`p-6 grid grid-cols-4 grid-rows-2 gap-8 ${actionsPage === 1 ? '' : 'hidden'}`}>
                             {/* 写 Notion 日记 */}
-                            <button onClick={() => onPanelAction('notion-diary-quick')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                            <button onClick={() => onPanelAction('notion-diary-quick')} className={`flex flex-col items-center gap-2 tool-btn ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-amber-300 border-amber-400/20' : 'bg-amber-50 text-amber-500 border-amber-100'}`}>
                                     <NotePencil className="w-6 h-6" weight="bold" />
                                 </div>
@@ -528,7 +530,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 if (!mcdConfigured) { onPanelAction('mcd-not-configured'); return; }
                                 onPanelAction(mcdActivated ? 'mcd-end' : 'mcd-request');
                               }}
-                              className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'} ${!mcdConfigured ? 'opacity-50' : ''}`}
+                              className={`flex flex-col items-center gap-2 tool-btn ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'} ${!mcdConfigured ? 'opacity-50' : ''}`}
                             >
                               <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border relative ${
                                   mcdActivated
@@ -545,7 +547,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             <button
                               onClick={() => onPanelAction('html-mode-toggle')}
                               onContextMenu={(e) => { e.preventDefault(); onPanelAction('html-mode-settings'); }}
-                              className={`flex flex-col items-center gap-2 active:scale-95 transition-transform relative ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}
+                              className={`flex flex-col items-center gap-2 tool-btn relative ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}
                             >
                               <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border relative ${
                                   htmlModeEnabled
@@ -561,7 +563,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             {/* 「展示思考」按钮：tap → 直接打开思考链设置弹窗（含开关），不再做 inline toggle */}
                             <button
                               onClick={() => onPanelAction('thinking-settings')}
-                              className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}
+                              className={`flex flex-col items-center gap-2 tool-btn ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}
                             >
                               <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border relative ${
                                   showThinkingChain
