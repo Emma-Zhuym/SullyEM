@@ -329,13 +329,11 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
 
     const renderStandardInfo = () => (
         <>
-            <img src={activeCharacter.avatar} className={`w-11 h-11 object-cover shadow-sm ${avatarRadiusClass}`} alt="avatar" />
-            <div className="flex-1 min-w-0 flex flex-col items-start text-left gap-1">
-                <div className="flex items-center gap-2">
-                    <div className={`font-bold text-[15px] ${primaryTextClass}`}>{activeCharacter.name}</div>
-                    {onlineStatusNode}
-                </div>
+            <img src={activeCharacter.avatar} className={`w-10 h-10 object-cover shadow-sm ${avatarRadiusClass}`} alt="avatar" />
+            <div className="flex-1 min-w-0 flex flex-col items-start text-left gap-0.5">
                 <div className="flex items-center gap-1.5 flex-wrap">
+                    <div className={`font-bold ${primaryTextClass}`}>{activeCharacter.name}</div>
+                    {onlineStatusNode}
                     {lastTokenUsage && (
                         <button
                             type="button"
