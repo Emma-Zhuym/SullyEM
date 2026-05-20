@@ -185,6 +185,7 @@ const Chat: React.FC = () => {
         }
         try {
             setShowPanel('none');
+            console.log('📝 [NotionNudge] 发送写日记请求', { notionEnabled: rc?.notionEnabled, hasApiKey: !!rc?.notionApiKey, hasDbId: !!rc?.notionDatabaseId });
             await DB.saveMessage({ charId: char.id, role: 'user', type: 'interaction', content: '📝', metadata: { kind: 'notion_diary_nudge' } });
             const allMsgs = await DB.getMessagesByCharId(char.id);
             const currentChar = charRef.current;
