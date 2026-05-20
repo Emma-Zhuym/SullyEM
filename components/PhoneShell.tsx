@@ -36,6 +36,7 @@ import LifeSimApp from '../apps/LifeSimApp';
 import MemoryPalaceApp from '../apps/MemoryPalaceApp';
 import HandbookApp from '../apps/HandbookApp';
 import QQBridge from '../apps/QQBridge';
+import HotNewsApp from '../apps/HotNewsApp';
 import { SpecialMomentsApp } from './ValentineEvent';
 import { UpdateNotificationController, shouldShowUpdateNotification } from './UpdateNotificationEvent';
 import { Like520Controller, shouldShowLike520Popup } from './Like520Event';
@@ -300,6 +301,7 @@ const PhoneShell: React.FC = () => {
       case AppID.MemoryPalace: return <MemoryPalaceApp />;
       case AppID.Handbook: return <HandbookApp />;
       case AppID.QQBridge: return <QQBridge />;
+      case AppID.HotNews: return <HotNewsApp />;
       case AppID.SpecialMoments: return <SpecialMomentsApp />;
       case AppID.Launcher:
       default: return <Launcher />;
