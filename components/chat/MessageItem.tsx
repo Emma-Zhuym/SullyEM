@@ -1602,8 +1602,8 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
         <>
         {quoteBlock}
         <div className={isVoiceOnlyMsg
-            ? `relative w-fit ${isUser ? 'animate-bubble-pop-right' : 'animate-bubble-pop-left'}`
-: `relative w-fit ${bubbleVariant === 'flat' || bubbleVariant === 'outline' || bubbleVariant === 'wechat' ? '' : 'shadow-sm '}px-5 py-3 ${isUser ? 'animate-bubble-pop-right' : 'animate-bubble-pop-left'} ${bubbleVariant === 'outline' ? '' : 'border border-black/5 '}active:scale-[0.98] transition-transform overflow-visible ${isUser ? 'sully-bubble-user' : 'sully-bubble-ai'}`}
+            ? `relative w-fit ${isUser ? 'ml-auto animate-bubble-pop-right' : 'animate-bubble-pop-left'}`
+: `relative w-fit ${isUser ? 'ml-auto' : ''} ${bubbleVariant === 'flat' || bubbleVariant === 'outline' || bubbleVariant === 'wechat' ? '' : 'shadow-sm '}px-5 py-3 ${isUser ? 'animate-bubble-pop-right' : 'animate-bubble-pop-left'} ${bubbleVariant === 'outline' ? '' : 'border border-black/5 '}active:scale-[0.98] transition-transform overflow-visible ${isUser ? 'sully-bubble-user' : 'sully-bubble-ai'}`}
             style={isVoiceOnlyMsg ? undefined : containerStyle}>
 
             {/* Layer 1: Background Image with Independent Opacity */}
