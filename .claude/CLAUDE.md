@@ -25,17 +25,25 @@ SullyOS 会持续更新，需要定期合并上游改动。
 ### 2. Token 面板 (contextComposition)
 - `hooks/useChatAI.ts` 里的 `ContextComposition` interface + state
 - `utils/chatRequestPayload.ts` 里的 `contextBreakdown` 返回值（coreContextChars 等）
+  - 必须 `import { ContextBuilder } from './context'` 并在 payload 里计算 `coreContextChars`
+  - 返回 `contextBreakdown: { coreContextChars, systemCharsBeforeBilingual, bilingualAddonChars }`
 - `components/chat/ChatHeaderShell.tsx` 里点击 ⚡ 数字展开的详细面板
 
 ### 3. 写 Notion 快捷操作
-- `components/chat/ChatInputArea.tsx` 工具栏第二页的"写 Notion"按钮
+- `components/chat/ChatInputArea.tsx` 工具栏第二页的"写 Notion"按钮（NotePencil 图标，amber 色）
 - `apps/Chat.tsx` 里的 `handleNotionDiaryQuick` + action case `'notion-diary-quick'`
-- `utils/chatPrompts.ts` buildMessageHistory 里 `notion_diary_nudge` 特殊处理（第 730 行附近）
+- `utils/chatPrompts.ts` buildMessageHistory 里 `notion_diary_nudge` 特殊处理
+  - 必须在 `m.type === 'interaction'` 判断**之前**检查 `m.metadata?.kind === 'notion_diary_nudge'`
+  - 替换为系统指令让 AI 用 `[[DIARY_START: 标题 | 心情]]...[[DIARY_END]]` 格式写日记
+- `hooks/useChatAI.ts` 里 `createDiaryPage` 调用必须传第四个参数 `realtimeConfig.notionDiaryExtraProperties`
+  - 这个参数控制 Notion 额外列（如 character 角色标签列），不传的话日记不会自动选角色
 
 ### 4. Notion 扩展数据库 (notionExtraConfig)
 - `utils/notionExtraConfig.ts` — TAG 系统、多库管理
 - `apps/Settings.tsx` 里 Notion 额外数据库配置 UI
 - `types.ts` 里 `NotionExtraDatabase` 类型（字段：`id`, `name`, `tag`, `databaseId`）
+  - 注意是 `name` 不是 `displayName`
+  - 新建时必须包含 `id: crypto.randomUUID()`
 
 ### 5. CheckPhone 固定联系人
 - `apps/CheckPhone.tsx` — 固定联系人 + 角色关联
@@ -43,6 +51,7 @@ SullyOS 会持续更新，需要定期合并上游改动。
 ### 6. ScheduleApp 分钟精度
 - `apps/ScheduleApp.tsx` — `dateTime` 字段精确到分钟
 - `types.ts` 里 `AgendaItem` 的 `dateTime?`, `charId?`, `reminderMinutes?`, `createdAt?`
+  - `dateTime` 是 optional，代码中访问时必须用 `item.dateTime ?? ''` 防 undefined
 
 ### 7. 桌面图标排序
 - `context/OSContext.tsx` 里的 `appOrder` / `setAppOrder` state
@@ -52,17 +61,58 @@ SullyOS 会持续更新，需要定期合并上游改动。
 ### 8. 默认壁纸
 - `context/OSContext.tsx` 里 `export const DEFAULT_WALLPAPER = 'linear-gradient(...)'`
 
+## 合并时常见坑（踩过的 bug）
+
+### PhoneShell.tsx — messageSubView 必须解构
+`useOS()` 解构时**必须**包含 `messageSubView`，否则 Chat 页面直接白屏（只剩背景图）。
+```
+const { ..., messageSubView } = useOS();
+```
+
+### ChatHeaderShell.tsx — 头像栏排版
+标准布局 (`renderStandardInfo`) 的正确排版：
+- **第一行**：名字 + online + ⚡token + 情绪分析中（flex-wrap 自动换行）
+- **第二行**：心情状态 buff 标签（仅在有 buff 时显示）
+- 头像尺寸 `w-10 h-10`，行间距 `gap-0.5`
+
+### chatPrompts.ts — 日程注入
+上游 `chatPrompts.ts` 的 `buildSystemPrompt` 会调用 `ContextBuilder.buildScheduleInjection()` 注入角色日程。如果用旧版 EM 的 chatPrompts 会导致角色聊天时完全不知道自己的日程（比如该开会的角色说去床上等你）。合并时优先用上游版本。
+
+### chatPrompts.ts — notion_diary_nudge
+上游的 chatPrompts 没有 `notion_diary_nudge` 处理。合并后必须在 `buildMessageHistory` 的 interaction 类型判断处手动加回：
+```typescript
+if (m.type === 'interaction' && m.metadata?.kind === 'notion_diary_nudge') {
+    content = `${timeStr} [系统: 用户通过快捷操作希望你立刻写一篇 Notion 私人日记...]`;
+} else if (m.type === 'interaction') content = `${timeStr} [系统: 用户戳了你一下]`;
+```
+
+### useChatAI.ts — contextComposition 不能硬编码 0
+合并上游 useChatAI 后，`setContextComposition` 里的值不能写死为 0，必须从 `payload.contextBreakdown` 读取实际值。
+
+### useChatAI.ts — notionDiaryExtraProperties
+`NotionManager.createDiaryPage()` 必须传第四个参数 `realtimeConfig.notionDiaryExtraProperties`，否则 Notion 日记不会自动填充角色标签等额外列。
+
+### types.ts — NotionExtraDatabase
+字段名是 `name`（不是 `displayName`），合并时注意不要搞混。
+
+### ValentineEvent.tsx — 520 等活动入口
+特别时光 App 的活动入口在 `ValentineEvent.tsx` 的 `SpecialMomentsApp` 组件里。上游新增活动时需要更新此文件（如 Like520Event 的 import 和卡片入口）。
+
+### Like520Event.tsx — 自动存档
+已加 `useEffect` 在 callA + callB + chibis 齐全时自动存档，防止闪退丢失活动进度。上游版本只在用户手动点"下一步"时才存档。
+
 ## 架构原则
 
 1. **个人新功能尽量做成独立文件**（新 App、新 util），减少对上游文件的侵入
 2. **必须改上游文件时**，改动越小越好——加一行 import、加一个 case、加一个 hook 调用
 3. **不要大面积重写上游文件**，否则每次合并都痛苦
+4. **未来新功能**（如 Notion 高级管理）建议做成独立 App（`apps/NotionApp.tsx`），配置和逻辑放自己的文件里，跟上游 Settings 里的基础 Notion 配置互不干扰
 
 ## 文件说明
 
 - `_em_backup/` — 合并前的 EM 旧版备份，供参考旧逻辑用
 - `.claude/launch.json` — Vite dev/preview server 配置
-- 部署：Vercel（绑 GitHub main 分支自动部署）
+- 部署：Vercel（绑 GitHub main 分支自动部署）+ GitHub Pages
 
 ## 技术栈
 
