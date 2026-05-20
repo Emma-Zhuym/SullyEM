@@ -175,7 +175,7 @@ export const RealtimeContextManager = {
      * 由 fetchNews 自然回落到 Brave / Hacker News。
      * 多平台并发拉取，每平台取前几条后 round-robin 交错合并，避免单一平台霸屏。
      */
-    fetchHotNews: async (platforms?: string[], perPlatform = 3, total = 12): Promise<NewsItem[]> => {
+    fetchHotNews: async (platforms?: string[], perPlatform = 10, total = 60): Promise<NewsItem[]> => {
         const list = (platforms && platforms.length > 0)
             ? platforms
             : RealtimeContextManager.DEFAULT_HOTNEWS_PLATFORMS;
@@ -541,13 +541,15 @@ export const RealtimeContextManager = {
         }
 
         // 4. 新闻热点
+        //    注：完整快照存在 IndexedDB 给「热点」App 看；这里只把头版精选喂给角色，控 token。
         if (config.newsEnabled) {
             const news = await RealtimeContextManager.fetchNews(config);
             if (news.length > 0) {
+                const NEWS_PROMPT_LIMIT = 24; // round-robin 已按平台交错，截前 N 条即均衡覆盖各平台
                 parts.push('');
                 parts.push(`📰 【你刚刷到的热搜/新闻】`);
                 parts.push(`（这些是真实的热点话题，你可以主动和用户聊这些）`);
-                news.forEach((n, i) => {
+                news.slice(0, NEWS_PROMPT_LIMIT).forEach((n, i) => {
                     const source = n.source ? ` [${n.source}]` : '';
                     parts.push(`${i + 1}. ${n.title}${source}`);
                 });
