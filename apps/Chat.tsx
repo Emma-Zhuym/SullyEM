@@ -185,11 +185,7 @@ const Chat: React.FC = () => {
         }
         try {
             setShowPanel('none');
-            await DB.saveMessage({
-                charId: char.id, role: 'user', type: 'interaction',
-                content: '[系统提示：用户请你现在写一篇 Notion 日记。请回顾今天的聊天内容，用 [[WRITE_DIARY: 标题 | 正文]] 格式写一篇日记。写完后简短告诉用户你写好了。]',
-                metadata: { kind: 'notion_diary_nudge' },
-            });
+            await DB.saveMessage({ charId: char.id, role: 'user', type: 'interaction', content: '📝', metadata: { kind: 'notion_diary_nudge' } });
             const allMsgs = await DB.getMessagesByCharId(char.id);
             const currentChar = charRef.current;
             const chatScopeMsgs = allMsgs

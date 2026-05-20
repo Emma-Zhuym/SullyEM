@@ -727,7 +727,9 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                 
                 if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') content = `${content}\n\n${timeGapHint}`; 
                 
-                if (m.type === 'interaction') content = `${timeStr} [系统: 用户戳了你一下]`; 
+                if (m.type === 'interaction' && m.metadata?.kind === 'notion_diary_nudge') {
+                    content = `${timeStr} [系统: 用户通过快捷操作希望你立刻写一篇 Notion 私人日记，存档此刻对话里对你重要或值得留下的想法、情绪或决定。请使用你已知的日记格式（推荐 [[DIARY_START: 标题 | 心情]] ... 正文 ... [[DIARY_END]]，也可用简短 [[DIARY: 标题 | 内容]]）。写完后在聊天里简短说一句即可，不要把整篇日记贴在对话框里。]`;
+                } else if (m.type === 'interaction') content = `${timeStr} [系统: 用户戳了你一下]`;
                 else if (m.type === 'transfer') content = `${timeStr} [系统: 用户转账 ${m.metadata?.amount}]`;
                 else if (m.type === 'social_card') {
                     const post = m.metadata?.post || {};
