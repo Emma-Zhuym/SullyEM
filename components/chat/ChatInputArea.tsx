@@ -379,8 +379,8 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             {/* Panels — always mounted, height transitions for smooth open/close */}
             {!selectionMode && (
                 <div
-                    className={`${panelClass} overflow-hidden relative z-0 flex flex-col will-change-[max-height] transition-[max-height] duration-200 ease-out`}
-                    style={{ maxHeight: showPanel !== 'none' ? '18rem' : '0px' }}
+                    className={`${panelClass} overflow-hidden relative z-0 flex flex-col will-change-[max-height]`}
+                    style={{ maxHeight: showPanel !== 'none' ? '18rem' : '0px', transition: 'max-height 340ms cubic-bezier(0.34, 1.56, 0.64, 1)' }}
                 >
                     
                     {/* Emojis Panel with Categories */}
@@ -450,7 +450,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             onTouchEnd={handleActionsSwipeEnd}
                             onClickCapture={handleActionsClickCapture}
                         >
-                          <div className={`p-6 grid grid-cols-4 gap-8 ${actionsPage === 0 ? '' : 'hidden'}`}>
+                          <div className={`p-6 grid grid-cols-4 grid-rows-2 gap-8 ${actionsPage === 0 ? '' : 'hidden'}`}>
                             <button onClick={() => onPanelAction('transfer')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-orange-300 border-orange-400/20' : 'bg-orange-50 text-orange-400 border-orange-100'}`}>
                                     <Money className="w-6 h-6" weight="bold" />
@@ -514,7 +514,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                           </div>
 
                           {/* Page 1: 外部服务 */}
-                          <div className={`p-6 grid grid-cols-4 gap-8 ${actionsPage === 1 ? '' : 'hidden'}`}>
+                          <div className={`p-6 grid grid-cols-4 grid-rows-2 gap-8 ${actionsPage === 1 ? '' : 'hidden'}`}>
                             {/* 写 Notion 日记 */}
                             <button onClick={() => onPanelAction('notion-diary-quick')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-amber-300 border-amber-400/20' : 'bg-amber-50 text-amber-500 border-amber-100'}`}>
@@ -573,6 +573,8 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                               </div>
                               <span className="text-xs font-bold">{showThinkingChain ? '思考已开' : '展示思考'}</span>
                             </button>
+                            {/* 空占位：让第二页与第一页等高（2行 × 4列 = 8格，现有4个工具，补4个） */}
+                            <div aria-hidden="true" /><div aria-hidden="true" /><div aria-hidden="true" /><div aria-hidden="true" />
                           </div>
 
                           {/* 翻页指示器 */}
