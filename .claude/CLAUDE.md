@@ -145,7 +145,14 @@ if (m.type === 'interaction' && m.metadata?.kind === 'notion_diary_nudge') {
 - 类别管理、月度统计图表
 - 和角色联动（角色评论花销习惯？）
 
-### 5. ~~Offline 系统~~ ✅ 已完成
+### 5. Apple Health 健康数据接入（难度：低-中）
+不走原生 HealthKit（需要 iOS app + 开发者账号），用曲线方案：
+- iOS 快捷指令定时导出昨日睡眠/步数/心率 → 写入 Notion 数据库或简单 API
+- SullyEM 读取数据，注入角色聊天上下文（"你昨晚才睡了5小时"）
+- 可以做成 `utils/healthData.ts` + 在 `chatRequestPayload.ts` 注入
+- 日程卡片也可以显示健康摘要
+
+### 6. ~~Offline 系统~~ ✅ 已完成
 已实现为 Online/Busy/Offline 状态系统（见上方功能 #9）。
 
 ## 文件说明
