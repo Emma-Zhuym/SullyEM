@@ -108,6 +108,46 @@ if (m.type === 'interaction' && m.metadata?.kind === 'notion_diary_nudge') {
 3. **不要大面积重写上游文件**，否则每次合并都痛苦
 4. **未来新功能**（如 Notion 高级管理）建议做成独立 App（`apps/NotionApp.tsx`），配置和逻辑放自己的文件里，跟上游 Settings 里的基础 Notion 配置互不干扰
 
+### 9. Online/Busy/Offline 状态系统
+- `utils/charStatus.ts` — 核心逻辑：根据日程 slot 计算状态，关键词 fallback
+- `hooks/useCharStatus.ts` — React hook，精确 setTimeout + visibilitychange
+- `utils/scheduleGenerator.ts` — 生成日程时 LLM 直接标注 `availability` 字段
+- `types.ts` 里 `ScheduleSlot.availability?: 'online' | 'busy' | 'offline'`
+- `ChatHeaderShell.tsx` — 状态 badge 颜色 + 文字
+- `ChatInputArea.tsx` — offline 时禁用发送
+- `chatRequestPayload.ts` — busy 时注入简短回复提示
+- `ScheduleCard.tsx` — 编辑时可手动覆盖状态
+- 三层判断优先级：手动覆盖 > LLM 生成 > 关键词 fallback
+
+## 未来功能计划
+
+### 1. Notion 高级管理 App（难度：中）
+做成独立 `apps/NotionApp.tsx`，Settings 里的基础 Notion 配置不动。
+- 全面的数据库权限配置、多库管理
+- 日记模板自定义、标签管理
+- 把 `notionExtraConfig.ts` 的逻辑搬过来并扩展
+
+### 2. 地图系统（难度：高）
+角色按日程 slot 的 `location` 字段在地图上移动。
+- 需要自定义地图（不是真实地图），像游戏里的城镇地图
+- 可以先做简单版：location 文字 → 预设坐标点
+- 点击角色位置可以发起聊天
+
+### 3. Intiface 外接硬件集成（难度：中）
+通过 Intiface Central + WebSocket 连接蓝牙设备。
+- Intiface 提供本地 WebSocket API（`ws://localhost:12345`）
+- 角色情绪/反应 → 映射为震动强度和模式
+- 做成独立 `utils/intifaceClient.ts` + `hooks/useIntiface.ts`
+- UI 入口放聊天工具栏或设置
+
+### 4. 记账系统增强（难度：低）
+上游已有基础记账。在此基础上加：
+- 类别管理、月度统计图表
+- 和角色联动（角色评论花销习惯？）
+
+### 5. ~~Offline 系统~~ ✅ 已完成
+已实现为 Online/Busy/Offline 状态系统（见上方功能 #9）。
+
 ## 文件说明
 
 - `_em_backup/` — 合并前的 EM 旧版备份，供参考旧逻辑用
