@@ -14,6 +14,7 @@
 
 import type { CharacterProfile, UserProfile, GroupProfile, Emoji, EmojiCategory, Message, RealtimeConfig, TranslationConfig } from '../types';
 import { ChatPrompts } from './chatPrompts';
+import { ContextBuilder } from './context';
 import { injectMemoryPalace } from './memoryPalace/pipeline';
 import { buildHtmlPrompt } from './htmlPrompt';
 import { buildThinkingChainPrompt } from './thinkingChainPrompt';
@@ -147,6 +148,9 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         musicCfg = derived.musicCfg ?? musicCfg;
     }
 
+    // ── 2.5 核心人设字符数（给 Token 面板用） ────────────────
+    const coreContextChars = ContextBuilder.buildCoreContext(char, userProfile).length;
+
     // ── 3. buildSystemPrompt 核心 ─────────────────────────
     let systemPrompt = await ChatPrompts.buildSystemPrompt(
         char, userProfile, groups, emojis, categories, recentMsgsHint,
@@ -155,6 +159,8 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         !!isListeningTogether,
         musicCfg,
     );
+
+    const systemCharsBeforeBilingual = systemPrompt.length;
 
     // ── 4. 双语指令注入 ───────────────────────────────────
     const bilingualActive = !!(translationConfig?.enabled && translationConfig.sourceLang && translationConfig.targetLang);
@@ -243,5 +249,10 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         cleanedApiMessages,
         fullMessages,
         flags: { bilingualActive, mcdActive, htmlActive, thinkingActive },
+        contextBreakdown: {
+            coreContextChars,
+            systemCharsBeforeBilingual,
+            bilingualAddonChars: systemPrompt.length - systemCharsBeforeBilingual,
+        },
     };
 }

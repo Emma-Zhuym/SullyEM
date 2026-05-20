@@ -736,14 +736,15 @@ export const useChatAI = ({
             const historyTotalChars = cleanedApiMessages.reduce((sum: number, m: any) => sum + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length), 0);
             console.log(`📊 [Context Debug] system_prompt_chars=${systemPromptLength} | history_msgs=${historyMsgCount} | history_chars=${historyTotalChars} | total_msgs_in_array=${fullMessages.length} | contextLimit=${limit}`);
 
+            const bd = payload.contextBreakdown;
             setContextComposition({
-                coreContextChars: 0,
-                systemInjectedChars: 0,
-                bilingualAddonChars: 0,
+                coreContextChars: bd?.coreContextChars ?? 0,
+                systemInjectedChars: Math.max(0, (bd?.systemCharsBeforeBilingual ?? 0) - (bd?.coreContextChars ?? 0)),
+                bilingualAddonChars: bd?.bilingualAddonChars ?? 0,
                 systemTotalChars: systemPromptLength,
                 historyMessageCount: historyMsgCount,
                 historyCharsApprox: historyTotalChars,
-                historyImageTurns: 0,
+                historyImageTurns: cleanedApiMessages.reduce((n: number, m: any) => n + (Array.isArray(m.content) && m.content.some((p: any) => p?.type === 'image_url') ? 1 : 0), 0),
                 contextLimit: limit,
             });
 
