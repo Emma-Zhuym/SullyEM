@@ -1,6 +1,6 @@
 
 import React, { useRef, useState } from 'react';
-import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Code, Brain } from '@phosphor-icons/react';
+import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Code, Brain, NotePencil } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import { isIOSStandaloneWebApp } from '../../utils/iosStandalone';
@@ -508,6 +508,14 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
 
                           {/* Page 1: 外部服务 */}
                           <div className={`p-6 grid grid-cols-4 gap-8 ${actionsPage === 1 ? '' : 'hidden'}`}>
+                            {/* 写 Notion 日记 */}
+                            <button onClick={() => onPanelAction('notion-diary-quick')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-amber-300 border-amber-400/20' : 'bg-amber-50 text-amber-500 border-amber-100'}`}>
+                                    <NotePencil className="w-6 h-6" weight="bold" />
+                                </div>
+                                <span className="text-xs font-bold">写 Notion</span>
+                            </button>
+
                             <button
                               onClick={() => {
                                 if (!mcdConfigured) { onPanelAction('mcd-not-configured'); return; }
