@@ -657,6 +657,7 @@ export interface SpecialMomentRecord {
     image?: string; // base64 PNG (stored separately so export tools can handle it)
     timestamp: number;
     source?: 'generated' | 'migrated';
+    customData?: Record<string, any>;
 }
 
 // --- BANK / SHOP GAME TYPES (NEW) ---

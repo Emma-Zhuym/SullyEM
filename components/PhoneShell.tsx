@@ -38,6 +38,7 @@ import HandbookApp from '../apps/HandbookApp';
 import QQBridge from '../apps/QQBridge';
 import { SpecialMomentsApp } from './ValentineEvent';
 import { UpdateNotificationController, shouldShowUpdateNotification } from './UpdateNotificationEvent';
+import { Like520Controller, shouldShowLike520Popup } from './Like520Event';
 import { AppID } from '../types';
 import { App as CapApp } from '@capacitor/app';
 import { StatusBar as CapStatusBar, Style as StatusBarStyle } from '@capacitor/status-bar';
@@ -130,6 +131,14 @@ const PhoneShell: React.FC = () => {
       }
     }
   }, [showDisclaimer]);
+
+  // 520 特别活动弹窗（2026-05-20 当天，一次性）
+  const [showLike520Popup, setShowLike520Popup] = useState(false);
+  useEffect(() => {
+    if (showDisclaimer || showUpdateNotification) return;
+    if (!isDataLoaded) return;
+    if (shouldShowLike520Popup()) setShowLike520Popup(true);
+  }, [showDisclaimer, showUpdateNotification, isDataLoaded]);
 
   // Capacitor Native Handling
   useEffect(() => {
@@ -379,6 +388,13 @@ const PhoneShell: React.FC = () => {
        {/* Version update popup (2026-04) — forced until acknowledged */}
        {!showDisclaimer && showUpdateNotification && (
          <UpdateNotificationController onClose={() => setShowUpdateNotification(false)} />
+       )}
+
+       {/* 520 特别活动弹窗（2026-05-20 当天，一次性） */}
+       {!showDisclaimer && !showUpdateNotification && showLike520Popup && (
+         <Like520Controller
+           onClose={() => setShowLike520Popup(false)}
+         />
        )}
     </div>
   );
