@@ -175,7 +175,7 @@ export const RealtimeContextManager = {
      * 由 fetchNews 自然回落到 Brave / Hacker News。
      * 多平台并发拉取，每平台取前几条后 round-robin 交错合并，避免单一平台霸屏。
      */
-    fetchHotNews: async (platforms?: string[], perPlatform = 10, total = 60): Promise<NewsItem[]> => {
+    fetchHotNews: async (platforms?: string[], perPlatform = 12, total = 240): Promise<NewsItem[]> => {
         const list = (platforms && platforms.length > 0)
             ? platforms
             : RealtimeContextManager.DEFAULT_HOTNEWS_PLATFORMS;
@@ -540,19 +540,27 @@ export const RealtimeContextManager = {
             }
         }
 
-        // 4. 新闻热点
-        //    注：完整快照存在 IndexedDB 给「热点」App 看；这里只把头版精选喂给角色，控 token。
+        // 4. 新闻热点（背景认知）
+        //    完整快照存 IndexedDB 给「热点」App；这里每轮随机抽 5 条打散注入，控 token + 保持新鲜感。
         if (config.newsEnabled) {
             const news = await RealtimeContextManager.fetchNews(config);
             if (news.length > 0) {
-                const NEWS_PROMPT_LIMIT = 24; // round-robin 已按平台交错，截前 N 条即均衡覆盖各平台
+                // Fisher–Yates 打散后抽前 5（每轮回复都重新 roll，平台全混）
+                const pool = [...news];
+                for (let i = pool.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [pool[i], pool[j]] = [pool[j], pool[i]];
+                }
+                const picks = pool.slice(0, 5);
                 parts.push('');
-                parts.push(`📰 【你刚刷到的热搜/新闻】`);
-                parts.push(`（这些是真实的热点话题，你可以主动和用户聊这些）`);
-                news.slice(0, NEWS_PROMPT_LIMIT).forEach((n, i) => {
-                    const source = n.source ? ` [${n.source}]` : '';
-                    parts.push(`${i + 1}. ${n.title}${source}`);
+                parts.push(`📰 【最近真实发生的热点 · 背景认知】`);
+                parts.push(`（以下是现实里真实在发生 / 被热议的事，已经存在于你的认知里。不必刻意提起或罗列，聊到相关话题时自然带出即可。）`);
+                picks.forEach((n) => {
+                    const source = n.source ? `（${n.source}）` : '';
+                    parts.push(`- ${n.title}${source}`);
                 });
+                parts.push('');
+                parts.push(`若你想主动把其中某条当作"新闻卡片"分享给对方，可单独输出一行：[[NEWS_CARD: 来源|标题]]（标题照抄上面的）。它会以卡片形式呈现，然后你再就此展开聊。别滥用，自然就好。`);
             }
         }
 
@@ -561,7 +569,7 @@ export const RealtimeContextManager = {
         parts.push(`### 【如何使用这些信息】`);
         parts.push(`1. 这些信息是真实的，你可以直接引用（比如"我看到今天热搜有xxx"）`);
         parts.push(`2. 天气是真实的，可以主动关心用户（"外面在下雨，你带伞了吗？"）`);
-        parts.push(`3. 新闻是真实的，可以主动聊起（"诶你看到xxx的新闻了吗？我觉得..."）`);
+        parts.push(`3. 新闻是真实发生的事，自然存在于你的认知里——聊到相关再带出，不必硬聊、也不用每条都提`);
         parts.push(`4. 如果用户问你"你怎么知道的"，可以说你刚刷到的/刚看到的`);
         parts.push(`5. 不要假装不知道这些信息，这是你真的能感知到的外部世界`);
 

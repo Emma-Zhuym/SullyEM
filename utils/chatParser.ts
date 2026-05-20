@@ -106,6 +106,137 @@ export const ChatParser = {
             content = content.replace(transferMatch[0], '').trim();
         }
 
+        // MUSIC_ACTION — char 对 user 正在听的歌表态（只处理第一次出现，每条消息最多一次插卡）
+        // 支持的格式（后两种是为了让 char 自己挑歌单 / 新建歌单）：
+        //   [[MUSIC_ACTION:join]]
+        //   [[MUSIC_ACTION:add]]                              → 默认放第一个歌单
+        //   [[MUSIC_ACTION:add|歌单标题]]                      → 放进现有歌单（标题匹配）
+        //   [[MUSIC_ACTION:add_new|新歌单标题|可选描述]]        → 新建歌单
+        //   [[MUSIC_ACTION:join_and_add(|...)]]              → 同 add 一套
+        //   [[MUSIC_ACTION:join_and_add_new|新歌单标题|描述]]  → 同 add_new
+        // 用 | 分隔参数，避免和 : 冲突（标题里很容易出现 :)
+        const MUSIC_TAG_RE = /\[\[MUSIC_ACTION:(join|add|add_new|join_and_add|join_and_add_new)(?:\|([^\]]*))?\]\]/;
+        const MUSIC_TAG_GLOBAL_RE = /\[\[MUSIC_ACTION:(?:join|add|add_new|join_and_add|join_and_add_new)(?:\|[^\]]*)?\]\]/g;
+        const musicMatch = content.match(MUSIC_TAG_RE);
+        if (musicMatch && musicHooks) {
+            const verb = musicMatch[1] as 'join' | 'add' | 'add_new' | 'join_and_add' | 'join_and_add_new';
+            const argsRaw = (musicMatch[2] || '').trim();
+            const args = argsRaw ? argsRaw.split('|').map(s => s.trim()).filter(Boolean) : [];
+            // 卡片元数据里只用 join / add / join_and_add 三种意图，把 _new 折叠回 add 系
+            const intent: 'join' | 'add' | 'join_and_add' =
+                verb === 'join' ? 'join'
+                : (verb === 'add' || verb === 'add_new') ? 'add'
+                : 'join_and_add';
+            const wantsJoin = verb === 'join' || verb === 'join_and_add' || verb === 'join_and_add_new';
+            const wantsAdd = verb !== 'join';
+
+            let target: AddSongTarget | undefined;
+            if (wantsAdd) {
+                if (verb === 'add_new' || verb === 'join_and_add_new') {
+                    // 至少要有标题；没标题就退化成默认 add
+                    if (args[0]) target = { kind: 'new', title: args[0], description: args[1] };
+                } else if (args[0]) {
+                    target = { kind: 'existing', title: args[0] };
+                }
+            }
+
+            const snap = musicHooks.getListeningSnapshot();
+            if (snap) {
+                let addedToPlaylistTitle: string | undefined;
+                let playlistCreated = false;
+                if (wantsJoin) {
+                    musicHooks.joinListeningTogether(charId);
+                }
+                if (wantsAdd) {
+                    try {
+                        const playlistSong: CharPlaylistSong = {
+                            id: snap.songId,
+                            name: snap.name,
+                            artists: snap.artists,
+                            album: snap.album,
+                            albumPic: snap.albumPic,
+                            duration: snap.duration,
+                            fee: snap.fee,
+                            source: 'user',
+                            addedAt: Date.now(),
+                        };
+                        const added = await musicHooks.addSongToCharPlaylist(charId, playlistSong, target);
+                        if (added) {
+                            addedToPlaylistTitle = added.playlistTitle;
+                            playlistCreated = added.created;
+                        }
+                    } catch { /* 忽略 */ }
+                }
+                await DB.saveMessage({
+                    charId,
+                    role: 'assistant',
+                    type: 'music_card',
+                    content: '[音乐卡片]',
+                    metadata: {
+                        intent,
+                        song: snap,
+                        addedToPlaylistTitle,
+                        playlistCreated,
+                    },
+                });
+                const playlistSuffix = addedToPlaylistTitle
+                    ? (playlistCreated ? `（新建《${addedToPlaylistTitle}》）` : `《${addedToPlaylistTitle}》`)
+                    : '';
+                addToast(
+                    intent === 'join' ? `${charName} 和你一起听` :
+                    intent === 'add' ? `${charName} 把这首加到了${playlistSuffix || '自己歌单'}` :
+                    `${charName} 和你一起听，也加到了${playlistSuffix || '歌单'}`,
+                    'info'
+                );
+            }
+            content = content.replace(musicMatch[0], '').trim();
+            // 同类 tag 全清，防止 LLM 一条消息里插多次
+            content = content.replace(MUSIC_TAG_GLOBAL_RE, '').trim();
+        } else if (musicMatch) {
+            // 没有 hooks（无音乐上下文）— 静默丢弃
+            content = content.replace(MUSIC_TAG_GLOBAL_RE, '').trim();
+        }
+
+        // NEWS_CARD — char 主动把某条热点当作新闻卡片分享（来源 + 标题）
+        //   [[NEWS_CARD: 来源|标题]]    （来源可省略 → [[NEWS_CARD: 标题]]）
+        const NEWS_CARD_RE = /\[\[NEWS_CARD:\s*([^\]]*?)\s*\]\]/;
+        const NEWS_CARD_GLOBAL_RE = /\[\[NEWS_CARD:[^\]]*\]\]/g;
+        const newsCardMatch = content.match(NEWS_CARD_RE);
+        if (newsCardMatch) {
+            const raw = (newsCardMatch[1] || '').trim();
+            if (raw) {
+                const segs = raw.split('|').map(s => s.trim());
+                let source = '';
+                let title = raw;
+                if (segs.length >= 2) {
+                    source = segs[0];
+                    title = segs.slice(1).join('|').trim();
+                }
+                // char 不知道链接，尝试从最近一次热点快照里按标题补 url / 来源
+                let url: string | undefined;
+                try {
+                    const snap = await DB.getLatestHotNewsSnapshot();
+                    const hit = snap?.items?.find(it => it.title === title)
+                        || snap?.items?.find(it => !!title && (it.title.includes(title) || title.includes(it.title)));
+                    if (hit) {
+                        url = hit.url;
+                        if (!source && hit.source) source = hit.source;
+                    }
+                } catch { /* 补不到就算了 */ }
+                if (title) {
+                    await DB.saveMessage({
+                        charId,
+                        role: 'assistant',
+                        type: 'news_card',
+                        content: `[你分享了一个热点：「${title}」${source ? `（来源：${source}）` : ''}]`,
+                        metadata: { source, title, url },
+                    });
+                    addToast(`${charName} 分享了一条热点`, 'info');
+                }
+            }
+            content = content.replace(NEWS_CARD_GLOBAL_RE, '').trim();
+        }
+
         // ADD_EVENT
         const eventMatch = content.match(/\[\[ACTION:ADD_EVENT\s*\|\s*(.*?)\s*\|\s*(.*?)\]\]/);
         if (eventMatch) {

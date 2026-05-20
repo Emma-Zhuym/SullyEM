@@ -2163,14 +2163,20 @@ const Settings: React.FC = () => {
                           {rtNewsPlatforms.length === 0 && (
                               <p className="text-[10px] text-rose-500/80">未选任何平台时会回落到 Brave / Hacker News。</p>
                           )}
-                          <div className="border-t border-blue-200/50 pt-2 mt-1">
-                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Brave Search API Key（回落源，可选）</label>
-                              <input type="password" value={rtNewsApiKey} onChange={e => setRtNewsApiKey(e.target.value)} className="w-full bg-white/80 border border-blue-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="获取: brave.com/search/api" />
-                              <p className="text-[10px] text-blue-500/70 mt-1">
-                                  仅当热榜拉取失败时启用。免费2000次/月。<br/>
-                                  都不可用时兜底 Hacker News（英文科技新闻）。
-                              </p>
-                          </div>
+                          <details className="border-t border-blue-200/50 pt-2 mt-1 group">
+                              <summary className="text-[10px] font-bold text-slate-400 uppercase cursor-pointer select-none list-none flex items-center gap-1.5">
+                                  <span className="transition-transform group-open:rotate-90">›</span>
+                                  Brave Search（回落源 · <span className="text-rose-400">不建议配置</span>）
+                              </summary>
+                              <div className="mt-2 space-y-1.5">
+                                  <p className="text-[10px] text-slate-400/90 leading-relaxed">
+                                      上面的中文热榜在国内场景比 Brave 好用一万倍，<b className="text-slate-500">基本不需要配这个</b>。
+                                      它只是热榜彻底拉不到时的英文回落，配了反而可能盖掉中文热点。除非你清楚自己在做什么，否则留空即可。
+                                  </p>
+                                  <input type="password" value={rtNewsApiKey} onChange={e => setRtNewsApiKey(e.target.value)} className="w-full bg-white/60 border border-slate-200 rounded-xl px-3 py-2 text-sm font-mono text-slate-500" placeholder="（不建议）brave.com/search/api" />
+                                  <p className="text-[10px] text-slate-400/70">仅当中文热榜拉取失败时才启用；都不可用时再兜底 Hacker News（英文）。</p>
+                              </div>
+                          </details>
                       </div>
                   )}
               </div>

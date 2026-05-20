@@ -113,7 +113,8 @@ const HotNewsApp: React.FC = () => {
                 <div className="my-3 bg-stone-800 text-stone-100 rounded-lg px-3 py-2.5 text-[11px] leading-relaxed flex gap-2">
                     <WarningCircle size={16} weight="fill" className="shrink-0 mt-0.5 text-amber-300" />
                     <span>
-                        这只是<b>热点可视化</b>——下面是角色此刻「刷到」、<b>可能主动和你聊起</b>的话题。
+                        这只是<b>热点可视化</b>。每次对话会从下面这些里<b>随机抽几条</b>注入给角色——它不一定会拎出来说，
+                        当作背景认知自然存在；偶尔也会主动<b>分享成新闻卡片</b>找你聊。
                         {realtimeConfig.newsEnabled
                             ? '（已开启：角色会真的看到这些）'
                             : '（未开启「实时感知 → 新闻热点」，角色暂时看不到，去设置打开后才会聊）'}

@@ -1136,6 +1136,31 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
         );
     }
 
+    if (m.type === 'news_card') {
+        const md: any = m.metadata || {};
+        const title: string = md.title || '热点';
+        const source: string = md.source || '热点';
+        const url: string | undefined = md.url;
+        const card = (
+            <div
+                className="w-60 rounded-xl overflow-hidden shadow-sm border border-stone-300 bg-[#f6f1e7] cursor-pointer active:opacity-90 transition-opacity"
+                onClick={() => { if (url) window.open(url, '_blank', 'noopener,noreferrer'); }}
+                style={{ fontFamily: `'Noto Serif','Georgia',serif` }}
+            >
+                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-stone-800 text-stone-100">
+                    <span className="text-[10px] tracking-[0.25em] uppercase font-bold">热点 · {source}</span>
+                </div>
+                <div className="px-3 py-2.5">
+                    <p className="text-[13px] leading-snug text-stone-900 font-semibold">{title}</p>
+                    {url && (
+                        <p className="text-[10px] text-stone-400 mt-1.5">点击查看原文 ›</p>
+                    )}
+                </div>
+            </div>
+        );
+        return commonLayout(card);
+    }
+
     if (m.type === 'html_card') {
         const meta: any = m.metadata || {};
         const html: string = (typeof meta.htmlSource === 'string' && meta.htmlSource) ? meta.htmlSource : '';
