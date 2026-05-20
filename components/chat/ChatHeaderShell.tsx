@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { CaretLeft, House, Lightning, X } from '@phosphor-icons/react';
 import { CharacterBuff, CharacterProfile } from '../../types';
 import type { ContextComposition } from '../../hooks/useChatAI';
+import type { CharAvailability } from '../../utils/charStatus';
 
 interface TokenBreakdown {
     prompt: number;
@@ -38,6 +39,10 @@ interface ChatHeaderShellProps {
     headerDensity?: 'compact' | 'default' | 'airy';
     statusStyle?: 'subtle' | 'pill' | 'dot';
     chromeStyle?: 'soft' | 'flat' | 'floating' | 'pixel';
+    /** EM: 角色在线状态（由日程驱动） */
+    charStatus?: CharAvailability;
+    /** EM: 角色当前活动名（busy/offline 时显示） */
+    charStatusActivity?: string;
 }
 
 const COLLAPSED_BUFF_MIN = 2;
@@ -78,6 +83,8 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     headerDensity = 'default',
     statusStyle = 'subtle',
     chromeStyle = 'soft',
+    charStatus = 'online',
+    charStatusActivity,
 }) => {
     const buffs: CharacterBuff[] = activeCharacter.activeBuffs || [];
     const [showTokenPanel, setShowTokenPanel] = useState(false);
@@ -224,19 +231,26 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
           ? 'text-[#fff7ed] hover:bg-[#f8f0e0]/20 rounded-[4px] border-2 border-[#8f674a] bg-[#f8f0e0]/10'
           : 'text-indigo-500 hover:bg-indigo-50 rounded-full';
 
+    // EM: 状态颜色和文字映射
+    const statusConfig = {
+        online:  { label: 'Online',  dotColor: 'bg-emerald-400', pillBg: isDarkHeader ? 'bg-emerald-500/20 text-emerald-200 border-emerald-400/20' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/25' : 'bg-emerald-50 text-emerald-500 border-emerald-100' },
+        busy:    { label: charStatusActivity ? `${charStatusActivity}中` : 'Busy', dotColor: 'bg-amber-400', pillBg: isDarkHeader ? 'bg-amber-500/20 text-amber-200 border-amber-400/20' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/25' : 'bg-amber-50 text-amber-500 border-amber-100' },
+        offline: { label: charStatusActivity ? `${charStatusActivity}` : 'Offline', dotColor: 'bg-slate-400', pillBg: isDarkHeader ? 'bg-slate-500/20 text-slate-300 border-slate-400/20' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/25' : 'bg-slate-100 text-slate-400 border-slate-200' },
+    }[charStatus];
+
     const onlineStatusNode = headerStyle === 'telegram'
         ? null
         : statusStyle === 'pill' ? (
-            <div className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold border ${isDarkHeader ? 'bg-emerald-500/20 text-emerald-200 border-emerald-400/20' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/25' : 'bg-emerald-50 text-emerald-500 border-emerald-100'}`}>
-                online
+            <div className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold border ${statusConfig.pillBg}`}>
+                {statusConfig.label}
             </div>
         ) : statusStyle === 'dot' ? (
             <div className={`flex items-center gap-1 text-[10px] ${secondaryTextClass}`}>
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                <span>Online</span>
+                <span className={`w-1.5 h-1.5 rounded-full ${statusConfig.dotColor}`} />
+                <span>{statusConfig.label}</span>
             </div>
         ) : (
-            <div className={`text-[10px] uppercase ${secondaryTextClass}`}>Online</div>
+            <div className={`text-[10px] uppercase ${secondaryTextClass}`}>{statusConfig.label}</div>
         );
 
     const renderBuffRow = (centered: boolean) => {
@@ -331,8 +345,8 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
         <>
             <img src={activeCharacter.avatar} className={`w-10 h-10 object-cover shadow-sm ${avatarRadiusClass}`} alt="avatar" />
             <div className="flex-1 min-w-0 flex flex-col items-start text-left gap-0.5">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                    <div className={`font-bold ${primaryTextClass}`}>{activeCharacter.name}</div>
+                <div className="flex items-center gap-1 flex-wrap">
+                    <div className={`font-bold ${primaryTextClass} shrink-0`}>{activeCharacter.name}</div>
                     {onlineStatusNode}
                     {lastTokenUsage && (
                         <button

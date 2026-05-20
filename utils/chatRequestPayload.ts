@@ -61,6 +61,9 @@ export interface BuildChatPayloadInput {
     htmlMode?: { enabled: boolean; customPrompt?: string };
     thinkingChain?: { enabled: boolean; customPrompt?: string };
     mcdMiniSnap?: McdMiniAppSnapshot;
+
+    /** EM: 角色当前在线状态（busy 时注入简短回复提示） */
+    charAvailability?: 'online' | 'busy' | 'offline';
 }
 
 export interface BuildChatPayloadResult {
@@ -72,6 +75,12 @@ export interface BuildChatPayloadResult {
     fullMessages: Array<{ role: string; content: any }>;
     /** 调试用：bilingual / mcd 是否实际注入 */
     flags: { bilingualActive: boolean; mcdActive: boolean; htmlActive: boolean; thinkingActive: boolean };
+    /** EM: Token 面板用的上下文字符数分解 */
+    contextBreakdown?: {
+        coreContextChars: number;
+        systemCharsBeforeBilingual: number;
+        bilingualAddonChars: number;
+    };
 }
 
 /**
@@ -159,6 +168,11 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         !!isListeningTogether,
         musicCfg,
     );
+
+    // ── 3.5 EM: busy 状态注入简短回复提示 ──────────────────
+    if (input.charAvailability === 'busy') {
+        systemPrompt += `\n\n[状态提示] 你现在正忙，可能在开会/工作/上课等。回复要简短（1-2句话），语气像在忙碌间隙匆匆回消息，可以表达"等会儿再聊"的意思。不要长篇大论。`;
+    }
 
     const systemCharsBeforeBilingual = systemPrompt.length;
 

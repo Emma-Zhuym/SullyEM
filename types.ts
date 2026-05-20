@@ -352,6 +352,8 @@ export interface ScheduleSlot {
     emoji?: string;       // "🏃"
     location?: string;    // "河边"
     innerThought?: string; // 该时段的内心独白，生成时由AI写好，运行时直接注入
+    /** EM: 手动覆盖该时段的在线状态（不填则根据关键词自动推断） */
+    availability?: 'online' | 'busy' | 'offline';
 }
 
 export interface DailySchedule {

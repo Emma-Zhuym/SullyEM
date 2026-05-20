@@ -522,6 +522,8 @@ interface UseChatAIProps {
     updateCharacter?: (id: string, partial: Partial<CharacterProfile>) => void;
     /** 麦当劳小程序当前快照 (cart/menu/nutrition); open=true 时把这段实时状态追加到 system prompt 末尾, 让 char 协同选餐 */
     mcdMiniAppRef?: MutableRefObject<import('../utils/mcdToolBridge').McdMiniAppSnapshot | undefined>;
+    /** EM: 角色在线状态（busy 时注入简短回复提示） */
+    charAvailability?: 'online' | 'busy' | 'offline';
 }
 
 export const useChatAI = ({
@@ -539,6 +541,7 @@ export const useChatAI = ({
     memoryPalaceConfig,
     updateCharacter,
     mcdMiniAppRef,
+    charAvailability,
 }: UseChatAIProps) => {
     
     // 音乐上下文 — 用于聊天时注入"user 正在听什么 + 当前歌词窗口"
@@ -721,6 +724,7 @@ export const useChatAI = ({
                 htmlMode: { enabled: !!(char as any).htmlModeEnabled, customPrompt: (char as any).htmlModeCustomPrompt },
                 thinkingChain: { enabled: !!(char as any).showThinkingChain, customPrompt: (char as any).thinkingChainCustomPrompt },
                 mcdMiniSnap: mcdMiniOpen ? mcdMiniSnap : undefined,
+                charAvailability,
             }));
             const systemPrompt = payload.systemPrompt;
             const cleanedApiMessages = payload.cleanedApiMessages;

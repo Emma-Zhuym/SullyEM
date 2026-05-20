@@ -18,6 +18,7 @@ import ChatModals from '../components/chat/ChatModals';
 import Modal from '../components/os/Modal';
 import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
 import ThinkingChainSettingsModal from '../components/chat/ThinkingChainSettingsModal';
+import { useCharStatus } from '../hooks/useCharStatus';
 import { useChatAI } from '../hooks/useChatAI';
 import { synthesizeSpeechDetailed, cleanTextForTts } from '../utils/minimaxTts';
 import { isInstantConfigReady } from '../utils/instantPushClient';
@@ -66,6 +67,8 @@ const Chat: React.FC = () => {
     const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility' | 'schedule'>('none');
     const [scheduleData, setScheduleData] = useState<DailySchedule | null>(null);
     const [isScheduleGenerating, setIsScheduleGenerating] = useState(false);
+    // EM: 角色在线状态（由日程驱动）
+    const charStatusInfo = useCharStatus(scheduleData);
     const [allHistoryMessages, setAllHistoryMessages] = useState<Message[]>([]);
     const [transferAmt, setTransferAmt] = useState('');
     const [emojiImportText, setEmojiImportText] = useState('');
@@ -173,6 +176,7 @@ const Chat: React.FC = () => {
         memoryPalaceConfig,
         mcdMiniAppRef,
         updateCharacter,
+        charAvailability: charStatusInfo.status,
     });
 
     // --- Emma: Notion Diary Quick Action ---
@@ -2168,6 +2172,8 @@ const Chat: React.FC = () => {
                 chromeStyle={osTheme.chatChromeStyle}
                 contextComposition={contextComposition}
                 onOpenContacts={() => setMessageSubView('contacts')}
+                charStatus={charStatusInfo.status}
+                charStatusActivity={charStatusInfo.activity}
              />
 
             {/* 认知消化结果弹窗 — 全屏玻璃拟态 */}
@@ -2451,6 +2457,8 @@ const Chat: React.FC = () => {
                     inputStyle={osTheme.chatInputStyle}
                     sendButtonStyle={osTheme.chatSendButtonStyle}
                     chromeStyle={osTheme.chatChromeStyle}
+                    charOffline={charStatusInfo.status === 'offline'}
+                    charOfflineHint={charStatusInfo.activity ? `${char.name}正在${charStatusInfo.activity}` : undefined}
                 />
             </div>
 

@@ -46,6 +46,10 @@ interface ChatInputAreaProps {
     inputStyle?: 'default' | 'rounded' | 'flat' | 'wechat' | 'ios' | 'telegram' | 'discord' | 'pixel';
     sendButtonStyle?: 'circle' | 'pill' | 'minimal';
     chromeStyle?: 'soft' | 'flat' | 'floating' | 'pixel';
+    /** EM: 角色 offline 时禁用发送 */
+    charOffline?: boolean;
+    /** EM: offline 时的提示文案 */
+    charOfflineHint?: string;
 }
 
 const ChatInputArea: React.FC<ChatInputAreaProps> = ({
@@ -64,6 +68,8 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     inputStyle = 'default',
     sendButtonStyle = 'circle',
     chromeStyle = 'soft',
+    charOffline = false,
+    charOfflineHint,
 }) => {
     const chatImageInputRef = useRef<HTMLInputElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -78,7 +84,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            onSend();
+            if (!charOffline) onSend();
         }
     };
 
@@ -359,10 +365,11 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             <Smiley className="w-6 h-6" weight="regular" />
                         </button>
                     </div>
-                    <button 
-                        onClick={onSend} 
-                        disabled={!input.trim()} 
-                        className={`${sendButtonClass} ${input.trim() ? '' : 'opacity-45 shadow-none'}`}
+                    <button
+                        onClick={onSend}
+                        disabled={!input.trim() || charOffline}
+                        className={`${sendButtonClass} ${(input.trim() && !charOffline) ? '' : 'opacity-45 shadow-none'}`}
+                        title={charOffline ? (charOfflineHint || '角色当前离线') : undefined}
                     >
                         {sendButtonStyle === 'pill' ? <span>发送</span> : <PaperPlaneTilt className="w-5 h-5" weight="fill" />}
                     </button>

@@ -48,6 +48,7 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
     const [editActivity, setEditActivity] = useState('');
     const [editDesc, setEditDesc] = useState('');
     const [editEmoji, setEditEmoji] = useState('');
+    const [editAvailability, setEditAvailability] = useState<'online' | 'busy' | 'offline' | ''>('');
     const coverInputRef = useRef<HTMLInputElement>(null);
 
     // 长按菜单状态：记录哪一条日程被长按触发 action sheet（修改 / 删除）
@@ -83,6 +84,7 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
         setEditActivity(slot.activity);
         setEditDesc(slot.description || '');
         setEditEmoji(slot.emoji || '');
+        setEditAvailability(slot.availability || '');
     };
 
     const saveEdit = () => {
@@ -92,6 +94,7 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
                 activity: editActivity,
                 description: editDesc || undefined,
                 emoji: editEmoji || undefined,
+                availability: editAvailability || undefined,
             });
         }
         setEditingIdx(null);
@@ -237,6 +240,23 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
                                             placeholder="描述 (可选)"
                                             className="w-full bg-white/10 rounded-lg px-2 py-1 text-xs border border-white/10 focus:outline-none opacity-70"
                                         />
+                                        {/* EM: 在线状态选择 */}
+                                        <div className="flex items-center gap-1.5 mt-1.5">
+                                            <span className="text-[10px] opacity-60 shrink-0">状态:</span>
+                                            {(['', 'online', 'busy', 'offline'] as const).map(v => {
+                                                const labels: Record<string, string> = { '': '自动', online: '🟢', busy: '🟡', offline: '⚫' };
+                                                const isActive = editAvailability === v;
+                                                return (
+                                                    <button
+                                                        key={v || 'auto'}
+                                                        onClick={() => setEditAvailability(v)}
+                                                        className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${isActive ? 'bg-white/25 border-white/30 font-bold' : 'bg-white/5 border-white/10 opacity-60 hover:opacity-80'}`}
+                                                    >
+                                                        {labels[v]}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
                                         <div className="flex gap-2 mt-2">
                                             <button onClick={saveEdit} className="text-[10px] font-bold px-3 py-1 rounded-lg bg-white/20 hover:bg-white/30 transition-colors">保存</button>
                                             <button onClick={() => setEditingIdx(null)} className="text-[10px] font-bold px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 transition-colors opacity-60">取消</button>
@@ -306,6 +326,9 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
                                         <div className="flex items-center gap-1.5">
                                             {slot.emoji && <span className="text-sm flex-shrink-0">{slot.emoji}</span>}
                                             <span className={`text-sm font-bold ${isCurrent ? '' : ''}`}>{slot.activity}</span>
+                                            {/* EM: 显示手动设置的状态标记 */}
+                                            {slot.availability === 'busy' && <span className="text-[9px] px-1 py-0.5 rounded bg-amber-400/20 text-amber-300 font-bold">忙</span>}
+                                            {slot.availability === 'offline' && <span className="text-[9px] px-1 py-0.5 rounded bg-slate-400/20 text-slate-400 font-bold">离线</span>}
                                         </div>
                                         {slot.description && (
                                             <p className="text-[11px] opacity-50 mt-0.5 leading-tight">{slot.description}</p>
