@@ -1,6 +1,7 @@
 
 import React, { useRef, useState } from 'react';
-import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Code, Brain, NotePencil } from '@phosphor-icons/react';
+import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Code, Brain, NotePencil, GameController } from '@phosphor-icons/react';
+import { intifaceClient } from '../../utils/intifaceClient';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import { isIOSStandaloneWebApp } from '../../utils/iosStandalone';
@@ -575,8 +576,33 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                               </div>
                               <span className="text-xs font-bold">{showThinkingChain ? '思考已开' : '展示思考'}</span>
                             </button>
-                            {/* 空占位：让第二页与第一页等高（2行 × 4列 = 8格，现有4个工具，补4个） */}
-                            <div aria-hidden="true" /><div aria-hidden="true" /><div aria-hidden="true" /><div aria-hidden="true" />
+                            {/* EM: Intiface 硬件 — 设备连上时才显示，点击 toggle Chat 模式 */}
+                            {intifaceClient.connected && intifaceClient.devices.length > 0 && (() => {
+                              const on = localStorage.getItem('intiface-chat-enabled') === 'true';
+                              return (
+                                <button
+                                  onClick={() => {
+                                    const next = localStorage.getItem('intiface-chat-enabled') !== 'true';
+                                    localStorage.setItem('intiface-chat-enabled', String(next));
+                                    onPanelAction('close'); // 收起工具栏让用户感知到切换了
+                                  }}
+                                  className={`flex flex-col items-center gap-2 tool-btn ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}
+                                >
+                                  <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border relative ${
+                                    on
+                                      ? (isDiscordStyle ? 'bg-violet-500/20 text-violet-300 border-violet-400/40' : 'bg-violet-100 text-violet-600 border-violet-200')
+                                      : (isDiscordStyle ? 'bg-slate-800 text-violet-300 border-violet-400/20' : 'bg-violet-50 text-violet-500 border-violet-100')
+                                  }`}>
+                                    <GameController className="w-6 h-6" weight="bold" />
+                                    {on && <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isDiscordStyle ? 'bg-violet-400 border-slate-900' : 'bg-violet-500 border-white'}`} />}
+                                  </div>
+                                  <span className="text-xs font-bold">{on ? '遥控已开' : '遥控'}</span>
+                                </button>
+                              );
+                            })()}
+
+                            {/* 空占位：补齐网格 */}
+                            <div aria-hidden="true" /><div aria-hidden="true" /><div aria-hidden="true" />
                           </div>
 
                           {/* 翻页指示器 */}

@@ -14,6 +14,7 @@ import McdMiniApp from '../components/mcd/McdMiniApp';
 import { PRESET_THEMES, DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import ChatHeader from '../components/chat/ChatHeaderShell';
 import ChatInputArea from '../components/chat/ChatInputArea';
+import IntifaceFloatingBall from '../components/chat/IntifaceFloatingBall';
 import ChatModals from '../components/chat/ChatModals';
 import Modal from '../components/os/Modal';
 import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
@@ -2429,6 +2430,9 @@ const Chat: React.FC = () => {
                     </div>
                 )}
                 
+                {/* EM: Intiface 实时悬浮球（设备连接+Chat模式开启时自动出现） */}
+                <IntifaceFloatingBall />
+
                 <ChatInputArea
                     input={input} setInput={handleInputChange}
                     isTyping={isTyping} selectionMode={selectionMode}
