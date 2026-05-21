@@ -736,7 +736,14 @@ ${recentPrivate || '(暂无私聊)'}
                 if (m.role === 'assistant') {
                     name = characters.find(c => c.id === m.charId)?.name || '未知';
                 }
-                const content = m.type === 'image' ? '[图片]' : m.type === 'emoji' ? `[表情包: ${m.content}]` : m.type === 'transfer' ? `[发红包: ${m.metadata?.amount}]` : m.content;
+                // emoji 的 content 是 URL/base64 data URI（导入走 readAsDataURL，单张可达几十 KB），
+                // 不能内联进 prompt，否则群上下文同样会被表情包撑爆；卡片等富类型也不内联原始 content。
+                const rawText = typeof m.content === 'string' ? m.content : '';
+                const content = m.type === 'image' ? '[图片]'
+                    : m.type === 'emoji' ? '[表情包]'
+                    : m.type === 'transfer' ? `[发红包: ${m.metadata?.amount}]`
+                    : /^(data:|https?:\/\/)/i.test(rawText.trim()) ? '[媒体]'
+                    : rawText;
                 return `${name}: ${content}`;
             }).join('\n');
 

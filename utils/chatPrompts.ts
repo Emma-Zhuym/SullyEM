@@ -9,6 +9,37 @@ import { MusicCfg, loadMusicCfgStandalone } from '../context/MusicContext';
 import { RealtimeContextManager, NotionManager, FeishuManager, defaultRealtimeConfig } from './realtimeContext';
 import { isScheduleFeatureOn } from './scheduleGenerator';
 
+// 群活动注入专用：把一条群消息压成"适合塞进别人私聊背景"的短文本。
+// 关键：emoji / image / 各类卡片的 content 是 URL 或 base64 data URI——
+// 表情包导入时走 readAsDataURL，单张就可能几十 KB。若原样内联进每位成员的
+// 私聊 system prompt，会把上下文撑爆（实测一个群可把私聊 prompt 顶到 8w+ 字符）。
+// 这里与 buildMessageHistory 的富类型处理对齐：只内联纯文本，其余一律占位符，
+// 并对超长文本截断兜底。
+const GROUP_MSG_TEXT_CAP = 500;
+function summarizeGroupMsgContent(m: Message): string {
+    const meta = (m.metadata as any) || {};
+    switch (m.type) {
+        case 'image': return '[图片]';
+        case 'emoji': return '[表情]';
+        case 'interaction': return '[戳了戳]';
+        case 'transfer': return `[转账${meta.amount ?? ''}]`;
+        case 'social_card': return `[分享帖子${meta.post?.title ? '：' + meta.post.title : ''}]`;
+        case 'chat_forward': return '[转发的聊天记录]';
+        case 'xhs_card': return '[小红书笔记]';
+        case 'score_card': return '[评分卡]';
+        case 'music_card': return '[分享音乐]';
+        case 'mcd_card': return '[麦当劳点餐]';
+        case 'html_card': return '[HTML卡片]';
+        case 'news_card': return '[新闻卡片]';
+        default: {
+            const c = typeof m.content === 'string' ? m.content : '';
+            // 兜底：任何 data:/http(s) 链接都不内联，防止异常/未来新增类型漏网
+            if (/^(data:|https?:\/\/)/i.test(c.trim())) return '[媒体]';
+            return c.length > GROUP_MSG_TEXT_CAP ? c.slice(0, GROUP_MSG_TEXT_CAP) + '…' : c;
+        }
+    }
+}
+
 export const ChatPrompts = {
     // 格式化时间戳
     formatDate: (ts: number) => {
@@ -151,7 +182,7 @@ export const ChatPrompts = {
                 if (recentGroupMsgs.length === 0) return '';
                 const groupLogStr = recentGroupMsgs.map(m => {
                     const dateStr = new Date(m.timestamp).toLocaleString([], {month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'});
-                    return `[${dateStr}] [Group: ${m.groupName}] ${m.role === 'user' ? userProfile.name : 'Member'}: ${m.content}`;
+                    return `[${dateStr}] [Group: ${m.groupName}] ${m.role === 'user' ? userProfile.name : 'Member'}: ${summarizeGroupMsgContent(m)}`;
                 }).join('\n');
                 return `\n### [Background Context: Recent Group Activities]\n(注意：你是以下群聊的成员...)\n${groupLogStr}\n`;
             } catch (e) {
