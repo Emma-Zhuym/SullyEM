@@ -15,10 +15,11 @@
 
 ## 二、视图层级
 
-### 书架（Shelf）— 入口页
-- 每个角色一张"世界书卡"：封面色块 + 角色名 + 当前状态 + 上次消息时间
-- **Crossover 开关**：OFF = 每人独立世界；ON = 所有角色合并到"星辰镇"总图
-- 点击书卡进入该世界的地图
+### 角色列表（入口）— 通讯录样式
+- 与现有 `ContactsList` 同风格：头像 + 名字 + 状态小点 + 当前活动描述
+- **状态小点**：绿（在线）/ 琥珀（忙碌）/ 灰（下线），叠在头像右下角
+- 点击角色进入该角色的地图
+- v1 暂不做混合世界（Crossover）
 
 ### 地图（MapView）— 主视图
 三层叠加：
@@ -44,9 +45,28 @@
 |---|---|
 | `character.mood` | `useCharStatus(schedule).status` |
 | `character.moodLabel` | status → "在线" / `activity+'中'` / "下线" |
-| `character.sub`（活动描述） | 当前 schedule slot 的 location + title |
-| `character.quote`（最后一句话） | `DB.getMessagesByCharId(char.id)` 最近一条 |
-| "去找TA"按钮 | `openApp(AppID.Chat, { messageWidgetCharId: char.id })` |
+| `character.sub`（活动描述） | 当前 schedule slot 的 `location` + `title` 字段 |
+| **角色 pin 位置** | 当前 slot 的 `location` → 匹配世界地图预设坐标点 |
+| `character.quote`（最后一句话） | `DB.getMessagesByCharId(char.id)` 最近一条 AI 消息 |
+| "去见TA"按钮 | `openApp(AppID.Chat, { messageWidgetCharId: char.id })` |
+
+### 日程联动：pin 位置计算
+
+每个世界地图的区域（region）有一个 `locationKeys` 字段，存该区域对应的 location 关键词：
+
+```typescript
+interface MapRegion {
+  id: string;
+  name: string;
+  locationKeys: string[];  // 如 ['公司', '会议室', '星澜']
+  pin: { x: string; y: string };  // 该区域的 pin 落点
+  // ...
+}
+```
+
+角色当前 pin 位置 = 找到 slot.location 匹配 locationKeys 的区域，取其 pin 坐标。
+没有匹配 → fallback 到该角色的"家"区域。
+没有日程 → 显示默认位置。
 
 ---
 
