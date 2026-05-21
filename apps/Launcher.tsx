@@ -7,6 +7,7 @@ import { AppConfig, CharacterProfile, Anniversary, AppID, DailySchedule } from '
 import { ScheduleHomeWidget, ScheduleFullscreenViewer } from '../components/schedule/ScheduleHomeWidget';
 import NowPlayingSquareWidget from '../components/os/NowPlayingSquareWidget';
 import { sortAnniversariesByNextOccurrence } from '../utils/anniversaryNext';
+import { useCharStatus } from '../hooks/useCharStatus';
 
 // --- Isolated Components to prevent full re-renders ---
 
@@ -77,19 +78,29 @@ const DesktopClock = React.memo(() => {
 });
 
 // 2. Character Widget (Consumes Character Data & Messages)
-const CharacterWidget = React.memo(({ 
-    char, 
-    unreadCount, 
-    lastMessage, 
-    onClick, 
-    contentColor 
-}: { 
-    char: CharacterProfile | null, 
-    unreadCount: number, 
-    lastMessage: string, 
+const CharacterWidget = React.memo(({
+    char,
+    unreadCount,
+    lastMessage,
+    onClick,
+    contentColor,
+    schedule,
+}: {
+    char: CharacterProfile | null,
+    unreadCount: number,
+    lastMessage: string,
     onClick: () => void,
-    contentColor: string
+    contentColor: string,
+    schedule: DailySchedule | null,
 }) => {
+    const { status, activity } = useCharStatus(schedule);
+
+    const statusConfig = {
+        online:  { dotClass: 'bg-emerald-400', glow: '0 0 6px #4ade80', label: 'Online',  pillBg: 'rgba(52,211,153,0.18)' },
+        busy:    { dotClass: 'bg-amber-400',   glow: '0 0 6px #fbbf24', label: activity ? `${activity}中` : 'Busy', pillBg: 'rgba(251,191,36,0.18)' },
+        offline: { dotClass: 'bg-slate-400',   glow: 'none',            label: activity ?? 'Offline',               pillBg: 'rgba(148,163,184,0.18)' },
+    }[status];
+
     return (
         <div className="mb-3 group animate-fade-in">
              <div
@@ -130,7 +141,7 @@ const CharacterWidget = React.memo(({
                                 {unreadCount > 9 ? '9+' : unreadCount}
                             </div>
                          ) : (
-                            <div className="absolute bottom-1 right-1 w-2.5 h-2.5 bg-emerald-400 rounded-full border-2 border-white/30" style={{ boxShadow: '0 0 6px #4ade80' }}></div>
+                            <div className={`absolute bottom-1 right-1 w-2.5 h-2.5 ${statusConfig.dotClass} rounded-full border-2 border-white/30`} style={{ boxShadow: statusConfig.glow }}></div>
                          )}
                      </div>
 
@@ -145,7 +156,7 @@ const CharacterWidget = React.memo(({
                                      style={{ background: 'rgba(239,68,68,0.9)', color: 'white' }}>NEW</div>
                              ) : (
                                  <div className="px-1.5 py-px rounded-full text-[8px] font-bold uppercase tracking-[0.15em]"
-                                     style={{ background: 'rgba(255,255,255,0.18)' }}>Online</div>
+                                     style={{ background: statusConfig.pillBg, color: contentColor }}>{statusConfig.label}</div>
                              )}
                          </div>
                          <div className="text-xs line-clamp-2 font-medium leading-relaxed opacity-85">
@@ -725,6 +736,7 @@ const Launcher: React.FC = () => {
                             lastMessage={lastMessage}
                             onClick={() => (widgetChar ? openApp(AppID.Chat, { messageWidgetCharId: widgetChar.id }) : openApp(AppID.Chat))}
                             contentColor={contentColor}
+                            schedule={scheduleData}
                         />
                         <div className="flex-1">
                             <AppGridPage
