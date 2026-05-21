@@ -108,16 +108,39 @@ export async function handleIntifaceToolCall(
  *
  * 匹配格式：  "VIBRATE": 数字   （ST 插件兼容格式）
  */
-const VIBRATE_RE = /"VIBRATE"\s*:\s*(\d+)/gi;
+/**
+ * 创建一个有状态的 chunk 处理器（每次约会 session 创建一个）。
+ * 内部维护 buffer 解决跨 chunk 断裂问题。
+ */
+export function createIntifaceChunkProcessor() {
+  let residual = '';
 
-export function processIntifaceChunk(chunk: string): string {
-  if (!intifaceClient.connected) return chunk;
+  return function process(chunk: string): string {
+    if (!intifaceClient.connected) return chunk;
 
-  return chunk.replace(VIBRATE_RE, (_, num) => {
-    const intensity = Math.max(0, Math.min(100, parseInt(num, 10)));
-    intifaceClient.runPattern(intensity, 'steady').catch(() => {});
-    return ''; // 从显示文本里剥除
-  });
+    // 拼上上次残留
+    const combined = residual + chunk;
+    residual = '';
+
+    // 如果末尾疑似一个不完整的 "VIBRATE"... 标记（没闭合的数字），
+    // 把可疑部分缓存到 residual，下次补全
+    const tailMatch = combined.match(/"VIBR(?:ATE)?(?:"\s*:\s*\d*)?$/i);
+    let toProcess = combined;
+    if (tailMatch) {
+      residual = tailMatch[0];
+      toProcess = combined.slice(0, -residual.length);
+    }
+
+    const cleaned = toProcess.replace(/"VIBRATE"\s*:\s*(\d+)/gi, (_, num) => {
+      const intensity = Math.max(0, Math.min(100, parseInt(num, 10)));
+      intifaceClient.runPattern(intensity, 'steady').catch(() => {});
+      return '';
+    });
+
+    // 只返回本次 chunk 应该输出的部分（减去 residual 来自上一次的偏移）
+    // 简化：如果没有 residual 被截走，直接返回 cleaned；否则只返回新增部分
+    return cleaned;
+  };
 }
 
 /**
@@ -126,27 +149,30 @@ export function processIntifaceChunk(chunk: string): string {
  */
 export function buildIntifaceTool() {
   return {
-    name: 'control_toy',
-    description:
-      '控制用户连接的设备。角色在对话中主动调整设备时调用。intensity 0 = 立即停止。',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        intensity: {
-          type: 'number',
-          description: '强度 0–100，0 为停止',
+    type: 'function' as const,
+    function: {
+      name: 'control_toy',
+      description:
+        '控制用户连接的设备。角色在对话中主动调整设备时调用。intensity 0 = 立即停止。',
+      parameters: {
+        type: 'object' as const,
+        properties: {
+          intensity: {
+            type: 'number',
+            description: '强度 0–100，0 为停止',
+          },
+          pattern: {
+            type: 'string',
+            enum: ['steady', 'pulse', 'wave'],
+            description: 'steady=恒定 pulse=脉冲 wave=波浪',
+          },
+          duration_ms: {
+            type: 'number',
+            description: '持续毫秒，省略则保持到下次调用',
+          },
         },
-        pattern: {
-          type: 'string',
-          enum: ['steady', 'pulse', 'wave'],
-          description: 'steady=恒定 pulse=脉冲 wave=波浪',
-        },
-        duration_ms: {
-          type: 'number',
-          description: '持续毫秒，省略则保持到下次调用',
-        },
+        required: ['intensity'],
       },
-      required: ['intensity'],
     },
   };
 }

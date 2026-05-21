@@ -999,7 +999,8 @@ export const useChatAI = ({
             }
 
             // EM: Intiface control_toy 工具调用处理
-            if (intifaceChatEnabled && data.choices?.[0]?.message?.tool_calls?.length) {
+            // 与 MCD 互斥——如果 MCD 已经处理过 tool_calls（follow-up 已拿到新 data），跳过
+            if (intifaceChatEnabled && !mcdMiniOpen && data.choices?.[0]?.message?.tool_calls?.length) {
                 const toolCalls: any[] = data.choices[0].message.tool_calls;
                 const intifaceTcs = toolCalls.filter((tc: any) => tc.function?.name === 'control_toy');
                 if (intifaceTcs.length > 0) {

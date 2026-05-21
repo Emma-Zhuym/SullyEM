@@ -30,6 +30,7 @@ class IntifaceClientSingleton {
   private _devices: ButtplugClientDevice[] = [];
   private _currentIntensity = 0;
   private patternTimer: ReturnType<typeof setTimeout> | null = null;
+  private durationTimer: ReturnType<typeof setTimeout> | null = null;
 
   private deviceListeners = new Set<DeviceListener>();
   private statusListeners = new Set<StatusListener>();
@@ -146,6 +147,10 @@ class IntifaceClientSingleton {
       clearTimeout(this.patternTimer);
       this.patternTimer = null;
     }
+    if (this.durationTimer) {
+      clearTimeout(this.durationTimer);
+      this.durationTimer = null;
+    }
   }
 
   /**
@@ -175,7 +180,7 @@ class IntifaceClientSingleton {
     }
 
     if (duration_ms && duration_ms > 0) {
-      this.patternTimer = setTimeout(() => this.stopAll(), duration_ms);
+      this.durationTimer = setTimeout(() => this.stopAll(), duration_ms);
     }
   }
 
