@@ -1,6 +1,7 @@
 
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
+import { useIntiface } from '../hooks/useIntiface';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
@@ -57,6 +58,15 @@ const Settings: React.FC = () => {
   const [localAceStepKey, setLocalAceStepKey] = useState(apiConfig.aceStepApiKey || '');
   const [showAceStepGuide, setShowAceStepGuide] = useState(false);
   const [otherStatusMsg, setOtherStatusMsg] = useState('');
+
+  // EM: Intiface 硬件集成
+  const intiface = useIntiface();
+  const [intifaceUrl, setIntifaceUrl] = useState(
+    () => localStorage.getItem('intiface-url') || 'ws://localhost:12345'
+  );
+  const [intifaceChatEnabled, setIntifaceChatEnabled] = useState(
+    () => localStorage.getItem('intiface-chat-enabled') === 'true'
+  );
   // 高级设置（流式/温度）默认折叠 — 大多数用户不需要碰
   const [showApiAdvanced, setShowApiAdvanced] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
@@ -1570,6 +1580,120 @@ const Settings: React.FC = () => {
                     </button>
                 </>
             )}
+        </section>
+
+        {/* EM: Intiface 硬件集成 */}
+        <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
+            <div className="flex items-center gap-2 mb-1">
+                <span className="text-lg">🎮</span>
+                <span className="text-sm font-bold text-slate-700">Intiface 硬件</span>
+                <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                    intiface.status === 'connected' ? 'bg-emerald-100 text-emerald-700' :
+                    intiface.status === 'connecting' ? 'bg-amber-100 text-amber-700' :
+                    intiface.status === 'error' ? 'bg-red-100 text-red-600' :
+                    'bg-slate-100 text-slate-500'
+                }`}>
+                    {intiface.status === 'connected' ? `已连接 · ${intiface.devices.length} 个设备` :
+                     intiface.status === 'connecting' ? '连接中…' :
+                     intiface.status === 'error' ? `错误: ${intiface.errorMessage ?? ''}` :
+                     '未连接'}
+                </span>
+            </div>
+            <p className="text-[10px] text-slate-400 mb-4 leading-relaxed">
+                通过 Intiface Central 连接蓝牙设备。Chat 模式角色可主动控制；见面模式由叙事自动驱动。
+            </p>
+
+            {/* 连接地址 */}
+            <div className="mb-3">
+                <label className="text-xs text-slate-500 font-medium mb-1 block">Intiface 地址</label>
+                <input
+                    type="text"
+                    value={intifaceUrl}
+                    onChange={e => {
+                        setIntifaceUrl(e.target.value);
+                        localStorage.setItem('intiface-url', e.target.value);
+                    }}
+                    className="w-full bg-white/80 border border-slate-200 rounded-xl px-3 py-2 text-sm font-mono"
+                    placeholder="ws://localhost:12345"
+                />
+            </div>
+
+            {/* 连接 / 断开按钮 */}
+            <div className="flex gap-2 mb-3">
+                {intiface.status !== 'connected' ? (
+                    <button
+                        type="button"
+                        onClick={() => intiface.connect(intifaceUrl)}
+                        disabled={intiface.status === 'connecting'}
+                        className="flex-1 py-2.5 rounded-2xl text-sm font-bold text-white bg-violet-500 active:scale-95 transition-all disabled:opacity-50"
+                    >
+                        {intiface.status === 'connecting' ? '连接中…' : '连接'}
+                    </button>
+                ) : (
+                    <>
+                        <button
+                            type="button"
+                            onClick={() => intiface.rescan()}
+                            className="flex-1 py-2.5 rounded-2xl text-sm font-bold text-violet-600 bg-violet-50 active:scale-95 transition-all"
+                        >
+                            重新扫描
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => intiface.disconnect()}
+                            className="flex-1 py-2.5 rounded-2xl text-sm font-bold text-slate-500 bg-slate-100 active:scale-95 transition-all"
+                        >
+                            断开
+                        </button>
+                    </>
+                )}
+            </div>
+
+            {/* 已发现设备列表 */}
+            {intiface.devices.length > 0 && (
+                <div className="mb-3 space-y-1.5">
+                    {intiface.devices.map(d => (
+                        <div key={d.index} className="flex items-center gap-2 px-3 py-2 bg-violet-50 rounded-xl text-xs">
+                            <span className="text-violet-400">●</span>
+                            <span className="font-medium text-violet-800">{d.displayName ?? d.name}</span>
+                            <span className="ml-auto text-violet-400">#{d.index}</span>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {/* 测试按钮 */}
+            {intiface.status === 'connected' && intiface.devices.length > 0 && (
+                <button
+                    type="button"
+                    onPointerDown={() => intiface.vibrate(30, 'pulse')}
+                    onPointerUp={() => intiface.stop()}
+                    onPointerLeave={() => intiface.stop()}
+                    className="w-full py-2 rounded-2xl text-xs font-bold text-violet-600 bg-violet-50 border border-violet-100 active:scale-95 transition-all mb-3"
+                >
+                    按住测试（松开停止）
+                </button>
+            )}
+
+            {/* Chat 模式开关 */}
+            <label className="flex items-center gap-3 cursor-pointer">
+                <div className="flex-1">
+                    <div className="text-xs font-bold text-slate-700">Chat 模式</div>
+                    <div className="text-[10px] text-slate-400">角色在聊天中可主动控制设备</div>
+                </div>
+                <div className="relative">
+                    <input
+                        type="checkbox"
+                        className="sr-only peer"
+                        checked={intifaceChatEnabled}
+                        onChange={e => {
+                            setIntifaceChatEnabled(e.target.checked);
+                            localStorage.setItem('intiface-chat-enabled', String(e.target.checked));
+                        }}
+                    />
+                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-violet-500"></div>
+                </div>
+            </label>
         </section>
 
         <div className="text-center text-[10px] text-slate-300 pb-8 font-mono tracking-widest uppercase">

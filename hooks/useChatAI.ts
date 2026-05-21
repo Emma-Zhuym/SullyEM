@@ -24,6 +24,8 @@ import type { DigestResult } from '../utils/memoryPalace';
 import { MCD_PROPOSE_TOOL, autoFixProposalCodesByName } from '../utils/mcdToolBridge';
 import { extractHtmlBlocks } from '../utils/htmlPrompt';
 import { buildChatRequestPayload } from '../utils/chatRequestPayload';
+import { intifaceClient } from '../utils/intifaceClient';
+import { handleIntifaceToolCall, buildIntifaceTool, buildIntifaceSystemPrompt } from './useIntiface';
 import {
     isInstantConfigReady,
     sendInstantPushAndAwaitReply,
@@ -822,6 +824,25 @@ export const useChatAI = ({
                 baseReqBody.tool_choice = 'auto';
             }
 
+            // EM: Intiface 硬件集成 — Chat 模式
+            // 设备已连接 + 用户开启聊天模式时，注入 control_toy 工具
+            const intifaceChatEnabled =
+                intifaceClient.connected &&
+                intifaceClient.devices.length > 0 &&
+                localStorage.getItem('intiface-chat-enabled') === 'true';
+            if (intifaceChatEnabled) {
+                const deviceName = intifaceClient.devices[0]?.name ?? '设备';
+                // 追加 Intiface 说明到 system prompt（messages[0] 是 system role）
+                if (Array.isArray(baseReqBody.messages) && baseReqBody.messages[0]?.role === 'system') {
+                    baseReqBody.messages[0] = {
+                        ...baseReqBody.messages[0],
+                        content: baseReqBody.messages[0].content + '\n\n' + buildIntifaceSystemPrompt(deviceName),
+                    };
+                }
+                baseReqBody.tools = [...(baseReqBody.tools ?? []), buildIntifaceTool()];
+                baseReqBody.tool_choice = 'auto';
+            }
+
             // ─── Instant Push 分支 ───
             // 与本地 fetch 对称：sendInstantPushAndAwaitReply 内部完成 sub 获取 / push 监听 /
             // 90s 超时兜底，返回时 push 已落库（或失败）。外层 finally 统一清 isTyping /
@@ -974,6 +995,41 @@ export const useChatAI = ({
                     updateTokenUsage(data, historyMsgCount, `mcd-propose-${it + 1}`);
                     // 第二轮跳过 (我们已经禁用了 tools)
                     if (!data.choices?.[0]?.message?.tool_calls?.length) break;
+                }
+            }
+
+            // EM: Intiface control_toy 工具调用处理
+            if (intifaceChatEnabled && data.choices?.[0]?.message?.tool_calls?.length) {
+                const toolCalls: any[] = data.choices[0].message.tool_calls;
+                const intifaceTcs = toolCalls.filter((tc: any) => tc.function?.name === 'control_toy');
+                if (intifaceTcs.length > 0) {
+                    const loopMessages = [
+                        ...fullMessages,
+                        {
+                            role: 'assistant',
+                            content: data.choices[0].message.content || '',
+                            tool_calls: toolCalls,
+                        },
+                    ];
+                    for (const tc of intifaceTcs) {
+                        let args: Record<string, unknown> = {};
+                        try { args = JSON.parse(tc.function?.arguments ?? '{}'); } catch { /* ignore */ }
+                        await handleIntifaceToolCall('control_toy', args);
+                        loopMessages.push({
+                            role: 'tool',
+                            tool_call_id: tc.id,
+                            content: JSON.stringify({ success: true, intensity: args.intensity ?? 0 }),
+                        } as any);
+                    }
+                    // 发 tool result，让角色继续生成文字（不带 tools 避免循环）
+                    const followBody = { ...baseReqBody, messages: loopMessages };
+                    delete followBody.tools;
+                    delete followBody.tool_choice;
+                    data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                        method: 'POST', headers,
+                        body: JSON.stringify(followBody),
+                    });
+                    updateTokenUsage(data, historyMsgCount, 'intiface-follow');
                 }
             }
 

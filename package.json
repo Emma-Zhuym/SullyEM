@@ -28,6 +28,7 @@
     "@rei-standard/amsg-instant": "^0.6.1",
     "@rei-standard/amsg-server": "^2.1.0",
     "@rei-standard/amsg-sw": "^2.0.1",
+    "buttplug": "^4.0.2",
     "jszip": "^3.10.1",
     "pg": "^8.20.0",
     "react": "^18.2.0",
