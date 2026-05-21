@@ -11,6 +11,16 @@
 
 以后如需升级为真实地图底图（Mapbox），坐标从百分比换经纬度，核心逻辑不变。
 
+### 角色位置模式
+
+每个角色有 `locationMode` 字段，决定在地图系统中的行为：
+
+| 模式 | 说明 | 地图表现 |
+|------|------|----------|
+| `local` | 同城，跟日程联动 | 正常 pin，位置随 slot.location 变化 |
+| `remote` | 异地 | pin 带城市标签 + 远程样式（信号图标），"去见TA"→"联系TA" |
+| `virtual` | 纯虚拟/AI 角色（Persephone、Sully） | 不出现在地图，入口列表灰显，点击直接跳聊天 |
+
 ---
 
 ## 二、视图层级
@@ -49,6 +59,10 @@
 | **角色 pin 位置** | 当前 slot 的 `location` → 匹配世界地图预设坐标点 |
 | `character.quote`（最后一句话） | `DB.getMessagesByCharId(char.id)` 最近一条 AI 消息 |
 | "去见TA"按钮 | `openApp(AppID.Chat, { messageWidgetCharId: char.id })` |
+
+### Schedule slot location 字段
+
+地图系统建好后，日程生成 prompt 需要让 LLM 在每个 slot 里填 `location` 字段（如"星澜大厦28楼"、"家"）。现在的 slot 结构没有此字段，等地图开发时一起加。
 
 ### 日程联动：pin 位置计算
 
