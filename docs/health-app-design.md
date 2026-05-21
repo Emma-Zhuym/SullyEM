@@ -82,15 +82,32 @@ function calcCycleStatus(periodStarts: string[]): CycleStatus {
 ## 六、数据流
 
 ```
-Apple Health
-    ↓ iOS 快捷指令（每日自动 + 历史一次性批量）
-Notion 数据库（HealthLog）
-    ↓ SullyEM 打开健康 app 时增量同步
-IndexedDB（本地缓存，主存储）
-    ↑ 手动在 app 里添加的记录（不回写 Notion）
+【历史导入，一次性】
+Apple Health → 导出所有健康数据（.zip）
+    → 上传到 SullyEM → 浏览器解压+解析 XML → IndexedDB
+
+【日常同步，自动】
+Apple Health → iOS 快捷指令（每日自动）
+    → Notion HealthLog 数据库
+    → SullyEM 打开健康 app 时增量同步 → IndexedDB
+
+【手动记录】
+直接在 SullyEM 健康 app 里添加 → IndexedDB（不回写 Notion）
 ```
 
-### Notion HealthLog 数据库结构
+### 历史导入：Apple Health XML 解析
+
+Apple Health 导出路径：健康 app → 右上角头像 → 导出所有健康数据 → 生成 .zip
+
+zip 内 `export.xml` 包含所有历史数据，SullyEM 用 JSZip + DOMParser 在浏览器端解析：
+
+```
+HKCategoryTypeIdentifierMenstrualFlow  → 经期记录
+HKCategoryTypeIdentifierAbdominalCramps → 痛经症状
+HKWorkoutActivityType*                 → 锻炼记录
+```
+
+### Notion HealthLog 数据库结构（日常同步用）
 
 | 列名 | 类型 | 说明 |
 |------|------|------|
@@ -100,16 +117,7 @@ IndexedDB（本地缓存，主存储）
 | Value | Number | 时长(min) 或卡路里（锻炼用） |
 | Source | Select | apple_health / manual |
 
-### 快捷指令逻辑
-
-**历史批量导入（一次性运行）：**
-```
-循环日期范围（如过去1年）：
-  获取健康样本 → 经期（Menstrual Flow）
-  获取健身记录 → 所有锻炼
-  获取健康样本 → 症状（Symptoms / Cramps）
-  有数据则调 Notion API 写入 HealthLog
-```
+### 快捷指令逻辑（仅日常同步）
 
 **每日自动同步（每晚 22:00 触发）：**
 ```
