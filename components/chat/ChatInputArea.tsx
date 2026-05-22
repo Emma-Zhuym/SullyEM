@@ -47,10 +47,6 @@ interface ChatInputAreaProps {
     inputStyle?: 'default' | 'rounded' | 'flat' | 'wechat' | 'ios' | 'telegram' | 'discord' | 'pixel';
     sendButtonStyle?: 'circle' | 'pill' | 'minimal';
     chromeStyle?: 'soft' | 'flat' | 'floating' | 'pixel';
-    /** EM: 角色 offline 时禁用发送 */
-    charOffline?: boolean;
-    /** EM: offline 时的提示文案 */
-    charOfflineHint?: string;
 }
 
 const ChatInputArea: React.FC<ChatInputAreaProps> = ({
@@ -69,8 +65,6 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     inputStyle = 'default',
     sendButtonStyle = 'circle',
     chromeStyle = 'soft',
-    charOffline = false,
-    charOfflineHint,
 }) => {
     const chatImageInputRef = useRef<HTMLInputElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -85,7 +79,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            if (!charOffline) onSend();
+            onSend();
         }
     };
 
@@ -370,9 +364,8 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                     </div>
                     <button
                         onClick={onSend}
-                        disabled={!input.trim() || charOffline}
-                        className={`${sendButtonClass} ${(input.trim() && !charOffline) ? '' : 'opacity-45 shadow-none'}`}
-                        title={charOffline ? (charOfflineHint || '角色当前离线') : undefined}
+                        disabled={!input.trim()}
+                        className={`${sendButtonClass} ${input.trim() ? '' : 'opacity-45 shadow-none'}`}
                     >
                         {sendButtonStyle === 'pill' ? <span>发送</span> : <PaperPlaneTilt className="w-5 h-5" weight="fill" />}
                     </button>
@@ -576,27 +569,28 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                               </div>
                               <span className="text-xs font-bold">{showThinkingChain ? '思考已开' : '展示思考'}</span>
                             </button>
-                            {/* EM: Intiface 硬件 — 设备连上时才显示，点击 toggle Chat 模式 */}
-                            {intifaceClient.connected && intifaceClient.devices.length > 0 && (() => {
+                            {/* EM: Intiface 硬件 — 设置里开过 chat 模式就显示，没连设备时灰色 */}
+                            {localStorage.getItem('intiface-chat-enabled') !== null && (() => {
                               const on = localStorage.getItem('intiface-chat-enabled') === 'true';
+                              const deviceReady = intifaceClient.connected && intifaceClient.devices.length > 0;
                               return (
                                 <button
                                   onClick={() => {
                                     const next = localStorage.getItem('intiface-chat-enabled') !== 'true';
                                     localStorage.setItem('intiface-chat-enabled', String(next));
-                                    onPanelAction('close'); // 收起工具栏让用户感知到切换了
+                                    onPanelAction('close');
                                   }}
-                                  className={`flex flex-col items-center gap-2 tool-btn ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}
+                                  className={`flex flex-col items-center gap-2 tool-btn ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'} ${!deviceReady ? 'opacity-50' : ''}`}
                                 >
                                   <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border relative ${
-                                    on
+                                    on && deviceReady
                                       ? (isDiscordStyle ? 'bg-violet-500/20 text-violet-300 border-violet-400/40' : 'bg-violet-100 text-violet-600 border-violet-200')
                                       : (isDiscordStyle ? 'bg-slate-800 text-violet-300 border-violet-400/20' : 'bg-violet-50 text-violet-500 border-violet-100')
                                   }`}>
                                     <GameController className="w-6 h-6" weight="bold" />
-                                    {on && <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isDiscordStyle ? 'bg-violet-400 border-slate-900' : 'bg-violet-500 border-white'}`} />}
+                                    {on && deviceReady && <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isDiscordStyle ? 'bg-violet-400 border-slate-900' : 'bg-violet-500 border-white'}`} />}
                                   </div>
-                                  <span className="text-xs font-bold">{on ? '遥控已开' : '遥控'}</span>
+                                  <span className="text-xs font-bold">{!deviceReady ? '未连接' : on ? '遥控已开' : '遥控'}</span>
                                 </button>
                               );
                             })()}

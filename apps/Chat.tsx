@@ -70,6 +70,8 @@ const Chat: React.FC = () => {
     const [isScheduleGenerating, setIsScheduleGenerating] = useState(false);
     // EM: 角色在线状态（由日程驱动）
     const charStatusInfo = useCharStatus(scheduleData);
+    const prevCharStatusRef = useRef<string>('online');
+    const hasOfflinePendingRef = useRef(false);
     const [allHistoryMessages, setAllHistoryMessages] = useState<Message[]>([]);
     const [transferAmt, setTransferAmt] = useState('');
     const [emojiImportText, setEmojiImportText] = useState('');
@@ -179,6 +181,18 @@ const Chat: React.FC = () => {
         updateCharacter,
         charAvailability: charStatusInfo.status,
     });
+
+    // EM: offline → online 时自动触发角色回复（补回 offline 期间的未回复消息）
+    useEffect(() => {
+        const prev = prevCharStatusRef.current;
+        prevCharStatusRef.current = charStatusInfo.status;
+        if (prev === 'offline' && charStatusInfo.status !== 'offline' && hasOfflinePendingRef.current) {
+            hasOfflinePendingRef.current = false;
+            // 清掉临时的 offline_hint 消息，触发 AI 回复
+            setMessages(ms => ms.filter(m => m.metadata?.kind !== 'offline_hint'));
+            triggerAI(messages);
+        }
+    }, [charStatusInfo.status]);
 
     // --- Emma: Notion Diary Quick Action ---
     const handleNotionDiaryQuick = useCallback(async () => {
@@ -835,6 +849,24 @@ const Chat: React.FC = () => {
 
         await reloadMessages(visibleCountRef.current);
         setShowPanel('none');
+
+        // EM: 角色 offline 时发消息 → 插入系统提示，不触发 AI，标记待回复
+        if (charStatusInfo.status === 'offline' && type === 'text') {
+            hasOfflinePendingRef.current = true;
+            const hint = charStatusInfo.activity
+                ? `${char.name}正在${charStatusInfo.activity}，可能稍后才会回复`
+                : `${char.name}当前不在线，可能稍后才会回复`;
+            setMessages(prev => [...prev, {
+                id: -(Date.now()),
+                charId: char.id,
+                role: 'system' as const,
+                type: 'interaction' as MessageType,
+                content: hint,
+                timestamp: Date.now(),
+                metadata: { kind: 'offline_hint' },
+            }]);
+            return;
+        }
 
         // Instant Push 模式：发完文本自动触发 AI（响应在 worker 端跑、后台 push 回写聊天页）。
         // 本地模式仍维持手动触发以保留现有 UX。triggerAI 内部会从 DB 拉完整历史，
@@ -2461,8 +2493,6 @@ const Chat: React.FC = () => {
                     inputStyle={osTheme.chatInputStyle}
                     sendButtonStyle={osTheme.chatSendButtonStyle}
                     chromeStyle={osTheme.chatChromeStyle}
-                    charOffline={charStatusInfo.status === 'offline'}
-                    charOfflineHint={charStatusInfo.activity ? `${char.name}正在${charStatusInfo.activity}` : undefined}
                 />
             </div>
 

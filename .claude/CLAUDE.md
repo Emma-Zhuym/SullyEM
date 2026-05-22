@@ -114,7 +114,7 @@ if (m.type === 'interaction' && m.metadata?.kind === 'notion_diary_nudge') {
 - `utils/scheduleGenerator.ts` — 生成日程时 LLM 直接标注 `availability` 字段
 - `types.ts` 里 `ScheduleSlot.availability?: 'online' | 'busy' | 'offline'`
 - `ChatHeaderShell.tsx` — 状态 badge 颜色 + 文字
-- `ChatInputArea.tsx` — offline 时禁用发送
+- `Chat.tsx` — offline 时插入🌙提示气泡 + 延迟 AI 回复到 slot 结束
 - `chatRequestPayload.ts` — busy 时注入简短回复提示
 - `ScheduleCard.tsx` — 编辑时可手动覆盖状态
 - 三层判断优先级：手动覆盖 > LLM 生成 > 关键词 fallback

@@ -757,6 +757,7 @@ const timeHint = durationSec <= 240 ? '差不多是一杯咖啡的时间' : '像
     }
 
     if (m.type === 'interaction') {
+        const isOfflineHint = m.metadata?.kind === 'offline_hint';
 
         return (
             <div className={`flex flex-col items-center ${marginBottom} w-full animate-fade-in relative transition-[padding] duration-300 ${selectionMode ? 'pl-8' : ''}`}>
@@ -769,12 +770,19 @@ const timeHint = durationSec <= 240 ? '差不多是一杯咖啡的时间' : '像
                 )}
                 <div className="text-[10px] text-slate-400 mb-1 opacity-70">{formatTime(m.timestamp)}</div>
                 <div className="group relative cursor-pointer active:scale-95 transition-transform" {...interactionProps}>
+                    {isOfflineHint ? (
+                        <div className="text-[11px] text-slate-400 bg-slate-100/60 backdrop-blur-sm px-4 py-1.5 rounded-full flex items-center gap-1.5 border border-slate-200/40 shadow-sm select-none">
+                            <span className="text-sm">🌙</span>
+                            <span className="opacity-70">{m.content}</span>
+                        </div>
+                    ) : (
                         <div className="text-[11px] text-slate-500 bg-slate-200/50 backdrop-blur-sm px-4 py-1.5 rounded-full flex items-center gap-1.5 border border-white/40 shadow-sm select-none">
 <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f449.png" alt="poke" className="w-4 h-4 group-hover:animate-bounce" />
                         <span className="font-medium opacity-80">{isUser ? '你' : charName}</span>
                         <span className="opacity-60">戳了戳</span>
                         <span className="font-medium opacity-80">{isUser ? charName : '你'}</span>
-                    </div>
+                        </div>
+                    )}
                 </div>
             </div>
         );
