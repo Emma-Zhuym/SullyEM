@@ -831,6 +831,33 @@ const Chat: React.FC = () => {
         }
     };
 
+    // 顶栏 ⚡ 手动触发。instant 模式下给"上一条 assistant 之后的所有 user 消息"打上"准备中"
+    // 三个点（从写入 DB 到 POST 200 之间），POST 被 worker 接收后由 onInstantPosted 清除 ——
+    // 与 autoTriggerOnSend 自动路径的指示器行为一致。本地模式无此指示器，直接 triggerAI。
+    const handleManualTrigger = () => {
+        if (!isInstantConfigReady()) { triggerAI(messages); return; }
+        const trailingUserIds: number[] = [];
+        for (let i = messages.length - 1; i >= 0; i--) {
+            if (messages[i].role === 'assistant') break;
+            if (messages[i].role === 'user') trailingUserIds.push(messages[i].id);
+        }
+        if (trailingUserIds.length > 0) {
+            setPendingInstantMsgIds(prev => {
+                const next = new Set(prev);
+                trailingUserIds.forEach(id => next.add(id));
+                return next;
+            });
+        }
+        triggerAI(messages, undefined, () => {
+            setPendingInstantMsgIds(prev => {
+                if (trailingUserIds.every(id => !prev.has(id))) return prev;
+                const next = new Set(prev);
+                trailingUserIds.forEach(id => next.delete(id));
+                return next;
+            });
+        });
+    };
+
     const handleReroll = async () => {
         if (isTyping || messages.length === 0) return;
 
@@ -2128,7 +2155,7 @@ const Chat: React.FC = () => {
                 lastTokenUsage={lastTokenUsage}
                 tokenBreakdown={tokenBreakdown}
                 onClose={closeApp}
-                onTriggerAI={() => triggerAI(messages)}
+                onTriggerAI={handleManualTrigger}
                 onShowCharsPanel={() => setShowPanel('chars')}
                 onDeleteBuff={(buffId) => {
                     const currentBuffs = char.activeBuffs || [];
