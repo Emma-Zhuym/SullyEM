@@ -1369,6 +1369,46 @@ export interface TrackerField {
     placeholder?: string;
 }
 
+// EM: 记账重设计 — 多账户/多币种/3层分类
+export interface FinanceAccount {
+    id: string;
+    name: string;
+    type: 'checking' | 'savings' | 'credit' | 'cash';
+    currency: string;
+    initialBalance: number;
+    color: string;
+    icon?: string;
+    isArchived?: boolean;
+    sortOrder?: number;
+}
+
+export interface FinanceCategory {
+    id: string;
+    name: string;
+    icon?: string;
+    color?: string;
+    parentId?: string;
+}
+
+export type FinanceTxType = 'expense' | 'income' | 'refund' | 'transfer';
+
+export interface FinanceTransaction {
+    id: string;
+    type: FinanceTxType;
+    amount: number;
+    currency: string;
+    accountId: string;
+    categoryId: string;
+    note: string;
+    timestamp: number;
+    dateStr: string;
+    toAccountId?: string;
+    toAmount?: number;
+    toCurrency?: string;
+    refundForTxId?: string;
+    charComments?: { charId: string; comment: string; timestamp: number }[];
+}
+
 export interface Tracker {
     id: string;
     name: string;                    // "心情" / "经期" / "今天有没有偏头痛"
