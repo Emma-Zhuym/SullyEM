@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Wallet, Receipt, ChartPie, CaretLeft, Plus, Trash, GearSix } from '@phosphor-icons/react';
+import { Wallet, Receipt, ChartPie, CaretLeft, Plus, Trash, GearSix, type Icon } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { FinanceDB } from '../utils/financeDb';
 import { safeFetchJson } from '../utils/safeApi';
@@ -15,7 +15,7 @@ import { FinanceAccount, FinanceCategory, FinanceTransaction, FinanceTxType, Cha
 
 type TabId = 'assets' | 'transactions' | 'analytics';
 
-const TABS: { id: TabId; label: string; icon: React.FC<{ className?: string; weight?: string }> }[] = [
+const TABS: { id: TabId; label: string; icon: Icon }[] = [
   { id: 'assets', label: '资产', icon: Wallet },
   { id: 'transactions', label: '交易', icon: Receipt },
   { id: 'analytics', label: '分析', icon: ChartPie },
