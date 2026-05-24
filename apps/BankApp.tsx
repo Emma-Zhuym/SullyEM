@@ -9,7 +9,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Wallet, Receipt, ChartPie, CaretLeft, Plus, Trash, GearSix } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { FinanceDB } from '../utils/financeDb';
-import { FinanceAccount, FinanceCategory, FinanceTransaction } from '../types';
+import { FinanceAccount, FinanceCategory, FinanceTransaction, FinanceTxType } from '../types';
 
 type TabId = 'assets' | 'transactions' | 'analytics';
 
@@ -131,6 +131,7 @@ const BankApp: React.FC = () => {
             transactions={transactions}
             accounts={accounts}
             categories={categories}
+            onRefresh={refreshData}
           />
         )}
         {activeTab === 'analytics' && (
@@ -355,6 +356,252 @@ const FormRow: React.FC<{
   </div>
 );
 
+// ── 交易表单（添加/编辑） ──
+
+const TransactionForm: React.FC<{
+  initial?: FinanceTransaction;
+  accounts: FinanceAccount[];
+  categories: FinanceCategory[];
+  onSave: (tx: FinanceTransaction) => void;
+  onDelete?: () => void;
+  onClose: () => void;
+}> = ({ initial, accounts, categories, onSave, onDelete, onClose }) => {
+  const isEdit = !!initial;
+  const [txType, setTxType] = useState<FinanceTxType>(initial?.type || 'expense');
+  const [amount, setAmount] = useState(initial ? String(initial.amount) : '');
+  const [accountId, setAccountId] = useState(initial?.accountId || accounts[0]?.id || '');
+  const [toAccountId, setToAccountId] = useState(initial?.toAccountId || '');
+  const [categoryId, setCategoryId] = useState(initial?.categoryId || '');
+  const [note, setNote] = useState(initial?.note || '');
+  const [dateStr, setDateStr] = useState(initial?.dateStr || new Date().toISOString().split('T')[0]);
+  const [expandedTopCat, setExpandedTopCat] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const catMap = new Map(categories.map(c => [c.id, c]));
+  const selectedCat = catMap.get(categoryId);
+  const selectedAcc = accounts.find(a => a.id === accountId);
+
+  const relevantTopCats = categories.filter(c => {
+    if (c.parentId) return false;
+    if (txType === 'income' || txType === 'refund') return c.id === 'cat_income';
+    return c.id !== 'cat_income';
+  });
+
+  const handleCatClick = (catId: string) => {
+    const children = categories.filter(c => c.parentId === catId);
+    if (children.length > 0) {
+      setExpandedTopCat(prev => prev === catId ? null : catId);
+    } else {
+      setCategoryId(catId);
+      setExpandedTopCat(null);
+    }
+  };
+
+  const handleSave = () => {
+    const parsed = parseFloat(amount);
+    if (!parsed || !accountId) return;
+    onSave({
+      id: initial?.id || `tx_${Date.now()}`,
+      type: txType,
+      amount: parsed,
+      currency: selectedAcc?.currency || 'CNY',
+      accountId,
+      categoryId: categoryId || (txType === 'income' || txType === 'refund' ? 'cat_income' : 'cat_food'),
+      note: note.trim(),
+      timestamp: initial?.timestamp || Date.now(),
+      dateStr,
+      toAccountId: txType === 'transfer' ? (toAccountId || undefined) : undefined,
+      charComments: initial?.charComments,
+    });
+  };
+
+  const canSave = parseFloat(amount) > 0 && !!accountId;
+
+  if (accounts.length === 0) {
+    return (
+      <div className="absolute inset-0 z-50 flex flex-col items-center justify-center" style={{ background: 'linear-gradient(165deg, #f3f0ff 0%, #eef2ff 40%, #f0f4ff 100%)' }}>
+        <div className="text-4xl mb-3">💳</div>
+        <div className="text-slate-500 text-sm mb-1">请先在资产页添加账户</div>
+        <button onClick={onClose} className="mt-4 px-5 py-2 text-sm text-blue-500 font-medium">返回</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="absolute inset-0 z-50 flex flex-col" style={{ background: 'linear-gradient(165deg, #f3f0ff 0%, #eef2ff 40%, #f0f4ff 100%)' }}>
+      <div className="shrink-0 flex items-center justify-between px-4 pt-12 pb-3">
+        <button onClick={onClose} className="flex items-center text-blue-500 text-sm">
+          <CaretLeft className="w-5 h-5" weight="bold" /> 返回
+        </button>
+        <span className="text-sm font-semibold text-slate-700">{isEdit ? '编辑交易' : '新增交易'}</span>
+        <button
+          onClick={handleSave}
+          disabled={!canSave}
+          className="text-blue-500 text-sm font-semibold disabled:text-slate-300"
+        >
+          保存
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-5 pb-8">
+        {/* 类型切换 */}
+        <div className="bg-white rounded-2xl shadow-sm p-1.5 mb-4 flex gap-1">
+          {(['expense', 'income', 'transfer'] as const).map(t => {
+            const cfg = {
+              expense: { label: '支出', active: 'bg-rose-50 text-rose-500' },
+              income: { label: '收入', active: 'bg-emerald-50 text-emerald-600' },
+              transfer: { label: '转账', active: 'bg-blue-50 text-blue-500' },
+            }[t];
+            return (
+              <button
+                key={t}
+                onClick={() => { setTxType(t); setCategoryId(''); setExpandedTopCat(null); }}
+                className={`flex-1 py-2 rounded-xl text-sm font-medium transition-colors ${txType === t ? cfg.active : 'text-slate-400'}`}
+              >
+                {cfg.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* 金额 */}
+        <div className="bg-white rounded-2xl shadow-sm px-5 py-4 mb-4">
+          <div className="text-xs text-slate-400 mb-2">金额</div>
+          <div className="flex items-baseline gap-2">
+            <span className="text-2xl text-slate-300 font-light">
+              {CURRENCY_SYMBOLS[selectedAcc?.currency || 'CNY'] || '¥'}
+            </span>
+            <input
+              value={amount}
+              onChange={e => setAmount(e.target.value)}
+              type="number"
+              inputMode="decimal"
+              placeholder="0.00"
+              autoFocus
+              className="flex-1 text-4xl font-bold text-slate-800 outline-none bg-transparent placeholder:text-slate-200 min-w-0"
+            />
+          </div>
+        </div>
+
+        {/* 分类（转账不需要） */}
+        {txType !== 'transfer' && (
+          <div className="bg-white rounded-2xl shadow-sm p-4 mb-4">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs text-slate-400">分类</span>
+              {selectedCat && (
+                <span className="text-xs font-medium text-blue-500">
+                  {selectedCat.icon} {selectedCat.name}
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-4 gap-2">
+              {relevantTopCats.map(cat => {
+                const isActive = selectedCat?.parentId === cat.id || (categoryId === cat.id && !catMap.get(categoryId)?.parentId);
+                const isExpanded = expandedTopCat === cat.id;
+                return (
+                  <button
+                    key={cat.id}
+                    onClick={() => handleCatClick(cat.id)}
+                    className={`flex flex-col items-center gap-1 py-2.5 rounded-xl transition-all ${
+                      isActive || isExpanded ? 'bg-blue-50 ring-1 ring-blue-200' : 'bg-slate-50'
+                    }`}
+                  >
+                    <span className="text-xl">{cat.icon}</span>
+                    <span className="text-[9px] text-slate-600 leading-tight text-center">{cat.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {expandedTopCat && (
+              <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-slate-50">
+                {categories.filter(c => c.parentId === expandedTopCat).map(child => (
+                  <button
+                    key={child.id}
+                    onClick={() => { setCategoryId(child.id); setExpandedTopCat(null); }}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-colors ${
+                      categoryId === child.id ? 'bg-blue-500 text-white font-medium' : 'bg-slate-100 text-slate-600'
+                    }`}
+                  >
+                    <span>{child.icon}</span>
+                    <span>{child.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 账户 / 目标账户 / 日期 / 备注 */}
+        <div className="bg-white rounded-2xl shadow-sm mb-4 overflow-hidden">
+          <FormRow label="账户">
+            <select
+              value={accountId}
+              onChange={e => setAccountId(e.target.value)}
+              className="w-full text-right text-sm text-slate-700 outline-none bg-transparent appearance-none"
+            >
+              {accounts.filter(a => !a.isArchived).map(a => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+          </FormRow>
+          {txType === 'transfer' && (
+            <FormRow label="转入账户" border>
+              <select
+                value={toAccountId}
+                onChange={e => setToAccountId(e.target.value)}
+                className="w-full text-right text-sm text-slate-700 outline-none bg-transparent appearance-none"
+              >
+                <option value="">请选择</option>
+                {accounts.filter(a => !a.isArchived && a.id !== accountId).map(a => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+            </FormRow>
+          )}
+          <FormRow label="日期" border>
+            <input
+              type="date"
+              value={dateStr}
+              onChange={e => setDateStr(e.target.value)}
+              className="w-full text-right text-sm text-slate-700 outline-none bg-transparent"
+            />
+          </FormRow>
+          <FormRow label="备注" border>
+            <input
+              value={note}
+              onChange={e => setNote(e.target.value)}
+              placeholder="可选"
+              className="w-full text-right text-sm text-slate-700 outline-none bg-transparent placeholder:text-slate-300"
+            />
+          </FormRow>
+        </div>
+
+        {/* 删除 */}
+        {isEdit && onDelete && (
+          <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+            {!confirmDelete ? (
+              <button
+                onClick={() => setConfirmDelete(true)}
+                className="w-full py-3.5 text-sm text-red-500 font-medium flex items-center justify-center gap-1.5"
+              >
+                <Trash className="w-4 h-4" /> 删除交易
+              </button>
+            ) : (
+              <div className="p-4 text-center">
+                <div className="text-sm text-slate-600 mb-3">确定删除这条交易记录？</div>
+                <div className="flex gap-3 justify-center">
+                  <button onClick={() => setConfirmDelete(false)} className="px-4 py-2 text-sm text-slate-500 bg-slate-100 rounded-xl">取消</button>
+                  <button onClick={onDelete} className="px-4 py-2 text-sm text-white bg-red-500 rounded-xl">删除</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // ── 资产 Tab ──
 
 const AssetsTab: React.FC<{
@@ -538,11 +785,34 @@ const TransactionsTab: React.FC<{
   transactions: FinanceTransaction[];
   accounts: FinanceAccount[];
   categories: FinanceCategory[];
-}> = ({ transactions, accounts, categories }) => {
+  onRefresh: () => Promise<void>;
+}> = ({ transactions, accounts, categories, onRefresh }) => {
   const [timeRange, setTimeRange] = useState<TimeRange>('month');
   const [filterAccountId, setFilterAccountId] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<'all' | 'expense' | 'income'>('all');
   const [showFilters, setShowFilters] = useState(false);
+  const [editingTx, setEditingTx] = useState<FinanceTransaction | 'new' | null>(null);
+
+  if (editingTx !== null) {
+    return (
+      <TransactionForm
+        initial={editingTx === 'new' ? undefined : editingTx}
+        accounts={accounts}
+        categories={categories}
+        onSave={async (tx) => {
+          await FinanceDB.saveTransaction(tx);
+          await onRefresh();
+          setEditingTx(null);
+        }}
+        onDelete={editingTx !== 'new' ? async () => {
+          await FinanceDB.deleteTransaction((editingTx as FinanceTransaction).id);
+          await onRefresh();
+          setEditingTx(null);
+        } : undefined}
+        onClose={() => setEditingTx(null)}
+      />
+    );
+  }
 
   const { from, to } = getDateRange(timeRange);
 
@@ -669,9 +939,10 @@ const TransactionsTab: React.FC<{
                   const acc = accMap.get(t.accountId);
                   const sym = CURRENCY_SYMBOLS[t.currency] || '$';
                   return (
-                    <div
+                    <button
                       key={t.id}
-                      className={`flex items-center px-4 py-3 ${
+                      onClick={() => setEditingTx(t)}
+                      className={`w-full flex items-center px-4 py-3 text-left active:bg-slate-50 transition-colors ${
                         i < txs.length - 1 ? 'border-b border-slate-50' : ''
                       }`}
                     >
@@ -688,7 +959,7 @@ const TransactionsTab: React.FC<{
                         {t.type === 'income' || t.type === 'refund' ? '+' : '-'}{sym}{t.amount.toLocaleString()}
                       </div>
                       <div className="text-slate-300 ml-2 text-xs">›</div>
-                    </div>
+                    </button>
                   );
                 })}
               </div>
@@ -698,7 +969,10 @@ const TransactionsTab: React.FC<{
       )}
 
       {/* 新增按钮 */}
-      <button className="fixed right-5 bottom-24 w-14 h-14 bg-blue-500 text-white rounded-2xl shadow-lg flex items-center justify-center text-2xl font-light active:scale-90 transition-transform z-10">
+      <button
+        onClick={() => setEditingTx('new')}
+        className="fixed right-5 bottom-24 w-14 h-14 bg-blue-500 text-white rounded-2xl shadow-lg flex items-center justify-center text-2xl font-light active:scale-90 transition-transform z-10"
+      >
         +
       </button>
     </div>

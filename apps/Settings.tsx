@@ -1666,7 +1666,7 @@ const Settings: React.FC = () => {
             {intiface.status === 'connected' && intiface.devices.length > 0 && (
                 <button
                     type="button"
-                    onPointerDown={() => intiface.vibrate(30, 'pulse')}
+                    onPointerDown={() => intiface.vibrate(60)}
                     onPointerUp={() => intiface.stop()}
                     onPointerLeave={() => intiface.stop()}
                     className="w-full py-2 rounded-2xl text-xs font-bold text-violet-600 bg-violet-50 border border-violet-100 active:scale-95 transition-all mb-3"

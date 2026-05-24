@@ -123,10 +123,12 @@ class IntifaceClientSingleton {
     const clamped = Math.max(0, Math.min(100, Math.round(intensity)));
     this._currentIntensity = clamped;
 
-    const cmd = DeviceOutput.Vibrate.percent(clamped / 100);
+    const pct = clamped / 100;
     for (const device of this._devices) {
       if (device.hasOutput(OutputType.Vibrate)) {
-        try { await device.runOutput(cmd); } catch { /* device may have disconnected */ }
+        try { await device.runOutput(DeviceOutput.Vibrate.percent(pct)); } catch { /* disconnected */ }
+      } else if (device.hasOutput(OutputType.Oscillate)) {
+        try { await device.runOutput(DeviceOutput.Oscillate.percent(pct)); } catch { /* disconnected */ }
       }
     }
   }
