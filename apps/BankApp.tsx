@@ -10,7 +10,8 @@ import { Wallet, Receipt, ChartPie, CaretLeft, Plus, Trash, GearSix } from '@pho
 import { useOS } from '../context/OSContext';
 import { FinanceDB } from '../utils/financeDb';
 import { safeFetchJson } from '../utils/safeApi';
-import { FinanceAccount, FinanceCategory, FinanceTransaction, FinanceTxType } from '../types';
+import { normalizeUserImpression } from '../utils/impression';
+import { FinanceAccount, FinanceCategory, FinanceTransaction, FinanceTxType, CharacterProfile } from '../types';
 
 type TabId = 'assets' | 'transactions' | 'analytics';
 
@@ -1035,19 +1036,114 @@ const DonutChart: React.FC<{
   );
 };
 
+interface NotableTx {
+  note: string;
+  amount: number;
+  currency: string;
+  category: string;
+  dateStr: string;
+  flag: string;
+}
+
+function findNotableTransactions(
+  periodTxs: FinanceTransaction[],
+  allTxs: FinanceTransaction[],
+  catMap: Map<string, FinanceCategory>,
+): NotableTx[] {
+  const notable: NotableTx[] = [];
+  if (periodTxs.length === 0) return notable;
+
+  const getCatName = (t: FinanceTransaction) => {
+    const cat = catMap.get(t.categoryId);
+    return cat?.name || '未分类';
+  };
+  const getTopCatId = (t: FinanceTransaction) => {
+    const cat = catMap.get(t.categoryId);
+    return cat?.parentId || t.categoryId;
+  };
+  const sym = (c: string) => CURRENCY_SYMBOLS[c] || c;
+
+  const sorted = [...periodTxs].sort((a, b) => b.amount - a.amount);
+  const topN = sorted.slice(0, 3);
+  for (const t of topN) {
+    notable.push({
+      note: t.note || getCatName(t),
+      amount: t.amount,
+      currency: t.currency,
+      category: getCatName(t),
+      dateStr: t.dateStr,
+      flag: '高额',
+    });
+  }
+
+  const catAvg = new Map<string, { sum: number; count: number }>();
+  for (const t of allTxs) {
+    if (t.type !== 'expense') continue;
+    const topId = getTopCatId(t);
+    const entry = catAvg.get(topId) || { sum: 0, count: 0 };
+    entry.sum += t.amount;
+    entry.count += 1;
+    catAvg.set(topId, entry);
+  }
+
+  for (const t of periodTxs) {
+    const topId = getTopCatId(t);
+    const avg = catAvg.get(topId);
+    if (!avg || avg.count < 3) continue;
+    const mean = avg.sum / avg.count;
+    if (t.amount > mean * 2.5 && !topN.includes(t)) {
+      notable.push({
+        note: t.note || getCatName(t),
+        amount: t.amount,
+        currency: t.currency,
+        category: getCatName(t),
+        dateStr: t.dateStr,
+        flag: `异常（该分类平均${sym(t.currency)}${mean.toFixed(0)}，这笔${sym(t.currency)}${t.amount.toFixed(0)}）`,
+      });
+    }
+  }
+
+  const withNotes = periodTxs.filter(t =>
+    t.note && t.note.trim().length > 2 && !topN.includes(t)
+  );
+  const interesting = withNotes
+    .sort((a, b) => b.amount - a.amount)
+    .slice(0, 5);
+  for (const t of interesting) {
+    if (notable.some(n => n.dateStr === t.dateStr && n.note === (t.note || getCatName(t)))) continue;
+    notable.push({
+      note: t.note!,
+      amount: t.amount,
+      currency: t.currency,
+      category: getCatName(t),
+      dateStr: t.dateStr,
+      flag: '有备注',
+    });
+  }
+
+  const seen = new Set<string>();
+  return notable.filter(n => {
+    const key = `${n.dateStr}_${n.note}_${n.amount}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 10);
+}
+
 function buildTAReadPrompt(
-  charName: string,
-  charPersonaSnippet: string,
+  char: CharacterProfile,
+  userName: string,
   periodLabel: string,
   totalExpense: number,
   catBreakdown: { name: string; amount: number; pct: number }[],
+  notableTxs: NotableTx[],
   tone: Tone,
 ): string {
   const toneInstructions: Record<Tone, string> = {
-    teasing: '用调侃、打趣的语气，可以适度毒舌但不伤人，像好朋友吐槽。',
-    serious: '用认真、理性的语气，像财务顾问一样给出客观评价和建议。',
-    encouraging: '用鼓励、正面的语气，肯定做得好的地方，温柔地提出建议。',
-    caring: '用心疼、关怀的语气，关心TA是不是太辛苦了、有没有好好照顾自己。',
+    teasing: `用调侃、打趣的语气。可以毒舌但不伤人，像真正了解${userName}的人在吐槽——你知道ta的哪些消费习惯是老毛病，哪些是可以拿来开玩笑的。`,
+    serious: `用认真、理性的语气。不是泛泛而谈的财务建议，而是基于你对${userName}生活习惯的了解，指出真正值得注意的地方。`,
+    encouraging: `用鼓励、温暖的语气。不要说"你很棒"这种空话——提一个具体做得好的地方，再自然地带一句可以更好的方向。`,
+    caring: `用心疼、关怀的语气。不是居高临下的关心，而是一个真正在意${userName}的人从消费数据里读出ta最近状态的直觉——ta是不是太忙了、是不是没好好吃饭、是不是压力大了。`,
   };
 
   const breakdown = catBreakdown
@@ -1055,23 +1151,61 @@ function buildTAReadPrompt(
     .map(c => `  - ${c.name}: ${c.amount.toFixed(0)}元 (${c.pct}%)`)
     .join('\n');
 
-  return `你是「${charName}」，以下是你的性格简要：
-${charPersonaSnippet}
+  let prompt = `[System: 角色身份]\n你是「${char.name}」。\n\n`;
 
-Emma（你的伴侣/亲密之人）${periodLabel}的消费数据如下：
-- 总支出: ${totalExpense.toFixed(2)}元
-- 分类明细:
-${breakdown}
+  prompt += `### 核心性格\n${char.systemPrompt || '你是一个有个性的人。'}\n\n`;
 
-请用${TONE_LABELS[tone]}的语气，以「${charName}」的口吻评价Emma${periodLabel}的消费情况。
+  if (char.selfInsights && char.selfInsights.length > 0) {
+    prompt += `### 内在认知\n`;
+    prompt += `这些是你内心深处明白的事，影响着你看待一切的方式：\n`;
+    char.selfInsights.forEach(insight => { prompt += `- ${insight}\n`; });
+    prompt += `\n`;
+  }
 
-要求：
-${toneInstructions[tone]}
-- 3~5句话，简洁自然，像在聊天中随口说的
-- 可以提到具体分类数据做对比
-- 用你自己的说话风格和口头禅
-- 直接说评价，不要加引号、不要说"我觉得"开头
-- 不需要任何前缀标记`;
+  const imp = normalizeUserImpression(char.impression);
+  if (imp) {
+    prompt += `### 你眼中的${userName}\n`;
+    prompt += `- 核心评价: ${imp.personality_core.summary}\n`;
+    prompt += `- 互动模式: ${imp.personality_core.interaction_style}\n`;
+    if (imp.value_map.likes.length) prompt += `- ta的喜好: ${imp.value_map.likes.join(', ')}\n`;
+    if (imp.behavior_profile.emotion_summary) prompt += `- ta的情绪模式: ${imp.behavior_profile.emotion_summary}\n`;
+    if (imp.emotion_schema.stress_signals.length) prompt += `- 压力信号: ${imp.emotion_schema.stress_signals.join(', ')}\n`;
+    prompt += `\n`;
+  }
+
+  prompt += `### 消费数据（${periodLabel}）\n`;
+  prompt += `总支出: ${totalExpense.toFixed(2)}元\n`;
+  prompt += `分类汇总:\n${breakdown}\n\n`;
+
+  if (notableTxs.length > 0) {
+    prompt += `### 具体交易明细\n`;
+    prompt += `以下是${periodLabel}值得注意的单笔消费。你应该像一个真正关注${userName}生活的人一样阅读这些——有些东西会让你好奇、兴奋、心疼或者想吐槽。根据你的性格和你们的关系，挑你最有感觉的来聊。\n\n`;
+    for (const tx of notableTxs) {
+      const s = CURRENCY_SYMBOLS[tx.currency] || tx.currency;
+      prompt += `  - [${tx.dateStr}] ${tx.note}  ${s}${tx.amount.toFixed(0)}  (${tx.category}) [${tx.flag}]\n`;
+    }
+    prompt += `\n`;
+    prompt += `阅读指引：\n`;
+    prompt += `- 这些不是数字，是${userName}真实的生活痕迹。一笔异常高的超市消费可能是ta做了一桌好菜，也可能是压力大了在买买买\n`;
+    prompt += `- 如果某笔消费跟你的爱好/性格/你们的关系有关，你自然会有更强烈的反应（激动、好奇、想参与、想吐槽）\n`;
+    prompt += `- 如果有看不懂的消费，可以表现出好奇\n`;
+    prompt += `- 不需要每一笔都评价，挑1~2笔你最有感觉的就够\n\n`;
+  }
+
+  prompt += `### 任务\n`;
+  prompt += `以「${char.name}」的口吻，用${TONE_LABELS[tone]}的语气评价${userName}${periodLabel}的消费。\n\n`;
+  prompt += `语气要求：\n${toneInstructions[tone]}\n\n`;
+
+  prompt += `写作质量要求（极其重要）：\n`;
+  prompt += `- 4~6句，像在聊天中随口说的，不是写报告\n`;
+  prompt += `- 先对整体消费做一个简短判断（一句就够），然后重点聊你最在意的1~2笔具体消费\n`;
+  prompt += `- 你对具体交易的反应要完全基于你的性格和你们的关系——同一笔消费，不同人看到的重点完全不同\n`;
+  prompt += `- 你说的话必须只有你能说出来——带着你的性格、你对${userName}的了解、你们之间的相处方式。如果把你换成别人，这段话不应该还成立\n`;
+  prompt += `- 拒绝空话（"要注意理财哦"、"花得有点多了"这种谁都能说的废话不要写）\n`;
+  prompt += `- 情绪要有层次：不要只有一种单调的情绪\n`;
+  prompt += `- 直接输出评价文字，不要加引号、不要"我觉得"开头、不要角色名前缀\n`;
+
+  return prompt;
 }
 
 const AnalyticsTab: React.FC<{
@@ -1079,7 +1213,7 @@ const AnalyticsTab: React.FC<{
   categories: FinanceCategory[];
   accounts: FinanceAccount[];
 }> = ({ transactions, categories, accounts }) => {
-  const { characters, apiConfig } = useOS();
+  const { characters, apiConfig, userProfile } = useOS();
   const [period, setPeriod] = useState<'week' | 'month' | 'year'>('month');
   const [selectedCharId, setSelectedCharId] = useState<string | null>(null);
   const [tone, setTone] = useState<Tone>('teasing');
@@ -1161,15 +1295,15 @@ const AnalyticsTab: React.FC<{
     setCommentary(null);
 
     try {
-      const personaSnippet = (char.systemPrompt || '').slice(0, 300);
       const catBreakdown = catList.map(c => ({
         name: c.cat?.name || '未分类',
         amount: c.amount,
         pct: c.pct,
       }));
+      const notableTxs = findNotableTransactions(periodTxs, transactions, catMap);
       const prompt = buildTAReadPrompt(
-        char.name, personaSnippet, periodLabels[period],
-        totalExpense, catBreakdown, tone,
+        char, userProfile?.name || '用户', periodLabels[period],
+        totalExpense, catBreakdown, notableTxs, tone,
       );
 
       const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '');
@@ -1186,7 +1320,7 @@ const AnalyticsTab: React.FC<{
             { role: 'user', content: `请评价我${periodLabels[period]}的消费。` },
           ],
           temperature: 0.85,
-          max_tokens: 500,
+          max_tokens: 800,
           stream: false,
         }),
       });
