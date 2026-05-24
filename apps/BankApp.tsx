@@ -9,6 +9,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Wallet, Receipt, ChartPie, CaretLeft, Plus, Trash, GearSix } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { FinanceDB } from '../utils/financeDb';
+import { safeFetchJson } from '../utils/safeApi';
 import { FinanceAccount, FinanceCategory, FinanceTransaction, FinanceTxType } from '../types';
 
 type TabId = 'assets' | 'transactions' | 'analytics';
@@ -138,6 +139,7 @@ const BankApp: React.FC = () => {
           <AnalyticsTab
             transactions={transactions}
             categories={categories}
+            accounts={accounts}
           />
         )}
       </div>
@@ -981,11 +983,109 @@ const TransactionsTab: React.FC<{
 
 // ── 分析 + TA 读 Tab ──
 
+const CHART_COLORS = [
+  '#FF6B6B', '#FFA06B', '#FFD93D', '#6BCB77', '#4D96FF',
+  '#9B59B6', '#FF85A1', '#00BCD4', '#FF7043', '#78909C',
+];
+
+type Tone = 'teasing' | 'serious' | 'encouraging' | 'caring';
+const TONE_LABELS: Record<Tone, string> = {
+  teasing: '调侃', serious: '严肃', encouraging: '鼓励', caring: '心疼',
+};
+
+const DonutChart: React.FC<{
+  data: { label: string; value: number; color: string }[];
+  total: number;
+  centerLabel: string;
+}> = ({ data, total, centerLabel }) => {
+  const size = 160;
+  const strokeWidth = 28;
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  let cumulativeOffset = 0;
+
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="mx-auto">
+      <circle
+        cx={size / 2} cy={size / 2} r={radius}
+        fill="none" stroke="#f1f5f9" strokeWidth={strokeWidth}
+      />
+      {data.map((seg, i) => {
+        const pct = total > 0 ? seg.value / total : 0;
+        const segLen = pct * circumference;
+        const offset = cumulativeOffset;
+        cumulativeOffset += segLen;
+        if (segLen < 0.5) return null;
+        return (
+          <circle
+            key={i}
+            cx={size / 2} cy={size / 2} r={radius}
+            fill="none" stroke={seg.color} strokeWidth={strokeWidth}
+            strokeDasharray={`${segLen} ${circumference - segLen}`}
+            strokeDashoffset={-offset}
+            strokeLinecap="round"
+            transform={`rotate(-90 ${size / 2} ${size / 2})`}
+            style={{ transition: 'stroke-dasharray 0.5s ease, stroke-dashoffset 0.5s ease' }}
+          />
+        );
+      })}
+      <text x={size / 2} y={size / 2 - 6} textAnchor="middle" className="fill-slate-400 text-[10px]">支出</text>
+      <text x={size / 2} y={size / 2 + 12} textAnchor="middle" className="fill-slate-800 text-sm font-bold">{centerLabel}</text>
+    </svg>
+  );
+};
+
+function buildTAReadPrompt(
+  charName: string,
+  charPersonaSnippet: string,
+  periodLabel: string,
+  totalExpense: number,
+  catBreakdown: { name: string; amount: number; pct: number }[],
+  tone: Tone,
+): string {
+  const toneInstructions: Record<Tone, string> = {
+    teasing: '用调侃、打趣的语气，可以适度毒舌但不伤人，像好朋友吐槽。',
+    serious: '用认真、理性的语气，像财务顾问一样给出客观评价和建议。',
+    encouraging: '用鼓励、正面的语气，肯定做得好的地方，温柔地提出建议。',
+    caring: '用心疼、关怀的语气，关心TA是不是太辛苦了、有没有好好照顾自己。',
+  };
+
+  const breakdown = catBreakdown
+    .slice(0, 6)
+    .map(c => `  - ${c.name}: ${c.amount.toFixed(0)}元 (${c.pct}%)`)
+    .join('\n');
+
+  return `你是「${charName}」，以下是你的性格简要：
+${charPersonaSnippet}
+
+Emma（你的伴侣/亲密之人）${periodLabel}的消费数据如下：
+- 总支出: ${totalExpense.toFixed(2)}元
+- 分类明细:
+${breakdown}
+
+请用${TONE_LABELS[tone]}的语气，以「${charName}」的口吻评价Emma${periodLabel}的消费情况。
+
+要求：
+${toneInstructions[tone]}
+- 3~5句话，简洁自然，像在聊天中随口说的
+- 可以提到具体分类数据做对比
+- 用你自己的说话风格和口头禅
+- 直接说评价，不要加引号、不要说"我觉得"开头
+- 不需要任何前缀标记`;
+}
+
 const AnalyticsTab: React.FC<{
   transactions: FinanceTransaction[];
   categories: FinanceCategory[];
-}> = ({ transactions, categories }) => {
+  accounts: FinanceAccount[];
+}> = ({ transactions, categories, accounts }) => {
+  const { characters, apiConfig } = useOS();
   const [period, setPeriod] = useState<'week' | 'month' | 'year'>('month');
+  const [selectedCharId, setSelectedCharId] = useState<string | null>(null);
+  const [tone, setTone] = useState<Tone>('teasing');
+  const [commentary, setCommentary] = useState<string | null>(null);
+  const [loadingComment, setLoadingComment] = useState(false);
+  const commentCache = useRef<Map<string, string>>(new Map());
 
   const now = new Date();
   let fromDate: string;
@@ -1006,7 +1106,6 @@ const AnalyticsTab: React.FC<{
   const totalExpense = periodTxs.reduce((s, t) => s + t.amount, 0);
 
   const catMap = new Map(categories.map(c => [c.id, c]));
-  const topCats = categories.filter(c => !c.parentId);
 
   const byCat = new Map<string, number>();
   for (const t of periodTxs) {
@@ -1016,14 +1115,102 @@ const AnalyticsTab: React.FC<{
   }
 
   const catList = Array.from(byCat.entries())
-    .map(([catId, amount]) => ({
+    .map(([catId, amount], i) => ({
       cat: catMap.get(catId),
       amount,
       pct: totalExpense > 0 ? Math.round((amount / totalExpense) * 100) : 0,
+      color: CHART_COLORS[i % CHART_COLORS.length],
     }))
     .sort((a, b) => b.amount - a.amount);
 
+  const donutData = catList.map(c => ({
+    label: c.cat?.name || '未分类',
+    value: c.amount,
+    color: c.color,
+  }));
+
   const periodLabels = { week: '本周', month: '本月', year: '今年' };
+
+  const availableChars = characters.filter(c =>
+    !c.id.includes('sully') && !c.id.includes('persephone')
+  );
+
+  useEffect(() => {
+    setCommentary(null);
+    setSelectedCharId(null);
+    commentCache.current.clear();
+  }, [period]);
+
+  const handleSelectChar = (charId: string) => {
+    setSelectedCharId(charId);
+    const cacheKey = `${charId}_${period}_${tone}`;
+    const cached = commentCache.current.get(cacheKey);
+    setCommentary(cached || null);
+  };
+
+  const generateCommentary = async () => {
+    if (!selectedCharId || !apiConfig?.baseUrl) return;
+    const char = characters.find(c => c.id === selectedCharId);
+    if (!char) return;
+
+    const cacheKey = `${selectedCharId}_${period}_${tone}`;
+    const cached = commentCache.current.get(cacheKey);
+    if (cached) { setCommentary(cached); return; }
+
+    setLoadingComment(true);
+    setCommentary(null);
+
+    try {
+      const personaSnippet = (char.systemPrompt || '').slice(0, 300);
+      const catBreakdown = catList.map(c => ({
+        name: c.cat?.name || '未分类',
+        amount: c.amount,
+        pct: c.pct,
+      }));
+      const prompt = buildTAReadPrompt(
+        char.name, personaSnippet, periodLabels[period],
+        totalExpense, catBreakdown, tone,
+      );
+
+      const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '');
+      const data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiConfig.apiKey || 'sk-none'}`,
+        },
+        body: JSON.stringify({
+          model: apiConfig.model,
+          messages: [
+            { role: 'system', content: prompt },
+            { role: 'user', content: `请评价我${periodLabels[period]}的消费。` },
+          ],
+          temperature: 0.85,
+          max_tokens: 500,
+          stream: false,
+        }),
+      });
+
+      const reply = data?.choices?.[0]?.message?.content?.trim() || '';
+      if (reply) {
+        commentCache.current.set(cacheKey, reply);
+        setCommentary(reply);
+      }
+    } catch (e) {
+      setCommentary('生成失败，请检查 API 配置。');
+    } finally {
+      setLoadingComment(false);
+    }
+  };
+
+  const handleToneChange = (t: Tone) => {
+    setTone(t);
+    if (selectedCharId) {
+      const cacheKey = `${selectedCharId}_${period}_${t}`;
+      const cached = commentCache.current.get(cacheKey);
+      setCommentary(cached || null);
+    }
+  };
 
   return (
     <div className="px-5 pt-2 pb-4">
@@ -1034,9 +1221,7 @@ const AnalyticsTab: React.FC<{
             key={p}
             onClick={() => setPeriod(p)}
             className={`px-4 py-1.5 text-xs rounded-full font-medium transition-colors ${
-              period === p
-                ? 'bg-blue-500 text-white'
-                : 'bg-slate-100 text-slate-500'
+              period === p ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-500'
             }`}
           >
             {p === 'week' ? '周' : p === 'month' ? '月' : '年'}
@@ -1047,14 +1232,16 @@ const AnalyticsTab: React.FC<{
       {/* 支出总额 */}
       <div className="mb-4">
         <div className="text-xs text-slate-400 mb-1">{periodLabels[period]}支出</div>
-        <div className="text-2xl font-bold text-slate-800">${totalExpense.toLocaleString()}</div>
+        <div className="text-2xl font-bold text-slate-800">{formatAmount(totalExpense)}</div>
       </div>
 
-      {/* 饼图占位 */}
+      {/* 饼图 */}
       <div className="bg-white rounded-2xl shadow-sm p-4 mb-5">
-        <div className="h-40 flex items-center justify-center text-slate-300 text-sm">
-          分类饼图（待实现）
-        </div>
+        {catList.length === 0 ? (
+          <div className="h-40 flex items-center justify-center text-slate-300 text-sm">暂无数据</div>
+        ) : (
+          <DonutChart data={donutData} total={totalExpense} centerLabel={formatAmount(totalExpense)} />
+        )}
       </div>
 
       {/* 分类列表 */}
@@ -1062,25 +1249,26 @@ const AnalyticsTab: React.FC<{
         <div className="text-center py-8 text-slate-400 text-sm">暂无支出数据</div>
       ) : (
         <div className="bg-white rounded-2xl shadow-sm overflow-hidden mb-6">
-          {catList.map(({ cat, amount, pct }, i) => (
+          {catList.map(({ cat, amount, pct, color }, i) => (
             <div
               key={cat?.id || i}
               className={`flex items-center px-4 py-3 ${
                 i < catList.length - 1 ? 'border-b border-slate-50' : ''
               }`}
             >
-              <span className="text-base mr-3">{cat?.icon || '📋'}</span>
+              <div className="w-3 h-3 rounded-full shrink-0 mr-2.5" style={{ backgroundColor: color }} />
+              <span className="text-base mr-2">{cat?.icon || '📋'}</span>
               <div className="flex-1 min-w-0">
                 <div className="text-sm text-slate-700">{cat?.name || '未分类'}</div>
                 <div className="w-full h-1.5 bg-slate-100 rounded-full mt-1.5 overflow-hidden">
                   <div
-                    className="h-full bg-blue-400 rounded-full transition-all"
-                    style={{ width: `${pct}%` }}
+                    className="h-full rounded-full transition-all"
+                    style={{ width: `${pct}%`, backgroundColor: color }}
                   />
                 </div>
               </div>
               <div className="text-right ml-3">
-                <div className="text-sm font-semibold text-slate-700">${amount.toLocaleString()}</div>
+                <div className="text-sm font-semibold text-slate-700">{formatAmount(amount)}</div>
                 <div className="text-[10px] text-slate-400">{pct}%</div>
               </div>
             </div>
@@ -1092,19 +1280,76 @@ const AnalyticsTab: React.FC<{
       <div className="bg-white rounded-2xl shadow-sm p-4">
         <div className="text-sm font-medium text-slate-700 mb-3">TA 怎么看</div>
         <div className="text-xs text-slate-400 mb-3">选一个角色来评价你{periodLabels[period]}的消费</div>
-        <div className="flex gap-2 mb-4">
-          {['小帕', '陈照', '陆时'].map(name => (
+
+        {/* 角色选择 */}
+        <div className="flex gap-2 mb-3 overflow-x-auto pb-1 scrollbar-none">
+          {availableChars.map(c => (
             <button
-              key={name}
-              className="px-3 py-1.5 text-xs rounded-full bg-slate-100 text-slate-500 font-medium"
+              key={c.id}
+              onClick={() => handleSelectChar(c.id)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors shrink-0 ${
+                selectedCharId === c.id ? 'bg-blue-500 text-white shadow-sm' : 'bg-slate-100 text-slate-500'
+              }`}
             >
-              {name}
+              {c.avatar ? (
+                <img src={c.avatar} className="w-4 h-4 rounded-full object-cover" />
+              ) : null}
+              {c.name}
             </button>
           ))}
         </div>
-        <div className="text-center py-6 text-slate-300 text-sm">
-          点击角色生成评价（待实现）
-        </div>
+
+        {/* 语气切换 */}
+        {selectedCharId && (
+          <div className="flex gap-2 mb-4">
+            {(Object.entries(TONE_LABELS) as [Tone, string][]).map(([t, label]) => (
+              <button
+                key={t}
+                onClick={() => handleToneChange(t)}
+                className={`px-3 py-1 text-[11px] rounded-full font-medium transition-colors ${
+                  tone === t ? 'bg-violet-100 text-violet-600' : 'bg-slate-50 text-slate-400'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* 评论内容 */}
+        {!selectedCharId ? (
+          <div className="text-center py-6 text-slate-300 text-sm">点击上方角色开始</div>
+        ) : commentary ? (
+          <div className="py-3">
+            <div className="text-sm text-slate-600 leading-relaxed whitespace-pre-wrap mb-3">
+              「{commentary}」
+            </div>
+            <button
+              onClick={() => {
+                const cacheKey = `${selectedCharId}_${period}_${tone}`;
+                commentCache.current.delete(cacheKey);
+                generateCommentary();
+              }}
+              disabled={loadingComment}
+              className="text-xs text-blue-400 font-medium disabled:text-slate-300"
+            >
+              换一个说法
+            </button>
+          </div>
+        ) : (
+          <div className="text-center py-6">
+            <button
+              onClick={generateCommentary}
+              disabled={loadingComment || totalExpense === 0}
+              className="px-5 py-2.5 bg-blue-500 text-white text-sm rounded-xl font-medium active:scale-95 transition-transform disabled:bg-slate-200 disabled:text-slate-400"
+            >
+              {loadingComment ? '生成中...' : `让${characters.find(c => c.id === selectedCharId)?.name || 'TA'}来说说`}
+            </button>
+            {totalExpense === 0 && (
+              <div className="text-[11px] text-slate-300 mt-2">没有消费数据</div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
