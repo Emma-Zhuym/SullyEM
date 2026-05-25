@@ -9,6 +9,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Wallet, Receipt, ChartPie, CaretLeft, CaretRight, Plus, Trash, GearSix, type Icon } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { FinanceDB } from '../utils/financeDb';
+import { DB } from '../utils/db';
 import { safeFetchJson } from '../utils/safeApi';
 import { normalizeUserImpression } from '../utils/impression';
 import { MemoryNodeDB, bm25Search } from '../utils/memoryPalace';
@@ -1297,29 +1298,28 @@ const TransactionsTab: React.FC<{
     if (!apiConfig?.baseUrl || characters.length === 0) return;
     setGossipLoading(true);
     try {
-      // 随机选角色
-      const char = characters[Math.floor(Math.random() * characters.length)];
-      setGossipChar(char);
+      // 读取所有角色今天的日程，随机选一个有日程的
+      const today = new Date().toISOString().split('T')[0];
+      const schedules = await Promise.all(
+        characters.map(async c => ({
+          char: c,
+          schedule: await DB.getDailySchedule(c.id, today).catch(() => null),
+        }))
+      );
+      const withSchedule = schedules.filter(s => s.schedule && s.schedule.slots.length > 0);
+      const pick = withSchedule.length > 0
+        ? withSchedule[Math.floor(Math.random() * withSchedule.length)]
+        : { char: characters[Math.floor(Math.random() * characters.length)], schedule: null };
 
-      // 取最近 7 天交易
-      const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 7);
-      const weekStr = weekAgo.toISOString().split('T')[0];
-      const recentTxs = transactions
-        .filter(t => t.dateStr >= weekStr)
-        .sort((a, b) => b.timestamp - a.timestamp)
-        .slice(0, 15);
+      setGossipChar(pick.char);
 
-      const catMap = new Map(categories.map(c => [c.id, c]));
-      const txSummary = recentTxs.length > 0
-        ? recentTxs.map(t => {
-          const cat = catMap.get(t.categoryId);
-          const sym = CURRENCY_SYMBOLS[t.currency] || '¥';
-          return `${t.dateStr} ${t.type === 'income' ? '+' : '-'}${sym}${t.amount} ${cat?.name || ''} ${t.note || ''}`.trim();
-        }).join('\n')
-        : '最近没有交易记录';
+      const slotsSummary = pick.schedule
+        ? pick.schedule.slots.map((s: { startTime: string; activity: string; emoji?: string; location?: string }) =>
+          `${s.startTime} ${s.emoji || ''} ${s.activity}${s.location ? `（在${s.location}）` : ''}`
+        ).join('\n')
+        : '今天没有日程安排';
 
-      const userName = userProfile?.name || '用户';
-      const prompt = `你是「${char.name}」。\n${char.systemPrompt || ''}\n\n${userName}最近的消费记录：\n${txSummary}\n\n用1~2句话随意评论一下${userName}最近的某条消费，像在聊天时随口提一嘴。语气要完全符合你的性格，可以好奇、吐槽、关心、开玩笑，随你。不要罗列数据，不要"我注意到"开头，不要加引号或角色名前缀。`;
+      const prompt = `你是一个写八卦情报的旁白系统。根据角色「${pick.char.name}」今天的日程，写一条简短的情报/八卦，像咖啡馆里听来的小道消息。\n\n${pick.char.name}的日程：\n${slotsSummary}\n\n要求：\n- 1句话，30字以内\n- 第三人称，像在报道别人的动态\n- 带点八卦感、生活感，不要干巴巴地复述日程\n- 可以从日程里推测角色的状态（比如连续开会→可能很忙，去咖啡店→可能在摸鱼）\n- 示例：「陈照今天买了三杯咖啡，看起来要通宵」「阿萌下午翘了课去逛街」\n- 直接输出情报文字，不加引号`;
 
       const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '');
       const data = await safeFetchJson(`${baseUrl}/chat/completions`, {
@@ -1332,18 +1332,18 @@ const TransactionsTab: React.FC<{
           model: apiConfig.model,
           messages: [
             { role: 'system', content: prompt },
-            { role: 'user', content: '说点什么吧' },
+            { role: 'user', content: '来一条情报' },
           ],
-          temperature: 0.9,
-          max_tokens: 200,
+          temperature: 0.95,
+          max_tokens: 100,
           stream: false,
         }),
       });
 
       const reply = data?.choices?.[0]?.message?.content?.trim() || '';
-      setGossipText(reply || '……（没话说）');
+      setGossipText(reply || '今天风平浪静');
     } catch {
-      setGossipText('生成失败了');
+      setGossipText('情报网暂时断了');
     } finally {
       setGossipLoading(false);
     }
@@ -1972,6 +1972,15 @@ const AnalyticsTab: React.FC<{
           origin: 'system',
         };
         MemoryNodeDB.save(memNode).catch(() => {});
+
+        // 在角色聊天里插入系统日志气泡
+        DB.saveMessage({
+          charId: char.id,
+          role: 'system',
+          type: 'interaction' as any,
+          content: `${char.name}翻了翻你的账本，评价了你${periodLabel}的消费`,
+          metadata: { kind: 'bank_ta_read' },
+        }).catch(() => {});
       }
     } catch (e) {
       setCommentary('生成失败，请检查 API 配置。');
