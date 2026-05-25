@@ -97,13 +97,18 @@ export function computeCharStatus(
         }
     }
 
-    // 还没到第一个 slot → online（角色还没开始一天的活动）
+    // 还没到第一个 slot（凌晨~第一个 slot 之前）
+    // 继承当天最后一个 slot 的状态：如果最后是睡觉(offline)，凌晨也算 offline
     if (currentSlotIndex === -1) {
         const firstSlot = schedule.slots[0];
         const [fh, fm] = firstSlot.startTime.split(':').map(Number);
         const firstSlotMs = fh * 3600000 + fm * 60000;
+        const lastSlot = schedule.slots[schedule.slots.length - 1];
+        const lastSlotAvail = getSlotAvailability(lastSlot);
         return {
-            status: 'online',
+            status: lastSlotAvail,
+            currentActivity: lastSlot.activity,
+            currentEmoji: lastSlot.emoji,
             msUntilChange: firstSlotMs - currentMs,
             nextStatus: getSlotAvailability(firstSlot),
         };
