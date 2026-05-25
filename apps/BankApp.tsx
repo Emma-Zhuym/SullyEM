@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Wallet, Receipt, ChartPie, CaretLeft, Plus, Trash, GearSix, type Icon } from '@phosphor-icons/react';
+import { Wallet, Receipt, ChartPie, CaretLeft, CaretRight, Plus, Trash, GearSix, type Icon } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { FinanceDB } from '../utils/financeDb';
 import { safeFetchJson } from '../utils/safeApi';
@@ -117,17 +117,20 @@ const BankApp: React.FC = () => {
   return (
     <div className="h-full flex flex-col" style={{ background: 'linear-gradient(165deg, #f3f0ff 0%, #eef2ff 40%, #f0f4ff 100%)' }}>
       {/* 顶部导航栏 */}
-      <div className="shrink-0 flex items-center justify-between px-4 pt-12 pb-2">
+      <div className="shrink-0 relative flex items-center px-4 pt-12 pb-2">
+        {/* 左侧返回 */}
         <button
           onClick={closeApp}
-          className="w-8 h-8 flex items-center justify-center rounded-full text-slate-400 active:scale-90 transition-transform"
+          className="w-8 h-8 flex items-center justify-center rounded-full text-slate-400 active:scale-90 transition-transform z-10"
         >
           <CaretLeft className="w-5 h-5" weight="bold" />
         </button>
-        <span className="text-sm font-semibold text-slate-600">
+        {/* 居中标题（absolute 不受两侧按钮数量影响） */}
+        <span className="absolute left-0 right-0 text-center text-sm font-semibold text-slate-600 pointer-events-none">
           {activeTab === 'assets' ? '资产' : activeTab === 'transactions' ? '交易' : '分析'}
         </span>
-        <div className="flex items-center gap-0">
+        {/* 右侧按钮 */}
+        <div className="ml-auto flex items-center gap-0 z-10">
           {activeTab === 'assets' && (
             <>
               <button
@@ -144,7 +147,6 @@ const BankApp: React.FC = () => {
               </button>
             </>
           )}
-          {activeTab !== 'assets' && <div className="w-8" />}
         </div>
       </div>
 
@@ -1137,29 +1139,42 @@ const TIME_RANGE_LABELS: Record<TimeRange, string> = {
   week: '本周', month: '本月', last_month: '上月', '3months': '近3月', year: '今年', all: '全部',
 };
 
-function getDateRange(range: TimeRange): { from: string; to: string } {
+function getDateRange(range: TimeRange, offset = 0): { from: string; to: string; label: string } {
   const now = new Date();
-  const to = now.toISOString().split('T')[0];
-  let from: string;
+  const fmt = (d: Date) => d.toISOString().split('T')[0];
+  const fmtShort = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}`;
+
   if (range === 'week') {
-    const d = new Date(now); d.setDate(d.getDate() - 7);
-    from = d.toISOString().split('T')[0];
+    // 周一到周日，offset=0 为本周, -1 为上周
+    const day = now.getDay() || 7; // 把周日变成7
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - day + 1 + offset * 7);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    const to = sunday > now ? now : sunday;
+    return { from: fmt(monday), to: fmt(to), label: offset === 0 ? '本周' : `${fmtShort(monday)} - ${fmtShort(sunday)}` };
   } else if (range === 'month') {
-    from = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+    const d = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+    const end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+    const to = end > now ? now : end;
+    const label = offset === 0 ? '本月' : `${d.getFullYear()}年${d.getMonth() + 1}月`;
+    return { from: fmt(d), to: fmt(to), label };
+  } else if (range === 'year') {
+    const y = now.getFullYear() + offset;
+    const from = `${y}-01-01`;
+    const end = new Date(y, 11, 31);
+    const to = end > now ? fmt(now) : fmt(end);
+    const label = offset === 0 ? '今年' : `${y}年`;
+    return { from, to, label };
   } else if (range === 'last_month') {
     const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    from = d.toISOString().split('T')[0];
     const end = new Date(now.getFullYear(), now.getMonth(), 0);
-    return { from, to: end.toISOString().split('T')[0] };
+    return { from: fmt(d), to: fmt(end), label: '上月' };
   } else if (range === '3months') {
     const d = new Date(now); d.setMonth(d.getMonth() - 3);
-    from = d.toISOString().split('T')[0];
-  } else if (range === 'year') {
-    from = `${now.getFullYear()}-01-01`;
-  } else {
-    from = '2000-01-01';
+    return { from: fmt(d), to: fmt(now), label: '近三月' };
   }
-  return { from, to };
+  return { from: '2000-01-01', to: fmt(now), label: '全部' };
 }
 
 const FilterChip: React.FC<{
@@ -1367,8 +1382,8 @@ const TransactionsTab: React.FC<{
       {/* 新增按钮 */}
       <button
         onClick={() => setEditingTx('new')}
-        className="fixed right-5 bottom-28 w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-xl font-light text-white active:scale-90 transition-transform z-10"
-        style={{ background: 'linear-gradient(135deg, #c084fc, #818cf8)' }}
+        className="fixed right-5 bottom-32 w-13 h-13 rounded-full shadow-lg flex items-center justify-center text-2xl font-light text-white active:scale-90 transition-transform z-10"
+        style={{ background: 'linear-gradient(135deg, #d8b4fe, #a5b4fc)', width: 52, height: 52 }}
       >
         +
       </button>
@@ -1616,8 +1631,9 @@ const AnalyticsTab: React.FC<{
 }> = ({ transactions, categories, accounts }) => {
   const { characters, apiConfig, userProfile } = useOS();
   const [period, setPeriod] = useState<'week' | 'month' | 'year'>('month');
+  const [periodOffset, setPeriodOffset] = useState(0);
   const [filterAccountId, setFilterAccountId] = useState<string | null>(null);
-  const [filterType, setFilterType] = useState<'expense' | 'income'>('expense');
+  const [filterType, setFilterType] = useState<'all' | 'expense' | 'income'>('expense');
   const [showFilters, setShowFilters] = useState(false);
   const [selectedCharId, setSelectedCharId] = useState<string | null>(null);
   const [tone, setTone] = useState<Tone>('teasing');
@@ -1634,9 +1650,13 @@ const AnalyticsTab: React.FC<{
     }).catch(() => {});
   }, []);
 
-  const { from: fromDate, to: toDate } = getDateRange(
-    period === 'week' ? 'week' : period === 'month' ? 'month' : 'year'
-  );
+  const { from: fromDate, to: toDate, label: periodLabel } = getDateRange(period, periodOffset);
+
+  // 切换周期时重置 offset
+  const handleSetPeriod = (p: typeof period) => {
+    setPeriod(p);
+    setPeriodOffset(0);
+  };
 
   const periodTxs = transactions.filter(t => {
     if (t.dateStr < fromDate || t.dateStr > toDate) return false;
@@ -1645,7 +1665,17 @@ const AnalyticsTab: React.FC<{
     if (filterType === 'income' && t.type !== 'income' && t.type !== 'refund') return false;
     return true;
   });
-  const totalAmount = periodTxs.reduce((s, t) => s + t.amount, 0);
+
+  // "收支" 模式：分别计算收入支出
+  const expenseTxs = transactions.filter(t => t.dateStr >= fromDate && t.dateStr <= toDate && t.type === 'expense' && (!filterAccountId || t.accountId === filterAccountId));
+  const incomeTxs = transactions.filter(t => t.dateStr >= fromDate && t.dateStr <= toDate && (t.type === 'income' || t.type === 'refund') && (!filterAccountId || t.accountId === filterAccountId));
+  const totalExpense = expenseTxs.reduce((s, t) => s + t.amount, 0);
+  const totalIncome = incomeTxs.reduce((s, t) => s + t.amount, 0);
+  const netBalance = totalIncome - totalExpense;
+
+  const totalAmount = filterType === 'all'
+    ? periodTxs.reduce((s, t) => s + t.amount, 0)
+    : periodTxs.reduce((s, t) => s + t.amount, 0);
 
   const catMap = new Map(categories.map(c => [c.id, c]));
 
@@ -1671,18 +1701,17 @@ const AnalyticsTab: React.FC<{
     color: c.color,
   }));
 
-  const periodLabels = { week: '本周', month: '本月', year: '今年' };
-  const typeLabel = filterType === 'expense' ? '支出' : '收入';
+  const typeLabel = filterType === 'expense' ? '支出' : filterType === 'income' ? '收入' : '收支';
   const activeFilterCount = filterAccountId ? 1 : 0;
 
   useEffect(() => {
     setCommentary(null);
     setSelectedCharId(null);
-  }, [period, filterAccountId, filterType]);
+  }, [period, periodOffset, filterAccountId, filterType]);
 
   const handleSelectChar = (charId: string) => {
     setSelectedCharId(charId);
-    const cacheKey = `${charId}_${period}_${tone}_${filterAccountId || 'all'}_${filterType}`;
+    const cacheKey = `${charId}_${period}${periodOffset}_${tone}_${filterAccountId || 'all'}_${filterType}`;
     const cached = commentCache.current.get(cacheKey);
     setCommentary(cached || null);
   };
@@ -1692,7 +1721,7 @@ const AnalyticsTab: React.FC<{
     const char = characters.find(c => c.id === selectedCharId);
     if (!char) return;
 
-    const cacheKey = `${selectedCharId}_${period}_${tone}_${filterAccountId || 'all'}_${filterType}`;
+    const cacheKey = `${selectedCharId}_${period}${periodOffset}_${tone}_${filterAccountId || 'all'}_${filterType}`;
     const cached = commentCache.current.get(cacheKey);
     if (cached) { setCommentary(cached); return; }
 
@@ -1728,7 +1757,7 @@ const AnalyticsTab: React.FC<{
       } catch { /* 记忆宫殿不可用也不影响基本功能 */ }
 
       const prompt = buildTAReadPrompt(
-        char, userProfile?.name || '用户', periodLabels[period],
+        char, userProfile?.name || '用户', periodLabel,
         totalAmount, catBreakdown, notableTxs, tone, memoryContext,
       );
 
@@ -1743,7 +1772,7 @@ const AnalyticsTab: React.FC<{
           model: apiConfig.model,
           messages: [
             { role: 'system', content: prompt },
-            { role: 'user', content: `请评价我${periodLabels[period]}的消费。` },
+            { role: 'user', content: `请评价我${periodLabel}的消费。` },
           ],
           temperature: 0.85,
           max_tokens: 800,
@@ -1768,7 +1797,7 @@ const AnalyticsTab: React.FC<{
   const handleToneChange = (t: Tone) => {
     setTone(t);
     if (selectedCharId) {
-      const cacheKey = `${selectedCharId}_${period}_${t}_${filterAccountId || 'all'}_${filterType}`;
+      const cacheKey = `${selectedCharId}_${period}${periodOffset}_${t}_${filterAccountId || 'all'}_${filterType}`;
       const cached = commentCache.current.get(cacheKey);
       setCommentary(cached || null);
     }
@@ -1779,10 +1808,12 @@ const AnalyticsTab: React.FC<{
       {/* 筛选栏 */}
       <div className="flex items-center gap-2 mb-3 overflow-x-auto pb-1 scrollbar-none">
         {(['week', 'month', 'year'] as const).map(p => (
-          <FilterChip key={p} label={p === 'week' ? '周' : p === 'month' ? '月' : '年'} active={period === p} onClick={() => setPeriod(p)} />
+          <FilterChip key={p} label={p === 'week' ? '周' : p === 'month' ? '月' : '年'} active={period === p} onClick={() => handleSetPeriod(p)} />
         ))}
+        <div className="w-px h-4 bg-slate-200 shrink-0" />
         <FilterChip label="支出" active={filterType === 'expense'} onClick={() => setFilterType('expense')} />
         <FilterChip label="收入" active={filterType === 'income'} onClick={() => setFilterType('income')} />
+        <FilterChip label="收支" active={filterType === 'all'} onClick={() => setFilterType('all')} />
         {accounts.length > 1 && (
           <button
             onClick={() => setShowFilters(!showFilters)}
@@ -1808,10 +1839,44 @@ const AnalyticsTab: React.FC<{
         </div>
       )}
 
-      {/* 金额总计 */}
+      {/* 时间段导航 + 金额总计 */}
       <div className="mb-4">
-        <div className="text-xs text-slate-400 mb-1">{periodLabels[period]}{typeLabel}</div>
-        <div className="text-2xl font-bold text-slate-800">{formatAmount(totalAmount)}</div>
+        <div className="flex items-center gap-2 mb-1">
+          <button onClick={() => setPeriodOffset(o => o - 1)} className="w-6 h-6 flex items-center justify-center rounded-full text-slate-400 active:bg-slate-100 transition-colors">
+            <CaretLeft className="w-4 h-4" weight="bold" />
+          </button>
+          <span className="text-xs text-slate-500 font-medium min-w-[60px] text-center">{periodLabel}</span>
+          <button
+            onClick={() => periodOffset < 0 && setPeriodOffset(o => o + 1)}
+            className={`w-6 h-6 flex items-center justify-center rounded-full transition-colors ${periodOffset < 0 ? 'text-slate-400 active:bg-slate-100' : 'text-slate-200'}`}
+            disabled={periodOffset >= 0}
+          >
+            <CaretRight className="w-4 h-4" weight="bold" />
+          </button>
+        </div>
+        {filterType === 'all' ? (
+          <div className="flex items-baseline gap-3">
+            <div>
+              <span className="text-xs text-green-500">收入 </span>
+              <span className="text-lg font-bold text-green-600">{formatAmount(totalIncome)}</span>
+            </div>
+            <div>
+              <span className="text-xs text-red-400">支出 </span>
+              <span className="text-lg font-bold text-red-500">{formatAmount(totalExpense)}</span>
+            </div>
+            <div>
+              <span className="text-xs text-slate-400">结余 </span>
+              <span className={`text-lg font-bold ${netBalance >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                {netBalance >= 0 ? '+' : ''}{formatAmount(netBalance)}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="text-xs text-slate-400 mb-0.5">{typeLabel}</div>
+            <div className="text-2xl font-bold text-slate-800">{formatAmount(totalAmount)}</div>
+          </>
+        )}
       </div>
 
       {/* 饼图 */}
@@ -1858,7 +1923,7 @@ const AnalyticsTab: React.FC<{
       {/* TA 读区域 */}
       <div className="bg-white rounded-2xl shadow-sm p-4">
         <div className="text-sm font-medium text-slate-700 mb-3">TA 怎么看</div>
-        <div className="text-xs text-slate-400 mb-3">选一个角色来评价你{periodLabels[period]}的消费</div>
+        <div className="text-xs text-slate-400 mb-3">选一个角色来评价你{periodLabel}的消费</div>
 
         {/* 角色选择 — 直接用全量 characters */}
         <div className="flex gap-2 mb-3 overflow-x-auto pb-1 scrollbar-none">
@@ -1905,7 +1970,7 @@ const AnalyticsTab: React.FC<{
             </div>
             <button
               onClick={() => {
-                const cacheKey = `${selectedCharId}_${period}_${tone}_${filterAccountId || 'all'}_${filterType}`;
+                const cacheKey = `${selectedCharId}_${period}${periodOffset}_${tone}_${filterAccountId || 'all'}_${filterType}`;
                 commentCache.current.delete(cacheKey);
                 generateCommentary();
               }}
