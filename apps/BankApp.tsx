@@ -1503,17 +1503,18 @@ const TransactionsTab: React.FC<{
           </button>
         </div>
         {gossipChar && gossipText ? (
-          <div className="flex items-start gap-2.5">
-            {gossipChar.avatar ? (
-              <img src={gossipChar.avatar} className="w-7 h-7 rounded-full object-cover shrink-0 mt-0.5" />
-            ) : (
-              <div className="w-7 h-7 rounded-full bg-slate-200 flex items-center justify-center text-xs text-slate-500 shrink-0 mt-0.5">
-                {gossipChar.name[0]}
-              </div>
-            )}
-            <div className="flex-1 min-w-0">
-              <div className="text-[11px] text-slate-400 mb-0.5">{gossipChar.name}</div>
-              <div className="text-xs text-slate-600 leading-relaxed">「{gossipText}」</div>
+          <div>
+            <div className="text-xs text-slate-600 leading-relaxed mb-2">「{gossipText}」</div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-slate-300">关于</span>
+              {gossipChar.avatar ? (
+                <img src={gossipChar.avatar} className="w-4 h-4 rounded-full object-cover" />
+              ) : (
+                <div className="w-4 h-4 rounded-full bg-slate-200 flex items-center justify-center text-[9px] text-slate-500">
+                  {gossipChar.name[0]}
+                </div>
+              )}
+              <span className="text-[10px] text-slate-400">{gossipChar.name}</span>
             </div>
           </div>
         ) : (
