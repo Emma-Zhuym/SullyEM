@@ -162,8 +162,20 @@ export interface InstantPushConfig {
   // VAPID 公私钥已迁移到 utils/pushVapid.ts (push_vapid_v1)，与 Proactive Push
   // 共享同一份，避免两边互相 unsubscribe 抢同一个 pushManager 订阅。
   clientToken?: string;     // 对应 Worker 的 AMSG_CLIENT_TOKEN
+  // 发送文本后是否自动触发 AI 回复 (worker 端跑 + push 回写). 仅控制"自动触发"这件事,
+  // 不改变 instant push 本身的开关含义. 关闭时 instant 模式也保留手动 ⚡, 跟本地模式一致.
+  // 缺省 (undefined) 视为关闭 — 避免"启用 instant = 自动回复"的反直觉强绑定.
+  autoTriggerOnSend?: boolean;
+  // 大 payload 的传输方式默认走 multipart。只有连接测试确认 Worker 绑定了可用 D1 后,
+  // 前台才允许用户打开 D1 envelope。
+  useD1BlobStore?: boolean;
+  d1Available?: boolean;
+  d1CheckedAt?: number;
+  d1CheckedWorkerUrl?: string;
   updatedAt?: number;
 }
+
+export type InstantOversizeTransport = 'multipart' | 'd1';
 
 export type ActiveMsg2DbDriver = 'pg' | 'neon';
 export type ActiveMsg2Mode = 'fixed' | 'auto' | 'prompted';
@@ -210,6 +222,7 @@ export interface ActiveMsg2InboxMessage {
   charId: string;
   charName: string;
   body: string;
+  previewBody?: string;
   avatarUrl?: string;
   source?: string;
   messageType?: string;
@@ -217,6 +230,38 @@ export interface ActiveMsg2InboxMessage {
   taskId?: string | null;
   metadata?: Record<string, any>;
   sentAt?: number;
+  receivedAt: number;
+}
+
+// Phase 2 Round 1 — Instant Push agentic loop session state, written client-side
+// before /instant and consumed by /continue.
+export interface InstantPushOutboundSession {
+  sessionId: string;
+  charId: string;
+  messages: any[];
+  apiCredentials: { baseUrl: string; apiKey: string; model: string };
+  createdAt: number;
+}
+
+// Phase 2 Round 2 — SW will populate these stores; Round 1 just defines schema (empty).
+export interface InstantPushPendingToolCall {
+  sessionId: string;
+  charId: string;
+  toolCalls: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>;
+  llmOutputText: string;
+  iteration: number;
+  createdAt: number;
+}
+
+export interface InstantPushReasoningBufferEntry {
+  sessionId: string;
+  charId: string;
+  reasoningContent?: string;
+  chunks?: Array<{
+    messageIndex: number;
+    chunkIndex: number;
+    reasoningContent: string;
+  }>;
   receivedAt: number;
 }
 

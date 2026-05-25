@@ -137,6 +137,8 @@ export interface MusicPlaybackSnapshot {
 }
 let __musicPlaybackSnapshot: MusicPlaybackSnapshot | null = null;
 export const loadMusicPlaybackSnapshot = (): MusicPlaybackSnapshot | null => __musicPlaybackSnapshot;
+// Stub for upstream compatibility — SullyEM does not use PostProcessMusicHooks
+export const loadMusicHooks = (): null => null;
 
 const saveCfg = (cfg: MusicCfg) => {
   try { localStorage.setItem(LS_CFG_KEY, JSON.stringify(cfg)); } catch {}
