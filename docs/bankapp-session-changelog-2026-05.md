@@ -102,20 +102,26 @@
 | 模块 | 状态 |
 |------|------|
 | 资产 Tab — 账户 CRUD | ✅ 完成 |
+| 资产 Tab — 多币种总资产分列 | ✅ 完成 |
 | 资产 Tab — 趋势图 | ⏳ 占位（按钮有，图表未实现） |
-| 资产 Tab — 设置页 | ⏳ 占位（齿轮按钮无 UI） |
-| 交易 Tab — 记账 CRUD | ✅ 完成 |
+| 交易 Tab — 记账 CRUD（支出/收入/转账） | ✅ 完成 |
+| 交易 Tab — 两级分类选择（可只选一级） | ✅ 完成 |
 | 交易 Tab — 筛选 / 汇总 / 按日分组 | ✅ 完成 |
 | 交易 Tab — 今日情报 | ⏳ 占位 |
 | 分析 Tab — 饼图 + 分类列表 | ✅ 完成 |
-| 分析 Tab — TA 读 LLM | ✅ 完成 |
-| 数据层 IndexedDB | ✅ 完成 |
+| 分析 Tab — 时间段导航（offset 箭头切换历史周期） | ✅ 完成 |
+| 分析 Tab — 支出/收入/收支三种视图 | ✅ 完成 |
+| 分析 Tab — TA 读 LLM + 记忆宫殿注入 + 持久化 | ✅ 完成 |
+| 设置页 — 常用币种 + 默认币种 | ✅ 完成 |
+| 设置页 — 分类管理（一二级 CRUD + 级联删除） | ✅ 完成 |
+| 数据层 IndexedDB（DB v3） | ✅ 完成 |
+| UI — 标题居中 + FAB 调色定位 | ✅ 完成 |
 
 详细设计规格见 [`finance-redesign.md`](./finance-redesign.md)。
 
 ---
 
-## 四、Git 提交记录（本会话）
+## 四、Git 提交记录
 
 | Commit | 说明 |
 |--------|------|
@@ -123,15 +129,19 @@
 | `ce135d7` | 分析页 — SVG饼图 + 彩色分类列表 + TA读LLM |
 | `76a4b83` | TA读提示词重写 + 注入单笔交易明细 + 用户名动态化 |
 | `2ac598d` | 聊天 Prompt：日记/引用强化 + XHS压缩 + proactive日记提示 |
-| （待提交） | BankApp Icon 类型修复 + 本文档 |
+| `2b0d40e` | 多币种总资产、TA读持久化、分析筛选、记忆宫殿注入、设置页、分类管理 |
+| `acccbb7` | 分析页时间导航+收支平衡+标题居中+FAB调色 |
+| `ea1ee95` | FormRow 内容统一靠右对齐 |
+| `39a3b16` | 切换一级分类时清除旧选中状态 |
+| `ee18b92` | 允许只选一级分类，不强制选二级 |
 
 ---
 
 ## 五、相关文件清单
 
 ```
-apps/BankApp.tsx          — BankApp 主文件（三 Tab + 表单 + 分析 + TA读）
-utils/financeDb.ts        — IndexedDB 数据层（未改，只读参考）
+apps/BankApp.tsx          — BankApp 主文件（~2000行，三 Tab + 表单 + 分析 + TA读 + 设置）
+utils/financeDb.ts        — IndexedDB 数据层（DB v3，5个store）
 utils/chatPrompts.ts      — 聊天 system prompt 构建
 context/OSContext.tsx     — proactive message hint
 docs/finance-redesign.md  — BankApp 设计规格（已有）

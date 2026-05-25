@@ -1409,7 +1409,8 @@ const DonutChart: React.FC<{
   data: { label: string; value: number; color: string }[];
   total: number;
   centerLabel: string;
-}> = ({ data, total, centerLabel }) => {
+  centerTitle?: string;
+}> = ({ data, total, centerLabel, centerTitle = '支出' }) => {
   const size = 160;
   const strokeWidth = 28;
   const radius = (size - strokeWidth) / 2;
@@ -1441,7 +1442,7 @@ const DonutChart: React.FC<{
           />
         );
       })}
-      <text x={size / 2} y={size / 2 - 6} textAnchor="middle" className="fill-slate-400 text-[10px]">支出</text>
+      <text x={size / 2} y={size / 2 - 6} textAnchor="middle" className="fill-slate-400 text-[10px]">{centerTitle}</text>
       <text x={size / 2} y={size / 2 + 12} textAnchor="middle" className="fill-slate-800 text-sm font-bold">{centerLabel}</text>
     </svg>
   );
@@ -1675,9 +1676,7 @@ const AnalyticsTab: React.FC<{
   const totalIncome = incomeTxs.reduce((s, t) => s + t.amount, 0);
   const netBalance = totalIncome - totalExpense;
 
-  const totalAmount = filterType === 'all'
-    ? periodTxs.reduce((s, t) => s + t.amount, 0)
-    : periodTxs.reduce((s, t) => s + t.amount, 0);
+  const totalAmount = periodTxs.reduce((s, t) => s + t.amount, 0);
 
   const catMap = new Map(categories.map(c => [c.id, c]));
 
@@ -1886,7 +1885,7 @@ const AnalyticsTab: React.FC<{
         {catList.length === 0 ? (
           <div className="h-40 flex items-center justify-center text-slate-300 text-sm">暂无数据</div>
         ) : (
-          <DonutChart data={donutData} total={totalAmount} centerLabel={formatAmount(totalAmount)} />
+          <DonutChart data={donutData} total={totalAmount} centerLabel={formatAmount(totalAmount)} centerTitle={typeLabel} />
         )}
       </div>
 
