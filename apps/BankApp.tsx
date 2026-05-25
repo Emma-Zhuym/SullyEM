@@ -12,6 +12,7 @@ import { FinanceDB } from '../utils/financeDb';
 import { safeFetchJson } from '../utils/safeApi';
 import { normalizeUserImpression } from '../utils/impression';
 import { MemoryNodeDB, bm25Search } from '../utils/memoryPalace';
+import type { MemoryNode } from '../utils/memoryPalace/types';
 import { FinanceAccount, FinanceCategory, FinanceTransaction, FinanceTxType, CharacterProfile } from '../types';
 
 type TabId = 'assets' | 'transactions' | 'analytics';
@@ -157,6 +158,7 @@ const BankApp: React.FC = () => {
             accounts={accounts}
             balances={balances}
             currencyEntries={currencyEntries}
+            transactions={transactions}
             onRefresh={refreshData}
             addingAccount={addingAccount}
             onAddingDone={() => setAddingAccount(false)}
@@ -989,17 +991,110 @@ const TransactionForm: React.FC<{
   );
 };
 
+// ── 收支趋势图 ──
+
+const TrendChart: React.FC<{
+  transactions: FinanceTransaction[];
+}> = ({ transactions }) => {
+  const [trendRange, setTrendRange] = useState<'week' | 'month' | 'year'>('month');
+
+  // 按日聚合收支
+  const { from, to } = getDateRange(trendRange);
+  const periodTxs = transactions.filter(t => t.dateStr >= from && t.dateStr <= to);
+
+  // 建日期列表
+  const dates: string[] = [];
+  const d = new Date(from + 'T12:00:00');
+  const endD = new Date(to + 'T12:00:00');
+  while (d <= endD) {
+    dates.push(d.toISOString().split('T')[0]);
+    d.setDate(d.getDate() + 1);
+  }
+
+  const dailyExpense = new Map<string, number>();
+  const dailyIncome = new Map<string, number>();
+  for (const t of periodTxs) {
+    if (t.type === 'expense') dailyExpense.set(t.dateStr, (dailyExpense.get(t.dateStr) || 0) + t.amount);
+    if (t.type === 'income' || t.type === 'refund') dailyIncome.set(t.dateStr, (dailyIncome.get(t.dateStr) || 0) + t.amount);
+  }
+
+  const expensePoints = dates.map(d => dailyExpense.get(d) || 0);
+  const incomePoints = dates.map(d => dailyIncome.get(d) || 0);
+  const maxVal = Math.max(...expensePoints, ...incomePoints, 1);
+
+  const w = 280, h = 100, px = 4, py = 8;
+  const chartW = w - px * 2, chartH = h - py * 2;
+
+  const makePath = (points: number[]) => {
+    if (points.length < 2) return '';
+    const stepX = chartW / Math.max(points.length - 1, 1);
+    return points.map((v, i) => {
+      const x = px + i * stepX;
+      const y = py + chartH - (v / maxVal) * chartH;
+      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+  };
+
+  const expensePath = makePath(expensePoints);
+  const incomePath = makePath(incomePoints);
+  const totalExp = expensePoints.reduce((s, v) => s + v, 0);
+  const totalInc = incomePoints.reduce((s, v) => s + v, 0);
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm p-4 mb-6">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex gap-2">
+          {(['week', 'month', 'year'] as const).map(r => (
+            <button
+              key={r}
+              onClick={() => setTrendRange(r)}
+              className={`px-3 py-1 text-xs rounded-full font-medium transition-colors ${
+                trendRange === r ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-500'
+              }`}
+            >
+              {r === 'week' ? '周' : r === 'month' ? '月' : '年'}
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-3 text-[10px]">
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-400" />支出</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400" />收入</span>
+        </div>
+      </div>
+
+      {periodTxs.length === 0 ? (
+        <div className="h-24 flex items-center justify-center text-slate-300 text-sm">暂无数据</div>
+      ) : (
+        <>
+          <svg width="100%" height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="overflow-visible">
+            {expensePath && <path d={expensePath} fill="none" stroke="#fb7185" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />}
+            {incomePath && <path d={incomePath} fill="none" stroke="#34d399" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />}
+          </svg>
+          <div className="flex justify-between mt-2 text-[11px] text-slate-400">
+            <span>支出 {formatAmount(totalExp)}</span>
+            <span>收入 {formatAmount(totalInc)}</span>
+            <span className={totalInc - totalExp >= 0 ? 'text-emerald-500' : 'text-rose-400'}>
+              结余 {totalInc - totalExp >= 0 ? '+' : ''}{formatAmount(totalInc - totalExp)}
+            </span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
 // ── 资产 Tab ──
 
 const AssetsTab: React.FC<{
   accounts: FinanceAccount[];
   balances: Record<string, number>;
   currencyEntries: [string, number][];
+  transactions: FinanceTransaction[];
   onRefresh: () => Promise<void>;
   addingAccount: boolean;
   onAddingDone: () => void;
   finSettings: FinanceSettings;
-}> = ({ accounts, balances, currencyEntries, onRefresh, addingAccount, onAddingDone, finSettings }) => {
+}> = ({ accounts, balances, currencyEntries, transactions, onRefresh, addingAccount, onAddingDone, finSettings }) => {
   const [editingAccount, setEditingAccount] = useState<FinanceAccount | 'new' | null>(null);
 
   useEffect(() => {
@@ -1061,22 +1156,8 @@ const AssetsTab: React.FC<{
         )}
       </div>
 
-      {/* 趋势图占位 */}
-      <div className="bg-white rounded-2xl shadow-sm p-4 mb-6">
-        <div className="flex gap-2 mb-3">
-          {['周', '月', '年', '全部'].map(label => (
-            <button
-              key={label}
-              className="px-3 py-1 text-xs rounded-full bg-slate-100 text-slate-500 font-medium"
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <div className="h-32 flex items-center justify-center text-slate-300 text-sm">
-          趋势图（待实现）
-        </div>
-      </div>
+      {/* 收支趋势图 */}
+      <TrendChart transactions={transactions} />
 
       {/* 账户列表 */}
       {activeAccounts.length === 0 ? (
@@ -1200,11 +1281,73 @@ const TransactionsTab: React.FC<{
   categories: FinanceCategory[];
   onRefresh: () => Promise<void>;
 }> = ({ transactions, accounts, categories, onRefresh }) => {
+  const { characters, apiConfig, userProfile } = useOS();
   const [timeRange, setTimeRange] = useState<TimeRange>('month');
   const [filterAccountId, setFilterAccountId] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<'all' | 'expense' | 'income'>('all');
   const [showFilters, setShowFilters] = useState(false);
   const [editingTx, setEditingTx] = useState<FinanceTransaction | 'new' | null>(null);
+
+  // ── 今日情报 ──
+  const [gossipChar, setGossipChar] = useState<CharacterProfile | null>(null);
+  const [gossipText, setGossipText] = useState<string | null>(null);
+  const [gossipLoading, setGossipLoading] = useState(false);
+
+  const generateGossip = async () => {
+    if (!apiConfig?.baseUrl || characters.length === 0) return;
+    setGossipLoading(true);
+    try {
+      // 随机选角色
+      const char = characters[Math.floor(Math.random() * characters.length)];
+      setGossipChar(char);
+
+      // 取最近 7 天交易
+      const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 7);
+      const weekStr = weekAgo.toISOString().split('T')[0];
+      const recentTxs = transactions
+        .filter(t => t.dateStr >= weekStr)
+        .sort((a, b) => b.timestamp - a.timestamp)
+        .slice(0, 15);
+
+      const catMap = new Map(categories.map(c => [c.id, c]));
+      const txSummary = recentTxs.length > 0
+        ? recentTxs.map(t => {
+          const cat = catMap.get(t.categoryId);
+          const sym = CURRENCY_SYMBOLS[t.currency] || '¥';
+          return `${t.dateStr} ${t.type === 'income' ? '+' : '-'}${sym}${t.amount} ${cat?.name || ''} ${t.note || ''}`.trim();
+        }).join('\n')
+        : '最近没有交易记录';
+
+      const userName = userProfile?.name || '用户';
+      const prompt = `你是「${char.name}」。\n${char.systemPrompt || ''}\n\n${userName}最近的消费记录：\n${txSummary}\n\n用1~2句话随意评论一下${userName}最近的某条消费，像在聊天时随口提一嘴。语气要完全符合你的性格，可以好奇、吐槽、关心、开玩笑，随你。不要罗列数据，不要"我注意到"开头，不要加引号或角色名前缀。`;
+
+      const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '');
+      const data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiConfig.apiKey || 'sk-none'}`,
+        },
+        body: JSON.stringify({
+          model: apiConfig.model,
+          messages: [
+            { role: 'system', content: prompt },
+            { role: 'user', content: '说点什么吧' },
+          ],
+          temperature: 0.9,
+          max_tokens: 200,
+          stream: false,
+        }),
+      });
+
+      const reply = data?.choices?.[0]?.message?.content?.trim() || '';
+      setGossipText(reply || '……（没话说）');
+    } catch {
+      setGossipText('生成失败了');
+    } finally {
+      setGossipLoading(false);
+    }
+  };
 
   if (editingTx !== null) {
     return (
@@ -1310,16 +1453,38 @@ const TransactionsTab: React.FC<{
         </div>
       </div>
 
-      {/* 八卦情报卡片 */}
+      {/* 今日情报 */}
       <div className="bg-white rounded-2xl shadow-sm p-4 mb-5">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
             <span className="text-base">☕</span>
             <span className="text-sm font-medium text-slate-700">今日情报</span>
           </div>
-          <span className="text-xs text-blue-400">查看更多 →</span>
+          <button
+            onClick={generateGossip}
+            disabled={gossipLoading}
+            className="text-xs text-blue-400 font-medium active:scale-95 transition-transform disabled:text-slate-300"
+          >
+            {gossipLoading ? '生成中...' : gossipText ? '换一条' : '来一条 →'}
+          </button>
         </div>
-        <div className="text-xs text-slate-400 mt-2">暂无新情报（待实现）</div>
+        {gossipChar && gossipText ? (
+          <div className="flex items-start gap-2.5">
+            {gossipChar.avatar ? (
+              <img src={gossipChar.avatar} className="w-7 h-7 rounded-full object-cover shrink-0 mt-0.5" />
+            ) : (
+              <div className="w-7 h-7 rounded-full bg-slate-200 flex items-center justify-center text-xs text-slate-500 shrink-0 mt-0.5">
+                {gossipChar.name[0]}
+              </div>
+            )}
+            <div className="flex-1 min-w-0">
+              <div className="text-[11px] text-slate-400 mb-0.5">{gossipChar.name}</div>
+              <div className="text-xs text-slate-600 leading-relaxed">「{gossipText}」</div>
+            </div>
+          </div>
+        ) : (
+          <div className="text-xs text-slate-400">点击右上角让角色聊聊你的消费</div>
+        )}
       </div>
 
       {/* 流水列表 */}
@@ -1787,6 +1952,26 @@ const AnalyticsTab: React.FC<{
         setCommentary(reply);
         // 持久化到 IndexedDB
         FinanceDB.saveTAComment({ id: cacheKey, text: reply, createdAt: Date.now() }).catch(() => {});
+
+        // 回传记忆宫殿 — 让角色记住自己评论过用户的消费
+        const userName = userProfile?.name || '用户';
+        const topCats = catBreakdown.slice(0, 3).map(c => c.name).join('、');
+        const memoryContent = `${char.name}看了${userName}${periodLabel}的消费记录（${topCats}等，总计${totalAmount.toFixed(0)}元），评价道：「${reply.slice(0, 150)}」`;
+        const memNode: MemoryNode = {
+          id: `bank_ta_${Date.now()}_${char.id}`,
+          charId: char.id,
+          content: memoryContent,
+          room: 'user_room',
+          tags: ['消费', '记账', '评价', ...catBreakdown.slice(0, 3).map(c => c.name)],
+          importance: 3,
+          mood: tone === 'caring' ? 'caring' : tone === 'teasing' ? 'playful' : 'neutral',
+          embedded: false,
+          createdAt: Date.now(),
+          lastAccessedAt: Date.now(),
+          accessCount: 0,
+          origin: 'system',
+        };
+        MemoryNodeDB.save(memNode).catch(() => {});
       }
     } catch (e) {
       setCommentary('生成失败，请检查 API 配置。');
