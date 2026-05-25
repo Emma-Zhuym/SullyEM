@@ -774,13 +774,12 @@ const TransactionForm: React.FC<{
 
   const handleCatClick = (catId: string) => {
     const children = categories.filter(c => c.parentId === catId);
+    // 选中该一级分类
+    setCategoryId(catId);
     if (children.length > 0) {
-      // 展开子分类列表，清掉旧选中
+      // 有子分类则展开/收起，但不强制选二级
       setExpandedTopCat(prev => prev === catId ? null : catId);
-      setCategoryId('');
     } else {
-      // 无子分类的一级直接选中
-      setCategoryId(catId);
       setExpandedTopCat(null);
     }
   };
