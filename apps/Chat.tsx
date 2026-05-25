@@ -1908,7 +1908,7 @@ const Chat: React.FC = () => {
     }), [emojis, activeCategory, hiddenCategoryIds]);
 
     // Memoize ChatInputArea callbacks
-    const handleSendCallback = useCallback(() => handleSendText(), [char, input, replyTarget]);
+    const handleSendCallback = useCallback(() => handleSendText(), [char, input, replyTarget, charStatusInfo.status]);
     const handleCharSelectCallback = useCallback((id: string) => { setActiveCharacterId(id); setShowPanel('none'); }, []);
     const chatChromeStyle = osTheme.chatChromeStyle || 'soft';
     const chatBackgroundStyle = osTheme.chatBackgroundStyle || 'plain';
@@ -2493,8 +2493,6 @@ const Chat: React.FC = () => {
                     inputStyle={osTheme.chatInputStyle}
                     sendButtonStyle={osTheme.chatSendButtonStyle}
                     chromeStyle={osTheme.chatChromeStyle}
-                    charOffline={charStatusInfo.status === 'offline'}
-                    charOfflineHint={charStatusInfo.activity ? `${char.name}正在${charStatusInfo.activity}，暂时无法回复` : `${char.name}当前不在线`}
                 />
             </div>
 

@@ -171,7 +171,12 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
 
     // ── 3.5 EM: busy 状态注入简短回复提示 ──────────────────
     if (input.charAvailability === 'busy') {
-        systemPrompt += `\n\n[状态提示] 你现在正忙，可能在开会/工作/上课等。回复要简短（1-2句话），语气像在忙碌间隙匆匆回消息，可以表达"等会儿再聊"的意思。不要长篇大论。`;
+        systemPrompt += `\n\n[严格执行] 你现在正在忙（开会/工作/上课/排练等），只能在间隙偷偷看一眼手机。必须遵守以下规则：
+- 回复不超过15个字，最多一句话
+- 语气匆忙、敷衍、随意，像真的在偷看手机
+- 可以用"嗯""知道了""等下""忙着呢"这类极简回复
+- 绝对禁止长段落、详细解释、情感分析、多句展开
+违反以上规则 = 人设崩塌。`;
     }
 
     const systemCharsBeforeBilingual = systemPrompt.length;
