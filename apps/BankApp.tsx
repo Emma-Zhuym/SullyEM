@@ -404,7 +404,7 @@ const FormRow: React.FC<{
 }> = ({ label, border, children }) => (
   <div className={`flex items-center px-4 py-3.5 ${border ? 'border-t border-slate-100' : ''}`}>
     <span className="text-sm text-slate-700 shrink-0 mr-4">{label}</span>
-    <div className="flex-1 min-w-0">{children}</div>
+    <div className="flex-1 min-w-0 text-right">{children}</div>
   </div>
 );
 
