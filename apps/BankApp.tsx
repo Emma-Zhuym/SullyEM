@@ -1517,7 +1517,7 @@ const TransactionsTab: React.FC<{
             </div>
           </div>
         ) : (
-          <div className="text-xs text-slate-400">点击右上角让角色聊聊你的消费</div>
+          <div className="text-xs text-slate-400">点击右上角获取今日情报</div>
         )}
       </div>
 
