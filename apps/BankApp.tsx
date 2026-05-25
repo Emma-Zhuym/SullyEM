@@ -11,6 +11,7 @@ import { useOS } from '../context/OSContext';
 import { FinanceDB } from '../utils/financeDb';
 import { safeFetchJson } from '../utils/safeApi';
 import { normalizeUserImpression } from '../utils/impression';
+import { MemoryNodeDB, bm25Search } from '../utils/memoryPalace';
 import { FinanceAccount, FinanceCategory, FinanceTransaction, FinanceTxType, CharacterProfile } from '../types';
 
 type TabId = 'assets' | 'transactions' | 'analytics';
@@ -30,10 +31,20 @@ const ACCOUNT_TYPE_LABELS: Record<FinanceAccount['type'], string> = {
   checking: '储蓄账户', savings: '定期/储蓄', credit: '信用账户', cash: '现金',
 };
 
-const CURRENCY_OPTIONS = ['CNY', 'USD', 'JPY', 'EUR', 'GBP', 'KRW'];
+const ALL_CURRENCIES = ['CNY', 'USD', 'JPY', 'EUR', 'GBP', 'KRW', 'HKD', 'TWD', 'CAD', 'AUD', 'SGD', 'CHF'];
+const CURRENCY_LABELS: Record<string, string> = {
+  CNY: '人民币 ¥', USD: '美元 $', JPY: '日元 ¥', EUR: '欧元 €', GBP: '英镑 £', KRW: '韩元 ₩',
+  HKD: '港币 HK$', TWD: '新台币 NT$', CAD: '加元 C$', AUD: '澳元 A$', SGD: '新加坡元 S$', CHF: '瑞士法郎 CHF',
+};
 const CURRENCY_SYMBOLS: Record<string, string> = {
   CNY: '¥', USD: '$', JPY: '¥', EUR: '€', GBP: '£', KRW: '₩',
+  HKD: 'HK$', TWD: 'NT$', CAD: 'C$', AUD: 'A$', SGD: 'S$', CHF: 'CHF',
 };
+
+interface FinanceSettings {
+  enabledCurrencies: string[];  // 启用的币种列表
+  defaultCurrency: string;      // 默认显示币种
+}
 
 const BankApp: React.FC = () => {
   const { closeApp } = useOS();
@@ -45,6 +56,10 @@ const BankApp: React.FC = () => {
   const [transactions, setTransactions] = useState<FinanceTransaction[]>([]);
   const [balances, setBalances] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
+  const [finSettings, setFinSettings] = useState<FinanceSettings>({
+    enabledCurrencies: ['CNY'],
+    defaultCurrency: 'CNY',
+  });
 
   const refreshData = useCallback(async () => {
     const [accs, cats, txs] = await Promise.all([
@@ -65,14 +80,31 @@ const BankApp: React.FC = () => {
   useEffect(() => {
     (async () => {
       await FinanceDB.init();
+      // 加载设置
+      const saved = await FinanceDB.getSetting<FinanceSettings>('financeSettings');
+      if (saved) setFinSettings(saved);
       await refreshData();
       setLoading(false);
     })();
   }, [refreshData]);
 
-  const totalBalance = accounts
-    .filter(a => !a.isArchived)
-    .reduce((sum, a) => sum + (balances[a.id] ?? a.initialBalance), 0);
+  const updateSettings = useCallback(async (patch: Partial<FinanceSettings>) => {
+    const next = { ...finSettings, ...patch };
+    // 确保 defaultCurrency 在 enabledCurrencies 里
+    if (patch.enabledCurrencies && !patch.enabledCurrencies.includes(next.defaultCurrency)) {
+      next.defaultCurrency = patch.enabledCurrencies[0] || 'CNY';
+    }
+    setFinSettings(next);
+    await FinanceDB.saveSetting('financeSettings', next);
+  }, [finSettings]);
+
+  // 按币种分组计算总资产（不混币种相加）
+  const balanceByCurrency: Record<string, number> = {};
+  for (const a of accounts.filter(a => !a.isArchived)) {
+    const cur = a.currency || 'CNY';
+    balanceByCurrency[cur] = (balanceByCurrency[cur] || 0) + (balances[a.id] ?? a.initialBalance);
+  }
+  const currencyEntries = Object.entries(balanceByCurrency).sort((a, b) => b[1] - a[1]);
 
   if (loading) {
     return (
@@ -122,10 +154,11 @@ const BankApp: React.FC = () => {
           <AssetsTab
             accounts={accounts}
             balances={balances}
-            totalBalance={totalBalance}
+            currencyEntries={currencyEntries}
             onRefresh={refreshData}
             addingAccount={addingAccount}
             onAddingDone={() => setAddingAccount(false)}
+            finSettings={finSettings}
           />
         )}
         {activeTab === 'transactions' && (
@@ -144,6 +177,17 @@ const BankApp: React.FC = () => {
           />
         )}
       </div>
+
+      {/* 设置页 */}
+      {showSettings && (
+        <SettingsPage
+          settings={finSettings}
+          onUpdate={updateSettings}
+          onClose={() => setShowSettings(false)}
+          categories={categories}
+          onRefresh={refreshData}
+        />
+      )}
 
       {/* 底部 Tab Bar */}
       <div className="shrink-0 flex items-center justify-around border-t border-slate-200/60 bg-white/80 backdrop-blur-lg pb-5 pt-2">
@@ -170,8 +214,8 @@ const BankApp: React.FC = () => {
 
 // ── 格式化金额 ──
 
-function formatAmount(amount: number, currency?: string) {
-  const sym = CURRENCY_SYMBOLS[currency || 'USD'] || '$';
+function formatAmount(amount: number, currency?: string, defaultCur?: string) {
+  const sym = CURRENCY_SYMBOLS[currency || defaultCur || 'CNY'] || '¥';
   const sign = amount < 0 ? '-' : '';
   return `${sign}${sym}${Math.abs(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
@@ -183,11 +227,14 @@ const AccountForm: React.FC<{
   onSave: (acc: FinanceAccount) => void;
   onDelete?: () => void;
   onClose: () => void;
-}> = ({ initial, onSave, onDelete, onClose }) => {
+  enabledCurrencies?: string[];
+  defaultCurrency?: string;
+}> = ({ initial, onSave, onDelete, onClose, enabledCurrencies, defaultCurrency }) => {
   const isEdit = !!initial;
   const [name, setName] = useState(initial?.name || '');
   const [type, setType] = useState<FinanceAccount['type']>(initial?.type || 'checking');
-  const [currency, setCurrency] = useState(initial?.currency || 'CNY');
+  const [currency, setCurrency] = useState(initial?.currency || defaultCurrency || 'CNY');
+  const currencyOptions = enabledCurrencies && enabledCurrencies.length > 0 ? enabledCurrencies : ['CNY'];
   const [initialBalance, setInitialBalance] = useState(
     initial ? String(initial.initialBalance) : ''
   );
@@ -257,7 +304,7 @@ const AccountForm: React.FC<{
               onChange={e => setCurrency(e.target.value)}
               className="w-full text-right text-sm text-slate-700 outline-none bg-transparent appearance-none"
             >
-              {CURRENCY_OPTIONS.map(c => (
+              {currencyOptions.map(c => (
                 <option key={c} value={c}>{c}</option>
               ))}
             </select>
@@ -358,6 +405,339 @@ const FormRow: React.FC<{
     <div className="flex-1 min-w-0">{children}</div>
   </div>
 );
+
+// ── 设置页 ──
+
+const SettingsPage: React.FC<{
+  settings: FinanceSettings;
+  onUpdate: (patch: Partial<FinanceSettings>) => Promise<void>;
+  onClose: () => void;
+  categories: FinanceCategory[];
+  onRefresh: () => Promise<void>;
+}> = ({ settings, onUpdate, onClose, categories, onRefresh }) => {
+  const [editingCat, setEditingCat] = useState<FinanceCategory | 'new-top' | { parentId: string } | null>(null);
+  const [expandedTopCat, setExpandedTopCat] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  const topCats = categories.filter(c => !c.parentId);
+  const childrenOf = (parentId: string) => categories.filter(c => c.parentId === parentId);
+
+  const toggleCurrency = (cur: string) => {
+    const current = settings.enabledCurrencies;
+    if (current.includes(cur)) {
+      if (current.length <= 1) return;
+      const next = current.filter(c => c !== cur);
+      onUpdate({ enabledCurrencies: next });
+    } else {
+      onUpdate({ enabledCurrencies: [...current, cur] });
+    }
+  };
+
+  const handleSaveCat = async (cat: FinanceCategory) => {
+    await FinanceDB.saveCategory(cat);
+    await onRefresh();
+    setEditingCat(null);
+  };
+
+  const handleDeleteCat = async (id: string) => {
+    // 删除一级分类时，同时删子分类
+    const children = childrenOf(id);
+    for (const child of children) {
+      await FinanceDB.deleteCategory(child.id);
+    }
+    await FinanceDB.deleteCategory(id);
+    await onRefresh();
+    setConfirmDeleteId(null);
+  };
+
+  // 编辑/新建分类的内联表单
+  if (editingCat) {
+    const isNew = editingCat === 'new-top' || 'parentId' in editingCat;
+    const initial = (!isNew && editingCat) as FinanceCategory | undefined;
+    const parentId = editingCat === 'new-top' ? undefined : ('parentId' in editingCat ? editingCat.parentId : (initial?.parentId || undefined));
+
+    return (
+      <CategoryEditForm
+        initial={initial}
+        parentId={parentId}
+        onSave={handleSaveCat}
+        onClose={() => setEditingCat(null)}
+      />
+    );
+  }
+
+  return (
+    <div className="absolute inset-0 z-50 flex flex-col" style={{ background: 'linear-gradient(165deg, #f3f0ff 0%, #eef2ff 40%, #f0f4ff 100%)' }}>
+      <div className="shrink-0 flex items-center justify-between px-4 pt-12 pb-3">
+        <button onClick={onClose} className="flex items-center text-blue-500 text-sm">
+          <CaretLeft className="w-5 h-5" weight="bold" /> 返回
+        </button>
+        <span className="text-sm font-semibold text-slate-700">设置</span>
+        <div className="w-12" />
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-5 pb-8">
+        {/* ── 分类管理 ── */}
+        <div className="bg-white rounded-2xl shadow-sm mb-4 overflow-hidden">
+          <div className="flex items-center justify-between px-4 pt-4 pb-2">
+            <div>
+              <div className="text-sm font-medium text-slate-700 mb-0.5">分类管理</div>
+              <div className="text-[11px] text-slate-400">点击编辑，展开查看子分类</div>
+            </div>
+            <button
+              onClick={() => setEditingCat('new-top')}
+              className="text-xs text-blue-500 font-medium px-3 py-1.5 rounded-full bg-blue-50 active:scale-95 transition-transform"
+            >
+              + 一级分类
+            </button>
+          </div>
+
+          <div className="px-2 pb-3">
+            {topCats.map(cat => {
+              const children = childrenOf(cat.id);
+              const isExpanded = expandedTopCat === cat.id;
+              const isConfirmingDelete = confirmDeleteId === cat.id;
+
+              return (
+                <div key={cat.id}>
+                  {/* 一级分类行 */}
+                  <div className="flex items-center px-2 py-2.5 rounded-xl group">
+                    <button
+                      onClick={() => setExpandedTopCat(isExpanded ? null : cat.id)}
+                      className="w-7 h-7 flex items-center justify-center text-slate-300 shrink-0"
+                    >
+                      <span className={`text-xs transition-transform ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
+                    </button>
+                    <span className="text-lg mr-2">{cat.icon || '📋'}</span>
+                    <span className="text-sm text-slate-700 flex-1">{cat.name}</span>
+                    <span className="text-[10px] text-slate-300 mr-2">{children.length} 子项</span>
+                    <button
+                      onClick={() => setEditingCat(cat)}
+                      className="text-[11px] text-blue-400 px-2 py-1 rounded-lg active:bg-blue-50"
+                    >
+                      编辑
+                    </button>
+                    {isConfirmingDelete ? (
+                      <div className="flex gap-1 ml-1">
+                        <button onClick={() => handleDeleteCat(cat.id)} className="text-[10px] text-white bg-red-500 px-2 py-1 rounded-lg">确认</button>
+                        <button onClick={() => setConfirmDeleteId(null)} className="text-[10px] text-slate-400 px-2 py-1 rounded-lg">取消</button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setConfirmDeleteId(cat.id)}
+                        className="text-[11px] text-red-300 px-1 py-1 rounded-lg active:bg-red-50 ml-1"
+                      >
+                        <Trash className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* 二级分类列表 */}
+                  {isExpanded && (
+                    <div className="ml-9 mb-2 space-y-0.5">
+                      {children.map(child => {
+                        const isChildConfirm = confirmDeleteId === child.id;
+                        return (
+                          <div key={child.id} className="flex items-center px-2 py-2 rounded-lg">
+                            <span className="text-base mr-2">{child.icon || '📋'}</span>
+                            <span className="text-sm text-slate-600 flex-1">{child.name}</span>
+                            <button
+                              onClick={() => setEditingCat(child)}
+                              className="text-[11px] text-blue-400 px-2 py-1 rounded-lg active:bg-blue-50"
+                            >
+                              编辑
+                            </button>
+                            {isChildConfirm ? (
+                              <div className="flex gap-1 ml-1">
+                                <button onClick={() => handleDeleteCat(child.id)} className="text-[10px] text-white bg-red-500 px-2 py-1 rounded-lg">确认</button>
+                                <button onClick={() => setConfirmDeleteId(null)} className="text-[10px] text-slate-400 px-2 py-1 rounded-lg">取消</button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => setConfirmDeleteId(child.id)}
+                                className="text-[11px] text-red-300 px-1 py-1 rounded-lg active:bg-red-50 ml-1"
+                              >
+                                <Trash className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                      <button
+                        onClick={() => setEditingCat({ parentId: cat.id })}
+                        className="flex items-center gap-1.5 px-2 py-2 text-[11px] text-blue-400 font-medium rounded-lg active:bg-blue-50 w-full"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> 添加子分类
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* ── 常用币种 ── */}
+        <div className="bg-white rounded-2xl shadow-sm mb-4 overflow-hidden">
+          <div className="px-4 pt-4 pb-2">
+            <div className="text-sm font-medium text-slate-700 mb-1">常用币种</div>
+            <div className="text-[11px] text-slate-400">选择你需要用到的币种，新建账户时只显示这些</div>
+          </div>
+          <div className="px-4 pb-4">
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              {ALL_CURRENCIES.map(cur => {
+                const isEnabled = settings.enabledCurrencies.includes(cur);
+                return (
+                  <button
+                    key={cur}
+                    onClick={() => toggleCurrency(cur)}
+                    className={`flex items-center gap-2 px-3 py-2.5 rounded-xl text-left transition-colors ${
+                      isEnabled ? 'bg-blue-50 ring-1 ring-blue-200' : 'bg-slate-50'
+                    }`}
+                  >
+                    <div className={`w-5 h-5 rounded-md flex items-center justify-center text-xs font-bold ${
+                      isEnabled ? 'bg-blue-500 text-white' : 'bg-slate-200 text-slate-400'
+                    }`}>
+                      {isEnabled ? '✓' : ''}
+                    </div>
+                    <div>
+                      <div className={`text-sm font-medium ${isEnabled ? 'text-slate-700' : 'text-slate-400'}`}>{cur}</div>
+                      <div className="text-[10px] text-slate-400">{CURRENCY_LABELS[cur]?.split(' ').slice(0, -1).join(' ') || cur}</div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* ── 默认显示币种 ── */}
+        <div className="bg-white rounded-2xl shadow-sm mb-4 overflow-hidden">
+          <div className="px-4 pt-4 pb-2">
+            <div className="text-sm font-medium text-slate-700 mb-1">默认显示币种</div>
+            <div className="text-[11px] text-slate-400">新建账户和金额显示的默认币种</div>
+          </div>
+          <div className="px-4 pb-4">
+            <div className="flex flex-wrap gap-2 mt-2">
+              {settings.enabledCurrencies.map(cur => (
+                <button
+                  key={cur}
+                  onClick={() => onUpdate({ defaultCurrency: cur })}
+                  className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
+                    settings.defaultCurrency === cur
+                      ? 'bg-blue-500 text-white shadow-sm'
+                      : 'bg-slate-50 text-slate-500'
+                  }`}
+                >
+                  {CURRENCY_SYMBOLS[cur] || cur} {cur}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ── 分类编辑表单 ──
+
+const EMOJI_SUGGESTIONS = [
+  '🍜','🍽️','☕','🛒','🚗','🚇','🚕','✈️','🛍️','👗','📱','🧴',
+  '🎮','📺','🕹️','🎬','🏥','📚','💰','💵','🎓','🏠','💡','📦',
+  '🐱','🎂','💊','🏋️','🎁','💇','🧹','📮','🔧','🎵','📷','🌿',
+];
+
+const CategoryEditForm: React.FC<{
+  initial?: FinanceCategory;
+  parentId?: string;
+  onSave: (cat: FinanceCategory) => void;
+  onClose: () => void;
+}> = ({ initial, parentId, onSave, onClose }) => {
+  const isEdit = !!initial;
+  const [name, setName] = useState(initial?.name || '');
+  const [icon, setIcon] = useState(initial?.icon || '');
+
+  const handleSave = () => {
+    if (!name.trim()) return;
+    onSave({
+      id: initial?.id || `cat_${Date.now()}`,
+      name: name.trim(),
+      icon: icon || undefined,
+      parentId: initial?.parentId || parentId,
+    });
+  };
+
+  return (
+    <div className="absolute inset-0 z-50 flex flex-col" style={{ background: 'linear-gradient(165deg, #f3f0ff 0%, #eef2ff 40%, #f0f4ff 100%)' }}>
+      <div className="shrink-0 flex items-center justify-between px-4 pt-12 pb-3">
+        <button onClick={onClose} className="flex items-center text-blue-500 text-sm">
+          <CaretLeft className="w-5 h-5" weight="bold" /> 返回
+        </button>
+        <span className="text-sm font-semibold text-slate-700">
+          {isEdit ? '编辑分类' : (parentId ? '新建子分类' : '新建一级分类')}
+        </span>
+        <button
+          onClick={handleSave}
+          disabled={!name.trim()}
+          className="text-blue-500 text-sm font-semibold disabled:text-slate-300"
+        >
+          保存
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-5 pb-8">
+        <div className="bg-white rounded-2xl shadow-sm mb-4 overflow-hidden">
+          <FormRow label="名称">
+            <input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="如：宠物"
+              className="w-full text-right text-sm text-slate-700 outline-none bg-transparent placeholder:text-slate-300"
+              autoFocus
+            />
+          </FormRow>
+          <FormRow label="图标" border>
+            <input
+              value={icon}
+              onChange={e => setIcon(e.target.value)}
+              placeholder="选一个 emoji"
+              className="w-full text-right text-sm text-slate-700 outline-none bg-transparent placeholder:text-slate-300"
+              maxLength={4}
+            />
+          </FormRow>
+        </div>
+
+        {/* 预览 */}
+        <div className="bg-white rounded-2xl shadow-sm p-4 mb-4">
+          <div className="text-xs text-slate-400 mb-2">预览</div>
+          <div className="flex items-center gap-2">
+            <span className="text-2xl">{icon || '📋'}</span>
+            <span className="text-sm font-medium text-slate-700">{name || '分类名称'}</span>
+          </div>
+        </div>
+
+        {/* 快速选 emoji */}
+        <div className="bg-white rounded-2xl shadow-sm p-4">
+          <div className="text-xs text-slate-400 mb-3">常用图标</div>
+          <div className="grid grid-cols-6 gap-2">
+            {EMOJI_SUGGESTIONS.map(e => (
+              <button
+                key={e}
+                onClick={() => setIcon(e)}
+                className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl transition-colors ${
+                  icon === e ? 'bg-blue-50 ring-1 ring-blue-200' : 'bg-slate-50 active:bg-slate-100'
+                }`}
+              >
+                {e}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // ── 交易表单（添加/编辑） ──
 
@@ -610,11 +990,12 @@ const TransactionForm: React.FC<{
 const AssetsTab: React.FC<{
   accounts: FinanceAccount[];
   balances: Record<string, number>;
-  totalBalance: number;
+  currencyEntries: [string, number][];
   onRefresh: () => Promise<void>;
   addingAccount: boolean;
   onAddingDone: () => void;
-}> = ({ accounts, balances, totalBalance, onRefresh, addingAccount, onAddingDone }) => {
+  finSettings: FinanceSettings;
+}> = ({ accounts, balances, currencyEntries, onRefresh, addingAccount, onAddingDone, finSettings }) => {
   const [editingAccount, setEditingAccount] = useState<FinanceAccount | 'new' | null>(null);
 
   useEffect(() => {
@@ -650,18 +1031,30 @@ const AssetsTab: React.FC<{
         onSave={handleSaveAccount}
         onDelete={editingAccount !== 'new' ? () => handleDeleteAccount(editingAccount.id) : undefined}
         onClose={closeForm}
+        enabledCurrencies={finSettings.enabledCurrencies}
+        defaultCurrency={finSettings.defaultCurrency}
       />
     );
   }
 
   return (
     <div className="px-5 pt-2 pb-4">
-      {/* 总资产 */}
+      {/* 总资产（按币种分列） */}
       <div className="mb-6">
         <div className="text-slate-500 text-xs mb-1">总资产</div>
-        <div className="text-3xl font-bold text-slate-800 tracking-tight">
-          {formatAmount(totalBalance)}
-        </div>
+        {currencyEntries.length <= 1 ? (
+          <div className="text-3xl font-bold text-slate-800 tracking-tight">
+            {formatAmount(currencyEntries[0]?.[1] ?? 0, currencyEntries[0]?.[0])}
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            {currencyEntries.map(([cur, amt]) => (
+              <span key={cur} className="text-2xl font-bold text-slate-800 tracking-tight">
+                {formatAmount(amt, cur)}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 趋势图占位 */}
@@ -974,7 +1367,8 @@ const TransactionsTab: React.FC<{
       {/* 新增按钮 */}
       <button
         onClick={() => setEditingTx('new')}
-        className="fixed right-5 bottom-24 w-14 h-14 bg-blue-500 text-white rounded-2xl shadow-lg flex items-center justify-center text-2xl font-light active:scale-90 transition-transform z-10"
+        className="fixed right-5 bottom-28 w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-xl font-light text-white active:scale-90 transition-transform z-10"
+        style={{ background: 'linear-gradient(135deg, #c084fc, #818cf8)' }}
       >
         +
       </button>
@@ -1138,6 +1532,7 @@ function buildTAReadPrompt(
   catBreakdown: { name: string; amount: number; pct: number }[],
   notableTxs: NotableTx[],
   tone: Tone,
+  memoryContext?: string,
 ): string {
   const toneInstructions: Record<Tone, string> = {
     teasing: `用调侃、打趣的语气。可以毒舌但不伤人，像真正了解${userName}的人在吐槽——你知道ta的哪些消费习惯是老毛病，哪些是可以拿来开玩笑的。`,
@@ -1192,6 +1587,12 @@ function buildTAReadPrompt(
     prompt += `- 不需要每一笔都评价，挑1~2笔你最有感觉的就够\n\n`;
   }
 
+  if (memoryContext) {
+    prompt += `### 你关于${userName}消费的记忆\n`;
+    prompt += `以下是你记忆中与消费/购物相关的片段。如果某笔消费和你的记忆有关联（比如ta之前提过想买的东西、或者你们聊过的话题），你可以自然地提起——但不要生硬地罗列记忆，只在真的有感触时才提。\n\n`;
+    prompt += memoryContext + '\n\n';
+  }
+
   prompt += `### 任务\n`;
   prompt += `以「${char.name}」的口吻，用${TONE_LABELS[tone]}的语气评价${userName}${periodLabel}的消费。\n\n`;
   prompt += `语气要求：\n${toneInstructions[tone]}\n\n`;
@@ -1215,29 +1616,36 @@ const AnalyticsTab: React.FC<{
 }> = ({ transactions, categories, accounts }) => {
   const { characters, apiConfig, userProfile } = useOS();
   const [period, setPeriod] = useState<'week' | 'month' | 'year'>('month');
+  const [filterAccountId, setFilterAccountId] = useState<string | null>(null);
+  const [filterType, setFilterType] = useState<'expense' | 'income'>('expense');
+  const [showFilters, setShowFilters] = useState(false);
   const [selectedCharId, setSelectedCharId] = useState<string | null>(null);
   const [tone, setTone] = useState<Tone>('teasing');
   const [commentary, setCommentary] = useState<string | null>(null);
   const [loadingComment, setLoadingComment] = useState(false);
   const commentCache = useRef<Map<string, string>>(new Map());
 
-  const now = new Date();
-  let fromDate: string;
-  if (period === 'week') {
-    const d = new Date(now);
-    d.setDate(d.getDate() - 7);
-    fromDate = d.toISOString().split('T')[0];
-  } else if (period === 'month') {
-    fromDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-  } else {
-    fromDate = `${now.getFullYear()}-01-01`;
-  }
-  const toDate = now.toISOString().split('T')[0];
+  // 加载 IndexedDB 中已缓存的评论
+  useEffect(() => {
+    FinanceDB.getAllTAComments().then(comments => {
+      for (const c of comments) {
+        commentCache.current.set(c.id, c.text);
+      }
+    }).catch(() => {});
+  }, []);
 
-  const periodTxs = transactions.filter(
-    t => t.dateStr >= fromDate && t.dateStr <= toDate && t.type === 'expense'
+  const { from: fromDate, to: toDate } = getDateRange(
+    period === 'week' ? 'week' : period === 'month' ? 'month' : 'year'
   );
-  const totalExpense = periodTxs.reduce((s, t) => s + t.amount, 0);
+
+  const periodTxs = transactions.filter(t => {
+    if (t.dateStr < fromDate || t.dateStr > toDate) return false;
+    if (filterAccountId && t.accountId !== filterAccountId) return false;
+    if (filterType === 'expense' && t.type !== 'expense') return false;
+    if (filterType === 'income' && t.type !== 'income' && t.type !== 'refund') return false;
+    return true;
+  });
+  const totalAmount = periodTxs.reduce((s, t) => s + t.amount, 0);
 
   const catMap = new Map(categories.map(c => [c.id, c]));
 
@@ -1252,7 +1660,7 @@ const AnalyticsTab: React.FC<{
     .map(([catId, amount], i) => ({
       cat: catMap.get(catId),
       amount,
-      pct: totalExpense > 0 ? Math.round((amount / totalExpense) * 100) : 0,
+      pct: totalAmount > 0 ? Math.round((amount / totalAmount) * 100) : 0,
       color: CHART_COLORS[i % CHART_COLORS.length],
     }))
     .sort((a, b) => b.amount - a.amount);
@@ -1264,20 +1672,17 @@ const AnalyticsTab: React.FC<{
   }));
 
   const periodLabels = { week: '本周', month: '本月', year: '今年' };
-
-  const availableChars = characters.filter(c =>
-    !c.id.includes('sully') && !c.id.includes('persephone')
-  );
+  const typeLabel = filterType === 'expense' ? '支出' : '收入';
+  const activeFilterCount = filterAccountId ? 1 : 0;
 
   useEffect(() => {
     setCommentary(null);
     setSelectedCharId(null);
-    commentCache.current.clear();
-  }, [period]);
+  }, [period, filterAccountId, filterType]);
 
   const handleSelectChar = (charId: string) => {
     setSelectedCharId(charId);
-    const cacheKey = `${charId}_${period}_${tone}`;
+    const cacheKey = `${charId}_${period}_${tone}_${filterAccountId || 'all'}_${filterType}`;
     const cached = commentCache.current.get(cacheKey);
     setCommentary(cached || null);
   };
@@ -1287,7 +1692,7 @@ const AnalyticsTab: React.FC<{
     const char = characters.find(c => c.id === selectedCharId);
     if (!char) return;
 
-    const cacheKey = `${selectedCharId}_${period}_${tone}`;
+    const cacheKey = `${selectedCharId}_${period}_${tone}_${filterAccountId || 'all'}_${filterType}`;
     const cached = commentCache.current.get(cacheKey);
     if (cached) { setCommentary(cached); return; }
 
@@ -1301,9 +1706,30 @@ const AnalyticsTab: React.FC<{
         pct: c.pct,
       }));
       const notableTxs = findNotableTransactions(periodTxs, transactions, catMap);
+
+      // 从记忆宫殿检索消费相关记忆
+      let memoryContext = '';
+      try {
+        const allNodes = await MemoryNodeDB.getByCharId(selectedCharId);
+        if (allNodes.length > 0) {
+          // 用消费关键词 + 具体交易备注做 BM25 搜索
+          const searchTerms = [
+            '买', '花钱', '消费', '购物', '钱', '想要', '价格',
+            ...notableTxs.slice(0, 3).map(t => t.note).filter(Boolean),
+            ...catBreakdown.slice(0, 3).map(c => c.name),
+          ].join(' ');
+          const hits = bm25Search(searchTerms, allNodes, 5);
+          if (hits.length > 0) {
+            memoryContext = hits
+              .map(h => `- ${h.node.content}`)
+              .join('\n');
+          }
+        }
+      } catch { /* 记忆宫殿不可用也不影响基本功能 */ }
+
       const prompt = buildTAReadPrompt(
         char, userProfile?.name || '用户', periodLabels[period],
-        totalExpense, catBreakdown, notableTxs, tone,
+        totalAmount, catBreakdown, notableTxs, tone, memoryContext,
       );
 
       const baseUrl = apiConfig.baseUrl.replace(/\/+$/, '');
@@ -1329,6 +1755,8 @@ const AnalyticsTab: React.FC<{
       if (reply) {
         commentCache.current.set(cacheKey, reply);
         setCommentary(reply);
+        // 持久化到 IndexedDB
+        FinanceDB.saveTAComment({ id: cacheKey, text: reply, createdAt: Date.now() }).catch(() => {});
       }
     } catch (e) {
       setCommentary('生成失败，请检查 API 配置。');
@@ -1340,7 +1768,7 @@ const AnalyticsTab: React.FC<{
   const handleToneChange = (t: Tone) => {
     setTone(t);
     if (selectedCharId) {
-      const cacheKey = `${selectedCharId}_${period}_${t}`;
+      const cacheKey = `${selectedCharId}_${period}_${t}_${filterAccountId || 'all'}_${filterType}`;
       const cached = commentCache.current.get(cacheKey);
       setCommentary(cached || null);
     }
@@ -1348,25 +1776,42 @@ const AnalyticsTab: React.FC<{
 
   return (
     <div className="px-5 pt-2 pb-4">
-      {/* 时间切换 */}
-      <div className="flex gap-2 mb-5">
+      {/* 筛选栏 */}
+      <div className="flex items-center gap-2 mb-3 overflow-x-auto pb-1 scrollbar-none">
         {(['week', 'month', 'year'] as const).map(p => (
+          <FilterChip key={p} label={p === 'week' ? '周' : p === 'month' ? '月' : '年'} active={period === p} onClick={() => setPeriod(p)} />
+        ))}
+        <FilterChip label="支出" active={filterType === 'expense'} onClick={() => setFilterType('expense')} />
+        <FilterChip label="收入" active={filterType === 'income'} onClick={() => setFilterType('income')} />
+        {accounts.length > 1 && (
           <button
-            key={p}
-            onClick={() => setPeriod(p)}
-            className={`px-4 py-1.5 text-xs rounded-full font-medium transition-colors ${
-              period === p ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-500'
+            onClick={() => setShowFilters(!showFilters)}
+            className={`px-3 py-1.5 text-xs rounded-full font-medium transition-colors shrink-0 flex items-center gap-1 ${
+              activeFilterCount > 0 ? 'bg-blue-500 text-white' : 'bg-white/80 text-slate-500'
             }`}
           >
-            {p === 'week' ? '周' : p === 'month' ? '月' : '年'}
+            账户{activeFilterCount > 0 && ` (${activeFilterCount})`}
           </button>
-        ))}
+        )}
       </div>
 
-      {/* 支出总额 */}
+      {/* 展开账户筛选 */}
+      {showFilters && (
+        <div className="bg-white rounded-2xl shadow-sm p-4 mb-4">
+          <div className="text-[11px] text-slate-400 mb-2">账户</div>
+          <div className="flex gap-2 flex-wrap">
+            <FilterChip label="全部" active={!filterAccountId} onClick={() => setFilterAccountId(null)} />
+            {accounts.filter(a => !a.isArchived).map(a => (
+              <FilterChip key={a.id} label={a.name} active={filterAccountId === a.id} onClick={() => setFilterAccountId(a.id)} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 金额总计 */}
       <div className="mb-4">
-        <div className="text-xs text-slate-400 mb-1">{periodLabels[period]}支出</div>
-        <div className="text-2xl font-bold text-slate-800">{formatAmount(totalExpense)}</div>
+        <div className="text-xs text-slate-400 mb-1">{periodLabels[period]}{typeLabel}</div>
+        <div className="text-2xl font-bold text-slate-800">{formatAmount(totalAmount)}</div>
       </div>
 
       {/* 饼图 */}
@@ -1374,13 +1819,13 @@ const AnalyticsTab: React.FC<{
         {catList.length === 0 ? (
           <div className="h-40 flex items-center justify-center text-slate-300 text-sm">暂无数据</div>
         ) : (
-          <DonutChart data={donutData} total={totalExpense} centerLabel={formatAmount(totalExpense)} />
+          <DonutChart data={donutData} total={totalAmount} centerLabel={formatAmount(totalAmount)} />
         )}
       </div>
 
       {/* 分类列表 */}
       {catList.length === 0 ? (
-        <div className="text-center py-8 text-slate-400 text-sm">暂无支出数据</div>
+        <div className="text-center py-8 text-slate-400 text-sm">暂无{typeLabel}数据</div>
       ) : (
         <div className="bg-white rounded-2xl shadow-sm overflow-hidden mb-6">
           {catList.map(({ cat, amount, pct, color }, i) => (
@@ -1415,9 +1860,9 @@ const AnalyticsTab: React.FC<{
         <div className="text-sm font-medium text-slate-700 mb-3">TA 怎么看</div>
         <div className="text-xs text-slate-400 mb-3">选一个角色来评价你{periodLabels[period]}的消费</div>
 
-        {/* 角色选择 */}
+        {/* 角色选择 — 直接用全量 characters */}
         <div className="flex gap-2 mb-3 overflow-x-auto pb-1 scrollbar-none">
-          {availableChars.map(c => (
+          {characters.map(c => (
             <button
               key={c.id}
               onClick={() => handleSelectChar(c.id)}
@@ -1460,7 +1905,7 @@ const AnalyticsTab: React.FC<{
             </div>
             <button
               onClick={() => {
-                const cacheKey = `${selectedCharId}_${period}_${tone}`;
+                const cacheKey = `${selectedCharId}_${period}_${tone}_${filterAccountId || 'all'}_${filterType}`;
                 commentCache.current.delete(cacheKey);
                 generateCommentary();
               }}
@@ -1474,13 +1919,13 @@ const AnalyticsTab: React.FC<{
           <div className="text-center py-6">
             <button
               onClick={generateCommentary}
-              disabled={loadingComment || totalExpense === 0}
+              disabled={loadingComment || totalAmount === 0}
               className="px-5 py-2.5 bg-blue-500 text-white text-sm rounded-xl font-medium active:scale-95 transition-transform disabled:bg-slate-200 disabled:text-slate-400"
             >
               {loadingComment ? '生成中...' : `让${characters.find(c => c.id === selectedCharId)?.name || 'TA'}来说说`}
             </button>
-            {totalExpense === 0 && (
-              <div className="text-[11px] text-slate-300 mt-2">没有消费数据</div>
+            {totalAmount === 0 && (
+              <div className="text-[11px] text-slate-300 mt-2">没有{typeLabel}数据</div>
             )}
           </div>
         )}

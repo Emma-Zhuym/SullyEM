@@ -8,11 +8,13 @@
 import { FinanceAccount, FinanceCategory, FinanceTransaction, FinanceTxType } from '../types';
 
 const DB_NAME = 'SullyEM_Finance';
-const DB_VERSION = 1;
+const DB_VERSION = 3;
 
 const STORE_ACCOUNTS = 'accounts';
 const STORE_CATEGORIES = 'categories';
 const STORE_TX = 'transactions';
+const STORE_TA_COMMENTS = 'ta_comments';
+const STORE_SETTINGS = 'settings';
 
 // ── 默认预设分类 ──
 
@@ -71,6 +73,14 @@ function openFinanceDB(): Promise<IDBDatabase> {
         txStore.createIndex('accountId', 'accountId', { unique: false });
         txStore.createIndex('dateStr', 'dateStr', { unique: false });
         txStore.createIndex('categoryId', 'categoryId', { unique: false });
+      }
+      // v2: TA读评论持久化
+      if (!db.objectStoreNames.contains(STORE_TA_COMMENTS)) {
+        db.createObjectStore(STORE_TA_COMMENTS, { keyPath: 'id' });
+      }
+      // v3: 设置
+      if (!db.objectStoreNames.contains(STORE_SETTINGS)) {
+        db.createObjectStore(STORE_SETTINGS, { keyPath: 'key' });
       }
     };
   });
@@ -179,6 +189,18 @@ export const FinanceDB = {
       req.onerror = () => reject(req.error);
     });
   },
+
+  // 设置
+  getSetting: async <T = unknown>(key: string): Promise<T | null> => {
+    const row = await getById<{ key: string; value: T }>(STORE_SETTINGS, key);
+    return row?.value ?? null;
+  },
+  saveSetting: <T = unknown>(key: string, value: T) => put(STORE_SETTINGS, { key, value }),
+
+  // TA读评论
+  getTAComment: (id: string) => getById<{ id: string; text: string; createdAt: number }>(STORE_TA_COMMENTS, id),
+  saveTAComment: (comment: { id: string; text: string; createdAt: number }) => put(STORE_TA_COMMENTS, comment),
+  getAllTAComments: () => getAll<{ id: string; text: string; createdAt: number }>(STORE_TA_COMMENTS),
 
   // 余额计算
   calcAccountBalance: async (account: FinanceAccount): Promise<number> => {
