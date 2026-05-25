@@ -992,18 +992,25 @@ const TransactionForm: React.FC<{
   );
 };
 
-// ── 收支趋势图 ──
+// ── 资产趋势图 ──
 
 const TrendChart: React.FC<{
   transactions: FinanceTransaction[];
-}> = ({ transactions }) => {
+  accounts: FinanceAccount[];
+  balances: Record<string, number>;
+}> = ({ transactions, accounts, balances }) => {
   const [trendRange, setTrendRange] = useState<'week' | 'month' | 'year'>('month');
 
-  // 按日聚合收支
-  const { from, to } = getDateRange(trendRange);
-  const periodTxs = transactions.filter(t => t.dateStr >= from && t.dateStr <= to);
+  const currencies = [...new Set(accounts.filter(a => !a.isArchived).map(a => a.currency))];
+  const [selectedCurrency, setSelectedCurrency] = useState<string>(() => currencies[0] || 'CNY');
+
+  // 当前该币种总余额（所有账户加总）
+  const currentTotal = accounts
+    .filter(a => !a.isArchived && a.currency === selectedCurrency)
+    .reduce((s, a) => s + (balances[a.id] ?? 0), 0);
 
   // 建日期列表
+  const { from, to } = getDateRange(trendRange);
   const dates: string[] = [];
   const d = new Date(from + 'T12:00:00');
   const endD = new Date(to + 'T12:00:00');
@@ -1012,34 +1019,50 @@ const TrendChart: React.FC<{
     d.setDate(d.getDate() + 1);
   }
 
-  const dailyExpense = new Map<string, number>();
-  const dailyIncome = new Map<string, number>();
-  for (const t of periodTxs) {
-    if (t.type === 'expense') dailyExpense.set(t.dateStr, (dailyExpense.get(t.dateStr) || 0) + t.amount);
-    if (t.type === 'income' || t.type === 'refund') dailyIncome.set(t.dateStr, (dailyIncome.get(t.dateStr) || 0) + t.amount);
+  // 每天该币种的净变动（收入 - 支出，转账同币种互抵不计）
+  const dailyNet = new Map<string, number>();
+  for (const t of transactions.filter(t => t.currency === selectedCurrency)) {
+    if (t.type === 'income' || t.type === 'refund') {
+      dailyNet.set(t.dateStr, (dailyNet.get(t.dateStr) || 0) + t.amount);
+    } else if (t.type === 'expense') {
+      dailyNet.set(t.dateStr, (dailyNet.get(t.dateStr) || 0) - t.amount);
+    }
   }
 
-  const expensePoints = dates.map(d => dailyExpense.get(d) || 0);
-  const incomePoints = dates.map(d => dailyIncome.get(d) || 0);
-  const maxVal = Math.max(...expensePoints, ...incomePoints, 1);
+  // 从当前余额倒推每天期末余额
+  const lastDate = dates[dates.length - 1];
+  let bal = currentTotal;
+  // 先撤销 chart 范围之后的交易
+  for (const [date, net] of dailyNet) {
+    if (date > lastDate) bal -= net;
+  }
+  const balancePoints: number[] = new Array(dates.length);
+  for (let i = dates.length - 1; i >= 0; i--) {
+    balancePoints[i] = bal;
+    bal -= (dailyNet.get(dates[i]) || 0);
+  }
+
+  const maxVal = Math.max(...balancePoints, 1);
+  const minVal = Math.min(...balancePoints, 0);
+  const range = maxVal - minVal || 1;
 
   const w = 280, h = 100, px = 4, py = 8;
   const chartW = w - px * 2, chartH = h - py * 2;
 
-  const makePath = (points: number[]) => {
-    if (points.length < 2) return '';
-    const stepX = chartW / Math.max(points.length - 1, 1);
-    return points.map((v, i) => {
+  const assetPath = (() => {
+    if (balancePoints.length < 2) return '';
+    const stepX = chartW / Math.max(balancePoints.length - 1, 1);
+    return balancePoints.map((v, i) => {
       const x = px + i * stepX;
-      const y = py + chartH - (v / maxVal) * chartH;
+      const y = py + chartH - ((v - minVal) / range) * chartH;
       return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
     }).join(' ');
-  };
+  })();
 
-  const expensePath = makePath(expensePoints);
-  const incomePath = makePath(incomePoints);
-  const totalExp = expensePoints.reduce((s, v) => s + v, 0);
-  const totalInc = incomePoints.reduce((s, v) => s + v, 0);
+  const latestBal = balancePoints[balancePoints.length - 1] ?? currentTotal;
+  const earliestBal = balancePoints[0] ?? currentTotal;
+  const change = latestBal - earliestBal;
+  const hasAccounts = accounts.some(a => !a.isArchived && a.currency === selectedCurrency);
 
   return (
     <div className="bg-white rounded-2xl shadow-sm p-4 mb-6">
@@ -1050,32 +1073,43 @@ const TrendChart: React.FC<{
               key={r}
               onClick={() => setTrendRange(r)}
               className={`px-3 py-1 text-xs rounded-full font-medium transition-colors ${
-                trendRange === r ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-500'
+                trendRange === r ? 'bg-violet-500 text-white' : 'bg-slate-100 text-slate-500'
               }`}
             >
               {r === 'week' ? '周' : r === 'month' ? '月' : '年'}
             </button>
           ))}
         </div>
-        <div className="flex gap-3 text-[10px]">
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-400" />支出</span>
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400" />收入</span>
-        </div>
+        {currencies.length > 1 && (
+          <div className="flex gap-1">
+            {currencies.map(c => (
+              <button
+                key={c}
+                onClick={() => setSelectedCurrency(c)}
+                className={`px-2 py-0.5 text-xs rounded-full font-medium transition-colors ${
+                  selectedCurrency === c ? 'bg-violet-100 text-violet-600' : 'bg-slate-100 text-slate-400'
+                }`}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      {periodTxs.length === 0 ? (
-        <div className="h-24 flex items-center justify-center text-slate-300 text-sm">暂无数据</div>
+      {!hasAccounts ? (
+        <div className="h-24 flex items-center justify-center text-slate-300 text-sm">暂无账户</div>
       ) : (
         <>
           <svg width="100%" height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="overflow-visible">
-            {expensePath && <path d={expensePath} fill="none" stroke="#fb7185" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />}
-            {incomePath && <path d={incomePath} fill="none" stroke="#34d399" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />}
+            {assetPath && (
+              <path d={assetPath} fill="none" stroke="#8b5cf6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            )}
           </svg>
           <div className="flex justify-between mt-2 text-[11px] text-slate-400">
-            <span>支出 {formatAmount(totalExp)}</span>
-            <span>收入 {formatAmount(totalInc)}</span>
-            <span className={totalInc - totalExp >= 0 ? 'text-emerald-500' : 'text-rose-400'}>
-              结余 {totalInc - totalExp >= 0 ? '+' : ''}{formatAmount(totalInc - totalExp)}
+            <span>当前 {formatAmount(latestBal)} {selectedCurrency}</span>
+            <span className={change >= 0 ? 'text-emerald-500' : 'text-rose-400'}>
+              {change >= 0 ? '▲' : '▼'} {formatAmount(Math.abs(change))}
             </span>
           </div>
         </>
@@ -1157,8 +1191,8 @@ const AssetsTab: React.FC<{
         )}
       </div>
 
-      {/* 收支趋势图 */}
-      <TrendChart transactions={transactions} />
+      {/* 资产趋势图 */}
+      <TrendChart transactions={transactions} accounts={accounts} balances={balances} />
 
       {/* 账户列表 */}
       {activeAccounts.length === 0 ? (
