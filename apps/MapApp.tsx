@@ -1,12 +1,13 @@
 /**
- * MapApp.tsx — 地图系统（可编辑版）
+ * MapApp.tsx — 地图系统（可编辑版 v3）
  *
  * EM 独有功能。角色按日程 slot.location 在自定义地图上移动。
  * 世界配置存 IndexedDB，用户可增删改。
+ * 每个区域可在地图上手动选位置。
  */
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { CaretLeft, ChatTeardrop, Plus, Trash, PencilSimple, Check, X } from '@phosphor-icons/react';
+import { CaretLeft, ChatTeardrop, Plus, Trash, PencilSimple, Check, X, Crosshair, MapPin } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { AppID, CharacterProfile, DailySchedule, ScheduleSlot } from '../types';
 import { DB } from '../utils/db';
@@ -18,14 +19,13 @@ import { computeCharStatus, CharAvailability } from '../utils/charStatus';
 
 interface MapRegion {
   id: string;
-  en: string;
   name: string;
   glyph: string;
   color: string;
-  blob: string;
-  labelX: number;
-  labelY: number;
-  pin?: { x: string; y: string; target?: string; me?: boolean };
+  x: number; // 0-100 percentage
+  y: number; // 0-100 percentage
+  isHome?: boolean;       // "你" 的默认位置
+  isCharDefault?: boolean; // 角色的默认位置
   locationKeys?: string[];
 }
 
@@ -40,7 +40,6 @@ interface MapWorld {
   tagBg: string;
   theme: MapTheme;
   regions: MapRegion[];
-  paths: string[];
   homeRegionId?: string;
 }
 
@@ -49,7 +48,7 @@ interface MapWorld {
 // ══════════════════════════════════════════════════════════════
 
 const MAP_DB = 'SullyEM_Map';
-const MAP_DB_VER = 1;
+const MAP_DB_VER = 2; // bumped for schema change
 const STORE = 'worlds';
 
 function openMapDB(): Promise<IDBDatabase> {
@@ -100,25 +99,6 @@ const MapDB = {
 
 const REGION_COLORS = ['#cfdcef', '#ddd2ec', '#f4d7c2', '#c9e3cd', '#efd0db', '#f1e5c8', '#b6b8d6', '#d6e3c6'];
 
-const TEMPLATE_REGIONS: MapRegion[] = [
-  {
-    id: 'r1', en: 'AREA 01', name: '主要区域', glyph: '🏢', color: '#cfdcef',
-    blob: 'M30 50 q 30 -22 80 -10 t 70 35 q 10 30 -20 50 t -90 5 q -50 -15 -40 -80z',
-    labelX: 40, labelY: 62, pin: { x: '30%', y: '30%', target: 'char' }, locationKeys: [],
-  },
-  {
-    id: 'r2', en: 'AREA 02', name: '你的地方', glyph: '🏠', color: '#ddd2ec',
-    blob: 'M35 250 q 25 -22 80 -15 t 60 35 q 5 30 -35 50 t -90 -5 q -32 -25 -15 -65z',
-    labelX: 45, labelY: 262, pin: { x: '25%', y: '68%', me: true }, locationKeys: [],
-  },
-  {
-    id: 'r3', en: 'AREA 03', name: '其他地方', glyph: '☕', color: '#f4d7c2',
-    blob: 'M210 200 q 60 -10 110 25 q 30 30 5 70 t -90 18 q -50 -15 -55 -55 t 30 -58z',
-    labelX: 225, labelY: 212, locationKeys: [],
-  },
-];
-const TEMPLATE_PATHS = ['M110 90 Q 200 160 250 230', 'M120 280 Q 200 250 250 240'];
-
 const SEED_WORLD: Omit<MapWorld, 'charId'> & { charNameMatch: string } = {
   id: 'chenzhao_default',
   charNameMatch: '陈照',
@@ -129,20 +109,19 @@ const SEED_WORLD: Omit<MapWorld, 'charId'> & { charNameMatch: string } = {
   theme: 'lilac',
   homeRegionId: 'home',
   regions: [
-    { id: 'office', en: 'OFFICE', name: '星澜大厦', glyph: '🏢', color: '#cfdcef',
-      blob: 'M30 50 q 30 -22 80 -10 t 70 35 q 10 30 -20 50 t -90 5 q -50 -15 -40 -80z',
-      labelX: 40, labelY: 62, pin: { x: '30%', y: '30%', target: 'char' },
+    { id: 'office', name: '星澜大厦', glyph: '🏢', color: '#cfdcef',
+      x: 70, y: 20, isCharDefault: true,
       locationKeys: ['公司', '会议室', '星澜', '办公', '大厦'] },
-    { id: 'home', en: 'HOME', name: '你们的家', glyph: '🏠', color: '#ddd2ec',
-      blob: 'M35 250 q 25 -22 80 -15 t 60 35 q 5 30 -35 50 t -90 -5 q -32 -25 -15 -65z',
-      labelX: 45, labelY: 262, pin: { x: '25%', y: '68%', me: true },
+    { id: 'home', name: '你们的家', glyph: '🏠', color: '#ddd2ec',
+      x: 20, y: 50, isHome: true,
       locationKeys: ['家', '卧室', '客厅', '厨房'] },
-    { id: 'dinner', en: 'DINNER', name: '街角餐厅', glyph: '🍷', color: '#f4d7c2',
-      blob: 'M210 200 q 60 -10 110 25 q 30 30 5 70 t -90 18 q -50 -15 -55 -55 t 30 -58z',
-      labelX: 225, labelY: 212,
+    { id: 'dinner', name: '街角餐厅', glyph: '🍷', color: '#f4d7c2',
+      x: 55, y: 70,
       locationKeys: ['餐厅', '吃饭', '晚餐', '约会'] },
+    { id: 'gym', name: '健身房', glyph: '💪', color: '#c9e3cd',
+      x: 85, y: 55,
+      locationKeys: ['健身', '跑步', '运动'] },
   ],
-  paths: ['M110 90 Q 200 160 250 230', 'M120 280 Q 200 250 250 240'],
 };
 
 const THEMES: { id: MapTheme; label: string; color: string }[] = [
@@ -194,38 +173,150 @@ const THEME_BG: Record<string, string> = {
 const STATUS_DOT: Record<CharAvailability, string> = { online: '#3aa763', busy: '#ff9466', offline: '#8a8ab1' };
 const STATUS_LABEL: Record<CharAvailability, string> = { online: '在线', busy: '忙碌', offline: '离线' };
 
+/** Auto-generate dashed path lines connecting regions */
+function generatePaths(regions: MapRegion[]): string[] {
+  if (regions.length < 2) return [];
+  const paths: string[] = [];
+  // Connect each region to the next (simple chain)
+  for (let i = 0; i < regions.length - 1; i++) {
+    const a = regions[i], b = regions[i + 1];
+    // Use quadratic curve with midpoint offset for organic feel
+    const mx = (a.x + b.x) / 2 + (Math.random() * 10 - 5);
+    const my = (a.y + b.y) / 2 + (Math.random() * 10 - 5);
+    paths.push(`M${a.x} ${a.y} Q${mx} ${my} ${b.x} ${b.y}`);
+  }
+  // Also connect last to first if 3+ regions
+  if (regions.length >= 3) {
+    const a = regions[regions.length - 1], b = regions[0];
+    const mx = (a.x + b.x) / 2 + 5;
+    const my = (a.y + b.y) / 2 - 5;
+    paths.push(`M${a.x} ${a.y} Q${mx} ${my} ${b.x} ${b.y}`);
+  }
+  return paths;
+}
+
 // ══════════════════════════════════════════════════════════════
-//  Pin Components
+//  Map Canvas — shared between MapView and Editor
 // ══════════════════════════════════════════════════════════════
 
-const CharPin: React.FC<{
-  name: string; avatar: string; x: string; y: string;
-  status: CharAvailability; active: boolean; onClick: () => void;
-}> = ({ name, avatar, x, y, status, active, onClick }) => (
-  <div className="absolute -translate-x-1/2 -translate-y-full cursor-pointer select-none transition-transform hover:scale-105"
-    style={{ left: x, top: y }} onClick={onClick}>
-    <div className={`w-11 h-11 rounded-full bg-white p-[3px] transition-shadow ${
-      active ? 'shadow-[0_0_0_3px_#6f5cd9,0_8px_18px_rgba(111,92,217,0.4)]' : 'shadow-[0_6px_14px_rgba(20,10,40,0.22)]'}`}>
-      <img src={avatar} className="w-full h-full rounded-full object-cover" />
-    </div>
-    <div className="absolute -right-0.5 top-0 w-3.5 h-3.5 rounded-full border-2 border-white" style={{ background: STATUS_DOT[status] }} />
-    <div className="w-3 h-3 bg-white mx-auto -mt-[7px] rotate-45 rounded-sm shadow-[3px_3px_6px_rgba(20,10,40,0.14)]" />
-    <div className="absolute left-1/2 top-full -translate-x-1/2 mt-1.5 bg-[rgba(28,22,38,0.82)] text-white text-[10.5px] font-semibold px-2 py-[3px] rounded-full whitespace-nowrap">
-      {name}
-    </div>
-  </div>
-);
+const MapCanvas: React.FC<{
+  regions: MapRegion[];
+  theme: MapTheme;
+  charAvatar?: string;
+  charName?: string;
+  charRegionId?: string; // which region the character is at
+  homeRegionId?: string;
+  status?: CharAvailability;
+  highlightRegionId?: string; // editor: which region is selected
+  placingRegionId?: string;   // editor: which region is being placed
+  onTapMap?: (x: number, y: number) => void;
+  onTapRegion?: (id: string) => void;
+  className?: string;
+}> = ({ regions, theme, charAvatar, charName, charRegionId, homeRegionId, status, highlightRegionId, placingRegionId, onTapMap, onTapRegion, className }) => {
+  const canvasRef = useRef<HTMLDivElement>(null);
 
-const MePin: React.FC<{ x: string; y: string }> = ({ x, y }) => (
-  <div className="absolute -translate-x-1/2 -translate-y-full select-none" style={{ left: x, top: y }}>
-    <div className="w-11 h-11 rounded-full p-[3px] animate-pulse"
-      style={{ background: '#6f5cd9', boxShadow: '0 0 0 4px rgba(111,92,217,0.20), 0 6px 14px rgba(111,92,217,0.45)' }}>
-      <div className="w-full h-full rounded-full flex items-center justify-center text-white text-[13px] font-bold" style={{ background: '#6f5cd9' }}>你</div>
+  const handleTap = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+    if (!onTapMap || !canvasRef.current) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    const x = Math.round(((clientX - rect.left) / rect.width) * 100);
+    const y = Math.round(((clientY - rect.top) / rect.height) * 100);
+    onTapMap(Math.max(5, Math.min(95, x)), Math.max(5, Math.min(95, y)));
+  }, [onTapMap]);
+
+  const paths = useMemo(() => generatePaths(regions), [regions]);
+
+  const charRegion = regions.find(r => r.id === charRegionId);
+  const homeRegion = regions.find(r => r.id === homeRegionId) || regions.find(r => r.isHome);
+
+  return (
+    <div ref={canvasRef}
+      className={`relative overflow-hidden bg-white/30 border border-white/60 shadow-[inset_0_1px_0_rgba(255,255,255,0.6),0_4px_22px_rgba(80,60,140,0.08)] ${className || ''}`}
+      style={{ background: THEME_BG[theme] || THEME_BG.lilac }}
+      onClick={handleTap}
+      onTouchStart={onTapMap ? (e) => { e.preventDefault(); handleTap(e); } : undefined}>
+
+      {/* Dashed connection lines */}
+      <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
+        <g stroke="rgba(28,22,38,0.10)" strokeWidth="0.4" strokeDasharray="1 2" fill="none">
+          {paths.map((d, i) => <path key={i} d={d} />)}
+        </g>
+      </svg>
+
+      {/* Placing mode crosshair */}
+      {placingRegionId && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
+          <div className="bg-violet-500/90 text-white text-xs font-bold px-3 py-1.5 rounded-full animate-pulse">
+            点击地图放置位置
+          </div>
+        </div>
+      )}
+
+      {/* Region markers */}
+      {regions.map(r => {
+        const isHighlighted = r.id === highlightRegionId;
+        const isCharHere = r.id === charRegionId;
+        const isPlacing = r.id === placingRegionId;
+        return (
+          <div key={r.id}
+            className="absolute -translate-x-1/2 -translate-y-1/2 select-none transition-all duration-300 ease-out"
+            style={{ left: `${r.x}%`, top: `${r.y}%`, zIndex: isHighlighted || isCharHere ? 20 : 10 }}
+            onClick={(e) => { if (onTapRegion && !placingRegionId) { e.stopPropagation(); onTapRegion(r.id); } }}>
+            {/* Glow ring for highlighted/placing */}
+            {(isHighlighted || isPlacing) && (
+              <div className="absolute inset-0 -m-2 rounded-full animate-pulse" style={{ background: `${r.color}55`, boxShadow: `0 0 20px ${r.color}88` }} />
+            )}
+            {/* Main circle */}
+            <div className={`w-11 h-11 rounded-full flex items-center justify-center text-lg transition-transform ${
+              isHighlighted ? 'scale-125 ring-2 ring-violet-500' : ''
+            }`} style={{ background: r.color, boxShadow: `0 4px 12px ${r.color}66` }}>
+              {r.glyph}
+            </div>
+            {/* Name label */}
+            <div className={`absolute left-1/2 top-full -translate-x-1/2 mt-1 whitespace-nowrap text-center ${
+              isHighlighted ? 'font-bold text-[12px]' : 'text-[10.5px]'
+            }`}>
+              <span className="bg-white/80 backdrop-blur-sm px-2 py-0.5 rounded-full text-[#1c1626]/80 font-semibold shadow-sm">
+                {r.name}
+              </span>
+            </div>
+            {/* Home badge */}
+            {r.isHome && (
+              <div className="absolute -right-1 -top-1 w-4 h-4 rounded-full bg-violet-500 text-white text-[8px] flex items-center justify-center font-bold shadow-sm">你</div>
+            )}
+            {r.isCharDefault && !isCharHere && (
+              <div className="absolute -right-1 -top-1 w-4 h-4 rounded-full bg-slate-500 text-white text-[8px] flex items-center justify-center font-bold shadow-sm">★</div>
+            )}
+          </div>
+        );
+      })}
+
+      {/* Character avatar pin — overlaid on the matched region */}
+      {charAvatar && charRegion && (
+        <div className="absolute -translate-x-1/2 -translate-y-1/2 z-20 select-none transition-all duration-500 ease-out pointer-events-none"
+          style={{ left: `${charRegion.x}%`, top: `${charRegion.y - 10}%` }}>
+          <div className="w-10 h-10 rounded-full bg-white p-[2px] shadow-[0_0_0_3px_#6f5cd9,0_6px_14px_rgba(111,92,217,0.4)]">
+            <img src={charAvatar} className="w-full h-full rounded-full object-cover" />
+          </div>
+          <div className="absolute -right-0.5 top-0 w-3 h-3 rounded-full border-2 border-white" style={{ background: STATUS_DOT[status || 'offline'] }} />
+          <div className="w-2.5 h-2.5 bg-white mx-auto -mt-[5px] rotate-45 rounded-sm shadow-sm" />
+        </div>
+      )}
+
+      {/* "Me" pin at home region */}
+      {homeRegion && !charRegionId && (
+        <div className="absolute -translate-x-1/2 -translate-y-1/2 z-15 select-none pointer-events-none"
+          style={{ left: `${homeRegion.x}%`, top: `${homeRegion.y - 10}%` }}>
+          <div className="w-9 h-9 rounded-full p-[2px] animate-pulse"
+            style={{ background: '#6f5cd9', boxShadow: '0 0 0 3px rgba(111,92,217,0.20), 0 4px 10px rgba(111,92,217,0.45)' }}>
+            <div className="w-full h-full rounded-full flex items-center justify-center text-white text-[11px] font-bold" style={{ background: '#6f5cd9' }}>你</div>
+          </div>
+        </div>
+      )}
     </div>
-    <div className="w-3 h-3 mx-auto -mt-[7px] rotate-45 rounded-sm" style={{ background: '#6f5cd9', boxShadow: '3px 3px 6px rgba(111,92,217,0.45)' }} />
-    <div className="absolute left-1/2 top-full -translate-x-1/2 mt-1.5 text-white text-[10.5px] font-semibold px-2 py-[3px] rounded-full whitespace-nowrap" style={{ background: '#6f5cd9' }}>你在这里</div>
-  </div>
-);
+  );
+};
 
 // ══════════════════════════════════════════════════════════════
 //  Bottom Sheet
@@ -296,16 +387,8 @@ const MapView: React.FC<{
 
   const matchedRegion = useMemo(() => {
     if (currentSlot?.location) { const m = matchRegion(world, currentSlot.location); if (m) return m; }
-    return world.regions.find(r => r.id === world.homeRegionId) || world.regions.find(r => r.pin?.target === 'char');
+    return world.regions.find(r => r.isCharDefault) || world.regions[0];
   }, [world, currentSlot]);
-
-  const charPinPos = useMemo(() => {
-    if (matchedRegion?.pin) return { x: matchedRegion.pin.x, y: matchedRegion.pin.y };
-    const r = world.regions.find(r => r.pin?.target === 'char');
-    return r?.pin ? { x: r.pin.x, y: r.pin.y } : { x: '50%', y: '50%' };
-  }, [matchedRegion, world]);
-
-  const mePinRegion = world.regions.find(r => r.pin?.me);
 
   return (
     <div className="flex flex-col h-full" style={{ background: THEME_BG[world.theme] || THEME_BG.lilac }}>
@@ -322,33 +405,21 @@ const MapView: React.FC<{
         </button>
       </div>
 
-      <div className="flex-1 relative overflow-hidden mx-3.5 rounded-[28px] bg-white/30 border border-white/60 shadow-[inset_0_1px_0_rgba(255,255,255,0.6),0_4px_22px_rgba(80,60,140,0.08)]">
-        <svg className="absolute inset-0 w-full h-full" viewBox="0 0 365 440" preserveAspectRatio="xMidYMid slice">
-          <defs><filter id="mapSoft" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="0.6" /></filter></defs>
-          <g stroke="rgba(28,22,38,0.10)" strokeWidth="1.2" strokeDasharray="3 5" fill="none">
-            {world.paths.map((d, i) => <path key={i} d={d} />)}
-          </g>
-          <g filter="url(#mapSoft)">
-            {world.regions.map(r => <path key={r.id} d={r.blob} fill={r.color} opacity="0.92" />)}
-          </g>
-          <g>
-            {world.regions.map(r => (
-              <React.Fragment key={r.id + '-lbl'}>
-                <text x={r.labelX} y={r.labelY} style={{ fontFamily: 'Inter,sans-serif', fontSize: '8px', fontWeight: 600, fill: 'rgba(28,22,38,0.32)', letterSpacing: '0.18em' }}>{r.en}</text>
-                <text x={r.labelX} y={r.labelY + 18} style={{ fontFamily: 'Noto Sans SC,sans-serif', fontSize: '11px', fontWeight: 600, fill: 'rgba(28,22,38,0.55)', letterSpacing: '0.05em' }}>{r.name}</text>
-              </React.Fragment>
-            ))}
-          </g>
-        </svg>
+      <MapCanvas
+        className="flex-1 mx-3.5 rounded-[28px]"
+        regions={world.regions}
+        theme={world.theme}
+        charAvatar={char.avatar}
+        charName={char.name}
+        charRegionId={matchedRegion?.id}
+        homeRegionId={world.homeRegionId}
+        status={statusResult.status}
+      />
 
-        <div className="absolute left-3 top-3 bg-white/[0.86] rounded-full px-3 py-1.5 flex items-center gap-2 text-[11.5px] font-semibold text-[#1c1626] shadow-[0_4px_14px_rgba(80,60,140,0.10)]">
-          <span className="w-2 h-2 rounded-full shadow-[0_0_0_4px_rgba(58,167,99,0.18)]" style={{ background: STATUS_DOT[statusResult.status] }} />
-          {char.name} · {statusResult.currentActivity || STATUS_LABEL[statusResult.status]}
-        </div>
-
-        <CharPin name={char.name} avatar={char.avatar} x={charPinPos.x} y={charPinPos.y}
-          status={statusResult.status} active={true} onClick={() => {}} />
-        {mePinRegion?.pin && <MePin x={mePinRegion.pin.x} y={mePinRegion.pin.y} />}
+      {/* Status bar overlay */}
+      <div className="absolute left-7 top-[72px] bg-white/[0.86] rounded-full px-3 py-1.5 flex items-center gap-2 text-[11.5px] font-semibold text-[#1c1626] shadow-[0_4px_14px_rgba(80,60,140,0.10)] z-30">
+        <span className="w-2 h-2 rounded-full shadow-[0_0_0_4px_rgba(58,167,99,0.18)]" style={{ background: STATUS_DOT[statusResult.status] }} />
+        {char.name} · {statusResult.currentActivity || STATUS_LABEL[statusResult.status]}
       </div>
 
       <BottomSheet char={char} region={matchedRegion} status={statusResult.status}
@@ -380,6 +451,7 @@ const WorldEditor: React.FC<{
 }> = ({ world: initial, char, onSave, onDelete, onBack, isNew, apiConfig }) => {
   const [w, setW] = useState<MapWorld>({ ...initial });
   const [editingRegion, setEditingRegion] = useState<string | null>(null);
+  const [placingRegionId, setPlacingRegionId] = useState<string | null>(null);
   const [importedLocations, setImportedLocations] = useState<{ name: string; emoji: string; keywords: string[] }[]>([]);
   const [importLoading, setImportLoading] = useState(false);
   const [importDone, setImportDone] = useState(false);
@@ -389,18 +461,12 @@ const WorldEditor: React.FC<{
     setImportLoading(true);
     try {
       const textParts: string[] = [];
-
-      // 1. Character profile text
       if (char.description) textParts.push(`[角色简介] ${char.description}`);
       if (char.systemPrompt) textParts.push(`[角色设定] ${char.systemPrompt.slice(0, 3000)}`);
       if (char.worldview) textParts.push(`[世界观] ${char.worldview.slice(0, 2000)}`);
-
-      // 2. Worldbook entries
       if (char.mountedWorldbooks) {
         for (const wb of char.mountedWorldbooks) textParts.push(`[世界书: ${wb.title}] ${wb.content.slice(0, 1500)}`);
       }
-
-      // 3. Recent chat messages (sample)
       try {
         const msgs = await DB.getRecentMessagesByCharId(char.id, 100);
         const chatSnippets = msgs
@@ -409,8 +475,6 @@ const WorldEditor: React.FC<{
           .join('\n');
         if (chatSnippets) textParts.push(`[近期聊天]\n${chatSnippets.slice(0, 4000)}`);
       } catch {}
-
-      // 4. Recent schedule locations (last 7 days)
       try {
         const today = new Date();
         const schedParts: string[] = [];
@@ -429,8 +493,7 @@ const WorldEditor: React.FC<{
         if (schedParts.length) textParts.push(`[近7天日程]\n${schedParts.join('\n')}`);
       } catch {}
 
-      const allText = textParts.join('\n\n').slice(0, 12000); // cap total context
-
+      const allText = textParts.join('\n\n').slice(0, 12000);
       const resp = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
@@ -462,7 +525,6 @@ const WorldEditor: React.FC<{
       if (!resp.ok) throw new Error('API error');
       const data = await resp.json();
       const raw = data.choices?.[0]?.message?.content || '';
-      // Extract JSON from response (handle markdown code blocks)
       const jsonMatch = raw.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]) as { name: string; emoji: string; keywords: string[] }[];
@@ -471,7 +533,7 @@ const WorldEditor: React.FC<{
       setImportDone(true);
     } catch (e) {
       console.error('Location import failed:', e);
-      setImportDone(true); // still show "no results" state
+      setImportDone(true);
     }
     setImportLoading(false);
   }, [char, apiConfig]);
@@ -484,30 +546,55 @@ const WorldEditor: React.FC<{
     }));
   };
 
-  const addRegion = () => {
-    const idx = w.regions.length + 1;
-    const extraBlobs = [
-      'M200 40 q 40 -15 90 10 t 50 50 q 0 30 -40 40 t -80 -10 q -35 -20 -20 -90z',
-      'M30 160 q 25 -20 75 -10 t 65 30 q 10 25 -15 45 t -80 5 q -45 -15 -45 -70z',
-      'M220 140 q 50 -12 95 20 q 25 25 5 55 t -80 15 q -50 -10 -50 -45 t 30 -45z',
-    ];
+  const addRegionFromImport = (loc: { name: string; emoji: string; keywords: string[] }) => {
+    const idx = w.regions.length;
+    // Auto-distribute in a circle pattern
+    const angle = (idx / Math.max(idx + 1, 6)) * Math.PI * 2 - Math.PI / 2;
+    const cx = 50, cy = 50, radius = 30;
+    const x = Math.round(cx + Math.cos(angle) * radius);
+    const y = Math.round(cy + Math.sin(angle) * radius);
     const newRegion: MapRegion = {
-      id: `r_${Date.now()}`,
-      en: `AREA ${String(idx).padStart(2, '0')}`,
-      name: `新区域 ${idx}`,
-      glyph: '📍',
-      color: REGION_COLORS[(idx - 1) % REGION_COLORS.length],
-      blob: extraBlobs[(idx - 1) % extraBlobs.length],
-      labelX: 120 + (idx % 2) * 100,
-      labelY: 100 + Math.floor(idx / 2) * 120,
-      locationKeys: [],
+      id: `r_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+      name: loc.name,
+      glyph: loc.emoji,
+      color: REGION_COLORS[idx % REGION_COLORS.length],
+      x: Math.max(10, Math.min(90, x)),
+      y: Math.max(10, Math.min(90, y)),
+      locationKeys: loc.keywords,
     };
     setW(prev => ({ ...prev, regions: [...prev.regions, newRegion] }));
   };
 
+  const addBlankRegion = () => {
+    const idx = w.regions.length;
+    const angle = (idx / Math.max(idx + 1, 6)) * Math.PI * 2 - Math.PI / 2;
+    const cx = 50, cy = 50, radius = 30;
+    const newRegion: MapRegion = {
+      id: `r_${Date.now()}`,
+      name: `新地点`,
+      glyph: '📍',
+      color: REGION_COLORS[idx % REGION_COLORS.length],
+      x: Math.max(10, Math.min(90, Math.round(cx + Math.cos(angle) * radius))),
+      y: Math.max(10, Math.min(90, Math.round(cy + Math.sin(angle) * radius))),
+      locationKeys: [],
+    };
+    setW(prev => ({ ...prev, regions: [...prev.regions, newRegion] }));
+    // Auto-enter placing mode for the new region
+    setPlacingRegionId(newRegion.id);
+  };
+
   const removeRegion = (id: string) => {
     setW(prev => ({ ...prev, regions: prev.regions.filter(r => r.id !== id) }));
+    if (placingRegionId === id) setPlacingRegionId(null);
+    if (editingRegion === id) setEditingRegion(null);
   };
+
+  const handleMapTap = useCallback((x: number, y: number) => {
+    if (placingRegionId) {
+      updateRegion(placingRegionId, { x, y });
+      setPlacingRegionId(null);
+    }
+  }, [placingRegionId]);
 
   return (
     <div className="flex flex-col h-full" style={{ background: THEME_BG.lilac }}>
@@ -523,12 +610,42 @@ const WorldEditor: React.FC<{
       </div>
 
       <div className="flex-1 overflow-y-auto pb-8 scrollbar-none">
+        {/* Map Preview — interactive positioning */}
+        <div className="px-4 mb-4">
+          <div className="text-xs font-semibold text-slate-500 mb-2 px-1 flex items-center gap-1.5">
+            <MapPin size={12} weight="bold" />
+            地图预览
+            {placingRegionId && (
+              <span className="text-violet-500 animate-pulse ml-1">· 点击放置「{w.regions.find(r => r.id === placingRegionId)?.name}」</span>
+            )}
+          </div>
+          <MapCanvas
+            className="rounded-[22px] aspect-square"
+            regions={w.regions}
+            theme={w.theme}
+            highlightRegionId={editingRegion || undefined}
+            placingRegionId={placingRegionId || undefined}
+            onTapMap={handleMapTap}
+            onTapRegion={(id) => {
+              if (!placingRegionId) {
+                setEditingRegion(editingRegion === id ? null : id);
+              }
+            }}
+          />
+          {placingRegionId && (
+            <button onClick={() => setPlacingRegionId(null)}
+              className="mt-2 w-full py-2 text-center text-sm text-slate-400 font-semibold bg-white/60 rounded-xl active:bg-white/80">
+              取消定位
+            </button>
+          )}
+        </div>
+
         {/* Character info */}
-        <div className="flex items-center gap-3 px-4 py-3">
-          <img src={char.avatar} className="w-12 h-12 rounded-2xl object-cover shadow-md" />
+        <div className="flex items-center gap-3 px-4 py-2">
+          <img src={char.avatar} className="w-10 h-10 rounded-2xl object-cover shadow-md" />
           <div>
             <div className="font-bold text-[15px]">{char.name}</div>
-            <div className="text-[11px] text-slate-400">这个世界属于 {char.name}</div>
+            <div className="text-[11px] text-slate-400">{w.regions.length} 个地点</div>
           </div>
         </div>
 
@@ -542,7 +659,7 @@ const WorldEditor: React.FC<{
 
         {/* Tag */}
         <div className="px-4 mb-4">
-          <div className="text-xs font-semibold text-slate-500 mb-2 px-1">标签</div>
+          <div className="text-xs font-semibold text-slate-500 mb-2 px-1">关系</div>
           <div className="flex flex-wrap gap-2">
             {TAG_PRESETS.map(t => (
               <button key={t.tag} onClick={() => update({ tag: t.tag, tagBg: t.bg, tagColor: t.color })}
@@ -579,35 +696,16 @@ const WorldEditor: React.FC<{
                 {importLoading ? '✨ AI 正在扫描聊天记录 + 人设...' : '🔍 AI 扫描记忆中的地名'}
               </button>
             ) : importedLocations.length === 0 ? (
-              <div className="text-center text-sm text-slate-400 py-2">没有找到地名，可手动添加区域</div>
+              <div className="text-center text-sm text-slate-400 py-2">没有找到地名，可手动添加</div>
             ) : (
               <div>
-                <div className="text-[11px] text-slate-400 mb-2">点击添加为区域（含自动关键词）：</div>
+                <div className="text-[11px] text-slate-400 mb-2">点击添加到地图（添加后可在地图上定位）：</div>
                 <div className="flex flex-col gap-1.5">
                   {importedLocations.map(loc => {
                     const alreadyAdded = w.regions.some(r => r.name === loc.name || r.locationKeys?.some(k => loc.keywords.includes(k)));
                     return (
                       <button key={loc.name} disabled={alreadyAdded}
-                        onClick={() => {
-                          const idx = w.regions.length + 1;
-                          const extraBlobs = [
-                            'M200 40 q 40 -15 90 10 t 50 50 q 0 30 -40 40 t -80 -10 q -35 -20 -20 -90z',
-                            'M30 160 q 25 -20 75 -10 t 65 30 q 10 25 -15 45 t -80 5 q -45 -15 -45 -70z',
-                            'M220 140 q 50 -12 95 20 q 25 25 5 55 t -80 15 q -50 -10 -50 -45 t 30 -45z',
-                          ];
-                          const newRegion: MapRegion = {
-                            id: `r_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
-                            en: loc.name.toUpperCase().slice(0, 12),
-                            name: loc.name,
-                            glyph: loc.emoji,
-                            color: REGION_COLORS[(idx - 1) % REGION_COLORS.length],
-                            blob: extraBlobs[(idx - 1) % extraBlobs.length],
-                            labelX: 120 + (idx % 2) * 100,
-                            labelY: 100 + Math.floor(idx / 2) * 120,
-                            locationKeys: loc.keywords,
-                          };
-                          setW(prev => ({ ...prev, regions: [...prev.regions, newRegion] }));
-                        }}
+                        onClick={() => addRegionFromImport(loc)}
                         className={`flex items-center gap-2 px-3 py-2 rounded-xl text-left transition-all ${
                           alreadyAdded ? 'bg-slate-50 opacity-40' : 'bg-violet-50 active:bg-violet-100'
                         }`}>
@@ -627,26 +725,28 @@ const WorldEditor: React.FC<{
           </div>
         </div>
 
-        {/* Regions */}
+        {/* Regions list */}
         <div className="px-4 mb-4">
           <div className="flex items-center justify-between mb-2 px-1">
-            <span className="text-xs font-semibold text-slate-500">区域 ({w.regions.length})</span>
-            <button onClick={addRegion} className="text-xs text-violet-500 font-semibold flex items-center gap-0.5">
+            <span className="text-xs font-semibold text-slate-500">地点 ({w.regions.length})</span>
+            <button onClick={addBlankRegion} className="text-xs text-violet-500 font-semibold flex items-center gap-0.5">
               <Plus size={12} weight="bold" />添加
             </button>
           </div>
 
           <div className="flex flex-col gap-2">
             {w.regions.map(r => (
-              <div key={r.id} className="bg-white rounded-2xl shadow-sm overflow-hidden">
+              <div key={r.id} className={`bg-white rounded-2xl shadow-sm overflow-hidden transition-all ${
+                editingRegion === r.id ? 'ring-2 ring-violet-400' : ''
+              }`}>
                 <div className="flex items-center gap-2.5 p-3 cursor-pointer" onClick={() => setEditingRegion(editingRegion === r.id ? null : r.id)}>
                   <div className="w-8 h-8 rounded-lg flex items-center justify-center text-base" style={{ background: r.color }}>{r.glyph}</div>
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-semibold truncate">{r.name}</div>
-                    <div className="text-[10px] text-slate-400">{r.en} · {r.locationKeys?.length || 0} 个关键词</div>
+                    <div className="text-[10px] text-slate-400">({r.x}, {r.y}) · {r.locationKeys?.length || 0} 个关键词</div>
                   </div>
-                  {r.pin?.target === 'char' && <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-600 font-bold">角色</span>}
-                  {r.pin?.me && <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-600 font-bold">你</span>}
+                  {r.isHome && <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-600 font-bold">你</span>}
+                  {r.isCharDefault && <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-600 font-bold">TA</span>}
                   {w.regions.length > 1 && (
                     <button onClick={e => { e.stopPropagation(); removeRegion(r.id); }} className="text-slate-300 active:text-rose-400">
                       <Trash size={16} />
@@ -656,23 +756,33 @@ const WorldEditor: React.FC<{
 
                 {/* Expanded edit */}
                 {editingRegion === r.id && (
-                  <div className="border-t border-slate-100 p-3 space-y-2">
+                  <div className="border-t border-slate-100 p-3 space-y-2.5">
                     <div className="flex gap-2">
                       <input value={r.glyph} onChange={e => updateRegion(r.id, { glyph: e.target.value.slice(0, 2) })}
                         className="w-10 text-center text-base bg-slate-50 rounded-lg p-1 outline-none" />
                       <input value={r.name} onChange={e => updateRegion(r.id, { name: e.target.value })}
-                        className="flex-1 text-sm bg-slate-50 rounded-lg px-2 py-1 outline-none" placeholder="区域名" />
+                        className="flex-1 text-sm bg-slate-50 rounded-lg px-2 py-1 outline-none" placeholder="地点名" />
                     </div>
-                    <input value={r.en} onChange={e => updateRegion(r.id, { en: e.target.value })}
-                      className="w-full text-xs bg-slate-50 rounded-lg px-2 py-1 outline-none text-slate-400" placeholder="英文标签（如 OFFICE）" />
+
+                    {/* Position button */}
+                    <button onClick={() => setPlacingRegionId(r.id)}
+                      className={`w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold transition-colors ${
+                        placingRegionId === r.id
+                          ? 'bg-violet-500 text-white'
+                          : 'bg-violet-50 text-violet-600 active:bg-violet-100'
+                      }`}>
+                      <Crosshair size={14} weight="bold" />
+                      {placingRegionId === r.id ? '点击地图放置...' : '在地图上定位'}
+                    </button>
+
                     <div>
-                      <div className="text-[10px] text-slate-400 mb-1">位置关键词（逗号分隔，用于匹配日程 location）</div>
+                      <div className="text-[10px] text-slate-400 mb-1">位置关键词（逗号分隔，匹配日程 location）</div>
                       <input value={(r.locationKeys || []).join(', ')}
                         onChange={e => updateRegion(r.id, { locationKeys: e.target.value.split(/[,，]/).map(s => s.trim()).filter(Boolean) })}
                         className="w-full text-xs bg-slate-50 rounded-lg px-2 py-1.5 outline-none" placeholder="公司, 会议室, 星澜" />
                     </div>
                     <div className="flex gap-2">
-                      <div className="text-[10px] text-slate-400 mt-1">颜色</div>
+                      <div className="text-[10px] text-slate-400 mt-1 shrink-0">颜色</div>
                       <div className="flex gap-1.5 flex-wrap">
                         {REGION_COLORS.map(c => (
                           <button key={c} onClick={() => updateRegion(r.id, { color: c })}
@@ -682,17 +792,25 @@ const WorldEditor: React.FC<{
                       </div>
                     </div>
                     <div className="flex gap-2">
-                      <button onClick={() => updateRegion(r.id, { pin: { x: r.pin?.x || '50%', y: r.pin?.y || '50%', target: 'char' } })}
-                        className={`text-[10px] px-2 py-1 rounded-full font-bold ${r.pin?.target === 'char' ? 'bg-violet-500 text-white' : 'bg-slate-100 text-slate-500'}`}>
-                        角色默认位
+                      <button onClick={() => {
+                        // Clear other isCharDefault, set this one
+                        setW(prev => ({
+                          ...prev,
+                          regions: prev.regions.map(reg => ({ ...reg, isCharDefault: reg.id === r.id })),
+                        }));
+                      }}
+                        className={`text-[10px] px-2 py-1 rounded-full font-bold ${r.isCharDefault ? 'bg-indigo-500 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                        TA的默认位
                       </button>
-                      <button onClick={() => updateRegion(r.id, { pin: { x: r.pin?.x || '50%', y: r.pin?.y || '50%', me: true } })}
-                        className={`text-[10px] px-2 py-1 rounded-full font-bold ${r.pin?.me ? 'bg-violet-500 text-white' : 'bg-slate-100 text-slate-500'}`}>
-                        你的位置
-                      </button>
-                      <button onClick={() => updateRegion(r.id, { pin: undefined })}
-                        className={`text-[10px] px-2 py-1 rounded-full font-bold ${!r.pin ? 'bg-slate-300 text-white' : 'bg-slate-100 text-slate-500'}`}>
-                        无 pin
+                      <button onClick={() => {
+                        setW(prev => ({
+                          ...prev,
+                          regions: prev.regions.map(reg => ({ ...reg, isHome: reg.id === r.id })),
+                          homeRegionId: r.id,
+                        }));
+                      }}
+                        className={`text-[10px] px-2 py-1 rounded-full font-bold ${r.isHome ? 'bg-violet-500 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                        你的默认位
                       </button>
                     </div>
                   </div>
@@ -727,9 +845,9 @@ const WorldCard: React.FC<{
     <div className="relative rounded-[22px] overflow-hidden p-3.5 border border-white/70 shadow-[0_10px_26px_rgba(80,60,140,0.12),inset_0_1px_0_rgba(255,255,255,0.7)] cursor-pointer active:scale-[0.985] transition-transform" onClick={onClick}>
       <div className="absolute inset-0 pointer-events-none">
         <svg viewBox="0 0 200 100" preserveAspectRatio="none" className="w-full h-full opacity-95">
-          <path d="M-5 30 q 30 -25 80 -15 t 70 25 q 20 25 -10 45 t -90 5 q -50 -10 -50 -60z" fill={colors[0] || '#ddd'} opacity="0.85" />
-          <path d="M90 -10 q 60 -5 110 25 q 25 25 5 50 t -90 8 q -45 -10 -55 -45 t 30 -38z" fill={colors[1] || '#eee'} opacity="0.85" />
-          {colors[2] && <path d="M40 60 q 30 -10 80 0 t 80 30 q -5 25 -50 30 t -100 -10 q -30 -15 -10 -50z" fill={colors[2]} opacity="0.85" />}
+          <circle cx={world.regions[0]?.x ?? 40} cy={world.regions[0]?.y ?? 40} r="35" fill={colors[0] || '#ddd'} opacity="0.6" />
+          <circle cx={world.regions[1]?.x ? world.regions[1].x * 2 : 130} cy={world.regions[1]?.y ?? 50} r="30" fill={colors[1] || '#eee'} opacity="0.6" />
+          {colors[2] && <circle cx={world.regions[2]?.x ? world.regions[2].x * 1.5 : 80} cy="70" r="25" fill={colors[2]} opacity="0.6" />}
         </svg>
       </div>
       <div className="absolute inset-0 bg-white/30 backdrop-blur-[4px]" />
@@ -743,7 +861,7 @@ const WorldCard: React.FC<{
               <span className="text-[17px] font-bold tracking-tight text-[#1c1626]">{char.name}</span>
               <span className="text-[9.5px] px-[7px] py-[1px] rounded-full font-bold" style={{ background: world.tagBg, color: world.tagColor }}>{world.tag}</span>
             </div>
-            <div className="text-[11.5px] text-[#1c1626]/60 mt-0.5">{world.genre}</div>
+            <div className="text-[11.5px] text-[#1c1626]/60 mt-0.5">{world.genre} · {world.regions.length} 个地点</div>
           </div>
         </div>
         <div className="flex items-center gap-2 mt-2.5 text-[11px] text-[#1c1626]/60">
@@ -815,7 +933,6 @@ const Shelf: React.FC<{
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 pb-6 flex flex-col gap-3 scrollbar-none">
-        {/* Characters WITH worlds */}
         {worlds.map(w => {
           const char = characters.find(c => c.id === w.charId);
           if (!char) return null;
@@ -823,12 +940,10 @@ const Shelf: React.FC<{
           return <WorldCard key={w.id} world={w} char={char} status={sr.status} activity={sr.currentActivity} onClick={() => onOpenWorld(w.id)} />;
         })}
 
-        {/* Divider */}
         {worlds.length > 0 && charsWithout.length > 0 && (
           <div className="text-[11px] text-[#1c1626]/40 font-semibold px-1 pt-2 tracking-wide">其他角色</div>
         )}
 
-        {/* Characters WITHOUT worlds */}
         {charsWithout.map(c => {
           const sr = computeCharStatus(schedules[c.id] || null);
           return <CharRow key={c.id} char={c} status={sr.status} activity={sr.currentActivity}
@@ -929,8 +1044,7 @@ export default function MapApp() {
       tagColor: '#6b5230',
       tagBg: '#f1e5c8',
       theme: 'lilac',
-      regions: TEMPLATE_REGIONS.map(r => ({ ...r, id: `r_${Date.now()}_${Math.random().toString(36).slice(2, 6)}` })),
-      paths: [...TEMPLATE_PATHS],
+      regions: [], // start empty — user imports from memory or adds manually
       homeRegionId: undefined,
     };
     return <WorldEditor world={newWorld} char={char} isNew apiConfig={apiConfig} onSave={handleSaveWorld} onBack={() => setView({ type: 'shelf' })} />;
