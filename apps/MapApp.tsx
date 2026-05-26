@@ -34,9 +34,7 @@ type MapTheme = 'lilac' | 'peach' | 'mint' | 'dusk' | 'rainbow';
 interface MapWorld {
   id: string;
   charId: string;
-  title: string;
   genre: string;
-  role: string;
   tag: string;
   tagColor: string;
   tagBg: string;
@@ -124,9 +122,7 @@ const TEMPLATE_PATHS = ['M110 90 Q 200 160 250 230', 'M120 280 Q 200 250 250 240
 const SEED_WORLD: Omit<MapWorld, 'charId'> & { charNameMatch: string } = {
   id: 'chenzhao_default',
   charNameMatch: '陈照',
-  title: '星澜的他',
   genre: '现代都市',
-  role: '你 -> 他的女友',
   tag: '同居',
   tagColor: '#8a3251',
   tagBg: '#ffd7e1',
@@ -158,12 +154,14 @@ const THEMES: { id: MapTheme; label: string; color: string }[] = [
 ];
 
 const TAG_PRESETS = [
-  { tag: '同居', bg: '#ffd7e1', color: '#8a3251' },
   { tag: '暧昧', bg: '#ffe5b3', color: '#7a5320' },
-  { tag: '校园', bg: '#d2ecd3', color: '#2c6c3a' },
-  { tag: '末世', bg: '#d6e7ff', color: '#284a82' },
-  { tag: '同事', bg: '#ddd2ec', color: '#5b4a8a' },
+  { tag: '恋爱', bg: '#ffd7e1', color: '#8a3251' },
+  { tag: '同居', bg: '#f4d2e8', color: '#8a3271' },
+  { tag: '订婚', bg: '#e8d2f4', color: '#6b3a8a' },
+  { tag: '结婚', bg: '#d6e7ff', color: '#284a82' },
   { tag: '朋友', bg: '#f1e5c8', color: '#6b5230' },
+  { tag: '同事', bg: '#ddd2ec', color: '#5b4a8a' },
+  { tag: '助手', bg: '#d2ecd3', color: '#2c6c3a' },
 ];
 
 // ══════════════════════════════════════════════════════════════
@@ -316,8 +314,8 @@ const MapView: React.FC<{
           <CaretLeft size={18} weight="bold" />
         </button>
         <div className="flex-1 text-center min-w-0">
-          <div className="font-bold text-[17px] tracking-tight truncate">{world.title}</div>
-          <div className="text-[11px] text-[#1c1626]/60 mt-0.5">{world.genre} · {world.role}</div>
+          <div className="font-bold text-[17px] tracking-tight truncate">{char.name}</div>
+          <div className="text-[11px] text-[#1c1626]/60 mt-0.5">{world.genre} · {world.tag}</div>
         </div>
         <button className="w-9 h-9 rounded-xl bg-white/45 border border-white/50 flex items-center justify-center active:scale-92 transition-transform" onClick={onEdit}>
           <PencilSimple size={16} weight="bold" />
@@ -371,6 +369,30 @@ const FormRow: React.FC<{ label: string; children: React.ReactNode }> = ({ label
   </div>
 );
 
+/** Extract location keywords from text (character description, prompts, chat messages, etc.) */
+function extractLocationsFromText(text: string): string[] {
+  // Common Chinese location-indicator patterns
+  const patterns = [
+    // 在XX、去XX、到XX — verb + place
+    /(?:在|去|到|回|离开|经过|路过|走进|走出|来到|抵达|前往|途经)\s*([^\s,，。！？…、\n]{2,8})/g,
+    // XX里/内/中/上/下/旁/边/前/后/外
+    /([^\s,，。！？…、\n]{2,6})(?:里|内|中|旁边|旁|边|附近|门口|门前|楼下|楼上|楼)/g,
+    // Known place suffixes
+    /([^\s,，。！？…、\n]{1,6}(?:大厦|公司|学校|大学|医院|餐厅|咖啡|酒吧|公园|广场|商场|超市|书店|图书馆|健身房|工作室|画室|办公室|教室|宿舍|别墅|公寓|小区|花园|车站|机场|码头|街|路|巷|弄|胡同|酒店|宾馆|银行|店))/g,
+  ];
+  const found = new Set<string>();
+  for (const pat of patterns) {
+    let m: RegExpExecArray | null;
+    while ((m = pat.exec(text)) !== null) {
+      const loc = m[1]?.trim();
+      if (loc && loc.length >= 2 && loc.length <= 10) found.add(loc);
+    }
+  }
+  // Filter out common false positives
+  const blacklist = ['什么', '这里', '那里', '哪里', '这个', '那个', '自己', '他们', '我们', '你们', '大家', '所有', '一些', '一个', '为什么', '怎么', '不是', '可以', '应该', '已经', '只是', '但是', '因为', '所以', '如果', '虽然'];
+  return [...found].filter(l => !blacklist.includes(l));
+}
+
 const WorldEditor: React.FC<{
   world: MapWorld;
   char: CharacterProfile;
@@ -381,6 +403,77 @@ const WorldEditor: React.FC<{
 }> = ({ world: initial, char, onSave, onDelete, onBack, isNew }) => {
   const [w, setW] = useState<MapWorld>({ ...initial });
   const [editingRegion, setEditingRegion] = useState<string | null>(null);
+  const [importedLocations, setImportedLocations] = useState<string[]>([]);
+  const [importLoading, setImportLoading] = useState(false);
+  const [importDone, setImportDone] = useState(false);
+
+  // Extract locations from character profile + chat history + recent schedules
+  const handleImportLocations = useCallback(async () => {
+    setImportLoading(true);
+    try {
+      const textParts: string[] = [];
+
+      // 1. Character profile text
+      if (char.description) textParts.push(char.description);
+      if (char.systemPrompt) textParts.push(char.systemPrompt);
+      if (char.worldview) textParts.push(char.worldview);
+
+      // 2. Worldbook entries
+      if (char.mountedWorldbooks) {
+        for (const wb of char.mountedWorldbooks) textParts.push(wb.content);
+      }
+
+      // 3. Recent chat messages
+      try {
+        const msgs = await DB.getRecentMessagesByCharId(char.id, 200);
+        for (const m of msgs) {
+          if (typeof m.content === 'string') textParts.push(m.content);
+        }
+      } catch {}
+
+      // 4. Recent schedule locations (last 7 days)
+      try {
+        const today = new Date();
+        for (let i = 0; i < 7; i++) {
+          const d = new Date(today);
+          d.setDate(d.getDate() - i);
+          const dateStr = d.toISOString().split('T')[0];
+          const sched = await DB.getDailySchedule(char.id, dateStr);
+          if (sched?.slots) {
+            for (const s of sched.slots) {
+              if (s.location) textParts.push(s.location);
+              if (s.description) textParts.push(s.description);
+            }
+          }
+        }
+      } catch {}
+
+      const allText = textParts.join('\n');
+      const locations = extractLocationsFromText(allText);
+
+      // Also add raw schedule locations directly
+      try {
+        const today = new Date();
+        for (let i = 0; i < 7; i++) {
+          const d = new Date(today);
+          d.setDate(d.getDate() - i);
+          const dateStr = d.toISOString().split('T')[0];
+          const sched = await DB.getDailySchedule(char.id, dateStr);
+          if (sched?.slots) {
+            for (const s of sched.slots) {
+              if (s.location && s.location.length >= 2) locations.push(s.location);
+            }
+          }
+        }
+      } catch {}
+
+      // Deduplicate
+      const unique = [...new Set(locations)];
+      setImportedLocations(unique);
+      setImportDone(true);
+    } catch {}
+    setImportLoading(false);
+  }, [char]);
 
   const update = (patch: Partial<MapWorld>) => setW(prev => ({ ...prev, ...patch }));
   const updateRegion = (regionId: string, patch: Partial<MapRegion>) => {
@@ -440,17 +533,9 @@ const WorldEditor: React.FC<{
 
         {/* Basic info */}
         <div className="mx-4 bg-white rounded-2xl shadow-sm mb-4">
-          <FormRow label="标题">
-            <input value={w.title} onChange={e => update({ title: e.target.value })}
-              className="text-sm text-right w-full outline-none bg-transparent" placeholder="世界标题" />
-          </FormRow>
           <FormRow label="类型">
             <input value={w.genre} onChange={e => update({ genre: e.target.value })}
-              className="text-sm text-right w-full outline-none bg-transparent" placeholder="现代都市 / 校园 / ..." />
-          </FormRow>
-          <FormRow label="你的角色">
-            <input value={w.role} onChange={e => update({ role: e.target.value })}
-              className="text-sm text-right w-full outline-none bg-transparent" placeholder="你 -> 他的女友" />
+              className="text-sm text-right w-full outline-none bg-transparent" placeholder="现代都市 / 校园 / 末世 / ..." />
           </FormRow>
         </div>
 
@@ -480,6 +565,58 @@ const WorldEditor: React.FC<{
                 <span className="text-[10px] text-slate-500">{t.label}</span>
               </button>
             ))}
+          </div>
+        </div>
+
+        {/* Location Import */}
+        <div className="px-4 mb-4">
+          <div className="text-xs font-semibold text-slate-500 mb-2 px-1">从记忆导入地点</div>
+          <div className="bg-white rounded-2xl shadow-sm p-3">
+            {!importDone ? (
+              <button onClick={handleImportLocations} disabled={importLoading}
+                className="w-full py-2.5 text-center text-sm font-semibold text-violet-500 bg-violet-50 rounded-xl active:bg-violet-100 disabled:opacity-50 transition-colors">
+                {importLoading ? '扫描聊天记录 + 人设中...' : '🔍 扫描记忆中的地名'}
+              </button>
+            ) : importedLocations.length === 0 ? (
+              <div className="text-center text-sm text-slate-400 py-2">没有找到地名，可手动添加区域</div>
+            ) : (
+              <div>
+                <div className="text-[11px] text-slate-400 mb-2">点击地名添加为新区域：</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {importedLocations.map(loc => {
+                    const alreadyAdded = w.regions.some(r => r.locationKeys?.includes(loc) || r.name === loc);
+                    return (
+                      <button key={loc} disabled={alreadyAdded}
+                        onClick={() => {
+                          const idx = w.regions.length + 1;
+                          const extraBlobs = [
+                            'M200 40 q 40 -15 90 10 t 50 50 q 0 30 -40 40 t -80 -10 q -35 -20 -20 -90z',
+                            'M30 160 q 25 -20 75 -10 t 65 30 q 10 25 -15 45 t -80 5 q -45 -15 -45 -70z',
+                            'M220 140 q 50 -12 95 20 q 25 25 5 55 t -80 15 q -50 -10 -50 -45 t 30 -45z',
+                          ];
+                          const newRegion: MapRegion = {
+                            id: `r_${Date.now()}`,
+                            en: loc.toUpperCase().slice(0, 12),
+                            name: loc,
+                            glyph: '📍',
+                            color: REGION_COLORS[(idx - 1) % REGION_COLORS.length],
+                            blob: extraBlobs[(idx - 1) % extraBlobs.length],
+                            labelX: 120 + (idx % 2) * 100,
+                            labelY: 100 + Math.floor(idx / 2) * 120,
+                            locationKeys: [loc],
+                          };
+                          setW(prev => ({ ...prev, regions: [...prev.regions, newRegion] }));
+                        }}
+                        className={`text-xs px-2.5 py-1.5 rounded-full font-semibold transition-all ${
+                          alreadyAdded ? 'bg-slate-100 text-slate-300 line-through' : 'bg-violet-50 text-violet-600 active:bg-violet-100'
+                        }`}>
+                        {loc}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -596,10 +733,10 @@ const WorldCard: React.FC<{
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[17px] font-bold tracking-tight text-[#1c1626]">{world.title}</span>
+              <span className="text-[17px] font-bold tracking-tight text-[#1c1626]">{char.name}</span>
               <span className="text-[9.5px] px-[7px] py-[1px] rounded-full font-bold" style={{ background: world.tagBg, color: world.tagColor }}>{world.tag}</span>
             </div>
-            <div className="text-[11.5px] text-[#1c1626]/60 mt-0.5">{world.genre} · <b className="text-[#1c1626] font-bold">{world.role}</b></div>
+            <div className="text-[11.5px] text-[#1c1626]/60 mt-0.5">{world.genre}</div>
           </div>
         </div>
         <div className="flex items-center gap-2 mt-2.5 text-[11px] text-[#1c1626]/60">
@@ -780,9 +917,7 @@ export default function MapApp() {
     const newWorld: MapWorld = {
       id: `world_${Date.now()}`,
       charId: char.id,
-      title: `${char.name}的世界`,
       genre: '',
-      role: '',
       tag: '朋友',
       tagColor: '#6b5230',
       tagBg: '#f1e5c8',
