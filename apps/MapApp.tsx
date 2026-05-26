@@ -369,30 +369,6 @@ const FormRow: React.FC<{ label: string; children: React.ReactNode }> = ({ label
   </div>
 );
 
-/** Extract location keywords from text (character description, prompts, chat messages, etc.) */
-function extractLocationsFromText(text: string): string[] {
-  // Common Chinese location-indicator patterns
-  const patterns = [
-    // 在XX、去XX、到XX — verb + place
-    /(?:在|去|到|回|离开|经过|路过|走进|走出|来到|抵达|前往|途经)\s*([^\s,，。！？…、\n]{2,8})/g,
-    // XX里/内/中/上/下/旁/边/前/后/外
-    /([^\s,，。！？…、\n]{2,6})(?:里|内|中|旁边|旁|边|附近|门口|门前|楼下|楼上|楼)/g,
-    // Known place suffixes
-    /([^\s,，。！？…、\n]{1,6}(?:大厦|公司|学校|大学|医院|餐厅|咖啡|酒吧|公园|广场|商场|超市|书店|图书馆|健身房|工作室|画室|办公室|教室|宿舍|别墅|公寓|小区|花园|车站|机场|码头|街|路|巷|弄|胡同|酒店|宾馆|银行|店))/g,
-  ];
-  const found = new Set<string>();
-  for (const pat of patterns) {
-    let m: RegExpExecArray | null;
-    while ((m = pat.exec(text)) !== null) {
-      const loc = m[1]?.trim();
-      if (loc && loc.length >= 2 && loc.length <= 10) found.add(loc);
-    }
-  }
-  // Filter out common false positives
-  const blacklist = ['什么', '这里', '那里', '哪里', '这个', '那个', '自己', '他们', '我们', '你们', '大家', '所有', '一些', '一个', '为什么', '怎么', '不是', '可以', '应该', '已经', '只是', '但是', '因为', '所以', '如果', '虽然'];
-  return [...found].filter(l => !blacklist.includes(l));
-}
-
 const WorldEditor: React.FC<{
   world: MapWorld;
   char: CharacterProfile;
@@ -400,40 +376,44 @@ const WorldEditor: React.FC<{
   onDelete?: () => void;
   onBack: () => void;
   isNew?: boolean;
-}> = ({ world: initial, char, onSave, onDelete, onBack, isNew }) => {
+  apiConfig: { baseUrl: string; apiKey: string; model: string };
+}> = ({ world: initial, char, onSave, onDelete, onBack, isNew, apiConfig }) => {
   const [w, setW] = useState<MapWorld>({ ...initial });
   const [editingRegion, setEditingRegion] = useState<string | null>(null);
-  const [importedLocations, setImportedLocations] = useState<string[]>([]);
+  const [importedLocations, setImportedLocations] = useState<{ name: string; emoji: string; keywords: string[] }[]>([]);
   const [importLoading, setImportLoading] = useState(false);
   const [importDone, setImportDone] = useState(false);
 
-  // Extract locations from character profile + chat history + recent schedules
+  // Use LLM to extract locations from character profile + chat history + schedules
   const handleImportLocations = useCallback(async () => {
     setImportLoading(true);
     try {
       const textParts: string[] = [];
 
       // 1. Character profile text
-      if (char.description) textParts.push(char.description);
-      if (char.systemPrompt) textParts.push(char.systemPrompt);
-      if (char.worldview) textParts.push(char.worldview);
+      if (char.description) textParts.push(`[角色简介] ${char.description}`);
+      if (char.systemPrompt) textParts.push(`[角色设定] ${char.systemPrompt.slice(0, 3000)}`);
+      if (char.worldview) textParts.push(`[世界观] ${char.worldview.slice(0, 2000)}`);
 
       // 2. Worldbook entries
       if (char.mountedWorldbooks) {
-        for (const wb of char.mountedWorldbooks) textParts.push(wb.content);
+        for (const wb of char.mountedWorldbooks) textParts.push(`[世界书: ${wb.title}] ${wb.content.slice(0, 1500)}`);
       }
 
-      // 3. Recent chat messages
+      // 3. Recent chat messages (sample)
       try {
-        const msgs = await DB.getRecentMessagesByCharId(char.id, 200);
-        for (const m of msgs) {
-          if (typeof m.content === 'string') textParts.push(m.content);
-        }
+        const msgs = await DB.getRecentMessagesByCharId(char.id, 100);
+        const chatSnippets = msgs
+          .filter(m => typeof m.content === 'string' && m.type === 'text')
+          .map(m => (m.content as string).slice(0, 200))
+          .join('\n');
+        if (chatSnippets) textParts.push(`[近期聊天]\n${chatSnippets.slice(0, 4000)}`);
       } catch {}
 
       // 4. Recent schedule locations (last 7 days)
       try {
         const today = new Date();
+        const schedParts: string[] = [];
         for (let i = 0; i < 7; i++) {
           const d = new Date(today);
           d.setDate(d.getDate() - i);
@@ -441,39 +421,60 @@ const WorldEditor: React.FC<{
           const sched = await DB.getDailySchedule(char.id, dateStr);
           if (sched?.slots) {
             for (const s of sched.slots) {
-              if (s.location) textParts.push(s.location);
-              if (s.description) textParts.push(s.description);
+              const parts = [s.startTime, s.activity, s.location, s.description].filter(Boolean).join(' ');
+              if (parts) schedParts.push(parts);
             }
           }
         }
+        if (schedParts.length) textParts.push(`[近7天日程]\n${schedParts.join('\n')}`);
       } catch {}
 
-      const allText = textParts.join('\n');
-      const locations = extractLocationsFromText(allText);
+      const allText = textParts.join('\n\n').slice(0, 12000); // cap total context
 
-      // Also add raw schedule locations directly
-      try {
-        const today = new Date();
-        for (let i = 0; i < 7; i++) {
-          const d = new Date(today);
-          d.setDate(d.getDate() - i);
-          const dateStr = d.toISOString().split('T')[0];
-          const sched = await DB.getDailySchedule(char.id, dateStr);
-          if (sched?.slots) {
-            for (const s of sched.slots) {
-              if (s.location && s.location.length >= 2) locations.push(s.location);
-            }
-          }
-        }
-      } catch {}
+      const resp = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
+        body: JSON.stringify({
+          model: apiConfig.model,
+          temperature: 0.3,
+          messages: [
+            {
+              role: 'system',
+              content: `你是地点提取助手。从下面关于虚构角色"${char.name}"的文本中，提取所有出现过的**具体地点/场所**。
 
-      // Deduplicate
-      const unique = [...new Set(locations)];
-      setImportedLocations(unique);
+规则：
+- 只提取具体的场所名（如"星澜大厦""家""健身房""梧桐苑""露台"），不要提取模糊词（如"这里""那边""外面"）
+- 同一个地方的不同说法合并（如"家/卧室/客厅"算同一个地点"家"，但可以把"卧室""客厅"作为 keywords）
+- 每个地点给一个合适的 emoji
+- 每个地点给出用于匹配日程 location 字段的关键词列表
+- 按重要性排序（角色最常出现的地方排前面）
+
+返回 JSON 数组，格式：
+[{"name":"地点名","emoji":"🏢","keywords":["关键词1","关键词2"]}]
+
+只返回 JSON，不要其他文字。`,
+            },
+            { role: 'user', content: allText },
+          ],
+        }),
+      });
+
+      if (!resp.ok) throw new Error('API error');
+      const data = await resp.json();
+      const raw = data.choices?.[0]?.message?.content || '';
+      // Extract JSON from response (handle markdown code blocks)
+      const jsonMatch = raw.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]) as { name: string; emoji: string; keywords: string[] }[];
+        setImportedLocations(parsed.filter((p: any) => p.name && p.emoji));
+      }
       setImportDone(true);
-    } catch {}
+    } catch (e) {
+      console.error('Location import failed:', e);
+      setImportDone(true); // still show "no results" state
+    }
     setImportLoading(false);
-  }, [char]);
+  }, [char, apiConfig]);
 
   const update = (patch: Partial<MapWorld>) => setW(prev => ({ ...prev, ...patch }));
   const updateRegion = (regionId: string, patch: Partial<MapRegion>) => {
@@ -575,18 +576,18 @@ const WorldEditor: React.FC<{
             {!importDone ? (
               <button onClick={handleImportLocations} disabled={importLoading}
                 className="w-full py-2.5 text-center text-sm font-semibold text-violet-500 bg-violet-50 rounded-xl active:bg-violet-100 disabled:opacity-50 transition-colors">
-                {importLoading ? '扫描聊天记录 + 人设中...' : '🔍 扫描记忆中的地名'}
+                {importLoading ? '✨ AI 正在扫描聊天记录 + 人设...' : '🔍 AI 扫描记忆中的地名'}
               </button>
             ) : importedLocations.length === 0 ? (
               <div className="text-center text-sm text-slate-400 py-2">没有找到地名，可手动添加区域</div>
             ) : (
               <div>
-                <div className="text-[11px] text-slate-400 mb-2">点击地名添加为新区域：</div>
-                <div className="flex flex-wrap gap-1.5">
+                <div className="text-[11px] text-slate-400 mb-2">点击添加为区域（含自动关键词）：</div>
+                <div className="flex flex-col gap-1.5">
                   {importedLocations.map(loc => {
-                    const alreadyAdded = w.regions.some(r => r.locationKeys?.includes(loc) || r.name === loc);
+                    const alreadyAdded = w.regions.some(r => r.name === loc.name || r.locationKeys?.some(k => loc.keywords.includes(k)));
                     return (
-                      <button key={loc} disabled={alreadyAdded}
+                      <button key={loc.name} disabled={alreadyAdded}
                         onClick={() => {
                           const idx = w.regions.length + 1;
                           const extraBlobs = [
@@ -595,22 +596,28 @@ const WorldEditor: React.FC<{
                             'M220 140 q 50 -12 95 20 q 25 25 5 55 t -80 15 q -50 -10 -50 -45 t 30 -45z',
                           ];
                           const newRegion: MapRegion = {
-                            id: `r_${Date.now()}`,
-                            en: loc.toUpperCase().slice(0, 12),
-                            name: loc,
-                            glyph: '📍',
+                            id: `r_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+                            en: loc.name.toUpperCase().slice(0, 12),
+                            name: loc.name,
+                            glyph: loc.emoji,
                             color: REGION_COLORS[(idx - 1) % REGION_COLORS.length],
                             blob: extraBlobs[(idx - 1) % extraBlobs.length],
                             labelX: 120 + (idx % 2) * 100,
                             labelY: 100 + Math.floor(idx / 2) * 120,
-                            locationKeys: [loc],
+                            locationKeys: loc.keywords,
                           };
                           setW(prev => ({ ...prev, regions: [...prev.regions, newRegion] }));
                         }}
-                        className={`text-xs px-2.5 py-1.5 rounded-full font-semibold transition-all ${
-                          alreadyAdded ? 'bg-slate-100 text-slate-300 line-through' : 'bg-violet-50 text-violet-600 active:bg-violet-100'
+                        className={`flex items-center gap-2 px-3 py-2 rounded-xl text-left transition-all ${
+                          alreadyAdded ? 'bg-slate-50 opacity-40' : 'bg-violet-50 active:bg-violet-100'
                         }`}>
-                        {loc}
+                        <span className="text-base shrink-0">{loc.emoji}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className={`text-sm font-semibold ${alreadyAdded ? 'text-slate-300 line-through' : 'text-violet-700'}`}>{loc.name}</div>
+                          <div className="text-[10px] text-slate-400 truncate">{loc.keywords.join('、')}</div>
+                        </div>
+                        {!alreadyAdded && <Plus size={14} weight="bold" className="text-violet-400 shrink-0" />}
+                        {alreadyAdded && <Check size={14} weight="bold" className="text-slate-300 shrink-0" />}
                       </button>
                     );
                   })}
@@ -850,7 +857,7 @@ type View =
   | { type: 'create'; charId: string };
 
 export default function MapApp() {
-  const { characters, openApp } = useOS();
+  const { characters, openApp, apiConfig } = useOS();
   const [view, setView] = useState<View>({ type: 'shelf' });
   const [worlds, setWorlds] = useState<MapWorld[]>([]);
   const [schedules, setSchedules] = useState<Record<string, DailySchedule | null>>({});
@@ -926,7 +933,7 @@ export default function MapApp() {
       paths: [...TEMPLATE_PATHS],
       homeRegionId: undefined,
     };
-    return <WorldEditor world={newWorld} char={char} isNew onSave={handleSaveWorld} onBack={() => setView({ type: 'shelf' })} />;
+    return <WorldEditor world={newWorld} char={char} isNew apiConfig={apiConfig} onSave={handleSaveWorld} onBack={() => setView({ type: 'shelf' })} />;
   }
 
   // ─── Edit existing world ───
@@ -934,7 +941,7 @@ export default function MapApp() {
     const world = worlds.find(w => w.id === view.worldId);
     const char = world ? characters.find(c => c.id === world.charId) : undefined;
     if (!world || !char) { setView({ type: 'shelf' }); return null; }
-    return <WorldEditor world={world} char={char} onSave={handleSaveWorld} onDelete={() => handleDeleteWorld(world.id)} onBack={() => setView({ type: 'map', worldId: world.id })} />;
+    return <WorldEditor world={world} char={char} apiConfig={apiConfig} onSave={handleSaveWorld} onDelete={() => handleDeleteWorld(world.id)} onBack={() => setView({ type: 'map', worldId: world.id })} />;
   }
 
   // ─── Map view ───
