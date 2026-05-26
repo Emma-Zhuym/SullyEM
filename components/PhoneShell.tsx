@@ -24,6 +24,7 @@ import GameApp from '../apps/GameApp';
 import WorldbookApp from '../apps/WorldbookApp';
 import NovelApp from '../apps/NovelApp'; 
 import BankApp from '../apps/BankApp';
+import MapApp from '../apps/MapApp';
 import XhsStockApp from '../apps/XhsStockApp';
 import XhsFreeRoamApp from '../apps/XhsFreeRoamApp';
 import BrowserApp from '../apps/BrowserApp';
@@ -289,6 +290,7 @@ const PhoneShell: React.FC = () => {
       case AppID.Worldbook: return <WorldbookApp />;
       case AppID.Novel: return <NovelApp />; 
       case AppID.Bank: return <BankApp />;
+      case AppID.Map: return <MapApp />;
       case AppID.XhsStock: return <XhsStockApp />;
       case AppID.XhsFreeRoam: return <XhsFreeRoamApp />;
       case AppID.Browser: return <BrowserApp />;
