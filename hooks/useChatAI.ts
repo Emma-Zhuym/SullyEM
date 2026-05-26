@@ -2684,6 +2684,14 @@ export const useChatAI = ({
                                 await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'emoji', content: foundEmoji.url, metadata: mergeAssistantMeta(mcdInheritMeta) } as any);
                                 setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                             }
+                        } else if (part.type === 'photo') {
+                            // [[SEND_PHOTO: description]] — generate via Pollinations (free, no API key)
+                            await new Promise(r => setTimeout(r, Math.random() * 400 + 200));
+                            const photoPrompt = encodeURIComponent(part.content);
+                            const seed = Math.floor(Math.random() * 1000000);
+                            const photoUrl = `https://image.pollinations.ai/prompt/${photoPrompt}?width=512&height=512&seed=${seed}&nologo=true`;
+                            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'image', content: photoUrl, metadata: { ...mergeAssistantMeta(mcdInheritMeta), aiGenerated: true, photoPrompt: part.content } } as any);
+                            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                         } else {
                             // Split on --- separators first, then chunkText for fine-grained splitting
                             const rawBlocks = part.content.split(/^\s*---\s*$/m).filter(b => b.trim());

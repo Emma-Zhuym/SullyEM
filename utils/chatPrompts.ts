@@ -344,6 +344,7 @@ export const ChatPrompts = {
    - 【严禁】在输出中包含时间戳、名字前缀或"[角色名]:"。
    - **【严禁】模仿历史记录中的系统日志格式（如"[你 发送了...]"）。**
    - **发送表情包**: 必须且只能使用命令: \`[[SEND_EMOJI: 表情名称]]\`。
+   - **发送照片**: 想给用户看你在做什么、吃什么、去了哪里时，用 \`[[SEND_PHOTO: 英文描述]]\`。描述要具体，包含场景、光线、风格，例如：\`[[SEND_PHOTO: a bowl of tonkotsu ramen with soft-boiled egg, cozy Japanese restaurant, warm lighting, casual phone photo style]]\`。照片描述必须用英文。不要在每次对话都发照片，只在真的想分享视觉内容时用（比如"给你看看我今天点的"、"你猜我在哪"）。
    - **可用表情库 (按分类)**: 
      ${emojiContextStr}
 4. **引用功能 (Quote/Reply)** ⚠️ 你必须频繁使用引用！这是让对话有针对性的核心功能:

@@ -286,20 +286,26 @@ export const ChatParser = {
         return stripped.length > 0;
     },
 
-    // Split text into bubbles (text and emojis)
-    splitResponse: (content: string): { type: 'text' | 'emoji', content: string }[] => {
-        const emojiPattern = /\[\[SEND_EMOJI:\s*(.*?)\]\]/g;
-        const parts: {type: 'text' | 'emoji', content: string}[] = [];
+    // Split text into bubbles (text, emojis, and AI-generated photos)
+    splitResponse: (content: string): { type: 'text' | 'emoji' | 'photo', content: string }[] => {
+        const tagPattern = /\[\[SEND_EMOJI:\s*(.*?)\]\]|\[\[SEND_PHOTO:\s*([\s\S]*?)\]\]/g;
+        const parts: {type: 'text' | 'emoji' | 'photo', content: string}[] = [];
         let lastIndex = 0;
-        let emojiMatch;
+        let match;
 
-        while ((emojiMatch = emojiPattern.exec(content)) !== null) {
-            if (emojiMatch.index > lastIndex) {
-                const textBefore = content.slice(lastIndex, emojiMatch.index).trim();
+        while ((match = tagPattern.exec(content)) !== null) {
+            if (match.index > lastIndex) {
+                const textBefore = content.slice(lastIndex, match.index).trim();
                 if (textBefore) parts.push({ type: 'text', content: textBefore });
             }
-            parts.push({ type: 'emoji', content: emojiMatch[1].trim() });
-            lastIndex = emojiMatch.index + emojiMatch[0].length;
+            if (match[1] !== undefined) {
+                // [[SEND_EMOJI: name]]
+                parts.push({ type: 'emoji', content: match[1].trim() });
+            } else {
+                // [[SEND_PHOTO: description]] — content is the image prompt
+                parts.push({ type: 'photo', content: match[2].trim() });
+            }
+            lastIndex = match.index + match[0].length;
         }
 
         if (lastIndex < content.length) {

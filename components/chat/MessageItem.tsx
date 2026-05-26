@@ -1491,10 +1491,24 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
     }
 
     if (m.type === 'image') {
+        const isAiPhoto = !!(m.metadata as any)?.aiGenerated;
         return commonLayout(
             <div className="relative group">
                 {m.content ? (
-                    <img src={m.content} className="max-w-[200px] max-h-[300px] rounded-2xl shadow-sm border border-black/5" alt="Uploaded" loading="lazy" decoding="async" />
+                    <div className="relative">
+                        <img
+                            src={m.content}
+                            className="max-w-[220px] max-h-[320px] rounded-2xl shadow-sm border border-black/5 block"
+                            alt={isAiPhoto ? (m.metadata as any)?.photoPrompt : 'Uploaded'}
+                            loading="lazy"
+                            decoding="async"
+                        />
+                        {isAiPhoto && (
+                            <div className="absolute bottom-1.5 right-1.5 bg-black/40 backdrop-blur-sm rounded-full px-1.5 py-0.5 text-[9px] text-white/80 leading-none">
+                                📷
+                            </div>
+                        )}
+                    </div>
                 ) : (
                     <div className="px-4 py-6 rounded-2xl bg-slate-100 text-slate-400 text-xs italic text-center min-w-[120px]">[图片已丢失]</div>
                 )}
