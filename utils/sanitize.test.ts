@@ -218,7 +218,7 @@ describe('bubble vs notification differences', () => {
   });
 });
 
-// ─── sanitizeIntoSegments (amsg-instant 0.8.0-next.4 pushPayloads) ─────────
+// ─── sanitizeIntoSegments (amsg-instant 0.8+ pushPayloads) ─────────────────
 
 describe('sanitizeIntoSegments', () => {
   it('单行普通文本 → 1 个 segment, raw === sanitized', () => {
@@ -290,6 +290,19 @@ describe('sanitizeIntoSegments', () => {
     expect(segs).toEqual([
       { raw: '前', sanitized: '前' },
       { raw: '[html]<div>x</div>[/html]', sanitized: '[HTML 卡片]' },
+      { raw: '后', sanitized: '后' },
+    ]);
+  });
+
+  it('[html] 多行 HTML → 整块单 segment, 不被 chunkText 按 \\n 切碎', () => {
+    const input = '前\n[html]<div>\n  hello\n  <span>world</span>\n</div>[/html]\n后';
+    const segs = sanitizeIntoSegments(input);
+    expect(segs).toEqual([
+      { raw: '前', sanitized: '前' },
+      {
+        raw: '[html]<div>\n  hello\n  <span>world</span>\n</div>[/html]',
+        sanitized: '[HTML 卡片]',
+      },
       { raw: '后', sanitized: '后' },
     ]);
   });

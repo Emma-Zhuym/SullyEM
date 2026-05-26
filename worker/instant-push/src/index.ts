@@ -2,7 +2,7 @@
  * SullyOS Instant Push — Cloudflare Worker entry.
  *
  * Phase 2 Round 2 (这次):
- *  - 升 @rei-standard/amsg-instant 到 ^0.8.0-next.3
+ *  - 升 @rei-standard/amsg-instant 到 0.8.1
  *  - 配置 onLLMOutput hook: SullyOS 业务标签分类器 (见 ./classifier.ts)
  *  - 数据标签 → tool-request push (客户端跑工具, POST /continue 续跑)
  *  - 副作用标签 → finish + metadata.directives (客户端重放)
@@ -503,7 +503,7 @@ export type PushDecision =
 /**
  * 纯函数: 给 normalize 过的 ctx 字段, 出 { decision, pushPayloads }.
  *
- * amsg-instant 0.8.0-next.4 起 hook 返回 pushPayloads 数组, lib 不做 split, hook
+ * amsg-instant 0.8+ hook 返回 pushPayloads 数组, lib 不做 split, hook
  * 自己负责把内容切成 N 个独立 push. 我们用 sanitizeIntoSegments 把 LLM 输出
  * 切成 segments (按换行 + CJK 空格切, 跟客户端 chatParser.chunkText 一致),
  * 每个 segment 一条 push, banner 显示 sanitized 版本, message 保留 raw 让客户端
@@ -643,7 +643,7 @@ function buildDirectiveOnlyPush(args: {
 
 /**
  * 单 segment → 单 ContentPush. messageId 显式给唯一值 ( amsg-shared typedef
- * 要求, 不能 undefined ). next.4 lib runtime 看到 hook 已设 messageId 就不动,
+ * 要求, 不能 undefined ). 0.8+ lib runtime 看到 hook 已设 messageId 就不动,
  * 只对未设的自动补 _chunk_${i} 后缀.
  */
 function buildSegmentPush(args: {
@@ -665,7 +665,7 @@ function buildSegmentPush(args: {
   const { seg, baseCommon, notificationTitle, callerMetadata, iteration, chunkIdx, sessionId, directives } = args;
   // notification.body 跟 message 显示文本可以不一样 (SEND_EMOJI 在 banner 上是
   // [表情：x], 在 message 里是 [[SEND_EMOJI: x]] 让客户端 Step 9 渲染 sticker).
-  // 即使 sanitized === raw 也照样塞 — next.4 lib 不再 clone notification 跨 chunk,
+  // 即使 sanitized === raw 也照样塞 — 0.8+ lib 不再 clone notification 跨 chunk,
   // 每条独立, 不会重复占 size.
   return {
     ...buildContentPush({

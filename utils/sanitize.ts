@@ -15,6 +15,8 @@
  *  - notification 专用 / Step 9-相关规则: utils/applyAssistantPostProcessing.ts:normalizeAiContent
  */
 
+import { segmentTextWithProtectedBlocks } from '@rei-standard/amsg-instant';
+
 // ─── 底层 helper (共享, 无歧义清理) ─────────────────────────────────────────
 
 /** `\\n` 字面 → 真实换行. 必须先跑, 否则后续 ^ 行锚定失效. */
@@ -222,7 +224,7 @@ export function sanitizeForBubble(
   return result;
 }
 
-// ─── Segments API (amsg-instant 0.8.0-next.4+ pushPayloads) ────────────────
+// ─── Segments API (amsg-instant 0.8+ pushPayloads) ─────────────────────────
 
 /**
  * 一段内容 → 一条 push.
@@ -238,17 +240,25 @@ export interface Segment {
   sanitized: string;
 }
 
+interface ProtectedAtomSegment {
+  raw: string;
+  sanitized: unknown;
+  protect: boolean;
+}
+
 /**
  * worker push notification + bubble 共用的分段器.
  *
- * 算法:
  *  1. Phase 1 — 全文 strip suppress content (think 块 / INNER_STATE / 业务标签 /
  *     时间戳 leak / 引用 / source tag / 历史 leak / divider / 老 trans). 必须先全文
  *     跑, 因为 think 跨多行, 单行 chunk 看不到完整块.
+ *  1.5. Phase 1.5 — 用 amsg-instant 标准保护分段器识别 HTML 卡片原子块,
+ *     防止 chunkText 按 \n 把 [html]...[/html] 切碎. 保护块两侧按旧逻辑补 \n,
+ *     让 chunkText 必把它独立成 chunk.
  *  2. Phase 2 — chunkText: 按 `\n` 切 + 按 CJK 字符之间的空格切, 跟客户端
  *     `chatParser.chunkText` 字节对齐 (LLM 在 prompt 引导下用换行断句).
- *  3. Phase 3 — 每个 chunk 内拆 SEND_EMOJI 独立成段, 文字段跑 banner-only 替换
- *     (markdown link / [html] / markdown header/bold/backtick).
+ *  3. Phase 3 — 还原 HTML 占位符, 再拆 SEND_EMOJI 独立成段, 文字段跑
+ *     banner-only 替换 (markdown link / [html] / markdown header/bold/backtick).
  *
  * 不切句号 — 客户端 chunkText 也不切, 保持气泡数 == banner 数.
  *
@@ -259,6 +269,32 @@ export function sanitizeIntoSegments(text: string): Segment[] {
   // Phase 1: 全文 suppress
   let cleaned = stripLiteralBackslashN(text);
   cleaned = stripThinkBlocks(cleaned);
+
+  // Phase 1.5: HTML 卡片交给 amsg-instant 标准 protected-block splitter 识别,
+  // 再桥回旧 pipeline。这样只替换"如何保护原子块", 不改变后续清洗/分段语义。
+  const ATOM_MARKER = String.fromCharCode(2);
+  const atomBlocks: Segment[] = [];
+  const atomSegments = segmentTextWithProtectedBlocks(cleaned, {
+    splitText: (plainText: string) => [plainText],
+    protectedPatterns: [
+      {
+        pattern: /\[html\][\s\S]*?\[\/html\]/i,
+        preview: '[HTML 卡片]',
+      },
+    ],
+  }) as ProtectedAtomSegment[];
+  cleaned = atomSegments.map((seg) => {
+    if (!seg.protect) return seg.raw;
+    const idx = atomBlocks.length;
+    atomBlocks.push({
+      raw: seg.raw,
+      sanitized: typeof seg.sanitized === 'string'
+        ? seg.sanitized
+        : sanitizeTextForBanner(seg.raw),
+    });
+    return `\n${ATOM_MARKER}B${idx}${ATOM_MARKER}\n`;
+  }).join('');
+
   cleaned = extractTranslationOriginal(cleaned);
   cleaned = stripInnerState(cleaned);
   cleaned = stripBusinessTagsForNotification(cleaned);
@@ -274,9 +310,17 @@ export function sanitizeIntoSegments(text: string): Segment[] {
   // 把 DB / React / Capacitor 依赖拖进 worker bundle)
   const rawChunks = chunkText(cleaned);
 
-  // Phase 3: 拆 SEND_EMOJI + banner-only 替换
+  // Phase 3: 还原 HTML 占位符 + 拆 SEND_EMOJI + banner-only 替换
+  const SOLO_RE = new RegExp(`^${ATOM_MARKER}B(\\d+)${ATOM_MARKER}$`);
+  const GLOBAL_RE = new RegExp(`${ATOM_MARKER}B(\\d+)${ATOM_MARKER}`, 'g');
   const segments: Segment[] = [];
   for (const rawChunk of rawChunks) {
+    const soloMatch = rawChunk.trim().match(SOLO_RE);
+    if (soloMatch) {
+      const blk = atomBlocks[Number(soloMatch[1])];
+      if (blk) segments.push({ raw: blk.raw, sanitized: blk.sanitized });
+      continue;
+    }
     const parts = splitOnSendEmoji(rawChunk);
     for (const part of parts) {
       if (part.kind === 'emoji') {
@@ -286,7 +330,12 @@ export function sanitizeIntoSegments(text: string): Segment[] {
         });
         continue;
       }
-      const rawText = part.text.trim();
+      // 安全网: 占位符跟正文同行 (chunkText 没拆开) 时把整块还原回 raw.
+      let rawText = part.text.replace(
+        GLOBAL_RE,
+        (_m, n) => atomBlocks[Number(n)]?.raw || '',
+      );
+      rawText = rawText.trim();
       if (!rawText) continue;
       const sanitized = sanitizeTextForBanner(rawText).trim();
       if (!sanitized) continue;
