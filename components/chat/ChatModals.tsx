@@ -84,6 +84,9 @@ interface ChatModalsProps {
     onToggleHtmlMode?: () => void;
     htmlModeCustomPrompt?: string;
     setHtmlModeCustomPrompt?: (v: string) => void;
+    // Photo style
+    photoStyle?: string;
+    onSetPhotoStyle?: (style: string) => void;
     // Voice TTS
     chatVoiceEnabled?: boolean;
     onToggleChatVoice?: () => void;
@@ -135,6 +138,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     translationEnabled, onToggleTranslation, translateSourceLang, translateTargetLang, onSetTranslateSourceLang, onSetTranslateLang,
     xhsEnabled, onToggleXhs,
     htmlModeEnabled, onToggleHtmlMode, htmlModeCustomPrompt, setHtmlModeCustomPrompt,
+    photoStyle, onSetPhotoStyle,
     chatVoiceEnabled, onToggleChatVoice, chatVoiceLang, onSetChatVoiceLang,
     onGenerateVoice, voiceAvailable,
     scheduleData, isScheduleGenerating, onScheduleEdit, onScheduleDelete, onScheduleReroll, onScheduleCoverChange,
@@ -389,6 +393,29 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                  <p className="text-[10px] text-slate-400 mt-1">留空则只使用内置提示词。</p>
                              </div>
                          )}
+                     </div>
+
+                     {/* 发照片风格 */}
+                     <div className="pt-2 border-t border-slate-100">
+                         <label className="text-xs font-bold text-slate-400 uppercase block mb-2">发照片风格</label>
+                         <div className="flex flex-wrap gap-1.5">
+                             {[
+                                 { v: '', l: '无' },
+                                 { v: 'soft-film', l: '柔光胶片' },
+                                 { v: 'clean-anime', l: '清透动画' },
+                                 { v: 'cozy-home', l: '居家温暖' },
+                                 { v: 'film-landscape', l: '胶片风景' },
+                                 { v: 'still-life', l: '低饱和静物' },
+                                 { v: 'moody-portrait', l: '氛围写真' },
+                                 { v: 'chinese-anime', l: '国漫风' },
+                             ].map(opt => (
+                                 <button key={opt.v} onClick={() => onSetPhotoStyle?.(opt.v)}
+                                     className={`px-2.5 py-1 rounded-full text-[11px] font-bold transition-all ${(photoStyle || '') === opt.v ? 'bg-violet-500 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                                     {opt.l}
+                                 </button>
+                             ))}
+                         </div>
+                         <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">选择风格后，AI 发照片时会在描述末尾追加对应的画风 tag，影响 Pollinations 生图效果。</p>
                      </div>
 
                      {/* Voice TTS */}

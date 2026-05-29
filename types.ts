@@ -1121,6 +1121,13 @@ export interface CharacterProfile {
   htmlModeCustomPrompt?: string;
 
   /**
+   * 发照片风格预设 ID（per-character）。
+   * 对应 useChatAI.ts 里的 PHOTO_STYLE_PRESETS map。
+   * 不设则 Pollinations 纯用 AI 写的描述，不追加风格 tag。
+   */
+  photoStyle?: string;
+
+  /**
    * 思考过程展示（per-character / 会话级）。
    * - true：把 LLM 返回的 reasoning_content 与 <think>...</think> 抽出来，
    *   作为 metadata.thinkingChain 落库到 assistant 消息上，

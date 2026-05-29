@@ -2687,10 +2687,22 @@ export const useChatAI = ({
                         } else if (part.type === 'photo') {
                             // [[SEND_PHOTO: description]] — generate via Pollinations (free, no API key)
                             await new Promise(r => setTimeout(r, Math.random() * 400 + 200));
-                            const photoPrompt = encodeURIComponent(part.content);
+                            // 风格预设：per-character photoStyle → 追加到描述末尾
+                            const PHOTO_STYLE_PRESETS: Record<string, string> = {
+                                'soft-film':      'analog film, polaroid, warm indoor light, film grain, soft focus',
+                                'clean-anime':    'anime illustration, clean lineart, soft cel shading, vivid colors',
+                                'cozy-home':      'cozy interior, warm lighting, lifestyle photography, homey atmosphere',
+                                'film-landscape': '35mm film photography, natural scenery, muted tones, cinematic',
+                                'still-life':     'still life photography, desaturated, minimal, soft shadows, quiet',
+                                'moody-portrait': 'moody portrait, cinematic lighting, atmospheric, dramatic shadows',
+                                'chinese-anime':  'chinese animation style, detailed illustration, vibrant, refined character art',
+                            };
+                            const styleTags = char.photoStyle && PHOTO_STYLE_PRESETS[char.photoStyle]
+                                ? `, ${PHOTO_STYLE_PRESETS[char.photoStyle]}`
+                                : '';
                             const seed = Math.floor(Math.random() * 1000000);
-                            const photoUrl = `https://image.pollinations.ai/prompt/${photoPrompt}?width=512&height=512&seed=${seed}&nologo=true`;
-                            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'image', content: photoUrl, metadata: { ...mergeAssistantMeta(mcdInheritMeta), aiGenerated: true, photoPrompt: part.content } } as any);
+                            const photoUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(part.content + styleTags)}?width=512&height=512&seed=${seed}&nologo=true`;
+                            await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'image', content: photoUrl, metadata: { ...mergeAssistantMeta(mcdInheritMeta), aiGenerated: true, photoPrompt: part.content, photoStyle: char.photoStyle } } as any);
                             setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                         } else {
                             // Split on --- separators first, then chunkText for fine-grained splitting
