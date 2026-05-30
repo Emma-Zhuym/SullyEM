@@ -33,6 +33,7 @@ import {
   Notebook,
   Plugs,
   Newspaper,
+  Planet,
 } from '@phosphor-icons/react';
 
 // SVG 图标库 - Phosphor Icons
@@ -70,6 +71,7 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
   Handbook: ({ className }) => <Notebook className={className} weight="bold" />,
   QQBridge: ({ className }) => <Plugs className={className} weight="bold" />,
   HotNews: ({ className }) => <Newspaper className={className} weight="fill" />,
+  VRWorld: ({ className }) => <Planet className={className} weight="bold" />,
 };
 
 export const INSTALLED_APPS: AppConfig[] = [
@@ -105,6 +107,7 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.Guidebook, name: '攻略本', icon: 'Guidebook', color: 'slate' },
   { id: AppID.LifeSim, name: '都市人生', icon: 'LifeSim', color: 'purple' },
   { id: AppID.SpecialMoments, name: '特别时光', icon: 'SpecialMoments', color: 'pink' },
+  { id: AppID.VRWorld, name: '彼方', icon: 'VRWorld', color: 'indigo' },
   // { id: AppID.QQBridge, name: 'QQ 桥', icon: 'QQBridge', color: 'sky' }, // Hidden temporarily
 ];
 

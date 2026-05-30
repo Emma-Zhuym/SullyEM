@@ -3,6 +3,8 @@ import React, { createContext, useContext, useEffect, useState, useRef, useCallb
 import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset, CloudBackupConfig, CloudBackupFile } from '../types';
 import { DB } from '../utils/db';
 import { ProactiveChat } from '../utils/proactiveChat';
+import { VRScheduler } from '../utils/vrWorld/scheduler';
+import { runVRSession } from '../utils/vrWorld/runSession';
 import { ChatParser } from '../utils/chatParser';
 import { safeFetchJson } from '../utils/safeApi';
 import { normalizeCharacterImpression, normalizeCharacterDefaults } from '../utils/impression';
@@ -1715,9 +1717,31 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           void runProactive(charId);
       });
 
+      // 「彼方」自主登入 —— 独立调度，复用同一批 refs 拿最新状态
+      const runVR = async (charId: string) => {
+          const char = charactersRef.current.find(c => c.id === charId);
+          if (!char || !char.vrState?.enabled) return;
+          if (!userProfileRef.current) return;
+          try {
+              await runVRSession({
+                  char,
+                  apiConfig: apiConfigRef.current,
+                  userProfile: userProfileRef.current,
+                  groups: groupsRef.current,
+                  realtimeConfig: realtimeConfigRef.current,
+                  memoryPalaceConfig: memoryPalaceConfigRef.current,
+                  updateCharacter,
+              });
+          } catch (e) {
+              console.error('[VRWorld] runVR error', e);
+          }
+      };
+      VRScheduler.onTrigger((charId: string) => { void runVR(charId); });
+
       return () => {
           // Cleanup: detach proactive listeners when OSContext unmounts (unlikely but safe)
           ProactiveChat.onTrigger(() => {});
+          VRScheduler.onTrigger(() => {});
       };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDataLoaded]);

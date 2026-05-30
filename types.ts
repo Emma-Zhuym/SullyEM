@@ -35,6 +35,7 @@ export enum AppID {
   Handbook = 'handbook', // 手账 — 跨角色聚合的生活留痕本（LLM 代笔 + 角色生活流陪伴）
   QQBridge = 'qq_bridge', // QQ 桥接 — 通过 NapCat 把 QQ 私聊接入当前角色，共享 IndexedDB 上下文
   HotNews = 'hot_news', // 热点 — 分时段召回的多平台热榜可视化（决定角色可能聊起的话题）
+  VRWorld = 'vrworld', // 彼方 — 角色自主登入的虚拟世界（定时驱动，房间里看小说/听歌/留言，产出活动卡注入聊天+记忆）
 }
 
 export interface SystemLog {
@@ -598,6 +599,94 @@ export interface NovelBook {
     lastActiveAt: number;
 }
 
+// =====================================================================
+// --- VR WORLD ("彼方") TYPES ---
+// 角色自主登入的虚拟世界。定时器驱动每个角色独立调用一次 LLM，在某个房间
+// 完成一次活动（v1：图书馆看小说），产出一张活动卡注入该角色的 1v1 聊天，
+// 天然被上下文与记忆总结捕捉。
+// =====================================================================
+
+/** 虚拟世界里的房间。v1 只实装 library，其余先占位（LLM 造谣）。 */
+export type VRRoomId = 'library' | 'music' | 'guestbook' | 'gym';
+
+/** 全局小说库里的一本书（所有角色共享原文，各自留批注、各自书签）。 */
+export interface VRWorldNovel {
+    id: string;
+    title: string;
+    author?: string;
+    /** 简介，喂给角色当背景，也用于 UI 展示 */
+    summary?: string;
+    /** 原文按阅读单元切好的段落块（每块 ~数百字，便于定位批注与推进书签）。 */
+    segments: VRNovelSegment[];
+    /** 总字数（缓存，UI 展示用） */
+    totalChars: number;
+    createdAt: number;
+    updatedAt: number;
+}
+
+/** 小说里的一个阅读单元（原文段落块）。 */
+export interface VRNovelSegment {
+    /** 段落索引（0-based，等于在 segments 数组里的位置，持久化以防重排） */
+    idx: number;
+    /** 原文内容 */
+    text: string;
+    /** 字数（缓存） */
+    chars: number;
+}
+
+/**
+ * 一条批注。挂在 (novelId, segIdx) 上，可被任何角色吐槽（targetAnnotationId 指向被吐槽的批注）。
+ * 全局存在 VRWorldNovel 之外的独立集合里——见 db 的 vr_annotations 字段。
+ */
+export interface VRNovelAnnotation {
+    id: string;
+    novelId: string;
+    /** 批注锚定的段落索引 */
+    segIdx: number;
+    /** 作者角色 id（user 留批注时为 'user'） */
+    authorId: string;
+    /** 作者展示名（落库冗余，避免角色删除后丢名） */
+    authorName: string;
+    /** 批注/吐槽正文 */
+    content: string;
+    /** 若是"吐槽别人的吐槽"，指向被吐槽的批注 id */
+    targetAnnotationId?: string;
+    createdAt: number;
+}
+
+/** 角色在虚拟世界里的个人状态（挂在 CharacterProfile.vrState）。 */
+export interface VRWorldCharState {
+    /** 是否启用该角色的自主登入（独立于主动发消息 proactiveConfig） */
+    enabled: boolean;
+    /** 自主登入间隔（分钟，30 对齐；默认 120 = 2h） */
+    intervalMinutes: number;
+    /**
+     * 每本小说的独立书签：novelId -> 下一次该从第几个 segment 开始读。
+     * 这是"每个角色书签不一样"的落点。
+     */
+    novelBookmarks?: Record<string, number>;
+    /** 最近一次活动落在哪个房间（UI 立绘站位用） */
+    currentRoom?: VRRoomId;
+    /** 最近一次活动时间戳（UI / 调度展示用） */
+    lastActiveAt?: number;
+    /** 该角色专属 API 覆盖（用户可单独为「彼方」活动配 api）；不设则回落全局 apiConfig。 */
+    api?: { baseUrl: string; apiKey: string; model: string };
+}
+
+/** 注入聊天的 vr_card 消息的 metadata 结构。 */
+export interface VRCardMeta {
+    vrCard: true;
+    room: VRRoomId;
+    /** 活动概述（steam 提示式，UI 标题） */
+    activity: string;
+    novelId?: string;
+    novelTitle?: string;
+    /** 本次读到的段落范围 [from, to)（仅 library） */
+    segRange?: [number, number];
+    /** 本次写下的批注摘要（保留正文，原文省略） */
+    annotationExcerpts?: string[];
+}
+
 // --- SONGWRITING APP TYPES ---
 export type SongMood = 'happy' | 'sad' | 'romantic' | 'angry' | 'chill' | 'epic' | 'nostalgic' | 'dreamy';
 export type SongGenre = 'pop' | 'rock' | 'ballad' | 'rap' | 'folk' | 'electronic' | 'jazz' | 'rnb' | 'free';
@@ -1148,6 +1237,12 @@ export interface CharacterProfile {
   };
   /** 用户追加的思考提示词（不替换原生，只在最后追加一段「用户额外要求」） */
   thinkingChainCustomPrompt?: string;
+
+  /**
+   * 虚拟世界「彼方」的个人状态：是否自主登入、登入间隔、各本小说的独立书签等。
+   * 独立于 proactiveConfig（主动发消息），互不挤占触发。
+   */
+  vrState?: VRWorldCharState;
 }
 
 export interface GroupProfile {
@@ -1637,7 +1732,7 @@ export interface GameSession {
     lastPlayedAt: number;
 }
 
-export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'html_card' | 'news_card';
+export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'html_card' | 'news_card' | 'vr_card';
 
 export interface Message {
     id: number;
@@ -1703,6 +1798,8 @@ export interface FullBackupData {
     roomCustomAssets?: { id?: string; name: string; image: string; defaultScale: number; description?: string; visibility?: 'public' | 'character'; assignedCharIds?: string[] }[]; 
     
     novels?: NovelBook[];
+    vrNovels?: VRWorldNovel[];          // 虚拟世界「彼方」全局小说库
+    vrAnnotations?: VRNovelAnnotation[]; // 虚拟世界小说批注
     songs?: SongSheet[]; // Songwriting app data
     
     // Bank Data

@@ -1359,6 +1359,59 @@ const MessageItem = React.memo(({
         );
     }
 
+    if (m.type === 'vr_card') {
+        const md: any = m.metadata || {};
+        const roomEmojiMap: Record<string, { emoji: string; name: string }> = {
+            library: { emoji: '📚', name: '图书馆' },
+            music: { emoji: '🎧', name: '听歌房' },
+            guestbook: { emoji: '📝', name: '留言簿' },
+            gym: { emoji: '🤸', name: '活动场' },
+        };
+        const roomInfo = roomEmojiMap[md.room] || { emoji: '🪐', name: '彼方' };
+        const activity: string = md.activity || '在彼方度过了一段时间。';
+        const excerpts: string[] = Array.isArray(md.annotationExcerpts) ? md.annotationExcerpts : [];
+        const timeStr = new Date(m.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        const card = (
+            <div className="w-64">
+                <div
+                    className="rounded-xl overflow-hidden border border-indigo-300/40 shadow-[0_4px_16px_rgba(60,40,120,0.22)]"
+                    style={{ background: 'linear-gradient(155deg,#2a2350 0%,#1b1838 100%)' }}
+                >
+                    {/* 头部：彼方 · 房间 */}
+                    <div className="px-3 pt-2.5 pb-2 flex items-center gap-2 border-b border-white/10">
+                        <span className="text-xl leading-none">{roomInfo.emoji}</span>
+                        <div className="flex-1 min-w-0">
+                            <div className="text-[9px] tracking-[0.25em] text-indigo-300/80 font-bold uppercase">彼方 · 动态</div>
+                            <div className="text-[12px] text-indigo-100 font-semibold truncate">{roomInfo.name}{md.novelTitle ? ` · 《${md.novelTitle}》` : ''}</div>
+                        </div>
+                        <span className="text-[9px] text-indigo-300/60">{timeStr}</span>
+                    </div>
+                    {/* 活动播报 */}
+                    <div className="px-3 py-2.5">
+                        <p className="text-[12.5px] leading-[1.5] text-indigo-50/95">
+                            <span className="font-bold text-amber-200">{charName || 'Ta'}</span> {activity}
+                        </p>
+                        {excerpts.length > 0 && (
+                            <div className="mt-2 space-y-1">
+                                {excerpts.map((ex, i) => (
+                                    <div key={i} className="text-[11px] leading-snug text-indigo-200/80 pl-2 border-l-2 border-amber-300/50">
+                                        {ex}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                    {/* 页脚 */}
+                    <div className="px-3 py-1.5 border-t border-white/10 flex items-center justify-between">
+                        <span className="text-[9px] text-indigo-300/60 italic">Ta 独自度过的时间</span>
+                        <span className="text-[9px] text-amber-200/70 font-bold tracking-wide">＋记忆</span>
+                    </div>
+                </div>
+            </div>
+        );
+        return commonLayout(card);
+    }
+
     if (m.type === 'news_card') {
         const md: any = m.metadata || {};
         const title: string = md.title || '热点';
