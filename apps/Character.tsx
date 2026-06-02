@@ -303,14 +303,15 @@ const Character: React.FC = () => {
           try {
               setIsCompressing(true);
               const processedBase64 = await processImage(file);
-              handleChange('avatar', processedBase64);
-              // 清空 URL draft, 否则用户之后再触发 URL input 的 onBlur 会用脏旧 URL
-              // 把刚上传的 data URL 头像盖掉. 不走 effect 监听 avatar 的方案 —— 那会
-              // 在用户正在打 URL 时吃掉 draft.
+              // 存入 assets 表，角色 JSON 只存短引用，不存大 base64
+              const { saveAvatarAsset } = await import('../utils/avatarAsset');
+              const { ref, resolved } = await saveAvatarAsset(processedBase64);
+              // state 里存 resolved data URL（供即时预览），_avatarAssetId 供存库时还原为 asset:uuid
+              setFormData(prev => prev ? { ...prev, avatar: resolved, _avatarAssetId: ref } as any : prev);
               setAvatarUrlDraft('');
               addToast('头像上传成功', 'success');
-          } catch (error: any) { 
-              addToast(error.message || '图片处理失败', 'error'); 
+          } catch (error: any) {
+              addToast(error.message || '图片处理失败', 'error');
           } finally {
               setIsCompressing(false);
               if (fileInputRef.current) fileInputRef.current.value = '';

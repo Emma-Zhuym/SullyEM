@@ -303,7 +303,14 @@ export const DB = {
     // 等事务真正提交再 resolve —— 否则调用方 await 后立刻重读 DB 会拿到旧值 (情绪 buff 落库竞态根因).
     return new Promise((resolve, reject) => {
       const transaction = db.transaction(STORE_CHARACTERS, 'readwrite');
-      transaction.objectStore(STORE_CHARACTERS).put(character);
+      // 如果头像是从 assets 表解析出来的（运行时 _avatarAssetId 标记），存库时换回 asset:uuid 引用，
+      // 避免把大 base64 data URL 重新写入 characters 表。
+      const toSave: any = { ...character };
+      if (toSave._avatarAssetId) {
+          toSave.avatar = toSave._avatarAssetId;
+          delete toSave._avatarAssetId;
+      }
+      transaction.objectStore(STORE_CHARACTERS).put(toSave);
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error);
       transaction.onabort = () => reject(transaction.error || new Error('saveCharacter aborted'));

@@ -12,6 +12,7 @@ import { evaluateEmotionBackground } from '../hooks/useChatAI';
 import { buildChatRequestPayload } from '../utils/chatRequestPayload';
 import { extractHtmlBlocks } from '../utils/htmlPrompt';
 import { loadMusicPlaybackSnapshot } from './MusicContext';
+import { AVATAR_ASSET_PREFIX, resolveAvatarRef } from '../utils/avatarAsset';
 import { setMinimaxRegion } from '../utils/minimaxEndpoint';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
@@ -984,6 +985,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         }
 
         finalChars = finalChars.map(c => normalizeCharacterDefaults(normalizeCharacterImpression(c)));
+
+        // 解析 asset:uuid 头像 → data URL，_avatarAssetId 记住原始引用供存库时还原
+        finalChars = await Promise.all(finalChars.map(async (c) => {
+            if (c.avatar?.startsWith(AVATAR_ASSET_PREFIX)) {
+                const resolved = await resolveAvatarRef(c.avatar);
+                return { ...c, avatar: resolved || c.avatar, _avatarAssetId: c.avatar } as any;
+            }
+            return c;
+        }));
 
         if (finalChars.length > 0) {
           setCharacters(finalChars);
