@@ -33,7 +33,8 @@ jobs:
         run: npm ci
 
       - name: Build
-        run: npm run build
+        # GitHub Pages 只需要前端产物，跳过 build:workers（依赖私有包，GH Actions 无法解析）
+        run: npx vite build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
