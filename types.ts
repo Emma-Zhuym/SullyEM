@@ -984,6 +984,7 @@ export interface CharacterProfile {
   spriteConfig?: SpriteConfig;
   customDateSprites?: string[]; // User-added custom emotion names for date mode (per-character)
   dateLightReading?: boolean;   // Light reading mode for novel/text view in date
+  dateWritingStyle?: string;    // 约会模式写作风格预设 key（见 utils/dateWritingStyle.ts）或自定义文风字符串
   dateSkinSets?: SkinSet[];     // Multiple skin sets for portrait mode
   activeSkinSetId?: string;     // Currently active skin set ID
 

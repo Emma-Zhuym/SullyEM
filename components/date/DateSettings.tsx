@@ -3,6 +3,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useOS } from '../../context/OSContext';
 import { CharacterProfile, SpriteConfig, SkinSet } from '../../types';
 import { processImage } from '../../utils/file';
+import { DATE_WRITING_STYLE_PRESETS } from '../../utils/dateWritingStyle';
 
 // 标准情绪列表
 const REQUIRED_EMOTIONS = ['normal', 'happy', 'angry', 'sad', 'shy'];
@@ -477,6 +478,38 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
                     </div>
                 </div>
             )}
+
+            {/* 写作风格 */}
+            <section className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm mx-4 mb-4">
+                <p className="text-xs font-bold text-slate-400 uppercase mb-3">写作风格</p>
+                <div className="flex flex-wrap gap-1.5 mb-3">
+                    <button
+                        onClick={() => updateCharacter(char.id, { dateWritingStyle: undefined })}
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-bold transition-all ${!char.dateWritingStyle ? 'bg-violet-500 text-white' : 'bg-slate-100 text-slate-500'}`}
+                    >默认</button>
+                    {DATE_WRITING_STYLE_PRESETS.map(p => (
+                        <button key={p.key}
+                            onClick={() => updateCharacter(char.id, { dateWritingStyle: p.key })}
+                            className={`px-2.5 py-1 rounded-full text-[11px] font-bold transition-all ${char.dateWritingStyle === p.key ? 'bg-violet-500 text-white' : 'bg-slate-100 text-slate-500'}`}
+                            title={p.desc}
+                        >{p.label}</button>
+                    ))}
+                </div>
+                {char.dateWritingStyle && (
+                    <p className="text-[10px] text-slate-400 leading-relaxed">
+                        {DATE_WRITING_STYLE_PRESETS.find(p => p.key === char.dateWritingStyle)?.desc || '自定义文风'}
+                    </p>
+                )}
+                <div className="mt-2">
+                    <p className="text-[10px] text-slate-400 mb-1">或输入自定义文风描述（会覆盖上方选择）</p>
+                    <textarea
+                        value={(!char.dateWritingStyle || DATE_WRITING_STYLE_PRESETS.some(p => p.key === char.dateWritingStyle)) ? '' : char.dateWritingStyle}
+                        onChange={e => updateCharacter(char.id, { dateWritingStyle: e.target.value || undefined })}
+                        placeholder="例：用民国白话文风格，克制含蓄，多用短句……"
+                        className="w-full h-16 bg-slate-50 rounded-xl p-2.5 text-[12px] resize-none border border-slate-200 focus:outline-none focus:border-violet-300"
+                    />
+                </div>
+            </section>
 
             <div className="p-4 border-t border-slate-200 bg-white/90 backdrop-blur-sm sticky bottom-0 z-20">
                 <button onClick={handleSaveSettings} className="w-full py-3 bg-primary text-white font-bold rounded-2xl shadow-lg active:scale-95 transition-transform">

@@ -13,6 +13,7 @@ import Modal from '../components/os/Modal';
 import DateSession from '../components/date/DateSession';
 import DateSettings from '../components/date/DateSettings';
 import { BookOpen } from '@phosphor-icons/react';
+import { buildDateWritingStylePrompt } from '../utils/dateWritingStyle';
 
 const DateApp: React.FC = () => {
     const { closeApp, characters, activeCharacterId, setActiveCharacterId, apiConfig, addToast, updateCharacter, virtualTime, userProfile, memoryPalaceConfig } = useOS();
@@ -385,6 +386,7 @@ const DateApp: React.FC = () => {
 ### 场景上下文
 1. **Location**: 你们现在**面对面**。
 2. **Context**: 参考历史记录。如果刚刚才看到开场白（Opening），请自然接话。
+${buildDateWritingStylePrompt(char.dateWritingStyle)}
 `;
 
         const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
