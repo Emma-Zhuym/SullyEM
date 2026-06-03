@@ -67,8 +67,9 @@ export const getRoom = (id: VRRoomId): VRRoomDef =>
 /** 默认自主登入间隔（分钟）= 2 小时 */
 export const VR_DEFAULT_INTERVAL_MIN = 120;
 
-/** 每次登入图书馆固定喂给角色的原文字数预算（含原文+已有批注）。 */
-export const VR_NOVEL_FEED_CHARS = 20000;
+/** 每次登入图书馆固定喂给角色的原文字数预算（含原文+已有批注）。
+ *  Gemini 等大上下文模型下，2w字仅约 1.5w tk，加人设/记忆/历史仍宽裕，故给到 4w字。 */
+export const VR_NOVEL_FEED_CHARS = 40000;
 
 /** 切块时单个 segment 的目标字数。 */
 export const VR_SEGMENT_TARGET_CHARS = 400;

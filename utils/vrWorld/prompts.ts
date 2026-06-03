@@ -67,6 +67,7 @@ export function buildLibraryRoomTurn(
     novel: VRWorldNovel,
     window: ReadingWindow,
     annotations: VRNovelAnnotation[],
+    selfAuthorId?: string,
 ): string {
     const annByseg = groupAnnotationsBySeg(annotations);
     const lines: string[] = [];
@@ -74,8 +75,16 @@ export function buildLibraryRoomTurn(
     lines.push(`你从书签处翻开了《${novel.title}》${novel.author ? `（${novel.author}）` : ''}。`);
     if (novel.summary) lines.push(`【简介】${novel.summary}`);
     const segCount = window.to - window.from;
-    lines.push(`你这次一口气读了下面这一长段——第 ${window.from + 1} ~ ${window.to} 段、共 ${segCount} 段（约两万字；全书共 ${novel.segments.length} 段${window.reachedEnd ? '，这是最后一部分了' : ''}）。`);
-    lines.push(`认真读完整段，在打动你、惹毛你、或让你走神的地方都停下来写点什么——别只盯着开头那几段。`);
+    const winChars = window.segments.reduce((s, seg) => s + seg.chars, 0);
+    const wan = (winChars / 10000).toFixed(1).replace(/\.0$/, '');
+    lines.push(`你这次一口气读了下面这一长段——第 ${window.from + 1} ~ ${window.to} 段、共 ${segCount} 段（约 ${wan} 万字；全书共 ${novel.segments.length} 段${window.reachedEnd ? '，这是最后一部分了' : ''}）。`);
+    lines.push(`认真读完整段，在打动你、惹毛你、或让你走神的地方都停下来写点什么——别只盯着开头那几段，结尾和中间也要有反应。`);
+
+    // 窗口里有别人留下的批注时，明确鼓励接话/抬杠
+    const others = annotations.filter(a => a.authorId !== selfAuthorId);
+    if (others.length > 0) {
+        lines.push(`（这一段里有别人留下的批注，标着 #编号。如果有哪条戳中你、或让你想反驳，就在那一段写条新批注、用 回应="#编号" 接话——附和、抬杠、或换个刁钻角度都行。）`);
+    }
     lines.push('');
 
     for (const seg of window.segments) {

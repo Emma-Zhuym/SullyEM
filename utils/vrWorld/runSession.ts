@@ -97,6 +97,12 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
     }
 
     running.add(char.id);
+    // 大世界喇叭：广播"某角色正在彼方行动中"
+    try {
+        window.dispatchEvent(new CustomEvent('vr-session-start', {
+            detail: { charId: char.id, charName: char.name, room: room.id, novelTitle: novel.title },
+        }));
+    } catch { /* SSR */ }
     try {
         const bookmark = getBookmark(char.vrState?.novelBookmarks, novel.id);
         const win = getReadingWindow(novel, bookmark >= novel.segments.length ? 0 : bookmark);
@@ -115,7 +121,7 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
         });
 
         const systemPrompt = payload.systemPrompt + buildVRSystemAddendum(room, char.name);
-        const roomTurn = buildLibraryRoomTurn(novel, win, windowAnn);
+        const roomTurn = buildLibraryRoomTurn(novel, win, windowAnn, char.id);
         const fullMessages = [
             { role: 'system', content: systemPrompt },
             ...payload.cleanedApiMessages,
@@ -234,5 +240,9 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
         return { ok: false, room: room.id, reason: 'error' };
     } finally {
         running.delete(char.id);
+        // 喇叭收尾：成功/失败都广播结束，避免横幅卡住
+        try {
+            window.dispatchEvent(new CustomEvent('vr-session-end', { detail: { charId: char.id } }));
+        } catch { /* SSR */ }
     }
 }
