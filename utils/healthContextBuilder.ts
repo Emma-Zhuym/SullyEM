@@ -10,8 +10,9 @@
  *   【今日】训练日（胸+臀）
  */
 
-import { getAllHealthEvents, WorkoutHealthEvent, PeriodHealthEvent, SleepHealthEvent, DietHealthEvent } from './healthDb';
+import { getAllHealthEvents, WorkoutHealthEvent, PeriodHealthEvent, SleepHealthEvent, DietHealthEvent, WeightHealthEvent } from './healthDb';
 import { calcCycleStatus } from './cycleCalc';
+import { getHealthProfile, calcBMR, calcDeficit } from './healthProfile';
 
 function todayStr(): string {
   const d = new Date();
@@ -76,6 +77,22 @@ export async function buildTodayHealthSummary(): Promise<string | null> {
     const todaySymptom = todayEvents.find(e => e.type === 'symptom');
     if (todaySymptom && 'symptoms' in todaySymptom && todaySymptom.symptoms.length > 0) {
       parts.push(`有${todaySymptom.symptoms.slice(0, 2).join('/')}症状`);
+    }
+
+    // ── 体重 ─────────────────────────────────────────────────
+    const weight = todayEvents.find(e => e.type === 'weight') as WeightHealthEvent | undefined;
+    if (weight) parts.push(`体重${weight.value}kg`);
+
+    // ── 热量缺口 ─────────────────────────────────────────────
+    const profile = getHealthProfile();
+    if (profile) {
+      const bmr = calcBMR(profile);
+      const exerciseCal = workout?.calories ?? 0;
+      const intakeCal = diets.reduce((s, d) => s + d.calories, 0);
+      if (exerciseCal > 0 || intakeCal > 0) {
+        const gap = calcDeficit(bmr, exerciseCal, intakeCal);
+        parts.push(gap >= 0 ? `热量盈余${gap}kcal` : `热量超出${Math.abs(gap)}kcal`);
+      }
     }
 
     if (parts.length === 0) return null;

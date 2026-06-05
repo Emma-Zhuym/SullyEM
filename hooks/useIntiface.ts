@@ -8,13 +8,12 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { ButtplugClientDevice } from 'buttplug';
-import { intifaceClient, IntifaceStatus } from '../utils/intifaceClient';
+import { intifaceClient, IntifaceStatus, IntifaceDevice } from '../utils/intifaceClient';
 
 interface UseIntifaceReturn {
   status: IntifaceStatus;
   connected: boolean;
-  devices: ButtplugClientDevice[];
+  devices: IntifaceDevice[];
   currentIntensity: number;          // 0–100，用于 UI 显示
   connect: (url?: string) => Promise<void>;
   disconnect: () => Promise<void>;
@@ -26,7 +25,7 @@ interface UseIntifaceReturn {
 
 export function useIntiface(): UseIntifaceReturn {
   const [status, setStatus] = useState<IntifaceStatus>(intifaceClient.status);
-  const [devices, setDevices] = useState<ButtplugClientDevice[]>(intifaceClient.devices);
+  const [devices, setDevices] = useState<IntifaceDevice[]>(intifaceClient.devices);
   const [currentIntensity, setCurrentIntensity] = useState(intifaceClient.currentIntensity);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -137,8 +136,6 @@ export function createIntifaceChunkProcessor() {
       return '';
     });
 
-    // 只返回本次 chunk 应该输出的部分（减去 residual 来自上一次的偏移）
-    // 简化：如果没有 residual 被截走，直接返回 cleaned；否则只返回新增部分
     return cleaned;
   };
 }

@@ -9,7 +9,7 @@
 
 export type PeriodFlow = 'spotting' | 'light' | 'medium' | 'heavy';
 export type SleepQuality = 'good' | 'ok' | 'poor';
-export type HealthEventType = 'workout' | 'period' | 'symptom' | 'sleep' | 'diet';
+export type HealthEventType = 'workout' | 'period' | 'symptom' | 'sleep' | 'diet' | 'weight';
 
 interface HealthEventBase {
   id: string;
@@ -56,12 +56,19 @@ export interface DietHealthEvent extends HealthEventBase {
   note?: string;        // 早餐/午餐/晚餐 标签
 }
 
+export interface WeightHealthEvent extends HealthEventBase {
+  type: 'weight';
+  value: number;        // kg
+  note?: string;
+}
+
 export type HealthEvent =
   | WorkoutHealthEvent
   | PeriodHealthEvent
   | SymptomHealthEvent
   | SleepHealthEvent
-  | DietHealthEvent;
+  | DietHealthEvent
+  | WeightHealthEvent;
 
 // ── DB Setup ─────────────────────────────────────────────────────────────────
 

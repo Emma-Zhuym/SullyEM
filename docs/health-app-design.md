@@ -1,13 +1,17 @@
 # HealthApp 设计文档
 
-> 设计时间：2026-05-21
+> 原稿：2026-05-21 | 重大修订：2026-06-04
 
 ---
 
 ## 一、功能定位
 
-Emma 的个人健康日历：经期追踪、锻炼记录、症状记录。
-与角色日程联动（只读），支持 Apple Health 数据导入。
+Emma 的个人健康中心：经期追踪、训练记录、症状记录、体成分趋势。
+
+**核心设计原则：**
+- Health App 是**系统级**模块，数据不属于任何角色
+- 角色**不自动知道**健康数据——通过对话触发才读取（沉浸感）
+- 数据录入走自然语言，不填表单
 
 ---
 
@@ -19,136 +23,155 @@ Emma 的个人健康日历：经期追踪、锻炼记录、症状记录。
 |------|------|
 | 🔴 深红 | 经期（量多） |
 | 🩷 粉色 | 经期（量少/点滴） |
-| 🔵 浅蓝 | 预测排卵窗口（半透明背景色） |
-| 🟢 绿色 | 有锻炼记录 |
+| 🔵 浅蓝 | 预测排卵窗口（背景色，不占点位） |
+| 🟢 绿色 | 有训练记录 |
 | 🟣 紫色 | 症状（痛经/腹胀等） |
-
-一天可以同时有多个点（如经期第一天+锻炼 = 红+绿）。
-排卵窗口用日期格背景浅蓝色表示，不占点位。
 
 日历顶部显示：当前周期第 X 天 · 预计下次 XX月XX日–XX日
 
 ---
 
-## 三、日期详情 Panel
+## 三、数据录入：自然语言输入
 
-点击任意日期，日历下方滑出详情 panel，分两部分：
+Health App 内有「记录训练」和「记录症状/经期」两个入口。
 
-**Emma 的记录：**
-- 经期：量级（无/点滴/少/中/多）
-- 症状：多选标签（痛经、腹胀、头痛、情绪低落、疲劳……）
-- 锻炼：类型（跑步/力量/瑜伽/游泳/其他）+ 时长（分钟）+ 消耗卡路里（可选）
-- 备注（自由文字）
+**不通过任何角色**，由 Health App 自己调 LLM 提取结构化数据：
 
-**角色当天日程（只读）：**
-- 读取现有 `DB.getDailySchedule`，显示当天角色在做什么
-- 格式：角色头像 + 时间段 + 活动名
-- 没有日程数据则不显示此区块
+```
+用户输入（自然语言）：
+  "刚练完，背和腿，杠铃划船3组、负重深蹲、高位下拉，
+   跑步机30分钟，Apple Watch 消耗480kcal"
 
-底部：「+ 添加记录」按钮，打开快速记录 modal。
+LLM 提取 →
+
+HealthLog 条目：
+  date: 2026-06-04
+  type: workout
+  部位: [背, 腿]
+  duration: 90min
+  训练摘要: "杠铃划船×3组、负重深蹲×3组、高位下拉×3组 + 跑步机30min"
+  source: manual
+
+同时自动更新 Daily Routine（Notion）：
+  健身: ✓
+  消耗: 480
+  页面 body Training 块追加一行摘要：
+  "💪 背+腿｜杠铃划船×3 / 负重深蹲×3 / 高位下拉×3｜90min"
+```
 
 ---
 
-## 四、周期推算（纯前端计算，无 LLM）
+## 四、Notion 数据库结构
 
-```typescript
-// 输入：所有历史经期开始日期数组
-// 输出：当前周期天数、预测下次经期范围、当前阶段
-
-function calcCycleStatus(periodStarts: string[]): CycleStatus {
-  // 1. 当前周期第几天（从最近一次经期开始算，始终准确）
-  // 2. 过去 N 次周期长度 → 计算平均值和标准差
-  // 3. 预测下次 = 最近经期开始 + 平均周期长度，范围 = ±1标准差
-  // 4. 当前阶段（卵泡期/排卵窗/黄体期）基于周期天数估算
-  // 5. 数据不足（<3次）或周期变异系数 >0.15 时标注"预测不确定"
-}
-```
-
-阶段显示用范围而不是确定值：
-- "可能进入排卵窗口（第 12–16 天，你目前第 14 天）"
-- 周期不规律时显示宽范围并注明"基于最近 X 次周期估算"
-
----
-
-## 五、LLM 功能
-
-仅用于角色周评论（手动触发，不自动调用）：
-- 健康 app 底部「让 [角色] 来说说这周」按钮
-- LLM 拿到本周症状+锻炼汇总，用角色口吻简评（3–5 句）
-- 角色可结合自己的日程（"我那天在开会，你还在跑步呢"）
-
----
-
-## 六、数据流
-
-```
-【历史导入，一次性】
-Apple Health → 导出所有健康数据（.zip）
-    → 上传到 SullyEM → 浏览器解压+解析 XML → IndexedDB
-
-【日常同步，自动】
-Apple Health → iOS 快捷指令（每日自动）
-    → Notion HealthLog 数据库
-    → SullyEM 打开健康 app 时增量同步 → IndexedDB
-
-【手动记录】
-直接在 SullyEM 健康 app 里添加 → IndexedDB（不回写 Notion）
-```
-
-### 历史导入：Apple Health XML 解析
-
-Apple Health 导出路径：健康 app → 右上角头像 → 导出所有健康数据 → 生成 .zip
-
-zip 内 `export.xml` 包含所有历史数据，SullyEM 用 JSZip + DOMParser 在浏览器端解析：
-
-```
-HKCategoryTypeIdentifierMenstrualFlow  → 经期记录
-HKCategoryTypeIdentifierAbdominalCramps → 痛经症状
-HKWorkoutActivityType*                 → 锻炼记录
-```
-
-### Notion HealthLog 数据库结构（日常同步用）
+### HealthLog（事件详情库）
 
 | 列名 | 类型 | 说明 |
 |------|------|------|
 | Date | Date | 日期 |
-| Type | Select | period / symptom / workout |
-| Detail | Text | 量级/症状名/锻炼类型 |
-| Value | Number | 时长(min) 或卡路里（锻炼用） |
-| Source | Select | apple_health / manual |
+| Type | Select | workout / period / symptom |
+| 部位 | Multi-select | 胸/臀/背/腿/肩/手臂（workout用） |
+| Duration | Number | 时长（分钟） |
+| 训练摘要 | Text | 主要动作，供角色读取 |
+| 经期量 | Select | 点滴/少/中/多（period用） |
+| 症状 | Multi-select | 痛经/腹胀/PMS/疲劳（symptom用） |
+| Source | Select | manual / apple_health |
 
-### 快捷指令逻辑（仅日常同步）
+> **注意**：消耗 kcal 不在 HealthLog 里——只存在 Daily Routine 的 `消耗` 字段。
 
-**每日自动同步（每晚 22:00 触发）：**
+### Daily Routine（每日总览，已有）
+Health App 写入时只更新两个字段：`健身 ✓` 和 `消耗`，其余字段用户自己填。
+
+---
+
+## 五、数据存储与同步
+
 ```
-获取今天的经期 / 症状 / 锻炼数据
-有数据则写入 Notion HealthLog（跳过已存在的条目）
+Health App 录入
+  → IndexedDB（healthDb.ts，本地，角色读取用）
+  → Notion HealthLog（备份，跨设备查看用）
+  → 更新 Notion Daily Routine（健身✓ + 消耗）
+
+Apple Health 快捷指令（可选，每晚自动）
+  → 写入 Notion HealthLog（source: apple_health）
+  → 下次打开 Health App 时增量同步到 IndexedDB
 ```
 
 ---
 
-## 七、文件结构
+## 六、角色感知健康数据（两层设计）
+
+### 第一层：轻量常驻注入
+每次对话自动注入一行基本感知，不占太多 token：
+
+```
+【今日】睡眠 7.2h｜训练日（背+腿）
+```
+
+或：
+```
+【今日】睡眠 5.1h｜休息日
+```
+
+让角色能自然说出"你好像没睡好"或"今天练完了吧"。
+
+### 第二层：对话触发按需读取
+角色检测到健康相关话题时，主动读 IndexedDB 里的 HealthLog 详情：
+
+```
+用户："刚练完好累"
+角色检测到训练话题
+→ 读取今日 HealthLog 条目
+→ "你今天练了背腿，消耗480kcal，难怪累……
+   杠铃划船3组做完背应该很酸"
+```
+
+触发词范围：健身/训练/锻炼/练了/好累/肌肉/体重/经期/痛经/没睡好……
+
+### 手动触发：角色周评论
+Health App 底部「让 [角色] 说说这周」按钮——角色拿到本周完整健康摘要，用自己的口吻评论（3–5句）。每个角色独立评论，不存在"A先知道再告诉B"的问题。
+
+---
+
+## 七、周期推算（纯前端，无 LLM）
+
+```typescript
+function calcCycleStatus(periodStarts: string[]): CycleStatus {
+  // 1. 当前周期第几天
+  // 2. 过去 N 次周期长度 → 均值和标准差
+  // 3. 预测下次 = 最近开始 + 均值，范围 = ±1σ
+  // 4. 数据不足（<3次）或变异系数 >0.15 时标注"预测不确定"
+}
+```
+
+显示用范围而非确定值："可能进入排卵窗口（第 12–16 天，你目前第 14 天）"
+
+---
+
+## 八、文件结构
 
 | 文件 | 说明 |
 |------|------|
-| `apps/HealthApp.tsx` | 主 app，月历 + 详情 panel |
+| `apps/HealthApp.tsx` | 主 App：月历 + 详情 panel + 自然语言录入 |
 | `utils/healthDb.ts` | IndexedDB 读写（健康数据表） |
 | `utils/cycleCalc.ts` | 周期推算纯计算函数 |
-| `utils/healthNotionSync.ts` | 从 Notion 同步到本地 IndexedDB |
+| `utils/healthNotionSync.ts` | Notion ↔ IndexedDB 增量同步 |
+| `utils/healthContextBuilder.ts` | 生成轻量注入摘要 + 按需读取接口 |
 
-**需要动的上游文件（最小改动）：**
-- `constants.tsx`：加 `AppID.Health`，加应用注册
-- `types.ts`：加健康数据类型（或单独 `types/health.ts`）
+**需动的上游文件（最小改动）：**
+- `constants.tsx`：加 `AppID.Health`
+- `types.ts`：加健康数据类型
+- `utils/chatRequestPayload.ts`：注入第一层轻量摘要
+- `apps/Chat.tsx`：加健康话题检测 + 按需读取触发
 
 ---
 
-## 八、实现顺序
+## 九、实现顺序
 
-1. 类型定义 + `healthDb.ts`（本地存储）
-2. `cycleCalc.ts`（周期推算逻辑，可单独测试）
+1. 类型定义 + `healthDb.ts`
+2. `cycleCalc.ts`
 3. `HealthApp.tsx` 月历视图 + 彩点渲染
-4. 日期详情 panel + 手动记录 modal
-5. `healthNotionSync.ts`（Notion 同步）
-6. 角色日程联动（读 DailySchedule）
-7. LLM 角色周评论
-8. 快捷指令模板（文档说明，不是代码）
+4. 自然语言录入 + LLM 提取 → IndexedDB + Notion 写入
+5. `healthNotionSync.ts`（Notion 备份同步）
+6. `healthContextBuilder.ts` + `chatRequestPayload.ts` 第一层注入
+7. Chat.tsx 触发检测 + 第二层按需读取
+8. 角色周评论按钮
