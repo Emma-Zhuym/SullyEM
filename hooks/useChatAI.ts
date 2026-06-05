@@ -526,6 +526,8 @@ interface UseChatAIProps {
     mcdMiniAppRef?: MutableRefObject<import('../utils/mcdToolBridge').McdMiniAppSnapshot | undefined>;
     /** EM: 角色在线状态（busy 时注入简短回复提示） */
     charAvailability?: 'online' | 'busy' | 'offline';
+    /** EM: 今日健康摘要，透传给 buildChatRequestPayload */
+    healthSummary?: string | null;
 }
 
 export const useChatAI = ({
@@ -544,6 +546,7 @@ export const useChatAI = ({
     updateCharacter,
     mcdMiniAppRef,
     charAvailability,
+    healthSummary,
 }: UseChatAIProps) => {
     
     // 音乐上下文 — 用于聊天时注入"user 正在听什么 + 当前歌词窗口"
@@ -727,6 +730,7 @@ export const useChatAI = ({
                 thinkingChain: { enabled: !!(char as any).showThinkingChain, customPrompt: (char as any).thinkingChainCustomPrompt },
                 mcdMiniSnap: mcdMiniOpen ? mcdMiniSnap : undefined,
                 charAvailability,
+                healthSummary,
             }));
             const systemPrompt = payload.systemPrompt;
             const cleanedApiMessages = payload.cleanedApiMessages;

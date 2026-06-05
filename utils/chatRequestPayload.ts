@@ -64,6 +64,8 @@ export interface BuildChatPayloadInput {
 
     /** EM: 角色当前在线状态（busy 时注入简短回复提示） */
     charAvailability?: 'online' | 'busy' | 'offline';
+    /** EM: 今日健康摘要（由 healthContextBuilder 构建，注入 system prompt 末尾） */
+    healthSummary?: string | null;
 }
 
 export interface BuildChatPayloadResult {
@@ -169,7 +171,12 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         musicCfg,
     );
 
-    // ── 3.5 EM: busy 状态注入简短回复提示 ──────────────────
+    // ── 3.5 EM: 健康感知第一层常驻注入 ────────────────────
+    if (input.healthSummary) {
+        systemPrompt += `\n\n${input.healthSummary}`;
+    }
+
+    // ── 3.6 EM: busy 状态注入简短回复提示 ──────────────────
     if (input.charAvailability === 'busy') {
         systemPrompt += `\n\n[严格执行] 你现在正在忙（开会/工作/上课/排练等），只能在间隙偷偷看一眼手机。必须遵守以下规则：
 - 回复最多2-3行（2-3个换行），不能更长
