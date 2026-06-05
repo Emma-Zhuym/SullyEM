@@ -8,7 +8,8 @@
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type PeriodFlow = 'spotting' | 'light' | 'medium' | 'heavy';
-export type HealthEventType = 'workout' | 'period' | 'symptom';
+export type SleepQuality = 'good' | 'ok' | 'poor';
+export type HealthEventType = 'workout' | 'period' | 'symptom' | 'sleep' | 'diet';
 
 interface HealthEventBase {
   id: string;
@@ -35,7 +36,32 @@ export interface SymptomHealthEvent extends HealthEventBase {
   symptoms: string[];
 }
 
-export type HealthEvent = WorkoutHealthEvent | PeriodHealthEvent | SymptomHealthEvent;
+export interface SleepHealthEvent extends HealthEventBase {
+  type: 'sleep';
+  bedtime: string;      // 'HH:MM'
+  wakeTime: string;     // 'HH:MM'
+  duration: number;     // 分钟
+  quality: SleepQuality;
+  note?: string;
+}
+
+export interface DietHealthEvent extends HealthEventBase {
+  type: 'diet';
+  calories: number;
+  protein?: number;     // g
+  carbs?: number;       // g
+  fat?: number;         // g
+  fiber?: number;       // g
+  rawInput?: string;    // 用户原始描述
+  note?: string;        // 早餐/午餐/晚餐 标签
+}
+
+export type HealthEvent =
+  | WorkoutHealthEvent
+  | PeriodHealthEvent
+  | SymptomHealthEvent
+  | SleepHealthEvent
+  | DietHealthEvent;
 
 // ── DB Setup ─────────────────────────────────────────────────────────────────
 

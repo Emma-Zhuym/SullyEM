@@ -10,7 +10,7 @@
  *   【今日】训练日（胸+臀）
  */
 
-import { getAllHealthEvents, WorkoutHealthEvent, PeriodHealthEvent } from './healthDb';
+import { getAllHealthEvents, WorkoutHealthEvent, PeriodHealthEvent, SleepHealthEvent, DietHealthEvent } from './healthDb';
 import { calcCycleStatus } from './cycleCalc';
 
 function todayStr(): string {
@@ -55,6 +55,21 @@ export async function buildTodayHealthSummary(): Promise<string | null> {
       } else {
         parts.push(`周期第${cs.cycleDay}天`);
       }
+    }
+
+    // ── 睡眠 ─────────────────────────────────────────────────
+    const sleep = todayEvents.find(e => e.type === 'sleep') as SleepHealthEvent | undefined;
+    if (sleep) {
+      const qLabel = sleep.quality === 'good' ? '良好' : sleep.quality === 'ok' ? '一般' : '差';
+      const hrs = (sleep.duration / 60).toFixed(1).replace(/\.0$/, '');
+      parts.push(`睡${hrs}h(${qLabel})`);
+    }
+
+    // ── 饮食 ─────────────────────────────────────────────────
+    const diets = todayEvents.filter(e => e.type === 'diet') as DietHealthEvent[];
+    if (diets.length > 0) {
+      const totalKcal = diets.reduce((s, d) => s + d.calories, 0);
+      parts.push(`摄入${totalKcal}kcal`);
     }
 
     // ── 症状提示 ─────────────────────────────────────────────
