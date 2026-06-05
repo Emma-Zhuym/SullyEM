@@ -21,7 +21,6 @@ import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
 import ThinkingChainSettingsModal from '../components/chat/ThinkingChainSettingsModal';
 import { useCharStatus } from '../hooks/useCharStatus';
 import { useChatAI } from '../hooks/useChatAI';
-import { buildTodayHealthSummary } from '../utils/healthContextBuilder';
 import { synthesizeSpeechDetailed, cleanTextForTts } from '../utils/minimaxTts';
 import { isInstantConfigReady } from '../utils/instantPushClient';
 
@@ -74,11 +73,6 @@ const Chat: React.FC = () => {
     const prevCharStatusRef = useRef<string>('online');
     const hasOfflinePendingRef = useRef(false);
 
-    // EM: 今日健康摘要（第一层常驻注入）
-    const [healthSummary, setHealthSummary] = useState<string | null>(null);
-    useEffect(() => {
-        buildTodayHealthSummary().then(s => setHealthSummary(s)).catch(() => {});
-    }, []);
     const [allHistoryMessages, setAllHistoryMessages] = useState<Message[]>([]);
     const [transferAmt, setTransferAmt] = useState('');
     const [emojiImportText, setEmojiImportText] = useState('');
@@ -187,7 +181,6 @@ const Chat: React.FC = () => {
         mcdMiniAppRef,
         updateCharacter,
         charAvailability: charStatusInfo.status,
-        healthSummary,
     });
 
     // EM: offline → online 时自动触发角色回复（补回 offline 期间的未回复消息）

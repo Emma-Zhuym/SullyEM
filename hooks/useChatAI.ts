@@ -24,6 +24,7 @@ import type { DigestResult } from '../utils/memoryPalace';
 import { MCD_PROPOSE_TOOL, autoFixProposalCodesByName } from '../utils/mcdToolBridge';
 import { extractHtmlBlocks } from '../utils/htmlPrompt';
 import { buildChatRequestPayload } from '../utils/chatRequestPayload';
+import { buildTodayHealthSummary } from '../utils/healthContextBuilder';
 import { intifaceClient } from '../utils/intifaceClient';
 import { handleIntifaceToolCall, buildIntifaceTool, buildIntifaceSystemPrompt } from './useIntiface';
 import {
@@ -526,8 +527,6 @@ interface UseChatAIProps {
     mcdMiniAppRef?: MutableRefObject<import('../utils/mcdToolBridge').McdMiniAppSnapshot | undefined>;
     /** EM: 角色在线状态（busy 时注入简短回复提示） */
     charAvailability?: 'online' | 'busy' | 'offline';
-    /** EM: 今日健康摘要，透传给 buildChatRequestPayload */
-    healthSummary?: string | null;
 }
 
 export const useChatAI = ({
@@ -546,7 +545,6 @@ export const useChatAI = ({
     updateCharacter,
     mcdMiniAppRef,
     charAvailability,
-    healthSummary,
 }: UseChatAIProps) => {
     
     // 音乐上下文 — 用于聊天时注入"user 正在听什么 + 当前歌词窗口"
@@ -691,6 +689,9 @@ export const useChatAI = ({
             const mcdMiniOpen = !!mcdMiniSnap?.open;
             const mcdInheritMeta = mcdMiniOpen ? { fromMcdMiniApp: true } : undefined;
 
+            // EM: 每次发消息前实时读今日健康摘要，确保下午锻炼后立刻生效
+            const freshHealthSummary = await buildTodayHealthSummary().catch(() => null);
+
             const payload = await stageT('payload', buildChatRequestPayload({
                 char, userProfile, groups, emojis, categories,
                 historyMsgs: contextMsgs,
@@ -730,7 +731,7 @@ export const useChatAI = ({
                 thinkingChain: { enabled: !!(char as any).showThinkingChain, customPrompt: (char as any).thinkingChainCustomPrompt },
                 mcdMiniSnap: mcdMiniOpen ? mcdMiniSnap : undefined,
                 charAvailability,
-                healthSummary,
+                healthSummary: freshHealthSummary,
             }));
             const systemPrompt = payload.systemPrompt;
             const cleanedApiMessages = payload.cleanedApiMessages;
