@@ -10,6 +10,15 @@ import type { EmbeddingConfig } from './types';
 // ─── 核心 API 调用 ────────────────────────────────────
 
 /**
+ * 判断模型是否支持自定义 dimensions 参数。
+ * 只有 Qwen3-Embedding 系列支持；bge 系列等固定维度模型不支持，
+ * 发送 dimensions 会导致硅基流动返回 400 错误。
+ */
+function modelSupportsDimensions(model: string): boolean {
+    return /qwen3?-?embedding/i.test(model);
+}
+
+/**
  * 单条文本向量化 — 返回 Float32Array 节省内存
  */
 export async function getEmbedding(text: string, config: EmbeddingConfig): Promise<Float32Array> {
@@ -18,23 +27,33 @@ export async function getEmbedding(text: string, config: EmbeddingConfig): Promi
 }
 
 /**
- * 批量文本向量化（一次最多 20 条，超出自动分批）
+ * 批量文本向量化（一次最多 10 条，超出自动分批，最多 5 批并发）
  * 返回 Float32Array[] — 比 number[][] 节省约 50% 内存
+ *
+ * BATCH_SIZE 从 20 降到 10：DashScope / Qwen 系列单次 batch 硬上限是 10 条，超过直接 400。
+ * 并发上限 5：拆批后并行发送，消除串行延迟。
  */
 export async function getEmbeddings(texts: string[], config: EmbeddingConfig): Promise<Float32Array[]> {
     if (texts.length === 0) return [];
 
-    const BATCH_SIZE = 20;
-    const results: Float32Array[] = [];
+    const BATCH_SIZE = 10;
+    const CONCURRENCY = 5;
 
+    const batches: string[][] = [];
     for (let i = 0; i < texts.length; i += BATCH_SIZE) {
-        const batch = texts.slice(i, i + BATCH_SIZE);
-        const batchResults = await callEmbeddingAPI(batch, config);
-        // 转为 Float32Array
-        results.push(...batchResults.map(v => new Float32Array(v)));
+        batches.push(texts.slice(i, i + BATCH_SIZE));
     }
 
-    return results;
+    const allResults: Float32Array[][] = new Array(batches.length);
+    for (let i = 0; i < batches.length; i += CONCURRENCY) {
+        const chunk = batches.slice(i, i + CONCURRENCY);
+        const chunkResults = await Promise.all(
+            chunk.map(b => callEmbeddingAPI(b, config).then(vecs => vecs.map(v => new Float32Array(v))))
+        );
+        chunkResults.forEach((r, j) => { allResults[i + j] = r; });
+    }
+
+    return allResults.flat();
 }
 
 /**
@@ -48,12 +67,17 @@ async function callEmbeddingAPI(
     baseUrl = baseUrl.replace('ai.siliconflow.cn', 'api.siliconflow.cn');
     const url = `${baseUrl}/embeddings`;
 
-    const body = {
+    // bge-m3 / bge-large 等固定维度模型不支持 dimensions 参数，
+    // 硅基流动 2026-06 起对这个参数会直接返回 400。
+    // 只有 Qwen3-Embedding 系列才支持自定义维度。
+    const body: Record<string, any> = {
         model: config.model,
         input,
-        dimensions: config.dimensions,
         encoding_format: 'float',
     };
+    if (modelSupportsDimensions(config.model) && config.dimensions) {
+        body.dimensions = config.dimensions;
+    }
 
     try {
         const response = await fetch(url, {
