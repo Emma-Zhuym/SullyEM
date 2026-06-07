@@ -673,7 +673,7 @@ export function parseScriptOutput(raw: string): ParsedScript {
 }
 
 const ATTITUDE_GUIDE = [
-    `**你是自愿来玩这场戏的，基调就是"我乐意来凑这个热闹"**。下面的态度只针对"分到的这个角色合不合你胃口"，跟"要不要参与""跟谁作不作对"无关——`,
+    `**你是自愿来玩这场戏的，基调就是"我跟大家约好来凑这个热闹"**。下面的态度只针对"roll 到的这个角色合不合你胃口"，跟"要不要参与""跟谁作不作对"无关——`,
     `· 欣然：这角色正合你意，演得来劲；`,
     `· 配合：演什么都行，无所谓；`,
     `· 勉强：这角色有点不对胃口，但你还是乐呵呵玩下去；`,
@@ -684,11 +684,11 @@ const ATTITUDE_GUIDE = [
 ].join('\n');
 
 /** 演员读剧本 → 给导演意见（逐角色模式：一次一个演员）。 */
-export function buildActorReviewTurn(title: string, logline: string, body: string, myRole: string, castLine: string, selfName: string, userName: string): string {
+export function buildActorReviewTurn(title: string, logline: string, body: string, myRole: string, castLine: string, selfName: string): string {
     return [
-        `「彼方 · 剧院」今天有场戏要排——剧本是${userName || '主人'}亲自挑的，你们是自发来「彼方」玩的，气氛像一局剧本杀：你本来就乐意来凑这个热闹。`,
-        `这次的角色分配：${castLine}`,
-        `**你分到的角色是：${myRole}**。`,
+        `「彼方 · 剧院」你和其他人约好了一起来玩话剧——本子和各自的角色都是 roll 到的，纯凑热闹图个乐。`,
+        `这次大家 roll 到的角色：${castLine}`,
+        `**你 roll 到的角色是：${myRole}**。`,
         '',
         '完整剧本如下：',
         body,
@@ -708,7 +708,7 @@ export function buildActorReviewTurn(title: string, logline: string, body: strin
 export function buildActorsBatchTurn(title: string, logline: string, body: string, cast: { roleName: string; actorName: string; persona?: string }[]): string {
     const roster = cast.map(c => `- ${c.actorName}（饰 ${c.roleName}）${c.persona ? `\n  本色：${c.persona}` : ''}`).join('\n');
     return [
-        `「彼方 · 剧院」要排一出戏《${title}》（${logline}）——剧本是主人亲自挑的，这些角色都是自发来「彼方」玩的，气氛像一局剧本杀，大家本来就乐意来凑热闹。下面是全体演员、各自分到的角色和本色：`,
+        `「彼方 · 剧院」一群角色约好一起来玩话剧《${title}》（${logline}）——本子和各自的角色都是 roll 到的，纯图个乐。下面是全体演员、各自 roll 到的角色和本色：`,
         roster,
         '',
         '完整剧本：',
@@ -769,7 +769,7 @@ export function buildDirectorTurn(
         '原始剧本：',
         body,
         '',
-        '演员们读完后的态度与意见（大家都是自愿来玩这场戏的、像一局剧本杀，态度只是"对分到的角色合不合胃口"——请尊重各自态度：欣然就顺着演；勉强/隐忍就让那点"不太想演这角色"的别扭从神态细节里渗出来；抵触/拒演就让 ta 出点戏、敷衍、或临时找导演救场，但**别写成反目成仇/敌对**，底色始终是"来都来了陪你们玩"）：',
+        '演员们读完后的态度与意见（大家是约好一起来玩话剧的、本子和角色都是 roll 到的，态度只是"对 roll 到的角色合不合胃口"——请尊重各自态度：欣然就顺着演；勉强/隐忍就让那点"不太想演这角色"的别扭从神态细节里渗出来；抵触/拒演就让 ta 出点戏、敷衍、或临时找导演救场，但**别写成反目成仇/敌对**，底色始终是"来都来了陪大家玩"）：',
         feedback || '（演员没什么意见）',
         '',
         `请整合成最终演出版，每句台词贴合对应演员的本色，然后严格按下面格式输出（标签外不要写别的）：`,
