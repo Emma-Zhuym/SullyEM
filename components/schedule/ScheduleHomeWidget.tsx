@@ -159,6 +159,66 @@ export const ScheduleHomeWidget: React.FC<ScheduleHomeWidgetProps> = ({
 
     const timelineSlots = schedule?.slots ?? [];
 
+    // 动森：全新奶油布局（不复用暗底版式）
+    if (acnh) {
+        return (
+            <button onClick={onOpen}
+                className="w-full text-left rounded-3xl overflow-hidden active:scale-[0.98] transition-transform relative"
+                style={{ background: 'rgb(247,243,223)', border: '2px solid #e8e2d6', boxShadow: '0 6px 18px rgba(61,52,40,0.12)' }}>
+                <div className="flex flex-col p-4 gap-3">
+                    <div className="flex items-center gap-2">
+                        <span className="text-[12px] font-extrabold" style={{ color: '#725d42' }}>🍃 今日日程</span>
+                        <div className="h-[2px] flex-1 rounded-full" style={{ background: '#e8e2d6' }} />
+                        <span className="text-[11px] font-bold" style={{ color: '#9f927d' }}>{timeLabel}</span>
+                    </div>
+                    <div className="flex items-center gap-3.5">
+                        <div className="w-[64px] h-[64px] shrink-0 rounded-[22%] overflow-hidden bg-[#e8e2d6] flex items-center justify-center"
+                            style={{ border: '3px solid #fff', boxShadow: '0 4px 10px -3px rgba(61,52,40,0.25)' }}>
+                            {character?.avatar
+                                ? <img src={character.avatar} alt="" loading="lazy" className="w-full h-full object-cover" style={{ objectPosition: 'center 28%' }} />
+                                : <span className="text-lg font-bold" style={{ color: '#9f927d' }}>{character?.name?.[0] || '🍃'}</span>}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 mb-1">
+                                <span className="text-[9px] font-extrabold tracking-wide px-2 py-0.5 rounded-full"
+                                    style={{ background: currentSlot ? '#dff0c8' : '#efe7d4', color: currentSlot ? '#5a9e1e' : '#9f927d' }}>
+                                    {currentSlot ? '现在' : '休息'}
+                                </span>
+                                <span className="text-[10px] font-bold" style={{ color: '#9f927d' }}>{currentSlot ? currentSlot.startTime : timeLabel}</span>
+                                <span className="text-[9px] ml-auto shrink-0 truncate max-w-[40%] font-bold" style={{ color: '#b3a88e' }}>{character?.name || '—'}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 min-w-0">
+                                {currentSlot?.emoji && <span className="text-base shrink-0">{currentSlot.emoji}</span>}
+                                <span className="text-[15px] font-bold truncate leading-tight" style={{ color: '#725d42' }}>
+                                    {currentSlot?.activity || (schedule ? '休息中 · 暂无安排' : '尚未生成日程')}
+                                </span>
+                            </div>
+                            {nextSlot && (
+                                <div className="text-[10.5px] mt-0.5 truncate" style={{ color: '#a89878' }}>
+                                    → {nextSlot.startTime} {nextSlot.emoji ? `${nextSlot.emoji} ` : ''}{nextSlot.activity}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                    {timelineSlots.length > 0 && (
+                        <div className="flex items-end gap-1.5 pt-0.5">
+                            {timelineSlots.slice(0, 10).map((slot, i) => {
+                                const isCur = i === currentIdx;
+                                const isPast = currentIdx >= 0 && i < currentIdx;
+                                return (
+                                    <div key={i} className="flex-1 min-w-0 flex flex-col items-center gap-1">
+                                        <div className="w-full rounded-full transition-all" style={{ height: '4px', background: isCur ? '#6fba2c' : isPast ? '#cdbfa0' : '#e8e2d6' }} />
+                                        <span className="text-[8px] font-bold" style={{ color: isCur ? '#5a9e1e' : '#b3a88e' }}>{slot.startTime.slice(0, 5)}</span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            </button>
+        );
+    }
+
     return (
         <button
             onClick={onOpen}

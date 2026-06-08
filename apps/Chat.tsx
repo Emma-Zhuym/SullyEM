@@ -2005,6 +2005,19 @@ const Chat: React.FC = () => {
                     border-radius: 22px !important;
                     box-shadow: 0 4px 10px -6px rgba(150,100,60,0.3) !important;
                 }
+                /* 破局：AC 对话气泡小尾巴尖 */
+                .sully-bubble-ai::after {
+                    content: ''; position: absolute; left: -7px; bottom: 11px;
+                    width: 13px; height: 13px; background: #FFFBF2;
+                    border-left: 2px solid #ece0c8; border-bottom: 2px solid #ece0c8;
+                    transform: rotate(45deg); border-bottom-left-radius: 3px;
+                }
+                .sully-bubble-user::after {
+                    content: ''; position: absolute; right: -7px; bottom: 11px;
+                    width: 13px; height: 13px; background: #F7C9A8;
+                    border-right: 2px solid #efb993; border-bottom: 2px solid #efb993;
+                    transform: rotate(-45deg); border-bottom-right-radius: 3px;
+                }
              `}</style>}
 
              {/* 记忆整理中 — 顶部浮动胶囊（不阻塞交互，轻量无 backdrop-filter） */}

@@ -235,7 +235,7 @@ const AppGridPage = React.memo(({
     acnh?: boolean,
 }) => {
     return (
-        <div className={`grid place-items-center animate-fade-in relative ${acnh ? 'grid-cols-3 gap-y-7 gap-x-3' : 'grid-cols-4 gap-y-6 gap-x-2'}`}>
+        <div className={`grid place-items-center animate-fade-in relative ${acnh ? 'grid-cols-4 gap-y-6 gap-x-2' : 'grid-cols-4 gap-y-6 gap-x-2'}`}>
              {apps.map(app => (
                  <div
                     key={app.id}
@@ -244,7 +244,7 @@ const AppGridPage = React.memo(({
                      <AppIcon
                         app={app}
                         onClick={() => openApp(app.id)}
-                        size={acnh ? 'lg' : 'md'}
+                        size="md"
                      />
                  </div>
              ))}
