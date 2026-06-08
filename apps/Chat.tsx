@@ -1967,10 +1967,10 @@ const Chat: React.FC = () => {
               : {
                   backgroundImage: 'none',
                 };
-    // 动森彩蛋：浅色纯色中心（上下绿条由 header/输入栏负责），简单稳。
+    // 动森彩蛋：浅奶油米黄中心（上下绿条由 header/输入栏负责），配色参考 Pocket Camp。
     const acnhRootClass = 'flex flex-col h-full overflow-hidden relative font-sans transition-[background-color] duration-500';
     const acnhRootStyle: React.CSSProperties = {
-        backgroundColor: '#F3F0E1',
+        backgroundColor: '#F2E9CC',
         backgroundImage: 'none',
     };
     const finalRootClass = acnh ? acnhRootClass : chatRootClass;
@@ -1990,31 +1990,29 @@ const Chat: React.FC = () => {
              {/* 动森彩蛋：作用域 CSS 覆盖气泡——奶油 AI 气泡 + 蜜桃用户气泡，暖棕文字，绕开 MessageItem 复杂逻辑 */}
              {acnh && <style>{`
                 .sully-bubble-ai {
-                    background: #FFFBF2 !important;
-                    color: #6b5435 !important;
-                    border: 2px solid #ece0c8 !important;
-                    border-radius: 22px !important;
-                    box-shadow: 0 4px 10px -6px rgba(120,90,40,0.25) !important;
+                    background: #FBF4DE !important;
+                    color: #6b5a3e !important;
+                    border: 1.5px solid #efe6c8 !important;
+                    border-radius: 24px !important;
+                    box-shadow: 0 4px 10px -5px rgba(120,95,45,0.28) !important;
                 }
                 .sully-bubble-user {
-                    background: #F7C9A8 !important;
+                    background: #F5C896 !important;
                     color: #6b4a2f !important;
-                    border: 2px solid #efb993 !important;
-                    border-radius: 22px !important;
-                    box-shadow: 0 4px 10px -6px rgba(150,100,60,0.3) !important;
+                    border: 1.5px solid #eeb87f !important;
+                    border-radius: 24px !important;
+                    box-shadow: 0 4px 10px -5px rgba(150,100,55,0.32) !important;
                 }
-                /* 破局：AC 对话气泡小尾巴尖 */
+                /* 破局：气泡尾巴是叶子（AI 绿叶 / 用户棕叶），引号包裹 data URI 安全 */
                 .sully-bubble-ai::after {
-                    content: ''; position: absolute; left: -7px; bottom: 11px;
-                    width: 13px; height: 13px; background: #FFFBF2;
-                    border-left: 2px solid #ece0c8; border-bottom: 2px solid #ece0c8;
-                    transform: rotate(45deg); border-bottom-left-radius: 3px;
+                    content: ''; position: absolute; left: -11px; bottom: -7px;
+                    width: 23px; height: 23px; transform: rotate(-22deg);
+                    background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 2C19 6 21 14 17 21C16 23 9 23 7 21C3 14 5 6 12 2Z' fill='%237CB85F'/><path d='M12 5V20' stroke='%235a8a3a' stroke-width='1.6' fill='none'/></svg>") no-repeat center/contain;
                 }
                 .sully-bubble-user::after {
-                    content: ''; position: absolute; right: -7px; bottom: 11px;
-                    width: 13px; height: 13px; background: #F7C9A8;
-                    border-right: 2px solid #efb993; border-bottom: 2px solid #efb993;
-                    transform: rotate(-45deg); border-bottom-right-radius: 3px;
+                    content: ''; position: absolute; right: -11px; bottom: -7px;
+                    width: 23px; height: 23px; transform: rotate(22deg) scaleX(-1);
+                    background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 2C19 6 21 14 17 21C16 23 9 23 7 21C3 14 5 6 12 2Z' fill='%23c2925a'/><path d='M12 5V20' stroke='%238a6235' stroke-width='1.6' fill='none'/></svg>") no-repeat center/contain;
                 }
              `}</style>}
 
