@@ -13,6 +13,8 @@ import MessageItem from '../components/chat/MessageItem';
 import McdMiniApp from '../components/mcd/McdMiniApp';
 import { PRESET_THEMES, DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import ChatHeader from '../components/chat/ChatHeaderShell';
+import CharacterEntryTransition from '../components/chat/CharacterEntryTransition';
+import ChromeCssEditor from '../components/chat/ChromeCssEditor';
 import ChatInputArea from '../components/chat/ChatInputArea';
 import ChatModals from '../components/chat/ChatModals';
 import Modal from '../components/os/Modal';
@@ -52,6 +54,10 @@ const Chat: React.FC = () => {
     const [visibleCount, setVisibleCount] = useState(30);
     const [windowedFocusMsgId, setWindowedFocusMsgId] = useState<number | null>(null);
     const [flashMsgId, setFlashMsgId] = useState<number | null>(null);
+    // 角色切换/进入时的缓入开关：先 false（透明），下一帧转 true，靠 CSS transition 平滑淡入。
+    // 初值 false 让首次打开也是淡入、且不会有"先显示再变透明"的闪烁。
+    // 角色切换「登场」过场是否显示。切换/进入角色时由 useLayoutEffect 在绘制前置真，覆盖住加载、避免闪到新聊天。
+    const [showEntry, setShowEntry] = useState(false);
     const WINDOW_RADIUS = 25;
     const [input, setInput] = useState('');
     const [showPanel, setShowPanel] = useState<'none' | 'actions' | 'emojis' | 'chars'>('none');
@@ -72,7 +78,7 @@ const Chat: React.FC = () => {
     // Reply Logic
     const [replyTarget, setReplyTarget] = useState<Message | null>(null);
 
-    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility' | 'schedule'>('none');
+    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility' | 'schedule' | 'chrome-css'>('none');
     const [scheduleData, setScheduleData] = useState<DailySchedule | null>(null);
     const [isScheduleGenerating, setIsScheduleGenerating] = useState(false);
     const [allHistoryMessages, setAllHistoryMessages] = useState<Message[]>([]);
@@ -264,6 +270,12 @@ const Chat: React.FC = () => {
         audio.play().catch(() => {});
         setPlayingMsgId(msgId);
     };
+
+    // 稳定的播放回调：用 ref 持有最新闭包，引用永不变 —— 避免每条消息每次渲染都新建箭头函数，
+    // 否则 MessageItem 的 React.memo 会被击穿（30 条重组件每次都全量重渲染 = 进入聊天卡顿主因之一）。
+    const handlePlayVoiceRef = useRef(handlePlayVoice);
+    handlePlayVoiceRef.current = handlePlayVoice;
+    const onPlayVoiceStable = useCallback((id: number) => handlePlayVoiceRef.current(id), []);
 
     /** Extract <语音>...</语音> tag content from a message, if present */
     const extractVoiceTag = (content: string): string | null => {
@@ -482,37 +494,36 @@ const Chat: React.FC = () => {
         if (!activeCharacterId) return;
 
         const charIdAtStart = activeCharacterId;
-        try {
-            const allMsgs = await DB.getMessagesByCharId(activeCharacterId, true);
-
-            // Guard against stale async results: if the user switched characters
-            // while the DB query was in flight, discard this result.
-            if (activeCharIdRef.current !== charIdAtStart) return;
-
-            // Use ref to always get the CURRENT char (avoids stale closure)
+        // 只用倒序游标取「最近 N 条」（含少量缓冲，抵消 date/call/系统消息被过滤后条数变少），
+        // 不再 getAll 全量反序列化 —— 图片多/消息多的账号原本要把整段历史（含内联图片）一次性读进
+        // 内存才显示 30 条，首次打开会卡好几秒。totalCount 走 index.count，不反序列化、极廉价。
+        const fetchLimit = requestedVisibleCount >= 100000 ? requestedVisibleCount : requestedVisibleCount + 16;
+        const applyResult = (recent: Message[], totalCount: number) => {
+            // 用 ref 取当前 char（避免闭包过期）
             const currentChar = charRef.current;
             // 不在视觉层过滤 hideBeforeMessageId —— 用户能往上滚回看，
             // 上下文截断仅作用于发给 LLM 的 prompt（在 chatPrompts.ts 里处理）。
-            const chatScopeMsgs = allMsgs
+            const chatScopeMsgs = recent
                 .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
                 .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
-
-            setTotalMsgCount(chatScopeMsgs.length);
+            setTotalMsgCount(totalCount);
             setMessages(chatScopeMsgs.slice(-requestedVisibleCount));
+        };
+        try {
+            const { messages: recent, totalCount } = await DB.getRecentMessagesWithCount(activeCharacterId, fetchLimit);
+            // Guard against stale async results: if the user switched characters
+            // while the DB query was in flight, discard this result.
+            if (activeCharIdRef.current !== charIdAtStart) return;
+            applyResult(recent, totalCount);
         } catch (e) {
             // DB read failed — retry once after a short delay
             if (activeCharIdRef.current !== charIdAtStart) return;
             await new Promise(r => setTimeout(r, 200));
             if (activeCharIdRef.current !== charIdAtStart) return;
             try {
-                const retryMsgs = await DB.getMessagesByCharId(activeCharacterId, true);
+                const { messages: recent, totalCount } = await DB.getRecentMessagesWithCount(activeCharacterId, fetchLimit);
                 if (activeCharIdRef.current !== charIdAtStart) return;
-                const currentChar = charRef.current;
-                const chatScopeMsgs = retryMsgs
-                    .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
-                    .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
-                setTotalMsgCount(chatScopeMsgs.length);
-                setMessages(chatScopeMsgs.slice(-requestedVisibleCount));
+                applyResult(recent, totalCount);
             } catch { /* give up silently */ }
         }
     }, [activeCharacterId]);
@@ -577,6 +588,12 @@ const Chat: React.FC = () => {
             }
         }
     }, [activeCharacterId, reloadMessages]);
+
+    // 进入/切换角色时触发「登场」过场。useLayoutEffect 在浏览器绘制前置真，
+    // 让过场层先盖住，避免一帧闪到新角色的空聊天界面。
+    useLayoutEffect(() => {
+        if (activeCharacterId) setShowEntry(true);
+    }, [activeCharacterId]);
 
     useEffect(() => {
         let clearTimer: ReturnType<typeof setTimeout> | null = null;
@@ -940,6 +957,7 @@ const Chat: React.FC = () => {
             case 'poke': handleSendText('[戳一戳]', 'interaction'); break;
             case 'archive': setModalType('archive-settings'); break;
             case 'settings': setModalType('chat-settings'); break;
+            case 'chrome-css': setModalType('chrome-css'); break;
             case 'emoji-import': setModalType('emoji-import'); break;
             case 'send-emoji': if (payload) handleSendText(payload.url, 'emoji'); break;
             case 'delete-emoji-req': setSelectedEmoji(payload); setModalType('delete-emoji'); break;
@@ -1909,6 +1927,13 @@ const Chat: React.FC = () => {
 
     const collapsedCount = Math.max(0, totalMsgCount - displayMessages.length);
 
+    // 稳定的思维链配置对象：只在角色/样式变化时重建，避免每次渲染新建对象击穿 MessageItem.memo。
+    const thinkingChainOptions = useMemo(() => ({
+        styleId: (char as any)?.thinkingChainStyle || 'echo',
+        customColors: (char as any)?.thinkingChainCustomColors,
+        onOpenSettings: () => setShowThinkingChainModal(true),
+    }), [(char as any)?.thinkingChainStyle, (char as any)?.thinkingChainCustomColors]);
+
     // Reset active category if it becomes invisible for the current character
     useEffect(() => {
         if (activeCategory !== 'default' && visibleCategories.length > 0 && !visibleCategories.some(c => c.id === activeCategory)) {
@@ -1996,6 +2021,7 @@ const Chat: React.FC = () => {
     };
     const finalRootClass = acnh ? acnhRootClass : chatRootClass;
     // 动森下强制覆盖角色自定义聊天背景，保证整机一致的彩蛋观感
+    // 进入/切换的过场由 CharacterEntryTransition 覆盖层负责，根容器不再自己做淡入。
     const finalRootStyle = acnh ? acnhRootStyle : chatRootStyle;
     const chatAvatarSizeClass = osTheme.chatAvatarSize === 'small' ? 'w-7 h-7' : osTheme.chatAvatarSize === 'large' ? 'w-12 h-12' : 'w-9 h-9';
     const chatAvatarRadiusClass = osTheme.chatAvatarShape === 'square' ? 'rounded-sm' : osTheme.chatAvatarShape === 'rounded' ? 'rounded-xl' : 'rounded-full';
@@ -2003,9 +2029,22 @@ const Chat: React.FC = () => {
 
     return (
         <div
-            className={finalRootClass}
+            className={`sully-chat-root ${finalRootClass}`}
             style={finalRootStyle}
         >
+             {/* 白框自定义 CSS：全局默认在前、角色专属在后（后者叠加覆盖）。作用于 .sully-chat-* 各零件。 */}
+             {osTheme.chatChromeCustomCss && <style>{osTheme.chatChromeCustomCss}</style>}
+             {char.chromeCustomCss && <style>{char.chromeCustomCss}</style>}
+             {/* 角色「登场」过场：切换/进入时以 ta 的头像氛围铺底登场，再推进穿过进入聊天。key 切换即重放。 */}
+             {showEntry && char && (
+               <CharacterEntryTransition
+                 key={activeCharacterId}
+                 name={char.name}
+                 avatar={char.avatar}
+                 onDone={() => setShowEntry(false)}
+               />
+             )}
+
              {activeTheme.customCss && <style>{activeTheme.customCss}</style>}
 
              {/* 动森彩蛋：作用域 CSS 覆盖气泡——奶油 AI 气泡 + 蜜桃用户气泡，暖棕文字，绕开 MessageItem 复杂逻辑 */}
@@ -2281,6 +2320,7 @@ const Chat: React.FC = () => {
                 headerDensity={osTheme.chatHeaderDensity}
                 statusStyle={osTheme.chatStatusStyle}
                 chromeStyle={osTheme.chatChromeStyle}
+                hideBuffs={osTheme.chatHideHeaderBuffs}
                 acnh={acnh}
              />
 
@@ -2462,7 +2502,7 @@ const Chat: React.FC = () => {
                             voiceData={voiceDataMap[m.id]}
                             voiceLoading={voiceLoading.has(m.id)}
                             isVoicePlaying={playingMsgId === m.id}
-                            onPlayVoice={() => handlePlayVoice(m.id)}
+                            onPlayVoice={onPlayVoiceStable}
                             avatarShape={osTheme.chatAvatarShape}
                             avatarSize={osTheme.chatAvatarSize}
                             avatarMode={osTheme.chatAvatarMode}
@@ -2473,11 +2513,7 @@ const Chat: React.FC = () => {
                             pendingIndicator={osTheme.chatPendingIndicator !== false}
                             onMcdSendCart={handleMcdSendCart}
                             onMcdCandidate={handleMcdCandidate}
-                            thinkingChainOptions={{
-                                styleId: (char as any).thinkingChainStyle || 'echo',
-                                customColors: (char as any).thinkingChainCustomColors,
-                                onOpenSettings: () => setShowThinkingChainModal(true),
-                            }}
+                            thinkingChainOptions={thinkingChainOptions}
                         />
                         </div>
                     );
@@ -2657,6 +2693,26 @@ const Chat: React.FC = () => {
                         if (Object.keys(patch).length) updateCharacter(char.id, patch as any);
                     }}
                 />
+            )}
+
+            {/* 角色专属「白框自定义」Modal —— 从加号面板「白框」进入；写到 char.chromeCustomCss，叠加在全局之上 */}
+            {char && modalType === 'chrome-css' && (
+                <div className="fixed inset-0 z-[110] flex items-end justify-center bg-black/5" onClick={() => setModalType('none')}>
+                    <div
+                        className="w-full max-h-[68vh] overflow-y-auto rounded-t-3xl border-t border-white/60 bg-white/95 p-5 shadow-[0_-12px_40px_rgba(15,23,42,0.18)] backdrop-blur-xl [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                        style={{ paddingBottom: 'calc(1.25rem + var(--safe-bottom))' }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="mb-2 flex items-start justify-between">
+                            <div>
+                                <div className="text-sm font-bold text-slate-800">白框自定义 · {char.name}</div>
+                                <div className="mt-0.5 text-[10px] text-slate-400">↑ 上方聊天界面即实时预览；仅对该角色生效，叠加在全局设置之上。</div>
+                            </div>
+                            <button onClick={() => setModalType('none')} className="px-2 text-xl leading-none text-slate-400 hover:text-slate-600">{'×'}</button>
+                        </div>
+                        <ChromeCssEditor value={char.chromeCustomCss || ''} onChange={(css) => updateCharacter(char.id, { chromeCustomCss: css } as any)} />
+                    </div>
+                </div>
             )}
 
             {/* 情绪设置已嵌入日程 Modal（与日程强制同步开/关），不再单独渲染 */}
