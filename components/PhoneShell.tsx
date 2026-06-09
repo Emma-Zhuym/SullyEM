@@ -59,6 +59,7 @@ import { isIOSStandaloneWebApp } from '../utils/iosStandalone';
 import AppErrorBoundary from './os/AppErrorBoundary';
 import GlobalMiniPlayer from './os/GlobalMiniPlayer';
 import ErrorDialog from './os/ErrorDialog';
+import BootSequence from './os/BootSequence';
 
 /*
 // Internal Error Boundary Component
@@ -327,9 +328,10 @@ const ImportRecoveryPopup: React.FC<{
 };
 
 // App 懒加载占位：关键是「延迟出现」。chunk 命中缓存/快速加载只需几十毫秒，这种时长用户
-// 本就无感——但 Suspense fallback 会立刻渲染，三个点一闪反而把无感瞬切变成能被看见的打断
-// （loading spinner 闪烁反模式）。所以前 ~220ms 一律渲染空（无感），只有真的慢才柔和淡出三点。
-// 用内联 @keyframes 而非 Tailwind 自定义 animate-* —— CDN 版 Tailwind 不可靠生成自定义动画类。
+// 本就无感——但 Suspense fallback 会立刻渲染，占位一闪反而把无感瞬切变成能被看见的打断
+// （loading spinner 闪烁反模式）。所以前 ~220ms 一律渲染空（无感），只有真的慢才柔和浮现。
+// 不用三点/转圈/进度条，而是与开机「世界入场」同一套语言：一颗呼吸的柔光球 + 缓缓扩散的光晕，
+// 像「这一小块世界正在成形」。用内联 @keyframes（CDN 版 Tailwind 不可靠生成自定义动画类）。
 const AppLoadingFallback: React.FC = () => {
   const [show, setShow] = useState(false);
   useEffect(() => {
@@ -338,12 +340,11 @@ const AppLoadingFallback: React.FC = () => {
   }, []);
   if (!show) return null;
   return (
-    <div className="w-full h-full flex items-center justify-center bg-transparent" style={{ animation: 'appLoadIn 220ms ease-out both' }}>
-      <style>{`@keyframes appLoadIn{from{opacity:0}to{opacity:1}}@keyframes appLoadDot{0%,80%,100%{opacity:.3;transform:scale(.8)}40%{opacity:1;transform:scale(1.1)}}`}</style>
-      <div className="flex items-center gap-1.5">
-        <span className="w-2.5 h-2.5 rounded-full bg-primary/70" style={{ animation: 'appLoadDot 1.2s ease-in-out infinite' }} />
-        <span className="w-2.5 h-2.5 rounded-full bg-primary/70" style={{ animation: 'appLoadDot 1.2s ease-in-out infinite', animationDelay: '160ms' }} />
-        <span className="w-2.5 h-2.5 rounded-full bg-primary/70" style={{ animation: 'appLoadDot 1.2s ease-in-out infinite', animationDelay: '320ms' }} />
+    <div className="w-full h-full flex items-center justify-center bg-transparent" style={{ animation: 'appLoadIn 280ms ease-out both' }}>
+      <style>{`@keyframes appLoadIn{from{opacity:0}to{opacity:1}}@keyframes appOrbBreathe{0%,100%{transform:scale(.82);opacity:.5}50%{transform:scale(1);opacity:1}}@keyframes appHalo{0%{transform:scale(.7);opacity:.45}100%{transform:scale(1.7);opacity:0}}`}</style>
+      <div className="relative w-16 h-16 flex items-center justify-center">
+        <span className="absolute inset-0 rounded-full" style={{ border: '1px solid hsla(var(--primary-hue),60%,75%,0.55)', animation: 'appHalo 2.2s ease-out infinite' }} />
+        <span className="w-7 h-7 rounded-full" style={{ background: 'radial-gradient(circle, hsla(var(--primary-hue),70%,72%,0.95), hsla(var(--primary-hue),70%,60%,0.18) 62%, transparent 72%)', animation: 'appOrbBreathe 2s ease-in-out infinite' }} />
       </div>
     </div>
   );
@@ -352,6 +353,8 @@ const AppLoadingFallback: React.FC = () => {
 const PhoneShell: React.FC = () => {
   const { theme, isLocked, unlock, activeApp, closeApp, openApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters, handleBack, suspendedCall, resumeCall, activeCharacterId, errorDialog, dismissError } = useOS();
   const useIOSStandaloneLayout = isIOSStandaloneWebApp();
+  // 冷启动「世界入场」是否已结束。结束前由 BootSequence 接管整屏（同时取代旧的黑屏 spinner）。
+  const [bootDone, setBootDone] = useState(false);
 
   // Disclaimer popup for first-time users
   const [showDisclaimer, setShowDisclaimer] = useState(() => {
@@ -493,8 +496,15 @@ const PhoneShell: React.FC = () => {
     });
   }, [theme.wallpaper]);
 
+  // 冷启动：先放「世界入场」cinematic（数据没就绪时它持续呼吸等待，绝不出现 spinner）。
+  // BootSequence 在「数据就绪 + 停留够时长」后推进退场，再交还控制权给下方的锁屏/桌面。
+  if (!bootDone) {
+    return <BootSequence dataReady={isDataLoaded} onDone={() => setBootDone(true)} />;
+  }
+
+  // 兜底：理论上 bootDone 时数据已就绪；万一未就绪（极端慢）退化为最简静态深色屏，不闪 spinner。
   if (!isDataLoaded) {
-    return <div className="w-full h-full bg-black flex items-center justify-center"><div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin"></div></div>;
+    return <div className="w-full h-full" style={{ background: '#05060f' }} />;
   }
 
   const getBgStyle = (wp: string) => {
@@ -521,8 +531,10 @@ const PhoneShell: React.FC = () => {
             unlock();
         }}
         className="relative w-full h-full bg-cover bg-center cursor-pointer overflow-hidden group font-light select-none overscroll-none"
-        style={{ backgroundImage: bgImageValue, color: contentColor }}
+        style={{ backgroundImage: bgImageValue, color: contentColor, animation: 'lockReveal 600ms ease-out both' }}
       >
+        {/* 锁屏柔和淡入：与开机「世界入场」退场衔接；body 背景本就是壁纸，故是无缝融入而非硬切。 */}
+        <style>{`@keyframes lockReveal{from{opacity:0}to{opacity:1}}`}</style>
         {acnhSkin ? (
             <div className="absolute inset-0 transition-all duration-700 group-hover:opacity-0"
                  style={{ background: 'linear-gradient(180deg, rgba(188,231,245,0.25) 0%, rgba(255,247,176,0.15) 45%, rgba(124,186,76,0.28) 100%)' }} />
