@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
-import { CaretLeft, CaretRight, Plus, X, Drop, PencilSimple, Trash, ArrowClockwise, Camera, Gear, TrendUp } from '@phosphor-icons/react';
+import { CaretLeft, CaretRight, Plus, X, Drop, PencilSimple, Trash, ArrowClockwise, Camera, Gear, TrendUp, Barbell, MoonStars, ForkKnife, Bandaids } from '@phosphor-icons/react';
 import {
   HealthEvent, WorkoutHealthEvent, PeriodHealthEvent, SymptomHealthEvent,
   SleepHealthEvent, DietHealthEvent, WeightHealthEvent,
@@ -867,7 +867,7 @@ const HealthApp: React.FC = () => {
                       color: (isSel || isToday) ? '#3A3A4A' : '#1d1d1f',
                     }}>{day}</span>
                     <div className="flex gap-0.5 items-center h-2">
-                      {periodEv  && <div style={{ width: 6, height: 6, borderRadius: '50%', background: CAT_COLORS.period.shadow }} />}
+                      {/* 经期不画点：整格已是粉色背景 */}
                       {hasWorkout && <div style={{ width: 6, height: 6, borderRadius: '50%', background: CAT_COLORS.workout.shadow }} />}
                       {hasSymptom && <div style={{ width: 6, height: 6, borderRadius: '50%', background: CAT_COLORS.symptom.shadow }} />}
                     </div>
@@ -909,7 +909,7 @@ const HealthApp: React.FC = () => {
                 {selWorkout && (
                   <div className="mb-3" style={{ ...clay.cardGreen, padding: '14px 16px' }}>
                     <div className="flex items-center gap-3">
-                      <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.workout.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}>训</div>
+                      <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.workout.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}><Barbell size={18} weight="fill" /></div>
                       <div className="flex-1 min-w-0">
                         <span style={{ fontSize: '15px', fontWeight: 600, color: CAT_COLORS.workout.fg }}>训练</span>
                         <span className="ml-2" style={{ fontSize: '13px', fontWeight: 400, color: `${CAT_COLORS.workout.fg}99` }}>{selWorkout.duration}min{selWorkout.calories ? ` · ${selWorkout.calories}kcal` : ''}</span>
@@ -934,7 +934,7 @@ const HealthApp: React.FC = () => {
                 {selSleep && (
                   <div className="mb-3" style={{ ...clay.cardIndigo, padding: '14px 16px' }}>
                     <div className="flex items-center gap-3">
-                      <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.sleep.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}>眠</div>
+                      <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.sleep.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}><MoonStars size={18} weight="fill" /></div>
                       <div className="flex-1 min-w-0">
                         <span style={{ fontSize: '15px', fontWeight: 600, color: CAT_COLORS.sleep.fg }}>睡眠</span>
                         <span className="ml-2" style={{ fontSize: '13px', fontWeight: 400, color: `${CAT_COLORS.sleep.fg}99` }}>
@@ -958,7 +958,7 @@ const HealthApp: React.FC = () => {
                 {selDiet.length > 0 && selDiet.map(d => (
                   <div key={d.id} className="mb-3" style={{ ...clay.cardAmber, padding: '14px 16px' }}>
                     <div className="flex items-center gap-3">
-                      <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.diet.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}>食</div>
+                      <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.diet.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}><ForkKnife size={18} weight="fill" /></div>
                       <div className="flex-1 min-w-0">
                         <span style={{ fontSize: '15px', fontWeight: 600, color: CAT_COLORS.diet.fg }}>{d.note || '饮食'}</span>
                         <span className="ml-2" style={{ fontSize: '13px', fontWeight: 400, color: `${CAT_COLORS.diet.fg}99` }}>{d.calories}kcal{d.protein ? ` · 蛋白${d.protein}g` : ''}</span>
@@ -1004,7 +1004,7 @@ const HealthApp: React.FC = () => {
                 {selSymptom && (
                   <div style={{ ...clay.cardViolet, padding: '14px 16px' }}>
                     <div className="flex items-center gap-3">
-                      <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.symptom.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}>症</div>
+                      <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.symptom.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}><Bandaids size={18} weight="fill" /></div>
                       <div className="flex-1 min-w-0">
                         <span style={{ fontSize: '15px', fontWeight: 600, color: CAT_COLORS.symptom.fg }}>症状</span>
                         <span className="ml-2" style={{ fontSize: '13px', fontWeight: 400, color: `${CAT_COLORS.symptom.fg}99` }}>{selSymptom.symptoms.join('、')}</span>
@@ -1276,7 +1276,7 @@ const HealthApp: React.FC = () => {
           {todayWorkout && (
             <div className="mb-3" style={{ ...clay.cardGreen, padding: '14px 16px' }}>
               <div className="flex items-center gap-3">
-                <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.workout.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}>训</div>
+                <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.workout.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}><Barbell size={18} weight="fill" /></div>
                 <div className="flex-1 min-w-0">
                   <span style={{ fontSize: '14px', fontWeight: 600, color: CAT_COLORS.workout.fg }}>训练</span>
                   <span className="ml-1" style={{ fontSize: '13px', fontWeight: 400, color: `${CAT_COLORS.workout.fg}99` }}>{todayWorkout.duration}min · {todayWorkout.calories ?? '—'}kcal</span>
@@ -1298,7 +1298,7 @@ const HealthApp: React.FC = () => {
           {todaySleep && (
             <div className="mb-3" style={{ ...clay.cardIndigo, padding: '14px 16px' }}>
               <div className="flex items-center gap-3">
-                <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.sleep.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}>眠</div>
+                <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.sleep.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}><MoonStars size={18} weight="fill" /></div>
                 <div className="flex-1 min-w-0">
                   <span style={{ fontSize: '14px', fontWeight: 600, color: CAT_COLORS.sleep.fg }}>睡眠</span>
                   <span className="ml-1" style={{ fontSize: '13px', fontWeight: 400, color: `${CAT_COLORS.sleep.fg}99` }}>{todaySleep.bedtime} → {todaySleep.wakeTime} · {fmtDuration(todaySleep.duration)} · {QUALITY_LABEL[todaySleep.quality]}</span>
@@ -1320,7 +1320,7 @@ const HealthApp: React.FC = () => {
           {todayDiets.map(d => (
             <div key={d.id} className="mb-3" style={{ ...clay.cardAmber, padding: '14px 16px' }}>
               <div className="flex items-center gap-3">
-                <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.diet.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}>食</div>
+                <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.diet.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}><ForkKnife size={18} weight="fill" /></div>
                 <div className="flex-1 min-w-0">
                   <span style={{ fontSize: '14px', fontWeight: 600, color: CAT_COLORS.diet.fg }}>{d.note || '饮食'}</span>
                   <span className="ml-1" style={{ fontSize: '13px', fontWeight: 400, color: `${CAT_COLORS.diet.fg}99` }}>{d.calories}kcal{d.protein ? ` · 蛋白${d.protein}g` : ''}</span>
@@ -1366,7 +1366,7 @@ const HealthApp: React.FC = () => {
           {todaySymptom && (
             <div className="mb-3" style={{ ...clay.cardViolet, padding: '14px 16px' }}>
               <div className="flex items-center gap-3">
-                <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.symptom.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}>症</div>
+                <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.symptom.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}><Bandaids size={18} weight="fill" /></div>
                 <div className="flex-1 min-w-0">
                   <span style={{ fontSize: '14px', fontWeight: 600, color: CAT_COLORS.symptom.fg }}>症状</span>
                   <span className="ml-1" style={{ fontSize: '13px', fontWeight: 400, color: `${CAT_COLORS.symptom.fg}99` }}>{todaySymptom.symptoms.join('、')}</span>
