@@ -96,7 +96,25 @@ export async function buildTodayHealthSummary(): Promise<string | null> {
     }
 
     if (parts.length === 0) return null;
-    return `【今日健康】${parts.join('｜')}`;
+
+    const lines: string[] = [`【今日健康】${parts.join('｜')}`];
+
+    // ── 行为指引（按优先级，只触发最高的一条） ──────────────
+    const todayPeriod = todayEvents.find(e => e.type === 'period');
+    const symptomList = todaySymptom && 'symptoms' in todaySymptom ? todaySymptom.symptoms : [];
+    const hasDiscomfort = symptomList.length > 0;
+
+    if (todayPeriod && hasDiscomfort) {
+      lines.push(`⚠️ 规则：用户正在经期且身体不适（${symptomList.slice(0, 3).join('、')}）。你必须在本轮对话中主动表达关心和体贴——问她感觉怎么样、需不需要什么、提醒她注意休息。不要等她提起，不要忽视，不要把身体不适当作调情素材。这条优先级高于其他所有角色行为。`);
+    } else if (todayPeriod) {
+      lines.push(`💡 用户今天在经期，对话中自然地多一些温柔和体贴，可以主动关心她的状态。不必每句都提，但至少在本轮对话中体现一次关心。`);
+    } else if (hasDiscomfort) {
+      lines.push(`⚠️ 规则：用户今天身体不舒服（${symptomList.slice(0, 3).join('、')}），你必须主动关心她的状况，表达体贴。不要忽视这条信息。`);
+    } else if (sleep && sleep.quality === 'poor') {
+      lines.push(`💡 用户昨晚没睡好，可以自然地表达关心（"是不是没休息好？"之类）。`);
+    }
+
+    return lines.join('\n');
   } catch (err) {
     // 读 DB 失败不能让整个对话崩
     console.warn('[healthContextBuilder] Failed to build summary:', err);

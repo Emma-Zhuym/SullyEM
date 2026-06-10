@@ -9,6 +9,7 @@ import {
 } from '../utils/healthDb';
 import { calcCycleStatus } from '../utils/cycleCalc';
 import { HealthProfile, FitnessGoal, getHealthProfile, saveHealthProfile, calcBMR, calcTDEE, recommendCalories, calcDeficit } from '../utils/healthProfile';
+import { safeFetchJson, extractJson } from '../utils/safeApi';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -67,17 +68,14 @@ async function parseWorkoutText(text: string, apiBase: string, apiKey: string, m
 只返回 JSON，不要解释。`;
   try {
     const base = apiBase.replace(/\/+$/, '');
-    const resp = await fetch(`${base}/chat/completions`, {
+    const data = await safeFetchJson(`${base}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey || 'sk-none'}` },
       body: JSON.stringify({ model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: text }], temperature: 0.2, max_tokens: 300, stream: false }),
     });
-    if (!resp.ok) return null;
-    const data = await resp.json();
     const raw = data?.choices?.[0]?.message?.content?.trim() ?? '';
-    const match = raw.match(/\{[\s\S]*\}/);
-    return match ? JSON.parse(match[0]) as ParsedWorkout : null;
-  } catch { return null; }
+    return extractJson(raw) as ParsedWorkout | null;
+  } catch (err) { console.warn('[parseWorkoutText]', err); return null; }
 }
 
 interface ParsedDiet {
@@ -94,17 +92,14 @@ async function parseDietText(text: string, apiBase: string, apiKey: string, mode
 尽可能准确估算中国家常菜的营养成分。只返回 JSON，不要解释。`;
   try {
     const base = apiBase.replace(/\/+$/, '');
-    const resp = await fetch(`${base}/chat/completions`, {
+    const data = await safeFetchJson(`${base}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey || 'sk-none'}` },
       body: JSON.stringify({ model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: text }], temperature: 0.2, max_tokens: 300, stream: false }),
     });
-    if (!resp.ok) return null;
-    const data = await resp.json();
     const raw = data?.choices?.[0]?.message?.content?.trim() ?? '';
-    const match = raw.match(/\{[\s\S]*\}/);
-    return match ? JSON.parse(match[0]) as ParsedDiet : null;
-  } catch { return null; }
+    return extractJson(raw) as ParsedDiet | null;
+  } catch (err) { console.warn('[parseDietText]', err); return null; }
 }
 
 // ── Sleep duration helper ─────────────────────────────────────────────────────
@@ -454,8 +449,6 @@ const HealthApp: React.FC = () => {
       date: todayStr, createdAt: Date.now(), type: 'weight', value,
     };
     await saveHealthEvent(event);
-    // Also update profile weight
-    if (profile) { const updated = { ...profile, weightKg: value }; saveHealthProfile(updated); setProfile(updated); }
     await loadEvents();
     addToast(`体重 ${value}kg 已记录`, 'success');
   };
