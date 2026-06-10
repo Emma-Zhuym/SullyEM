@@ -53,30 +53,13 @@ const TAB_ORDER: { id: RecordMode; label: string }[] = [
   { id: 'symptom', label: '症状' },
 ];
 
+const WORKOUT_ACTIVITIES = ['力量', '跑步', '走路', '游泳', '骑行', '球类', '瑜伽/拉伸', '操课/有氧', '爬山', '其他'];
+const WORKOUT_PARTS = ['胸', '背', '腿', '臀', '肩', '手臂', '核心', '全身'];
+
+// 弹窗高度：默认 420px；训练/饮食可拖到屏幕 85%
+const MODAL_BASE_H = 420;
+
 // ── LLM parsers ───────────────────────────────────────────────────────────────
-
-interface ParsedWorkout {
-  parts: string[]; duration: number; calories?: number; summary: string;
-}
-
-async function parseWorkoutText(text: string, apiBase: string, apiKey: string, model: string): Promise<ParsedWorkout | null> {
-  const systemPrompt = `你是一个健身数据提取助手。从用户的自然语言训练记录中，提取以下字段并以 JSON 格式返回：
-- parts: 训练部位数组，从这些选项中选（可多选）：胸、臀、背、腿、肩、手臂、核心、全身。没有明确提及的不要猜。
-- duration: 总时长（分钟，整数）。没有提及则填 60。
-- calories: 消耗热量（数字，可选，没有明确数字则不填）。
-- summary: 主要动作的简短摘要，最多50字。
-只返回 JSON，不要解释。`;
-  try {
-    const base = apiBase.replace(/\/+$/, '');
-    const data = await safeFetchJson(`${base}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey || 'sk-none'}` },
-      body: JSON.stringify({ model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: text }], temperature: 0.2, max_tokens: 300, stream: false }),
-    });
-    const raw = data?.choices?.[0]?.message?.content?.trim() ?? '';
-    return extractJson(raw) as ParsedWorkout | null;
-  } catch (err) { console.warn('[parseWorkoutText]', err); return null; }
-}
 
 interface ParsedDiet {
   calories: number; protein?: number; carbs?: number; fat?: number; fiber?: number;
@@ -224,8 +207,13 @@ const HealthApp: React.FC = () => {
   const [workoutCalories, setWorkoutCalories] = useState<number | ''>('');
   const [workoutDuration, setWorkoutDuration] = useState<number | ''>(60);
   const [workoutParts, setWorkoutParts] = useState<string[]>([]);
+  const [workoutActivities, setWorkoutActivities] = useState<string[]>([]);
   // Camera menu
   const [showCameraMenu, setShowCameraMenu] = useState(false);
+  // Modal height drag（训练/饮食可拖高）
+  const [modalHeight, setModalHeight] = useState(MODAL_BASE_H);
+  const [isDraggingModal, setIsDraggingModal] = useState(false);
+  const modalDragRef = React.useRef({ startY: 0, startH: MODAL_BASE_H, maxH: 700 });
   // Health profile + weight trend
   const [profile, setProfile] = useState<HealthProfile | null>(null);
   const [showProfileSetup, setShowProfileSetup] = useState(false);
@@ -332,42 +320,32 @@ const HealthApp: React.FC = () => {
     setDietText(''); setDietCalories(''); setDietProtein('');
     setDietCarbs(''); setDietFat(''); setDietFiber('');
     setDietNote(''); setDietParsed(false);
-    setWorkoutCalories(''); setWorkoutDuration(60); setWorkoutParts([]);
+    setWorkoutCalories(''); setWorkoutDuration(60); setWorkoutParts([]); setWorkoutActivities([]);
     setShowCameraMenu(false);
+    setModalHeight(MODAL_BASE_H);
   };
 
   // ── Submit: Workout ──
   const handleSubmitWorkout = async () => {
-    if ((!recordText.trim() && !workoutCalories) || isSubmitting) return;
+    if ((workoutActivities.length === 0 && !recordText.trim() && !workoutCalories) || isSubmitting) return;
     setIsSubmitting(true);
     try {
+      // summary 供角色读取："力量（背+腿）+跑步" 或备注摘要
+      const actLabel = workoutActivities.map(a =>
+        a === '力量' && workoutParts.length > 0 ? `力量（${workoutParts.join('+')}）` : a
+      ).join('+');
       const event: WorkoutHealthEvent = {
         id: editingId ?? `workout_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
         date: periodDate, createdAt: Date.now(), type: 'workout',
+        activities: workoutActivities,
         parts: workoutParts, duration: workoutDuration ? Number(workoutDuration) : 60,
         calories: workoutCalories ? Number(workoutCalories) : undefined,
-        summary: recordText.trim() ? recordText.slice(0, 80) : '训练',
+        summary: actLabel || (recordText.trim() ? recordText.slice(0, 80) : '训练'),
         rawInput: recordText,
       };
       await saveHealthEvent(event); await loadEvents(); closeRecord();
       addToast(editingId ? '训练记录已更新' : '训练记录已保存', 'success');
     } catch { addToast('保存失败，请重试', 'error'); }
-    finally { setIsSubmitting(false); }
-  };
-
-  // ── AI Parse: Workout (optional) ──
-  const handleWorkoutParse = async () => {
-    if (!recordText.trim() || isSubmitting) return;
-    if (!apiConfig?.baseUrl || !apiConfig?.model) { addToast('请先配置 API', 'error'); return; }
-    setIsSubmitting(true);
-    try {
-      const parsed = await parseWorkoutText(recordText, apiConfig.baseUrl, apiConfig.apiKey, apiConfig.model);
-      if (parsed) {
-        setWorkoutParts(parsed.parts);
-        if (parsed.calories != null) setWorkoutCalories(parsed.calories);
-        setWorkoutDuration(parsed.duration);
-      } else { addToast('解析失败，请手动输入', 'error'); }
-    } catch { addToast('解析失败', 'error'); }
     finally { setIsSubmitting(false); }
   };
 
@@ -534,7 +512,7 @@ const HealthApp: React.FC = () => {
   };
 
   // ── Edit helpers ──
-  const startEditWorkout = (w: WorkoutHealthEvent) => { setEditingId(w.id); setRecordText(w.rawInput ?? w.summary); setWorkoutCalories(w.calories ?? ''); setWorkoutDuration(w.duration); setWorkoutParts(w.parts); setSelectedDate(w.date); setRecordMode('workout'); };
+  const startEditWorkout = (w: WorkoutHealthEvent) => { setEditingId(w.id); setRecordText(w.rawInput ?? ''); setWorkoutCalories(w.calories ?? ''); setWorkoutDuration(w.duration); setWorkoutParts(w.parts); setWorkoutActivities(w.activities ?? []); setSelectedDate(w.date); setRecordMode('workout'); };
   const startEditPeriod  = (p: PeriodHealthEvent)  => { setEditingId(p.id); setPeriodFlow(p.flow); setPeriodDate(p.date); setRecordMode('period'); };
   const startEditSymptom = (s: SymptomHealthEvent) => { setEditingId(s.id); setPeriodSymptoms(s.symptoms); setPeriodDate(s.date); setRecordMode('symptom'); };
   const startEditSleep   = (s: SleepHealthEvent)   => { setEditingId(s.id); setSleepBedtime(s.bedtime); setSleepWakeTime(s.wakeTime); setSleepQuality(s.quality); setSleepNote(s.note ?? ''); setRecordMode('sleep'); };
@@ -546,7 +524,9 @@ const HealthApp: React.FC = () => {
   const openRecord = (mode: RecordMode) => {
     // Reset all form fields first
     setEditingId(null);
-    setRecordText(''); setWorkoutCalories(''); setWorkoutDuration(60); setWorkoutParts([]);
+    setRecordText(''); setWorkoutCalories(''); setWorkoutDuration(60); setWorkoutParts([]); setWorkoutActivities([]);
+    // 简单类型固定 420 高；训练/饮食保留当前拖拽高度
+    if (mode !== 'workout' && mode !== 'diet') setModalHeight(MODAL_BASE_H);
     setPeriodFlow(null); setPeriodSymptoms([]);
     setSleepBedtime('23:00'); setSleepWakeTime('07:30'); setSleepQuality('good'); setSleepNote('');
     setDietText(''); setDietCalories(''); setDietProtein(''); setDietCarbs(''); setDietFat(''); setDietFiber(''); setDietNote(''); setDietParsed(false);
@@ -1342,8 +1322,43 @@ const HealthApp: React.FC = () => {
       {recordMode && (
         <div className="absolute inset-0 bg-black/15 backdrop-blur-sm z-50 flex items-end"
           onClick={(e) => { if (e.target === e.currentTarget) closeRecord(); }}>
-          <div className="w-full px-5 pt-5 pb-10 flex flex-col"
-            style={{ background: clay.bg, borderRadius: '28px 28px 0 0', boxShadow: '0 -6px 16px rgba(0,0,0,0.10), 0 3px 10px rgba(255,255,255,0.70)', height: '420px' }}>
+          <div className="w-full px-5 pt-2 pb-10 flex flex-col"
+            style={{
+              background: clay.bg, borderRadius: '28px 28px 0 0',
+              boxShadow: '0 -6px 16px rgba(0,0,0,0.10), 0 3px 10px rgba(255,255,255,0.70)',
+              height: `${modalHeight}px`,
+              transition: isDraggingModal ? 'none' : 'height 0.25s ease',
+            }}>
+
+            {/* 拖拽把手 — 仅训练/饮食可拖高 */}
+            {(recordMode === 'workout' || recordMode === 'diet') ? (
+              <div className="shrink-0 py-1.5 -mx-5 px-5 flex justify-center cursor-grab active:cursor-grabbing"
+                style={{ touchAction: 'none' }}
+                onPointerDown={(e) => {
+                  const overlay = (e.currentTarget.closest('.absolute.inset-0') as HTMLElement);
+                  modalDragRef.current = {
+                    startY: e.clientY, startH: modalHeight,
+                    maxH: overlay ? Math.round(overlay.clientHeight * 0.85) : 700,
+                  };
+                  setIsDraggingModal(true);
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                }}
+                onPointerMove={(e) => {
+                  if (!isDraggingModal) return;
+                  const { startY, startH, maxH } = modalDragRef.current;
+                  setModalHeight(Math.min(maxH, Math.max(MODAL_BASE_H, startH + (startY - e.clientY))));
+                }}
+                onPointerUp={() => {
+                  setIsDraggingModal(false);
+                  // 松手吸附到最近的档位（默认高 / 85%）
+                  const { maxH } = modalDragRef.current;
+                  setModalHeight(h => (h - MODAL_BASE_H < (maxH - MODAL_BASE_H) / 2 ? MODAL_BASE_H : maxH));
+                }}>
+                <div className="w-10 h-1 rounded-full bg-slate-300" />
+              </div>
+            ) : (
+              <div className="shrink-0 h-3" />
+            )}
 
             <div className="flex items-center justify-between mb-4 shrink-0">
               <span className="text-base font-bold text-slate-700">{editingId ? '编辑记录' : '新记录'}</span>
@@ -1382,17 +1397,51 @@ const HealthApp: React.FC = () => {
               {/* ── Workout ── */}
               {recordMode === 'workout' && (
                 <div className="flex flex-col h-full">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">训练内容（可选）</span>
-                  <textarea value={recordText} onChange={e => setRecordText(e.target.value)}
-                    placeholder="杠铃划船三组、深蹲三组、跑步30分钟..."
-                    className="mt-1.5 w-full px-4 py-3 text-sm text-slate-700 placeholder:text-slate-400 resize-none focus:outline-none leading-relaxed"
-                    style={{ background: '#f8f7f5', borderRadius: '10px', boxShadow: insetShadow, border: '1px solid rgba(0,0,0,0.03)', minHeight: '70px' }} />
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">运动项目</span>
+                  <div className="flex flex-wrap gap-1.5 mt-1.5">
+                    {WORKOUT_ACTIVITIES.map(act => {
+                      const on = workoutActivities.includes(act);
+                      return (
+                        <button key={act}
+                          onClick={() => setWorkoutActivities(prev => on ? prev.filter(x => x !== act) : [...prev, act])}
+                          className={`px-3 py-1.5 text-xs transition-all duration-150 ${clay.pressSmall}`}
+                          style={{
+                            borderRadius: '50px',
+                            background: on ? CAT_COLORS.workout.active : '#fff',
+                            color: on ? '#fff' : 'rgba(0,0,0,0.45)',
+                            fontWeight: on ? 600 : 400,
+                            boxShadow: on ? SH.btn : SH.pill,
+                          }}>
+                          {act}
+                        </button>
+                      );
+                    })}
+                  </div>
 
-                  <button onClick={handleWorkoutParse} disabled={!recordText.trim() || isSubmitting}
-                    className={`mt-2 w-full text-white font-bold py-2 text-xs disabled:opacity-50 ${clay.pressSmall}`}
-                    style={{ background: CAT_COLORS.workout.active, borderRadius: '50px', boxShadow: SH.btn }}>
-                    {isSubmitting ? '解析中…' : 'AI 解析'}
-                  </button>
+                  {workoutActivities.includes('力量') && (
+                    <>
+                      <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mt-3">训练部位</span>
+                      <div className="flex flex-wrap gap-1.5 mt-1.5">
+                        {WORKOUT_PARTS.map(part => {
+                          const on = workoutParts.includes(part);
+                          return (
+                            <button key={part}
+                              onClick={() => setWorkoutParts(prev => on ? prev.filter(x => x !== part) : [...prev, part])}
+                              className={`px-3 py-1.5 text-xs transition-all duration-150 ${clay.pressSmall}`}
+                              style={{
+                                borderRadius: '50px',
+                                background: on ? CAT_COLORS.workout.bg : '#fff',
+                                color: on ? CAT_COLORS.workout.fg : 'rgba(0,0,0,0.45)',
+                                fontWeight: on ? 600 : 400,
+                                boxShadow: SH.pill,
+                              }}>
+                              {part}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
 
                   <div className="flex gap-3 mt-3">
                     <div className="flex-1">
@@ -1411,8 +1460,14 @@ const HealthApp: React.FC = () => {
                     </div>
                   </div>
 
-                  <button onClick={handleSubmitWorkout} disabled={(!recordText.trim() && !workoutCalories) || isSubmitting}
-                    className={`w-full text-white font-bold py-3.5 mt-auto disabled:opacity-40 ${clay.press}`}
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mt-3">备注（可选）</span>
+                  <textarea value={recordText} onChange={e => setRecordText(e.target.value)}
+                    placeholder="杠铃划船三组、深蹲三组..."
+                    className="mt-1.5 w-full px-4 py-3 text-sm text-slate-700 placeholder:text-slate-400 resize-none focus:outline-none leading-relaxed"
+                    style={{ background: '#f8f7f5', borderRadius: '10px', boxShadow: insetShadow, border: '1px solid rgba(0,0,0,0.03)', minHeight: '60px' }} />
+
+                  <button onClick={handleSubmitWorkout} disabled={(workoutActivities.length === 0 && !recordText.trim() && !workoutCalories) || isSubmitting}
+                    className={`w-full shrink-0 text-white font-bold py-3.5 mt-auto disabled:opacity-40 ${clay.press}`}
                     style={{ background: CAT_COLORS.workout.active, borderRadius: '50px', boxShadow: SH.btn }}>
                     保存
                   </button>
@@ -1514,46 +1569,34 @@ const HealthApp: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Macro result / manual input */}
-                  {(dietParsed || editingId) && (
-                    <div className="mt-3 p-3" style={clay.cardAmber}>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-bold text-amber-800">
-                          {dietParsed && !editingId ? '估算结果 · 可修改' : '营养数据'}
-                        </span>
-                        {dietParsed && !editingId && (
-                          <button onClick={handleDietEstimate} className="text-[10px] text-amber-600">重新估算</button>
-                        )}
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        {([
-                          { label: '总热量', val: dietCalories, set: setDietCalories, unit: 'kcal', color: '#92400e' },
-                          { label: '蛋白质', val: dietProtein,  set: setDietProtein,  unit: 'g', color: '#0d9488' },
-                          { label: '碳水',   val: dietCarbs,    set: setDietCarbs,    unit: 'g', color: '#d97706' },
-                          { label: '脂肪',   val: dietFat,      set: setDietFat,      unit: 'g', color: '#e11d48' },
-                        ] as const).map(f => (
-                          <div key={f.label} className="flex items-baseline gap-1">
-                            <span className="text-[10px] text-slate-400 w-10">{f.label}</span>
-                            <input type="number" value={f.val} onChange={e => f.set(e.target.value ? Number(e.target.value) : '')}
-                              className="w-14 text-sm font-bold text-right focus:outline-none"
-                              style={{ background: 'transparent', color: f.color, border: 'none' }} />
-                            <span className="text-[10px] text-slate-400">{f.unit}</span>
-                          </div>
-                        ))}
-                      </div>
+                  {/* Macro panel — 常驻可手填，AI 估算后自动填充 */}
+                  <div className="mt-3 p-3" style={clay.cardAmber}>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-bold text-amber-800">
+                        {dietParsed && !editingId ? '估算结果 · 可修改' : '营养数据（可手填）'}
+                      </span>
+                      {dietParsed && !editingId && (
+                        <button onClick={handleDietEstimate} className="text-[10px] text-amber-600">重新估算</button>
+                      )}
                     </div>
-                  )}
-
-                  {/* Manual kcal if no parse yet */}
-                  {!dietParsed && !editingId && (
-                    <div className="mt-3">
-                      <span className="text-xs font-bold text-slate-400">或直接输入热量</span>
-                      <input type="number" value={dietCalories} onChange={e => setDietCalories(e.target.value ? Number(e.target.value) : '')}
-                        placeholder="kcal"
-                        className="mt-1.5 w-full px-4 py-2.5 text-sm text-slate-700 focus:outline-none"
-                        style={{ background: '#F5F5F7', borderRadius: '20px', boxShadow: SH.input }} />
+                    <div className="grid grid-cols-2 gap-2">
+                      {([
+                        { label: '总热量', val: dietCalories, set: setDietCalories, unit: 'kcal', color: '#92400e' },
+                        { label: '蛋白质', val: dietProtein,  set: setDietProtein,  unit: 'g', color: '#0d9488' },
+                        { label: '碳水',   val: dietCarbs,    set: setDietCarbs,    unit: 'g', color: '#d97706' },
+                        { label: '脂肪',   val: dietFat,      set: setDietFat,      unit: 'g', color: '#e11d48' },
+                      ] as const).map(f => (
+                        <div key={f.label} className="flex items-baseline gap-1">
+                          <span className="text-[10px] text-slate-400 w-10">{f.label}</span>
+                          <input type="number" value={f.val} onChange={e => f.set(e.target.value ? Number(e.target.value) : '')}
+                            placeholder="—"
+                            className="w-14 text-sm font-bold text-right focus:outline-none"
+                            style={{ background: 'transparent', color: f.color, border: 'none' }} />
+                          <span className="text-[10px] text-slate-400">{f.unit}</span>
+                        </div>
+                      ))}
                     </div>
-                  )}
+                  </div>
 
                   <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mt-4">标签（可选）</span>
                   <input value={dietNote} onChange={e => setDietNote(e.target.value)} placeholder="早餐、午餐、晚餐..."

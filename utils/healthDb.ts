@@ -19,11 +19,12 @@ interface HealthEventBase {
 
 export interface WorkoutHealthEvent extends HealthEventBase {
   type: 'workout';
-  parts: string[];      // ['背', '腿']
+  activities?: string[]; // ['力量', '跑步'] 运动项目
+  parts: string[];      // ['背', '腿'] 力量训练部位
   duration: number;     // 分钟
   calories?: number;
   summary: string;      // 主要动作，供角色读取
-  rawInput?: string;    // 用户原始文字输入
+  rawInput?: string;    // 用户原始文字输入（备注）
 }
 
 export interface PeriodHealthEvent extends HealthEventBase {

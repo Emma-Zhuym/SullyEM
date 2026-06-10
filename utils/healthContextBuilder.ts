@@ -37,9 +37,9 @@ export async function buildTodayHealthSummary(): Promise<string | null> {
     // ── 训练 or 休息 ─────────────────────────────────────────
     const workout = todayEvents.find(e => e.type === 'workout') as WorkoutHealthEvent | undefined;
     if (workout) {
-      const label = workout.parts.length > 0
-        ? `训练日（${workout.parts.join('+')}）`
-        : '训练日';
+      const detail = workout.activities?.length ? workout.activities.join('+')
+        : workout.parts.length > 0 ? workout.parts.join('+') : '';
+      const label = detail ? `训练日（${detail}）` : '训练日';
       const extra = workout.calories ? `·消耗${workout.calories}kcal` : '';
       parts.push(label + extra);
     } else {
