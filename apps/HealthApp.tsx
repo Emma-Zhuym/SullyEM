@@ -26,6 +26,16 @@ const WEEKDAYS    = ['日','一','二','三','四','五','六'];
 const toDateStr = (y: number, m: number, d: number) =>
   `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 
+/** 在两个 #RRGGBB 颜色之间线性插值 */
+function lerpColor(from: string, to: string, t: number): string {
+  const a = parseInt(from.slice(1), 16), b = parseInt(to.slice(1), 16);
+  const ch = (shift: number) => {
+    const x = (a >> shift) & 255, y = (b >> shift) & 255;
+    return Math.round(x + (y - x) * t);
+  };
+  return `#${((ch(16) << 16) | (ch(8) << 8) | ch(0)).toString(16).padStart(6, '0')}`;
+}
+
 type RecordMode = 'workout' | 'period' | 'symptom' | 'sleep' | 'diet';
 type TopTab = 'calendar' | 'today';
 
@@ -674,6 +684,21 @@ const HealthApp: React.FC = () => {
     return { strokeDasharray: `${arc.toFixed(1)} ${(c - arc).toFixed(1)}` };
   };
 
+  // 溢出弧：沿弧线方向的渐变（SVG linearGradient 做不了环形渐变，用分段插值模拟）。
+  // 从 12 点接着底色出发，越往前越亮，亮色尖端 = 溢出终点。
+  const overflowArc = (r: number, overflowPct: number, from: string, to: string) => {
+    const pct = Math.min(overflowPct, 0.999); // 超过两倍目标也只画一圈
+    const segs = Math.max(8, Math.ceil(pct * 48));
+    const segLen = pct / segs;
+    return Array.from({ length: segs }, (_, i) => (
+      <circle key={i} cx="124" cy="124" r={r} fill="none"
+        stroke={lerpColor(from, to, (i + 1) / segs)} strokeWidth="16"
+        strokeLinecap={i === segs - 1 ? 'round' : 'butt'}
+        {...ringArc(r, i === segs - 1 ? segLen : segLen * 1.15)} // 中段微重叠防缝隙
+        transform={`rotate(${-90 + i * segLen * 360} 124 124)`} />
+    ));
+  };
+
   // ── Render ────────────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-full overflow-hidden relative" style={{ background: clay.bg }}>
@@ -1030,20 +1055,6 @@ const HealthApp: React.FC = () => {
             }} />
             {/* SVG data arcs */}
             <svg viewBox="0 0 248 248" width="248" height="248" className="absolute inset-0">
-              <defs>
-                <linearGradient id="sleepOF" gradientUnits="userSpaceOnUse" x1="124" y1="17" x2="231" y2="124">
-                  <stop offset="0%" stopColor={CAT_COLORS.sleep.shadow} />
-                  <stop offset="100%" stopColor={CAT_COLORS.sleep.active} />
-                </linearGradient>
-                <linearGradient id="workoutOF" gradientUnits="userSpaceOnUse" x1="124" y1="36" x2="212" y2="124">
-                  <stop offset="0%" stopColor={CAT_COLORS.workout.shadow} />
-                  <stop offset="100%" stopColor={CAT_COLORS.workout.active} />
-                </linearGradient>
-                <linearGradient id="dietOF" gradientUnits="userSpaceOnUse" x1="124" y1="55" x2="193" y2="124">
-                  <stop offset="0%" stopColor={CAT_COLORS.diet.shadow} />
-                  <stop offset="100%" stopColor={CAT_COLORS.diet.active} />
-                </linearGradient>
-              </defs>
               {/* Sleep ring (outer, r=107): track → arc shadow → arc → overflow */}
               <circle cx="124" cy="124" r="107" fill="none" stroke="#D8D8DD" strokeWidth="20" />
               <circle cx="126" cy="127" r="107" fill="none"
@@ -1059,10 +1070,7 @@ const HealthApp: React.FC = () => {
                   stroke="rgba(0,0,0,0.10)" strokeWidth="16" strokeLinecap="round"
                   {...ringArc(107, todaySleep.duration / sleepTarget - 1)}
                   transform="rotate(-90 126 127)" />
-                <circle cx="124" cy="124" r="107" fill="none"
-                  stroke="url(#sleepOF)" strokeWidth="16" strokeLinecap="round"
-                  {...ringArc(107, todaySleep.duration / sleepTarget - 1)}
-                  transform="rotate(-90 124 124)" />
+                {overflowArc(107, todaySleep.duration / sleepTarget - 1, CAT_COLORS.sleep.shadow, CAT_COLORS.sleep.active)}
               </>)}
               {/* Workout ring (mid, r=88) */}
               <circle cx="124" cy="124" r="88" fill="none" stroke="#D8D8DD" strokeWidth="20" />
@@ -1079,10 +1087,7 @@ const HealthApp: React.FC = () => {
                   stroke="rgba(0,0,0,0.10)" strokeWidth="16" strokeLinecap="round"
                   {...ringArc(88, todayWorkout.calories / workoutTarget - 1)}
                   transform="rotate(-90 126 127)" />
-                <circle cx="124" cy="124" r="88" fill="none"
-                  stroke="url(#workoutOF)" strokeWidth="16" strokeLinecap="round"
-                  {...ringArc(88, todayWorkout.calories / workoutTarget - 1)}
-                  transform="rotate(-90 124 124)" />
+                {overflowArc(88, todayWorkout.calories / workoutTarget - 1, CAT_COLORS.workout.shadow, CAT_COLORS.workout.active)}
               </>)}
               {/* Diet ring (inner, r=69) — split by macronutrient when available */}
               <circle cx="124" cy="124" r="69" fill="none" stroke="#D8D8DD" strokeWidth="20" />
@@ -1134,10 +1139,7 @@ const HealthApp: React.FC = () => {
                       stroke="rgba(0,0,0,0.10)" strokeWidth="16" strokeLinecap="round"
                       {...ringArc(69, todayDietTotal / calTarget - 1)}
                       transform="rotate(-90 126 127)" />
-                    <circle cx="124" cy="124" r="69" fill="none"
-                      stroke="url(#dietOF)" strokeWidth="16" strokeLinecap="round"
-                      {...ringArc(69, todayDietTotal / calTarget - 1)}
-                      transform="rotate(-90 124 124)" />
+                    {overflowArc(69, todayDietTotal / calTarget - 1, CAT_COLORS.diet.shadow, CAT_COLORS.diet.active)}
                   </>)}
                 </>
               ) : null}
