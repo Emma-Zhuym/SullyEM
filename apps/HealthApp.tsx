@@ -56,6 +56,11 @@ const TAB_ORDER: { id: RecordMode; label: string }[] = [
 const WORKOUT_ACTIVITIES = ['力量', '跑步', '走路', '游泳', '骑行', '球类', '瑜伽/拉伸', '操课/有氧', '爬山', '其他'];
 const WORKOUT_PARTS = ['胸', '背', '腿', '臀', '肩', '手臂', '核心', '全身'];
 
+// 症状分两组：经期伴随症状记在经期 tab，身体不适记在症状 tab；存储时合并进同一条 symptom 记录
+// 注意两组不能有重复项（保存时按组归属做合并）
+const PMS_SYMPTOMS     = ['痛经', '乳房胀痛', '腰酸', '腹胀', '情绪波动', '长痘', '食欲增加'];
+const GENERAL_SYMPTOMS = ['头痛', '感冒', '发烧', '胃痛', '恶心', '失眠', '过敏', '疲劳'];
+
 // 弹窗高度：默认 420px；训练/饮食可拖到屏幕 85%
 const MODAL_BASE_H = 420;
 
@@ -213,7 +218,8 @@ const HealthApp: React.FC = () => {
   const [recordText, setRecordText] = useState('');
   // Period / symptom
   const [periodFlow, setPeriodFlow] = useState<PeriodFlow | null>(null);
-  const [periodSymptoms, setPeriodSymptoms] = useState<string[]>([]);
+  const [periodSymptoms, setPeriodSymptoms] = useState<string[]>([]); // 症状 tab：身体不适
+  const [pmsSymptoms, setPmsSymptoms] = useState<string[]>([]);       // 经期 tab：伴随症状
   const [periodDate, setPeriodDate] = useState(todayStr);
   // Sleep
   const [sleepBedtime, setSleepBedtime]   = useState('23:00');
@@ -340,7 +346,7 @@ const HealthApp: React.FC = () => {
   // ── Modal close / reset ──
   const closeRecord = () => {
     setRecordMode(null); setRecordText(''); setPeriodFlow(null);
-    setPeriodSymptoms([]); setPeriodDate(todayStr); setEditingId(null);
+    setPeriodSymptoms([]); setPmsSymptoms([]); setPeriodDate(todayStr); setEditingId(null);
     setSleepBedtime('23:00'); setSleepWakeTime('07:30');
     setSleepQuality('good'); setSleepNote('');
     setDietText(''); setDietCalories(''); setDietProtein('');
@@ -375,7 +381,24 @@ const HealthApp: React.FC = () => {
     finally { setIsSubmitting(false); }
   };
 
-  // ── Submit: Period ──
+  // ── Symptom merge helper ──────────────────────────────────────────────────
+  // 经期 tab 和症状 tab 各管一组症状，保存时合并进同一条 symptom 记录：
+  // 先剔除本组旧值、保留对方组的，再并入本次选择。全空则删除记录。
+  const saveSymptomGroup = async (groupList: string[], selected: string[]) => {
+    const existing = (eventMap[periodDate] || []).find(e => e.type === 'symptom') as SymptomHealthEvent | undefined;
+    const others = (existing?.symptoms ?? []).filter(s => !groupList.includes(s));
+    const merged = [...others, ...selected];
+    if (merged.length > 0) {
+      await saveHealthEvent({
+        id: existing?.id ?? `symptom_${periodDate}_${Math.random().toString(36).slice(2, 7)}`,
+        date: periodDate, createdAt: existing?.createdAt ?? Date.now(), type: 'symptom', symptoms: merged,
+      } as SymptomHealthEvent);
+    } else if (existing) {
+      await deleteHealthEvent(existing.id);
+    }
+  };
+
+  // ── Submit: Period（量级 + 伴随症状一起存） ──
   const handleSubmitPeriod = async () => {
     if (!periodFlow) return;
     setIsSubmitting(true);
@@ -384,22 +407,21 @@ const HealthApp: React.FC = () => {
         id: editingId ?? `period_${periodDate}_${Math.random().toString(36).slice(2, 7)}`,
         date: periodDate, createdAt: Date.now(), type: 'period', flow: periodFlow,
       };
-      await saveHealthEvent(event); await loadEvents(); closeRecord();
+      await saveHealthEvent(event);
+      await saveSymptomGroup(PMS_SYMPTOMS, pmsSymptoms);
+      await loadEvents(); closeRecord();
       addToast(editingId ? '经期记录已更新' : '经期记录已保存', 'success');
     } catch { addToast('保存失败，请重试', 'error'); }
     finally { setIsSubmitting(false); }
   };
 
-  // ── Submit: Symptom ──
+  // ── Submit: Symptom（身体不适） ──
   const handleSubmitSymptom = async () => {
-    if (periodSymptoms.length === 0) return;
+    if (periodSymptoms.length === 0 && !editingId) return;
     setIsSubmitting(true);
     try {
-      const event: SymptomHealthEvent = {
-        id: editingId ?? `symptom_${periodDate}_${Math.random().toString(36).slice(2, 7)}`,
-        date: periodDate, createdAt: Date.now(), type: 'symptom', symptoms: periodSymptoms,
-      };
-      await saveHealthEvent(event); await loadEvents(); closeRecord();
+      await saveSymptomGroup(GENERAL_SYMPTOMS, periodSymptoms);
+      await loadEvents(); closeRecord();
       addToast(editingId ? '症状记录已更新' : '症状已保存', 'success');
     } catch { addToast('保存失败，请重试', 'error'); }
     finally { setIsSubmitting(false); }
@@ -555,8 +577,13 @@ const HealthApp: React.FC = () => {
 
   // ── Edit helpers ──
   const startEditWorkout = (w: WorkoutHealthEvent) => { setEditingId(w.id); setRecordText(w.rawInput ?? ''); setWorkoutCalories(w.calories ?? ''); setWorkoutDuration(w.duration); setWorkoutParts(w.parts); setWorkoutActivities(w.activities ?? []); setSelectedDate(w.date); setRecordMode('workout'); };
-  const startEditPeriod  = (p: PeriodHealthEvent)  => { setEditingId(p.id); setPeriodFlow(p.flow); setPeriodDate(p.date); setRecordMode('period'); };
-  const startEditSymptom = (s: SymptomHealthEvent) => { setEditingId(s.id); setPeriodSymptoms(s.symptoms); setPeriodDate(s.date); setRecordMode('symptom'); };
+  const startEditPeriod  = (p: PeriodHealthEvent)  => {
+    setEditingId(p.id); setPeriodFlow(p.flow); setPeriodDate(p.date);
+    const sym = (eventMap[p.date] || []).find(e => e.type === 'symptom') as SymptomHealthEvent | undefined;
+    setPmsSymptoms((sym?.symptoms ?? []).filter(s => PMS_SYMPTOMS.includes(s)));
+    setRecordMode('period');
+  };
+  const startEditSymptom = (s: SymptomHealthEvent) => { setEditingId(s.id); setPeriodSymptoms(s.symptoms.filter(x => GENERAL_SYMPTOMS.includes(x))); setPeriodDate(s.date); setRecordMode('symptom'); };
   const startEditSleep   = (s: SleepHealthEvent)   => { setEditingId(s.id); setSleepBedtime(s.bedtime); setSleepWakeTime(s.wakeTime); setSleepQuality(s.quality); setSleepNote(s.note ?? ''); setRecordMode('sleep'); };
   const startEditDiet    = (d: DietHealthEvent)     => { setEditingId(d.id); setDietCalories(d.calories); setDietProtein(d.protein ?? ''); setDietCarbs(d.carbs ?? ''); setDietFat(d.fat ?? ''); setDietFiber(d.fiber ?? ''); setDietText(d.rawInput ?? ''); setDietNote(d.note ?? ''); setDietParsed(true); setRecordMode('diet'); };
 
@@ -569,7 +596,7 @@ const HealthApp: React.FC = () => {
     setRecordText(''); setWorkoutCalories(''); setWorkoutDuration(60); setWorkoutParts([]); setWorkoutActivities([]);
     // 简单类型固定 420 高；训练/饮食保留当前拖拽高度
     if (mode !== 'workout' && mode !== 'diet') setModalHeight(MODAL_BASE_H);
-    setPeriodFlow(null); setPeriodSymptoms([]);
+    setPeriodFlow(null); setPeriodSymptoms([]); setPmsSymptoms([]);
     setSleepBedtime('23:00'); setSleepWakeTime('07:30'); setSleepQuality('good'); setSleepNote('');
     setDietText(''); setDietCalories(''); setDietProtein(''); setDietCarbs(''); setDietFat(''); setDietFiber(''); setDietNote(''); setDietParsed(false);
     setShowCameraMenu(false);
@@ -599,11 +626,13 @@ const HealthApp: React.FC = () => {
       case 'period': {
         const p = dayEvents.find(e => e.type === 'period') as PeriodHealthEvent | undefined;
         if (p) { setEditingId(p.id); setPeriodFlow(p.flow); }
+        const sym = dayEvents.find(e => e.type === 'symptom') as SymptomHealthEvent | undefined;
+        setPmsSymptoms((sym?.symptoms ?? []).filter(s => PMS_SYMPTOMS.includes(s)));
         break;
       }
       case 'symptom': {
         const s = dayEvents.find(e => e.type === 'symptom') as SymptomHealthEvent | undefined;
-        if (s) { setEditingId(s.id); setPeriodSymptoms(s.symptoms); }
+        if (s) { setEditingId(s.id); setPeriodSymptoms(s.symptoms.filter(x => GENERAL_SYMPTOMS.includes(x))); }
         break;
       }
     }
@@ -1677,6 +1706,26 @@ const HealthApp: React.FC = () => {
                       </button>
                     ))}
                   </div>
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mt-4">伴随症状（可选）</span>
+                  <div className="flex flex-wrap gap-2 mt-1.5">
+                    {PMS_SYMPTOMS.map(sym => {
+                      const on = pmsSymptoms.includes(sym);
+                      return (
+                        <button key={sym}
+                          onClick={() => setPmsSymptoms(prev => on ? prev.filter(x => x !== sym) : [...prev, sym])}
+                          className={`px-3 py-1.5 text-xs font-semibold ${clay.pressSmall}`}
+                          style={{
+                            borderRadius: '50px',
+                            background: on ? CAT_COLORS.period.active : '#fff',
+                            color: on ? '#fff' : '#6B6760',
+                            fontWeight: on ? 600 : 400,
+                            boxShadow: on ? SH.btn : SH.pill,
+                          }}>
+                          {sym}
+                        </button>
+                      );
+                    })}
+                  </div>
                   <button onClick={handleSubmitPeriod} disabled={!periodFlow || isSubmitting}
                     className={`w-full text-white font-bold py-3.5 mt-auto disabled:opacity-40 ${clay.press}`}
                     style={{ background: CAT_COLORS.period.active, borderRadius: '50px', boxShadow: SH.btn }}>
@@ -1685,12 +1734,12 @@ const HealthApp: React.FC = () => {
                 </div>
               )}
 
-              {/* ── Symptom ── */}
+              {/* ── Symptom（身体不适） ── */}
               {recordMode === 'symptom' && (
                 <div className="flex flex-col h-full">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">症状（可多选）</span>
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">身体不适（可多选）</span>
                   <div className="flex flex-wrap gap-2 mt-1.5">
-                    {['痛经','腹胀','头痛','情绪低落','疲劳','PMS','腰痛','恶心','乳房胀痛'].map(sym => (
+                    {GENERAL_SYMPTOMS.map(sym => (
                       <button key={sym} onClick={() => toggleSymptom(sym)}
                         className={`px-3 py-1.5 text-xs font-semibold ${clay.pressSmall}`}
                         style={{
@@ -1704,7 +1753,8 @@ const HealthApp: React.FC = () => {
                       </button>
                     ))}
                   </div>
-                  <button onClick={handleSubmitSymptom} disabled={periodSymptoms.length === 0 || isSubmitting}
+                  <p className="text-[10px] text-slate-400 mt-2">经期相关症状（痛经等）在经期 tab 里记录</p>
+                  <button onClick={handleSubmitSymptom} disabled={(periodSymptoms.length === 0 && !editingId) || isSubmitting}
                     className={`w-full text-white font-bold py-3.5 mt-auto disabled:opacity-40 ${clay.press}`}
                     style={{ background: CAT_COLORS.symptom.active, borderRadius: '50px', boxShadow: SH.btn }}>
                     保存
