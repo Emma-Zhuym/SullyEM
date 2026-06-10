@@ -344,12 +344,54 @@ const MenuStep: React.FC<{
     const [loading, setLoading] = useState(false);
     const [err, setErr] = useState<string | null>(null);
     const [items, setItems] = useState<any[]>([]);
+    const [mode, setMode] = useState<'browse' | 'search'>('browse');
     const [sheetProduct, setSheetProduct] = useState<any>(null);
+
+    // 瑞幸 MCP 没有"拉全量菜单"接口, 只有 searchProductForMcp(query)。
+    // 进菜单页自动并发搜一批热门关键词, 按 skuCode 去重合并成一个可浏览列表,
+    // 这样不打字也有一屏商品可逛 (伪菜单)。
+    const BROWSE_KEYWORDS = ['拿铁', '美式', '生椰', '瑞纳冰', '轻乳茶', '橙C', '可可', '椰'];
+
+    const mergeUnique = (lists: any[][]): any[] => {
+        const seen = new Set<string>();
+        const out: any[] = [];
+        for (const list of lists) {
+            for (const it of (list || [])) {
+                const sku = it?.skuCode ? String(it.skuCode) : '';
+                if (!sku || seen.has(sku)) continue;
+                seen.add(sku);
+                out.push(it);
+            }
+        }
+        return out;
+    };
+
+    const browseLoad = async () => {
+        setLoading(true); setErr(null); setMode('browse');
+        try {
+            const results = await Promise.allSettled(
+                BROWSE_KEYWORDS.map(kw => callLuckinTool('searchProductForMcp', { deptId: ctx.deptId, query: kw }))
+            );
+            const lists = results.map(r => (r.status === 'fulfilled' && r.value?.success) ? asList(r.value.data) : []);
+            const merged = mergeUnique(lists);
+            if (!merged.length) {
+                // 全失败 (例如门店关了 / 鉴权问题): 把第一个失败原因抛出来
+                const firstErr = results.find(r => r.status === 'fulfilled' && !(r.value as any)?.success) as any;
+                throw new Error(firstErr?.value?.error || '没拉到商品, 换个门店或直接搜关键词试试');
+            }
+            setItems(merged);
+            onProductsSeen?.(merged);
+        } catch (e: any) {
+            setErr(e?.message || String(e));
+        } finally {
+            setLoading(false);
+        }
+    };
 
     const search = async (q: string) => {
         const kw = q.trim();
-        if (!kw) return;
-        setLoading(true); setErr(null);
+        if (!kw) { browseLoad(); return; }
+        setLoading(true); setErr(null); setMode('search');
         try {
             const r = await callLuckinTool('searchProductForMcp', { deptId: ctx.deptId, query: kw });
             if (!r.success) throw new Error(r.error || '搜商品失败');
@@ -362,6 +404,9 @@ const MenuStep: React.FC<{
             setLoading(false);
         }
     };
+
+    // 进门店菜单页 → 自动拉一批热门
+    useEffect(() => { browseLoad(); /* eslint-disable-next-line */ }, [ctx.deptId]);
 
     const cartCount = (Array.from(cart.values()) as CartLine[]).reduce((s, l) => s + l.qty, 0);
     const cartTotal = (Array.from(cart.values()) as CartLine[]).reduce((s, l) => {
@@ -393,10 +438,18 @@ const MenuStep: React.FC<{
             </div>
 
             <div className="flex-1 overflow-y-auto luckin-scroll p-2 space-y-2">
-                {loading ? <Spinner label="搜索中..." />
-                : err ? <ErrorBox msg={err} onRetry={() => search(query)} />
+                {!loading && !err && items.length > 0 && (
+                    <div className="flex items-center justify-between px-1 pb-0.5">
+                        <span className="text-[11px] font-bold text-[#0B1F3A]/70">{mode === 'browse' ? '☕ 热门精选' : `搜索 "${query.trim()}"`} · {items.length} 款</span>
+                        {mode === 'search' && (
+                            <button onClick={() => { setQuery(''); browseLoad(); }} className="text-[11px] text-[#16386F] active:scale-95">← 看看热门</button>
+                        )}
+                    </div>
+                )}
+                {loading ? <Spinner label={mode === 'browse' ? '正在为你拉热门…' : '搜索中…'} />
+                : err ? <ErrorBox msg={err} onRetry={() => (mode === 'browse' ? browseLoad() : search(query))} />
                 : items.length === 0 ? (
-                    <div className="text-center py-8 text-[11px] text-slate-400">搜个关键词看看 ☕<br />比如"拿铁""生椰""美式"</div>
+                    <div className="text-center py-8 text-[11px] text-slate-400">这家店暂时没拉到商品 ☕<br />换个门店, 或直接搜个关键词试试</div>
                 ) : items.map((it: any, idx: number) => {
                     const sku = String(it.skuCode || `idx-${idx}`);
                     const inCart = cart.get(sku);
