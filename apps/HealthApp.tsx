@@ -586,7 +586,8 @@ const HealthApp: React.FC = () => {
   };
 
   // ── Edit helpers ──
-  const startEditWorkout = (w: WorkoutHealthEvent) => { setEditingId(w.id); setRecordText(w.rawInput ?? ''); setWorkoutCalories(w.calories ?? ''); setWorkoutDuration(w.duration); setWorkoutParts(w.parts); setWorkoutActivities(w.activities ?? []); setSelectedDate(w.date); setRecordMode('workout'); };
+  // 注意：必须 setPeriodDate(记录日期)，否则跨天编辑时保存会把记录改写到"今天"
+  const startEditWorkout = (w: WorkoutHealthEvent) => { setEditingId(w.id); setRecordText(w.rawInput ?? ''); setWorkoutCalories(w.calories ?? ''); setWorkoutDuration(w.duration); setWorkoutParts(w.parts); setWorkoutActivities(w.activities ?? []); setSelectedDate(w.date); setPeriodDate(w.date); setRecordMode('workout'); };
   const startEditPeriod  = (p: PeriodHealthEvent)  => {
     setEditingId(p.id); setPeriodFlow(p.flow); setPeriodDate(p.date);
     const sym = (eventMap[p.date] || []).find(e => e.type === 'symptom') as SymptomHealthEvent | undefined;
@@ -594,8 +595,8 @@ const HealthApp: React.FC = () => {
     setRecordMode('period');
   };
   const startEditSymptom = (s: SymptomHealthEvent) => { setEditingId(s.id); setPeriodSymptoms(s.symptoms.filter(x => GENERAL_SYMPTOMS.includes(x))); setPeriodDate(s.date); setRecordMode('symptom'); };
-  const startEditSleep   = (s: SleepHealthEvent)   => { setEditingId(s.id); setSleepBedtime(s.bedtime); setSleepWakeTime(s.wakeTime); setSleepQuality(s.quality); setSleepNote(s.note ?? ''); setRecordMode('sleep'); };
-  const startEditDiet    = (d: DietHealthEvent)     => { setEditingId(d.id); setDietCalories(d.calories); setDietProtein(d.protein ?? ''); setDietCarbs(d.carbs ?? ''); setDietFat(d.fat ?? ''); setDietFiber(d.fiber ?? ''); setDietText(d.rawInput ?? ''); setDietNote(d.note ?? ''); setDietParsed(true); setRecordMode('diet'); };
+  const startEditSleep   = (s: SleepHealthEvent)   => { setEditingId(s.id); setSleepBedtime(s.bedtime); setSleepWakeTime(s.wakeTime); setSleepQuality(s.quality); setSleepNote(s.note ?? ''); setPeriodDate(s.date); setRecordMode('sleep'); };
+  const startEditDiet    = (d: DietHealthEvent)     => { setEditingId(d.id); setDietCalories(d.calories); setDietProtein(d.protein ?? ''); setDietCarbs(d.carbs ?? ''); setDietFat(d.fat ?? ''); setDietFiber(d.fiber ?? ''); setDietText(d.rawInput ?? ''); setDietNote(d.note ?? ''); setDietParsed(true); setPeriodDate(d.date); setRecordMode('diet'); };
 
   const toggleSymptom = (sym: string) =>
     setPeriodSymptoms(prev => prev.includes(sym) ? prev.filter(x => x !== sym) : [...prev, sym]);
