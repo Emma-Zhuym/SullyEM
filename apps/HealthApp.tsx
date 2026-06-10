@@ -102,6 +102,63 @@ async function parseDietText(text: string, apiBase: string, apiKey: string, mode
   } catch (err) { console.warn('[parseDietText]', err); return null; }
 }
 
+interface ParsedDietImage extends ParsedDiet {
+  description?: string;
+}
+
+/** 拍照识图：base64 图片 → vision 模型估算营养（OpenAI 兼容 image_url 格式，Gemini 等支持） */
+async function parseDietImage(imageDataUrl: string, apiBase: string, apiKey: string, model: string): Promise<ParsedDietImage | null> {
+  const systemPrompt = `你是一个营养估算助手。识别图片中的食物，估算营养数据并以 JSON 格式返回：
+- description: 食物清单简述（如"红烧肉半份、白米饭一碗"，最多50字）
+- calories: 总热量 kcal（整数）
+- protein: 蛋白质 g（整数）
+- carbs: 碳水化合物 g（整数）
+- fat: 脂肪 g（整数）
+- fiber: 膳食纤维 g（整数）
+根据图中份量尽可能准确估算，中国家常菜按常见做法估。只返回 JSON，不要解释。`;
+  try {
+    const base = apiBase.replace(/\/+$/, '');
+    const data = await safeFetchJson(`${base}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey || 'sk-none'}` },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: [
+            { type: 'image_url', image_url: { url: imageDataUrl } },
+            { type: 'text', text: '识别这张图里的食物并估算营养。' },
+          ] },
+        ],
+        temperature: 0.2, max_tokens: 500, stream: false,
+      }),
+    });
+    const raw = data?.choices?.[0]?.message?.content?.trim() ?? '';
+    return extractJson(raw) as ParsedDietImage | null;
+  } catch (err) { console.warn('[parseDietImage]', err); return null; }
+}
+
+/** 压缩图片到最长边 1024px 的 JPEG data URL，控制 base64 体积 */
+function compressImage(file: File, maxDim = 1024): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { reject(new Error('canvas unavailable')); return; }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL('image/jpeg', 0.85));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('image load failed')); };
+    img.src = url;
+  });
+}
+
 // ── Sleep duration helper ─────────────────────────────────────────────────────
 
 function calcSleepMinutes(bedtime: string, wakeTime: string): number {
@@ -404,11 +461,28 @@ const HealthApp: React.FC = () => {
   };
 
   // ── Image input handler (camera menu) ──
-  const handleImageInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = ''; // 允许重复选择同一张图
     if (!file) return;
     setShowCameraMenu(false);
-    addToast('拍照识图功能开发中', 'info');
+    if (!file.type.startsWith('image/')) { addToast('请选择图片文件', 'error'); return; }
+    if (!apiConfig?.baseUrl || !apiConfig?.model) { addToast('请先配置 API', 'error'); return; }
+    setIsSubmitting(true);
+    try {
+      const dataUrl = await compressImage(file);
+      const parsed = await parseDietImage(dataUrl, apiConfig.baseUrl, apiConfig.apiKey, apiConfig.model);
+      if (parsed) {
+        if (parsed.description) setDietText(parsed.description);
+        setDietCalories(parsed.calories);
+        if (parsed.protein != null) setDietProtein(parsed.protein);
+        if (parsed.carbs != null)   setDietCarbs(parsed.carbs);
+        if (parsed.fat != null)     setDietFat(parsed.fat);
+        if (parsed.fiber != null)   setDietFiber(parsed.fiber);
+        setDietParsed(true);
+      } else { addToast('识图失败，试试文字描述', 'error'); }
+    } catch (err) { console.warn('[handleImageInput]', err); addToast('识图失败', 'error'); }
+    finally { setIsSubmitting(false); }
   };
 
   // ── Save profile ──
