@@ -9,7 +9,7 @@ import {
 } from '../utils/healthDb';
 import { calcCycleStatus } from '../utils/cycleCalc';
 import { HealthProfile, FitnessGoal, getHealthProfile, saveHealthProfile, calcBMR, calcTDEE, recommendCalories, calcDeficit } from '../utils/healthProfile';
-import { safeFetchJson, extractJson } from '../utils/safeApi';
+import { safeFetchJson, extractJson, extractContent } from '../utils/safeApi';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -100,9 +100,11 @@ async function parseDietText(text: string, apiBase: string, apiKey: string, mode
     const data = await safeFetchJson(`${base}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey || 'sk-none'}` },
-      body: JSON.stringify({ model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: text }], temperature: 0.2, max_tokens: 300, stream: false }),
+      // max_tokens 要给足：Gemini 等 thinking 模型的思考过程也算在内，给少了正文直接为空
+      body: JSON.stringify({ model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: text }], temperature: 0.2, max_tokens: 4000, stream: false }),
     });
-    const raw = data?.choices?.[0]?.message?.content?.trim() ?? '';
+    const raw = extractContent(data);
+    if (!raw) console.warn('[parseDietText] empty content, finish_reason:', data?.choices?.[0]?.finish_reason);
     return extractJson(raw) as ParsedDiet | null;
   } catch (err) { console.warn('[parseDietText]', err); return null; }
 }
@@ -135,10 +137,11 @@ async function parseDietImage(imageDataUrl: string, apiBase: string, apiKey: str
             { type: 'text', text: '识别这张图里的食物并估算营养。' },
           ] },
         ],
-        temperature: 0.2, max_tokens: 500, stream: false,
+        temperature: 0.2, max_tokens: 4000, stream: false,
       }),
     });
-    const raw = data?.choices?.[0]?.message?.content?.trim() ?? '';
+    const raw = extractContent(data);
+    if (!raw) console.warn('[parseDietImage] empty content, finish_reason:', data?.choices?.[0]?.finish_reason);
     return extractJson(raw) as ParsedDietImage | null;
   } catch (err) { console.warn('[parseDietImage]', err); return null; }
 }
