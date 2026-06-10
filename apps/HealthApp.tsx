@@ -87,7 +87,8 @@ interface ParsedDiet {
   calories: number; protein?: number; carbs?: number; fat?: number; fiber?: number;
 }
 
-async function parseDietText(text: string, apiBase: string, apiKey: string, model: string): Promise<ParsedDiet | null> {
+/** 文字估算。失败时 throw 带具体原因的 Error（手机端无控制台，靠 toast 展示） */
+async function parseDietText(text: string, apiBase: string, apiKey: string, model: string): Promise<ParsedDiet> {
   const systemPrompt = `你是一个营养估算助手。根据用户描述的饮食内容，估算营养数据并以 JSON 格式返回：
 - calories: 总热量 kcal（整数）
 - protein: 蛋白质 g（整数）
@@ -95,26 +96,26 @@ async function parseDietText(text: string, apiBase: string, apiKey: string, mode
 - fat: 脂肪 g（整数）
 - fiber: 膳食纤维 g（整数）
 尽可能准确估算中国家常菜的营养成分。只返回 JSON，不要解释。`;
-  try {
-    const base = apiBase.replace(/\/+$/, '');
-    const data = await safeFetchJson(`${base}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey || 'sk-none'}` },
-      // max_tokens 要给足：Gemini 等 thinking 模型的思考过程也算在内，给少了正文直接为空
-      body: JSON.stringify({ model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: text }], temperature: 0.2, max_tokens: 4000, stream: false }),
-    });
-    const raw = extractContent(data);
-    if (!raw) console.warn('[parseDietText] empty content, finish_reason:', data?.choices?.[0]?.finish_reason);
-    return extractJson(raw) as ParsedDiet | null;
-  } catch (err) { console.warn('[parseDietText]', err); return null; }
+  const base = apiBase.replace(/\/+$/, '');
+  const data = await safeFetchJson(`${base}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey || 'sk-none'}` },
+    // max_tokens 要给足：Gemini 等 thinking 模型的思考过程也算在内，给少了正文直接为空
+    body: JSON.stringify({ model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: text }], temperature: 0.2, max_tokens: 4000, stream: false }),
+  });
+  const raw = extractContent(data);
+  if (!raw) throw new Error(`AI返回空内容（finish: ${data?.choices?.[0]?.finish_reason ?? '?'}）`);
+  const parsed = extractJson(raw);
+  if (!parsed) throw new Error(`返回内容无法解析: ${raw.slice(0, 60)}`);
+  return parsed as ParsedDiet;
 }
 
 interface ParsedDietImage extends ParsedDiet {
   description?: string;
 }
 
-/** 拍照识图：base64 图片 → vision 模型估算营养（OpenAI 兼容 image_url 格式，Gemini 等支持） */
-async function parseDietImage(imageDataUrl: string, apiBase: string, apiKey: string, model: string): Promise<ParsedDietImage | null> {
+/** 拍照识图：base64 图片 → vision 模型估算营养（OpenAI 兼容 image_url 格式，Gemini 等支持）。失败时 throw */
+async function parseDietImage(imageDataUrl: string, apiBase: string, apiKey: string, model: string): Promise<ParsedDietImage> {
   const systemPrompt = `你是一个营养估算助手。识别图片中的食物，估算营养数据并以 JSON 格式返回：
 - description: 食物清单简述（如"红烧肉半份、白米饭一碗"，最多50字）
 - calories: 总热量 kcal（整数）
@@ -123,27 +124,27 @@ async function parseDietImage(imageDataUrl: string, apiBase: string, apiKey: str
 - fat: 脂肪 g（整数）
 - fiber: 膳食纤维 g（整数）
 根据图中份量尽可能准确估算，中国家常菜按常见做法估。只返回 JSON，不要解释。`;
-  try {
-    const base = apiBase.replace(/\/+$/, '');
-    const data = await safeFetchJson(`${base}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey || 'sk-none'}` },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: [
-            { type: 'image_url', image_url: { url: imageDataUrl } },
-            { type: 'text', text: '识别这张图里的食物并估算营养。' },
-          ] },
-        ],
-        temperature: 0.2, max_tokens: 4000, stream: false,
-      }),
-    });
-    const raw = extractContent(data);
-    if (!raw) console.warn('[parseDietImage] empty content, finish_reason:', data?.choices?.[0]?.finish_reason);
-    return extractJson(raw) as ParsedDietImage | null;
-  } catch (err) { console.warn('[parseDietImage]', err); return null; }
+  const base = apiBase.replace(/\/+$/, '');
+  const data = await safeFetchJson(`${base}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey || 'sk-none'}` },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: [
+          { type: 'image_url', image_url: { url: imageDataUrl } },
+          { type: 'text', text: '识别这张图里的食物并估算营养。' },
+        ] },
+      ],
+      temperature: 0.2, max_tokens: 4000, stream: false,
+    }),
+  });
+  const raw = extractContent(data);
+  if (!raw) throw new Error(`AI返回空内容（finish: ${data?.choices?.[0]?.finish_reason ?? '?'}）`);
+  const parsed = extractJson(raw);
+  if (!parsed) throw new Error(`返回内容无法解析: ${raw.slice(0, 60)}`);
+  return parsed as ParsedDietImage;
 }
 
 /** 压缩图片到最长边 1024px 的 JPEG data URL，控制 base64 体积 */
@@ -453,15 +454,16 @@ const HealthApp: React.FC = () => {
     setIsSubmitting(true);
     try {
       const parsed = await parseDietText(dietText, apiConfig.baseUrl, apiConfig.apiKey, apiConfig.model);
-      if (parsed) {
-        setDietCalories(parsed.calories);
-        if (parsed.protein != null) setDietProtein(parsed.protein);
-        if (parsed.carbs != null)   setDietCarbs(parsed.carbs);
-        if (parsed.fat != null)     setDietFat(parsed.fat);
-        if (parsed.fiber != null)   setDietFiber(parsed.fiber);
-        setDietParsed(true);
-      } else { addToast('估算失败，请手动输入', 'error'); }
-    } catch { addToast('估算失败', 'error'); }
+      setDietCalories(parsed.calories);
+      if (parsed.protein != null) setDietProtein(parsed.protein);
+      if (parsed.carbs != null)   setDietCarbs(parsed.carbs);
+      if (parsed.fat != null)     setDietFat(parsed.fat);
+      if (parsed.fiber != null)   setDietFiber(parsed.fiber);
+      setDietParsed(true);
+    } catch (err: any) {
+      console.warn('[handleDietEstimate]', err);
+      addToast(`估算失败: ${String(err?.message ?? err).slice(0, 120)}`, 'error');
+    }
     finally { setIsSubmitting(false); }
   };
 
@@ -477,28 +479,29 @@ const HealthApp: React.FC = () => {
     try {
       const dataUrl = await compressImage(file);
       const parsed = await parseDietImage(dataUrl, apiConfig.baseUrl, apiConfig.apiKey, apiConfig.model);
-      if (parsed) {
-        const hadText = dietText.trim().length > 0;
-        if (parsed.description) {
-          // 已有草稿时追加而不是覆盖（白天多次拍照累积）
-          const newText = hadText ? `${dietText.trim()}\n${parsed.description}` : parsed.description;
-          setDietText(newText);
-          if (!editingId) saveDietDraft(periodDate, newText);
-        }
-        if (hadText) {
-          // 营养数据只是这一张图的量，提示重新估算全天
-          addToast('已追加到描述，点 AI 估算算全天总量', 'info');
-          setDietParsed(false);
-        } else {
-          setDietCalories(parsed.calories);
-          if (parsed.protein != null) setDietProtein(parsed.protein);
-          if (parsed.carbs != null)   setDietCarbs(parsed.carbs);
-          if (parsed.fat != null)     setDietFat(parsed.fat);
-          if (parsed.fiber != null)   setDietFiber(parsed.fiber);
-          setDietParsed(true);
-        }
-      } else { addToast('识图失败，试试文字描述', 'error'); }
-    } catch (err) { console.warn('[handleImageInput]', err); addToast('识图失败', 'error'); }
+      const hadText = dietText.trim().length > 0;
+      if (parsed.description) {
+        // 已有草稿时追加而不是覆盖（白天多次拍照累积）
+        const newText = hadText ? `${dietText.trim()}\n${parsed.description}` : parsed.description;
+        setDietText(newText);
+        if (!editingId) saveDietDraft(periodDate, newText);
+      }
+      if (hadText) {
+        // 营养数据只是这一张图的量，提示重新估算全天
+        addToast('已追加到描述，点 AI 估算算全天总量', 'info');
+        setDietParsed(false);
+      } else {
+        setDietCalories(parsed.calories);
+        if (parsed.protein != null) setDietProtein(parsed.protein);
+        if (parsed.carbs != null)   setDietCarbs(parsed.carbs);
+        if (parsed.fat != null)     setDietFat(parsed.fat);
+        if (parsed.fiber != null)   setDietFiber(parsed.fiber);
+        setDietParsed(true);
+      }
+    } catch (err: any) {
+      console.warn('[handleImageInput]', err);
+      addToast(`识图失败: ${String(err?.message ?? err).slice(0, 120)}`, 'error');
+    }
     finally { setIsSubmitting(false); }
   };
 
