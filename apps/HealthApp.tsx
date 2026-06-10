@@ -408,19 +408,21 @@ const HealthApp: React.FC = () => {
     }
   };
 
-  // ── Submit: Period（量级 + 伴随症状一起存） ──
+  // ── Submit: Period（量级 + 伴随症状，至少其一；PMS 可在出血前单独记） ──
   const handleSubmitPeriod = async () => {
-    if (!periodFlow) return;
+    if (!periodFlow && pmsSymptoms.length === 0) return;
     setIsSubmitting(true);
     try {
-      const event: PeriodHealthEvent = {
-        id: editingId ?? `period_${periodDate}_${Math.random().toString(36).slice(2, 7)}`,
-        date: periodDate, createdAt: Date.now(), type: 'period', flow: periodFlow,
-      };
-      await saveHealthEvent(event);
+      if (periodFlow) {
+        const event: PeriodHealthEvent = {
+          id: editingId ?? `period_${periodDate}_${Math.random().toString(36).slice(2, 7)}`,
+          date: periodDate, createdAt: Date.now(), type: 'period', flow: periodFlow,
+        };
+        await saveHealthEvent(event);
+      }
       await saveSymptomGroup(PMS_SYMPTOMS, pmsSymptoms);
       await loadEvents(); closeRecord();
-      addToast(editingId ? '经期记录已更新' : '经期记录已保存', 'success');
+      addToast('已保存', 'success');
     } catch { addToast('保存失败，请重试', 'error'); }
     finally { setIsSubmitting(false); }
   };
@@ -1729,7 +1731,7 @@ const HealthApp: React.FC = () => {
                       );
                     })}
                   </div>
-                  <button onClick={handleSubmitPeriod} disabled={!periodFlow || isSubmitting}
+                  <button onClick={handleSubmitPeriod} disabled={(!periodFlow && pmsSymptoms.length === 0) || isSubmitting}
                     className={`w-full text-white font-bold py-3.5 mt-auto disabled:opacity-40 ${clay.press}`}
                     style={{ background: CAT_COLORS.period.active, borderRadius: '50px', boxShadow: SH.btn }}>
                     保存
