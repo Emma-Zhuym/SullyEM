@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { RoomItem, CharacterProfile, RoomTodo, RoomNote, DailySchedule } from '../types';
+import { RoomItem, CharacterProfile, RoomTodo, RoomNote, DailySchedule, AppID } from '../types';
 import ScheduleCard from '../components/schedule/ScheduleCard';
 import { ContextBuilder } from '../utils/context';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
@@ -237,11 +237,12 @@ const renderNotebookContent = (text: string) => {
 };
 
 const RoomApp: React.FC = () => {
-    const { closeApp, characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, addToast, userProfile } = useOS();
-    
+    const { closeApp, openApp, characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, addToast, userProfile } = useOS();
+
     // Core State
     const [viewState, setViewState] = useState<'select' | 'room' | 'pixelHome'>('select');
-    const [homeTab, setHomeTab] = useState<'room' | 'pixelHome'>('room');
+    // 小小窝里的三个独立分区：房间 / 像素家园 / 家园（家园是另一套体系，单独成区）
+    const [homeTab, setHomeTab] = useState<'room' | 'pixelHome' | 'worldHome'>('room');
     const [mode, setMode] = useState<'view' | 'edit'>('view');
     const [items, setItems] = useState<RoomItem[]>([]);
     
@@ -1062,11 +1063,11 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6 text-slate-600"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                         </button>
                         <span className="font-bold text-slate-700 text-lg tracking-wide">
-                            {homeTab === 'room' ? '拜访谁的房间?' : '谁的像素家园?'}
+                            {homeTab === 'room' ? '拜访谁的房间?' : homeTab === 'pixelHome' ? '谁的像素家园?' : '家园 · 大世界'}
                         </span>
                         <div className="w-8"></div>
                     </div>
-                    {/* Tab 切换 */}
+                    {/* Tab 切换：房间 / 像素家园 / 家园（三个独立分区） */}
                     <div className="flex gap-1 mt-2 bg-slate-100 rounded-xl p-1">
                         <button
                             onClick={() => setHomeTab('room')}
@@ -1084,31 +1085,63 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                         >
                             🎮 像素家园
                         </button>
+                        <button
+                            onClick={() => setHomeTab('worldHome')}
+                            className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
+                                homeTab === 'worldHome' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400'
+                            }`}
+                        >
+                            🌍 家园
+                        </button>
                     </div>
                 </div>
-               <div className="p-6 grid grid-cols-2 gap-4 overflow-y-auto pb-20 no-scrollbar">
-    {characters.map(c => (
-        <div key={c.id} onClick={() => {
-            if (homeTab === 'pixelHome') {
-                setActiveCharacterId(c.id);
-                setViewState('pixelHome');
-            } else {
-                handleEnterRoom(c);
-            }
-        }} className="min-h-[180px] bg-white rounded-2xl shadow-sm border border-slate-100 p-4 flex flex-col items-center justify-center gap-3 cursor-pointer active:scale-95 transition-all relative overflow-hidden group hover:shadow-md">
-                            <div className="w-20 h-20 rounded-full p-1 border-2 border-slate-100 relative">
-                                <img src={c.avatar} className="w-full h-full rounded-full object-cover" />
-                                <div className="absolute bottom-0 right-0 w-6 h-6 bg-green-400 rounded-full border-2 border-white flex items-center justify-center">
-                                    {homeTab === 'pixelHome'
-                                        ? <span className="text-[10px]">🎮</span>
-                                        : <img src={twemojiUrl('1f3e0')} alt="home" className="w-3 h-3" />
-                                    }
+                {homeTab === 'worldHome' ? (
+                    /* 家园分区：另一套体系（同世界观多角色共同生活的大世界），单独成区，点进去全屏打开 */
+                    <div className="p-6 overflow-y-auto pb-20 no-scrollbar">
+                        <button onClick={() => openApp(AppID.WorldHome)}
+                            className="w-full text-left rounded-3xl overflow-hidden shadow-[0_10px_30px_rgba(20,30,60,.25)] active:scale-[0.99] transition-transform border border-white/60">
+                            <div className="relative px-5 py-7" style={{ background: 'linear-gradient(150deg,#16203e 0%,#23315c 55%,#2c4a4f 100%)' }}>
+                                <div className="absolute inset-0 pointer-events-none animate-pulse" style={{ backgroundImage: 'radial-gradient(1.5px 1.5px at 18% 30%,#fff,transparent),radial-gradient(1px 1px at 70% 24%,#ffe9b0,transparent),radial-gradient(1.5px 1.5px at 44% 62%,#cfe2ff,transparent),radial-gradient(1px 1px at 86% 56%,#fff,transparent)' }} />
+                                <div className="relative">
+                                    <div className="text-[9px] font-black tracking-[0.4em] text-amber-300/80 uppercase">World · Home</div>
+                                    <div className="text-[26px] font-black text-white tracking-[0.18em] mt-1" style={{ textShadow: '0 2px 14px rgba(255,200,100,.25)' }}>家　园</div>
+                                    <p className="text-[11px] leading-[1.8] text-indigo-100/70 mt-2.5">
+                                        把同一世界观的角色放进一个世界，让他们在你不看的时候慢慢生活。
+                                        每次<b className="text-amber-200">观测</b>推进半天，每个角色独立演绎，绝不上帝视角。
+                                    </p>
+                                    <span className="inline-flex items-center gap-1.5 mt-4 px-4 py-2 rounded-full bg-amber-400 text-amber-950 text-[12px] font-black shadow-lg">走进家园 →</span>
                                 </div>
                             </div>
-                            <span className="font-bold text-slate-700 text-sm">{c.name}</span>
-                        </div>
-                    ))}
-                </div>
+                        </button>
+                        <p className="text-[10.5px] text-slate-400 leading-relaxed mt-3 px-1">
+                            家园和「房间 / 像素家园」是两套独立的玩法：这里管理的是多角色共同生活的大世界，不绑定单个角色。
+                        </p>
+                    </div>
+                ) : (
+                    <div className="p-6 grid grid-cols-2 gap-4 overflow-y-auto pb-20 no-scrollbar">
+                        {characters.map(c => (
+                            <div key={c.id} onClick={() => {
+                                if (homeTab === 'pixelHome') {
+                                    setActiveCharacterId(c.id);
+                                    setViewState('pixelHome');
+                                } else {
+                                    handleEnterRoom(c);
+                                }
+                            }} className="min-h-[180px] bg-white rounded-2xl shadow-sm border border-slate-100 p-4 flex flex-col items-center justify-center gap-3 cursor-pointer active:scale-95 transition-all relative overflow-hidden group hover:shadow-md">
+                                <div className="w-20 h-20 rounded-full p-1 border-2 border-slate-100 relative">
+                                    <img src={c.avatar} className="w-full h-full rounded-full object-cover" />
+                                    <div className="absolute bottom-0 right-0 w-6 h-6 bg-green-400 rounded-full border-2 border-white flex items-center justify-center">
+                                        {homeTab === 'pixelHome'
+                                            ? <span className="text-[10px]">🎮</span>
+                                            : <img src={twemojiUrl('1f3e0')} alt="home" className="w-3 h-3" />
+                                        }
+                                    </div>
+                                </div>
+                                <span className="font-bold text-slate-700 text-sm">{c.name}</span>
+                            </div>
+                        ))}
+                    </div>
+                )}
             </div>
         );
     }
