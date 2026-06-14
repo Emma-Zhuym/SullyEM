@@ -230,7 +230,7 @@ const PhoneModal: React.FC<{
     const [dmIdx, setDmIdx] = useState(0);
     const group = groupThreadOf(world);
     const latestBeat = episodes[0]?.beats.find(b => b.charId === ownerId);
-    const nameById = (id: string) => members.find(m => m.id === id)?.name || '?';
+    const nameById = (id: string) => members.find(m => m.id === id)?.name || world.npcs.find(n => n.id === id)?.name || '?';
 
     // 归档线：sim 模式结卷后，被卷进编年史的轮次（round ≤ 此值）不再在手机里展示
     const archivedClock = world.simSummarizedClock || 0;

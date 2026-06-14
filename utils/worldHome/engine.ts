@@ -27,7 +27,7 @@ import {
     worldTimeLabel, buildWorldSystemAddendum, buildWorldCharTurn, buildNpcTurn,
     parseCharBeat, parseNpcScene, realObserveTarget, formatRealClock,
 } from './prompts';
-import { ensureThreads, applyBeatToThreads, applyNpcGroupLines } from './threads';
+import { ensureThreads, applyBeatToThreads, applyNpcGroupLines, applyNpcDms, npcInboxes } from './threads';
 import { shouldCloseChapter, summarizeChapter, SIM_CHAPTER_CLOCKS } from './chapters';
 
 interface MemoryConfigLike {
@@ -249,15 +249,16 @@ export async function runWorldEpisode(deps: WorldEpisodeDeps): Promise<WorldEpis
                     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${api.apiKey || 'sk-none'}` },
                     body: JSON.stringify({
                         model: api.model,
-                        messages: [{ role: 'user', content: buildNpcTurn({ world, members, storyTime, lastSummary, chapterAtmosphere: latestChapter?.atmosphere }) }],
+                        messages: [{ role: 'user', content: buildNpcTurn({ world, members, storyTime, lastSummary, chapterAtmosphere: latestChapter?.atmosphere, inboxes: npcInboxes(world) }) }],
                         temperature: 0.9, stream: false,
                     }),
                 }, 2, 0, { appName: '家园', purpose: `NPC世界引擎 · ${world.name}` });
                 const parsed = parseNpcScene(npcData.choices?.[0]?.message?.content || '');
                 npcScene = parsed.scene || undefined;
                 npcHooks = parsed.hooks;
-                // NPC 在世界群聊里冒泡（先落线程，角色们这轮就能看到并接话）
+                // NPC 在世界群聊里冒泡 + 回复成员的私信（先落线程，角色们这轮就能看到并接话）
                 applyNpcGroupLines(world, parsed.groupLines, round, storyTime);
+                applyNpcDms(world, parsed.dms, members, round, storyTime);
             } catch (e) {
                 // NPC 失败不阻塞角色演绎——世界这半天只是安静一点
                 console.warn('[WorldHome] NPC engine failed, continuing without npcScene:', e);
@@ -320,7 +321,7 @@ export async function runWorldEpisode(deps: WorldEpisodeDeps): Promise<WorldEpis
                         temperature: 0.9, stream: false,
                     }),
                 }, 2, 0, { appName: '家园', charId: char.id, charName: char.name, purpose: `演绎 · ${world.name}` });
-                const beat = parseCharBeat(data.choices?.[0]?.message?.content || '', char, memberNames);
+                const beat = parseCharBeat(data.choices?.[0]?.message?.content || '', char, memberNames, world.npcs.map(n => n.name));
                 beats.push(beat);
                 // 该角色发出的私聊/群聊立刻落线程——后面还没演绎的角色这一轮就能收到并回应
                 applyBeatToThreads(world, beat, members, round, storyTime);

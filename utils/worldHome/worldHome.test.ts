@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { extractJson, parseCharBeat, parseNpcScene, storyTimeLabel, buildModeRule, buildWorldCharTurn, parseRolledNpcs, buildNpcRollPrompt, NARRATIVE_STYLES, narrationPersonGuide, realNowSeg, realObserveTarget, worldTimeLabel } from './prompts';
 import { applyRelationshipDeltas, collectSeeds, buildSummary } from './engine';
-import { ensureThreads, applyBeatToThreads, applyNpcGroupLines, dmThreadsOf, groupThreadOf, formatThreadForPrompt, dmThreadId, GROUP_THREAD_ID } from './threads';
+import { ensureThreads, applyBeatToThreads, applyNpcGroupLines, applyNpcDms, npcInboxes, dmThreadsOf, groupThreadOf, formatThreadForPrompt, dmThreadId, GROUP_THREAD_ID } from './threads';
 import { WorldScheduler } from './scheduler';
 import type { CharacterProfile, WorldProfile } from '../../types';
 
@@ -378,6 +378,40 @@ describe('世界消息线程（交替传递）', () => {
         const text = formatThreadForPrompt(dmThreadsOf(world, 'b')[0], 'b', 10, 2);
         expect(text).toContain('[第1天白天] 小满：老消息');
         expect(text).toContain('【刚刚】 小满：新消息');
+    });
+});
+
+describe('NPC 私聊（角色发、NPC 那一轮统一回复）', () => {
+    const members = [{ id: 'a', name: '小满' }];
+
+    it('parseCharBeat：可以给 NPC 发私信（to=NPC名也保留）', () => {
+        const raw = JSON.stringify({ location: 'x', narrative: 'x', mood: 'y', phone: { dms: [{ to: '老板娘', lines: ['今天还有栗子包吗'] }] } });
+        const beat = parseCharBeat(raw, mkChar('a', '小满'), ['小满'], ['老板娘']);
+        expect(beat.phone?.dms?.[0]).toEqual({ to: '老板娘', lines: ['今天还有栗子包吗'] });
+    });
+
+    it('applyBeatToThreads：角色→NPC 私信落进 char↔npc 线程；npcInboxes 能捞到待回', () => {
+        const world = mkWorld({ npcs: [{ id: 'n1', name: '老板娘', persona: '面包店' }] });
+        applyBeatToThreads(world, { charId: 'a', charName: '小满', location: 'x', narrative: 'y', mood: 'z', phone: { dms: [{ to: '老板娘', lines: ['还有栗子包吗'] }] } }, members, 1, '第1天早上');
+        const tid = dmThreadId('a', 'n1');
+        expect(dmThreadsOf(world, 'a').some(t => t.id === tid)).toBe(true);
+        const inbox = npcInboxes(world);
+        expect(inbox).toHaveLength(1);
+        expect(inbox[0]).toMatchObject({ npcName: '老板娘', memberName: '小满' });
+    });
+
+    it('applyNpcDms：NPC 回复后该线程不再算待回', () => {
+        const world = mkWorld({ npcs: [{ id: 'n1', name: '老板娘', persona: '面包店' }] });
+        applyBeatToThreads(world, { charId: 'a', charName: '小满', location: 'x', narrative: 'y', mood: 'z', phone: { dms: [{ to: '老板娘', lines: ['还有栗子包吗'] }] } }, members, 1, '第1天早上');
+        applyNpcDms(world, [{ from: '老板娘', to: '小满', lines: ['刚出炉，给你留俩'] }], members, 1, '第1天早上');
+        expect(npcInboxes(world)).toHaveLength(0);
+        const thread = dmThreadsOf(world, 'a').find(t => t.id === dmThreadId('a', 'n1'))!;
+        expect(thread.messages.map(m => `${m.fromName}:${m.text}`)).toEqual(['小满:还有栗子包吗', '老板娘:刚出炉，给你留俩']);
+    });
+
+    it('parseNpcScene：解析 NPC 私信回复', () => {
+        const out = parseNpcScene('```json\n{"scene":"x","hooks":[],"groupLines":[],"dms":[{"from":"老板娘","to":"小满","lines":["给你留俩"]}]}\n```');
+        expect(out.dms).toEqual([{ from: '老板娘', to: '小满', lines: ['给你留俩'] }]);
     });
 });
 

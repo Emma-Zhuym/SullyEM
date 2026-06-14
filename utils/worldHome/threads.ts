@@ -49,7 +49,8 @@ export function applyBeatToThreads(
     storyTime: string,
 ): void {
     const threads = ensureThreads(world);
-    const idOf = (name: string) => members.find(m => m.name === name)?.id;
+    // dm 对象可以是成员，也可以是 NPC（角色给镇上的人发私信）
+    const idOf = (name: string) => members.find(m => m.name === name)?.id || world.npcs.find(n => n.name === name)?.id;
     const now = Date.now();
 
     for (const dm of beat.phone?.dms || []) {
@@ -91,6 +92,54 @@ export function applyNpcGroupLines(
         if (!npc) continue; // 只收真实存在的 NPC 的发言
         pushMsg(group, { id: genId('wm'), fromId: npc.id, fromName: npc.name, text: l.line, round, storyTime, timestamp: now });
     }
+}
+
+/** NPC 回复成员的私信（世界引擎一次调用统一产出）。from=NPC 名，to=成员名。 */
+export function applyNpcDms(
+    world: WorldProfile,
+    dms: { from: string; to: string; lines: string[] }[],
+    members: { id: string; name: string }[],
+    round: number,
+    storyTime: string,
+): void {
+    if (!dms || dms.length === 0) return;
+    const threads = ensureThreads(world);
+    const now = Date.now();
+    for (const dm of dms) {
+        const npc = world.npcs.find(n => n.name === dm.from);
+        const member = members.find(m => m.name === dm.to);
+        if (!npc || !member || !Array.isArray(dm.lines)) continue;
+        const tid = dmThreadId(npc.id, member.id);
+        let thread = threads.find(t => t.id === tid);
+        if (!thread) {
+            thread = { id: tid, kind: 'dm', memberIds: [npc.id, member.id], messages: [] };
+            threads.push(thread);
+        }
+        for (const line of dm.lines) {
+            if (!line) continue;
+            pushMsg(thread, { id: genId('wm'), fromId: npc.id, fromName: npc.name, text: line, round, storyTime, timestamp: now });
+        }
+    }
+}
+
+/**
+ * NPC 的私信收件箱：成员发给各 NPC、但 NPC 还没回（最后一条不是该 NPC 发的）的私聊线程。
+ * 供世界引擎参考，让 NPC 这一轮回复。
+ */
+export function npcInboxes(world: WorldProfile): { npcName: string; memberName: string; recent: string }[] {
+    const out: { npcName: string; memberName: string; recent: string }[] = [];
+    const npcIds = new Map(world.npcs.map(n => [n.id, n.name]));
+    for (const t of world.threads || []) {
+        if (t.kind !== 'dm' || t.messages.length === 0) continue;
+        const npcId = t.memberIds.find(id => npcIds.has(id));
+        const memberId = t.memberIds.find(id => !npcIds.has(id));
+        if (!npcId || !memberId) continue;
+        const last = t.messages[t.messages.length - 1];
+        if (last.fromId === npcId) continue; // NPC 已回过，跳过
+        const recent = t.messages.slice(-6).map(m => `${m.fromName}：${m.text}`).join('\n');
+        out.push({ npcName: npcIds.get(npcId)!, memberName: t.messages.find(m => m.fromId === memberId)?.fromName || '', recent });
+    }
+    return out;
 }
 
 /** 取与某成员相关的 dm 线程（手机 UI / prompt 共用）。 */

@@ -280,7 +280,7 @@ export function buildWorldCharTurn(args: {
     // ── 你的手机：私聊线程 + 世界群聊 ──
     const myDms = dmThreadsOf(world, char.id);
     const group = groupThreadOf(world);
-    const nameById = new Map(members.map(m => [m.id, m.name]));
+    const nameById = new Map([...members.map(m => [m.id, m.name] as const), ...world.npcs.map(n => [n.id, n.name] as const)]);
     const dmSection = myDms.length > 0
         ? myDms.map(t => {
             const otherName = t.memberIds.filter(id => id !== char.id).map(id => nameById.get(id)).filter(Boolean).join('、') || '?';
@@ -354,7 +354,7 @@ ${groupSection}
   "dialogues": [{ "with": "在场成员的名字", "lines": ["你当面对ta说的话（ta会完整听到）"] }],
   "phone": {
     "posts": ["这一段发的社交媒体动态（尽量发 1 条，记录此刻的心情/见闻/吐槽/晒图文案；除非你确实没心情发，否则别空着）"],
-    "dms": [{ "to": "成员名", "lines": ["私聊消息，像真人在手机上打字——可以连发好几条短的、聊得来回多一点"] }],
+    "dms": [{ "to": "成员名或镇上 NPC 的名字", "lines": ["私聊消息，像真人在手机上打字——可以连发好几条短的、聊得来回多一点；给 NPC 发的话 ta 会在之后回你"] }],
     "group": ["发到世界群聊的话（0~4条）"]
   },
   "relationships": [{ "with": "成员名", "delta": -4到4的整数, "reason": "为什么", "relabel": "（仅在这段关系发生重大转折时才给）你对这段关系新的定位/称呼，例如从「死对头」变成「不打不相识的损友」；平时省略此字段" }]
@@ -433,8 +433,13 @@ export function buildNpcTurn(args: {
     lastSummary?: string;
     /** sim 模式：上一卷沉淀的氛围基调（不含隐私，可给世界引擎定调） */
     chapterAtmosphere?: string;
+    /** 成员发给各 NPC、还没回的私信收件箱 */
+    inboxes?: { npcName: string; memberName: string; recent: string }[];
 }): string {
-    const { world, members, storyTime, lastSummary, chapterAtmosphere } = args;
+    const { world, members, storyTime, lastSummary, chapterAtmosphere, inboxes } = args;
+    const inboxSection = (inboxes && inboxes.length > 0)
+        ? `\n## 📨 NPC 收到的私信（请让对应 NPC 回复）\n${inboxes.map(b => `▸ ${b.memberName} → ${b.npcName}：\n${b.recent}`).join('\n')}`
+        : '';
     return `你是共同世界「${world.name}」的世界引擎，负责一次性扮演镇上所有 NPC。NPC 没有独立记忆，完全为世界观氛围服务。
 
 ## 世界观
@@ -448,13 +453,14 @@ ${members.map(m => m.name).join('、')}
 
 ## 之前发生的事
 ${lastSummary || '（这是这个世界的第一个半天）'}
-${chapterAtmosphere ? `\n## 这段日子的氛围基调\n${chapterAtmosphere}` : ''}
+${chapterAtmosphere ? `\n## 这段日子的氛围基调\n${chapterAtmosphere}` : ''}${inboxSection}
 剧情时间：${storyTime}。
-一次性输出这半天所有 NPC 的群像动静。严格输出一个 JSON 对象（建议用 \`\`\`json 包裹）：
+一次性输出这一段所有 NPC 的群像动静。严格输出一个 JSON 对象（建议用 \`\`\`json 包裹）：
 {
   "scene": "200~400字的 NPC 群像叙述：谁在做什么、市井气息、天气与街景、和主角们擦肩的小事件。生活感优先，不要推进重大剧情。",
   "hooks": ["1~3个可以被主角们接住的小事件钩子（例：面包店老板娘今天多烤了一炉栗子面包，见人就塞）"],
-  "groupLines": [{ "name": "NPC的名字", "line": "ta在世界群聊里冒泡的一句话（0~2条，市井闲聊/吆喝/通知，别太频繁）" }]
+  "groupLines": [{ "name": "NPC的名字", "line": "ta在世界群聊里冒泡的一句话（0~2条，市井闲聊/吆喝/通知，别太频繁）" }],
+  "dms": [{ "from": "NPC的名字", "to": "给ta发私信的成员名", "lines": ["NPC 私信回复（针对上面收件箱里的消息；没有要回的就空数组）"] }]
 }`;
 }
 
@@ -486,13 +492,14 @@ const clampNum = (v: any, lo: number, hi: number, fallback: number): number => {
 };
 
 /** 解析单角色演绎输出 → WorldCharBeat（解析失败时整段原文兜底进 narrative，绝不丢内容）。 */
-export function parseCharBeat(raw: string, char: CharacterProfile, memberNames: string[]): WorldCharBeat {
+export function parseCharBeat(raw: string, char: CharacterProfile, memberNames: string[], npcNames: string[] = []): WorldCharBeat {
     const j = extractJson(raw);
     const fallbackNarrative = (raw || '').replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```(?:json)?|```/g, '').trim().slice(0, 1400);
     if (!j || typeof j !== 'object') {
         return { charId: char.id, charName: char.name, location: '住处', narrative: fallbackNarrative || '安静地度过了这半天。', mood: '平静' };
     }
     const nameSet = new Set(memberNames);
+    const dmNameSet = new Set([...memberNames, ...npcNames]); // 私聊对象可以是成员或 NPC
     const statusPanel: Record<string, number | string> = {};
     if (j.statusPanel && typeof j.statusPanel === 'object') {
         let count = 0;
@@ -504,7 +511,7 @@ export function parseCharBeat(raw: string, char: CharacterProfile, memberNames: 
     }
     const dms = Array.isArray(j.phone?.dms)
         ? j.phone.dms
-            .filter((d: any) => d && typeof d.to === 'string' && nameSet.has(d.to) && Array.isArray(d.lines))
+            .filter((d: any) => d && typeof d.to === 'string' && dmNameSet.has(d.to) && Array.isArray(d.lines))
             .map((d: any) => ({ to: d.to, lines: d.lines.map((l: any) => String(l).slice(0, 200)).filter(Boolean).slice(0, 8) }))
             .filter((d: any) => d.lines.length > 0)
             .slice(0, 4)
@@ -572,7 +579,7 @@ export function parseCharBeat(raw: string, char: CharacterProfile, memberNames: 
 }
 
 /** 解析 NPC 世界引擎输出。 */
-export function parseNpcScene(raw: string): { scene: string; hooks: string[]; groupLines: { name: string; line: string }[] } {
+export function parseNpcScene(raw: string): { scene: string; hooks: string[]; groupLines: { name: string; line: string }[]; dms: { from: string; to: string; lines: string[] }[] } {
     const j = extractJson(raw);
     if (j && typeof j.scene === 'string') {
         return {
@@ -584,8 +591,15 @@ export function parseNpcScene(raw: string): { scene: string; hooks: string[]; gr
                     .map((g: any) => ({ name: g.name.trim(), line: g.line.trim().slice(0, 200) }))
                     .slice(0, 2)
                 : [],
+            dms: Array.isArray(j.dms)
+                ? j.dms
+                    .filter((d: any) => d && typeof d.from === 'string' && typeof d.to === 'string' && Array.isArray(d.lines))
+                    .map((d: any) => ({ from: d.from.trim(), to: d.to.trim(), lines: d.lines.map((l: any) => String(l).slice(0, 200)).filter(Boolean).slice(0, 6) }))
+                    .filter((d: any) => d.lines.length > 0)
+                    .slice(0, 8)
+                : [],
         };
     }
     const fallback = (raw || '').replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```(?:json)?|```/g, '').trim().slice(0, 500);
-    return { scene: fallback, hooks: [], groupLines: [] };
+    return { scene: fallback, hooks: [], groupLines: [], dms: [] };
 }
