@@ -764,7 +764,12 @@ ${isInitialGeneration ? `
                   model: apiConfig.model,
                   messages: [{ role: "user", content: prompt }],
                   max_tokens: 8000,
-                  temperature: 0.5
+                  temperature: 0.5,
+                  // 印象 prompt 体量大（含完整上下文 + 记忆 + 近期聊天），非流式下要等
+                  // 整段思考链 + JSON 全生成完才返回首字节，常超 60s 撞上中转站空闲超时被
+                  // 掐断（NetworkError）。开流式让连接持续有数据，绕开空闲超时；
+                  // safeResponseJson 会把 SSE 流拼回完整对象，下游 extractContent 无需改动。
+                  stream: true
               })
           }, 0);
           let content = extractContent(data);
