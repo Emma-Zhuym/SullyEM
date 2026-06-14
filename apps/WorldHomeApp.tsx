@@ -909,7 +909,8 @@ const ResidentDayCard: React.FC<{
     world: WorldProfile;
     onPhone: () => void;
     onDirective: (impulseText: string, text: string) => void;
-}> = ({ char, beat: b, t, world, onPhone, onDirective }) => {
+    onReroll?: () => void;
+}> = ({ char, beat: b, t, world, onPhone, onDirective, onReroll }) => {
     const [open, setOpen] = useState(false);
     if (!b) {
         return (
@@ -1020,6 +1021,11 @@ const ResidentDayCard: React.FC<{
                             ))}
                         </div>
                     )}
+                    {onReroll && (
+                        <button onClick={onReroll} className={`mt-1 flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-lg border ${t.chip} active:scale-95 transition-transform`}>
+                            <Sparkle size={11} weight="fill" className="text-violet-500" />重演这一段
+                        </button>
+                    )}
                 </div>
             )}
         </div>
@@ -1047,6 +1053,8 @@ const WorldView: React.FC<{
     const [chapterPage, setChapterPage] = useState(0);
     const [seedPage, setSeedPage] = useState(0);
     const [phoneView, setPhoneView] = useState<{ ownerId: string; tab?: 'feed' | 'dm' | 'group' } | null>(null);
+    const [rerollTarget, setRerollTarget] = useState<{ charId: string; charName: string } | null>(null);
+    const [rerollDir, setRerollDir] = useState('');
 
     const members = useMemo(() => world.memberIds.map(id => characters.find(c => c.id === id)).filter(Boolean) as CharacterProfile[], [world.memberIds, characters]);
     const latest = episodes[0];
@@ -1099,6 +1107,16 @@ const WorldView: React.FC<{
         setProgress({ done: 0, total: members.length });
         WorldScheduler.triggerNow(world.id);
         addToast(world.timeMode === 'sim' ? '观测开始——世界推进一段（早/中/晚），可以先去做别的' : '观测开始——演绎现实中刚过去的这一段，可以先去做别的', 'success');
+    };
+
+    // 单个角色重 roll（仅对最新一轮）：派发事件给 OSContext 用完整 deps 重演这一拍
+    const doReroll = (charId: string, charName: string, direction: string) => {
+        if (isWorldRunning(world.id)) { addToast('还在演绎中，稍等', 'error'); return; }
+        if (!latest) { addToast('还没有可重演的一轮', 'error'); return; }
+        setProgress({ done: 0, total: 1, charName });
+        window.dispatchEvent(new CustomEvent('world-reroll-request', { detail: { worldId: world.id, charId, episodeId: latest.id, direction: direction.trim() || undefined } }));
+        addToast(`正在重演 ${charName} 这一段…`, 'success');
+        setRerollTarget(null); setRerollDir('');
     };
 
     // 拜访视图的住房编排：配置的小屋 + 没分配的成员各自独居
@@ -1199,6 +1217,41 @@ const WorldView: React.FC<{
                             <button onClick={() => setPendingSeed(null)} className="flex-1 py-2.5 text-[13px] font-bold text-stone-500 active:bg-black/5">取消</button>
                             <button onClick={() => { deleteSeed(pendingSeed.id); setPendingSeed(null); }} className="flex-1 py-2.5 text-[13px] font-bold text-rose-500 border-l border-stone-200 active:bg-rose-50">删除</button>
                         </div>
+                    </div>
+                </div>
+            )}
+            {rerollTarget && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 backdrop-blur-sm p-6" onClick={() => { setRerollTarget(null); setRerollDir(''); }}>
+                    <div className="w-full max-w-[320px] rounded-2xl bg-[#f7f3ea] shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+                        <div className="px-4 pt-4 pb-3">
+                            <div className="text-[14px] font-black text-stone-800 flex items-center gap-1.5"><Sparkle size={15} weight="fill" className="text-violet-500" />重演 {rerollTarget.charName} 这一段</div>
+                            <p className="text-[10.5px] text-stone-400 mt-1.5 leading-relaxed">会重新生成 ta 这一轮的演绎。可以给个大致方向（选填），留空就完全重写。</p>
+                            <textarea value={rerollDir} onChange={e => setRerollDir(e.target.value)} rows={3}
+                                className="mt-2.5 w-full px-3 py-2 rounded-xl bg-white border border-stone-200 text-[12px] text-stone-800 focus:outline-none focus:border-violet-300 resize-none"
+                                placeholder="比如：让 ta 这次主动去找 XX 摊牌 / 心情写得更低落些 / 别提工作的事…" />
+                        </div>
+                        <div className="flex border-t border-stone-200">
+                            <button onClick={() => { setRerollTarget(null); setRerollDir(''); }} className="flex-1 py-2.5 text-[13px] font-bold text-stone-500 active:bg-black/5">取消</button>
+                            <button onClick={() => doReroll(rerollTarget.charId, rerollTarget.charName, rerollDir)} className="flex-1 py-2.5 text-[13px] font-bold text-violet-600 border-l border-stone-200 active:bg-violet-50">重新生成</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            {/* 本轮没演出来的角色：提示 + 可重 roll */}
+            {latest && (latest.failedCharIds?.length || 0) > 0 && !progress && (
+                <div className="mx-4 mt-3 rounded-2xl border border-rose-200 bg-rose-50/80 p-3">
+                    <div className="text-[11.5px] font-bold text-rose-600">本轮有角色没演出来</div>
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                        {latest.failedCharIds!.map(id => {
+                            const c = members.find(m => m.id === id);
+                            if (!c) return null;
+                            return (
+                                <button key={id} onClick={() => { setRerollDir(''); setRerollTarget({ charId: id, charName: c.name }); }}
+                                    className="flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-lg bg-rose-500 text-white active:scale-95 transition-transform">
+                                    <Sparkle size={11} weight="fill" />重新生成 {c.name}
+                                </button>
+                            );
+                        })}
                     </div>
                 </div>
             )}
@@ -1364,6 +1417,7 @@ const WorldView: React.FC<{
                                                     world={world}
                                                     onPhone={() => setPhoneView({ ownerId: r.id })}
                                                     onDirective={(impulseText, text) => sendDirective(r.id, impulseText, text)}
+                                                    onReroll={latest?.beats.some(b => b.charId === r.id) ? () => { setRerollDir(''); setRerollTarget({ charId: r.id, charName: r.name }); } : undefined}
                                                 />
                                             ))}
                                         </div>
