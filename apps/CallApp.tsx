@@ -283,7 +283,7 @@ const buildCallPrompt = (userName: string, charName?: string, coreContext?: stri
   return [coreContext, timeContext, callPrompt, voiceLangPrompt].filter(Boolean).join('\n\n');
 };
 const CallApp: React.FC = () => {
-  const { closeApp, openApp, characters, activeCharacterId, addToast, apiConfig, userProfile, customThemes, suspendCall, suspendedCall, clearSuspendedCall } = useOS();
+  const { closeApp, openApp, characters, activeCharacterId, addToast, apiConfig, userProfile, customThemes, suspendCall, suspendedCall, clearSuspendedCall, updateCharacter } = useOS();
 
   const [viewMode, setViewMode] = useState<ViewMode>('role-select');
   const [selectedCharId, setSelectedCharId] = useState<string>(activeCharacterId || characters[0]?.id || '');
@@ -333,9 +333,24 @@ const CallApp: React.FC = () => {
   const accentColor = useMemo(() => {
     const themeId = selectedChar?.bubbleStyle || 'default';
     const theme: ChatTheme | undefined = customThemes?.find((t: ChatTheme) => t.id === themeId) || PRESET_THEMES[themeId];
-    return theme?.user?.backgroundColor || '#8b5cf6';
+    const raw = (theme?.user?.backgroundColor || '#8b5cf6').trim();
+    // 通话界面靠 accent 做发光/描边/光环——主题色太暗（如纯黑）会让这些全部"消失"，
+    // 按键也没了漂亮的边。这里给最低亮度兜底：太暗就回落到亮紫，保证每个角色都有边。
+    const m = /^#?([0-9a-f]{6})$/i.exec(raw) || /^#?([0-9a-f]{3})$/i.exec(raw);
+    if (m) {
+      let hex = m[1];
+      if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+      const r = parseInt(hex.slice(0, 2), 16), g = parseInt(hex.slice(2, 4), 16), b = parseInt(hex.slice(4, 6), 16);
+      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+      if (lum < 90) return '#a78bfa';
+    }
+    return raw;
   }, [selectedChar?.bubbleStyle, customThemes]);
   const callScrollableRef = useRef<HTMLDivElement | null>(null);
+  // Restore this character's remembered translation language whenever the selection changes.
+  useEffect(() => {
+    setVoiceLang(selectedChar?.callVoiceLang || '');
+  }, [selectedCharId]);
   const resolveVoiceId = () => selectedChar?.voiceProfile?.voiceId?.trim() || '';
   const resolveModel = () => selectedChar?.voiceProfile?.model?.trim() || 'speech-2.8-hd';
   const resolveGroupId = () => (apiConfig.minimaxGroupId || '').trim();
@@ -1456,7 +1471,7 @@ const CallApp: React.FC = () => {
             <p className="text-xs text-white/40">选择后，角色会用中文回复，语音则用对应语种朗读</p>
             <div className="flex flex-wrap gap-2 pt-1">
               {VOICE_LANG_OPTIONS.map(opt => (
-                <button key={opt.value} onClick={() => { setVoiceLang(opt.value); setShowLangPicker(false); }}
+                <button key={opt.value} onClick={() => { setVoiceLang(opt.value); if (selectedChar) updateCharacter(selectedChar.id, { callVoiceLang: opt.value }); setShowLangPicker(false); }}
                   className="text-xs px-3 py-2 rounded-full font-medium transition-colors text-white"
                   style={voiceLang === opt.value ? { backgroundColor: accentColor } : { background: 'rgba(255,255,255,0.1)' }}>
                   {opt.label}
