@@ -769,7 +769,11 @@ export const useChatAI = ({
             //  - reasoning_effort：OpenAI 系（o1/o3、GLM-4.5、deepseek-reasoner 等）
             //  - extra_body.thinking：LiteLLM 系桥
             // 关掉则一个都不传，避免无谓的 thinking token 计费。
-            if (payload.flags.thinkingActive) {
+            // ⚠️ 工具模式(瑞幸点单/麦当劳)下绝不带 thinking/reasoning 参数: "thinking + tools" 同发
+            //    Gemini 等会直接 400 INVALID_ARGUMENT —— 表现就是"开了思考链的角色一点单就报错,
+            //    换个没开思考链的角色就好"。工具循环优先, 思考链这一轮让步。
+            const toolModeActive = payload.flags.luckinChatActive || payload.flags.mcdActive || payload.flags.luckinActive;
+            if (payload.flags.thinkingActive && !toolModeActive) {
                 const m: string = baseReqBody.model || '';
                 if (/^claude-/i.test(m) && !/-thinking$/i.test(m)) {
                     baseReqBody.model = `${m}-thinking`;
@@ -870,7 +874,8 @@ export const useChatAI = ({
                     if (!toolCalls || !toolCalls.length) break;
                     loopMessages.push({
                         role: 'assistant',
-                        content: data.choices[0].message.content || '',
+                        // 空 content + tool_calls 在 Gemini 兼容层会被判 INVALID_ARGUMENT, 给个占位
+                        content: data.choices[0].message.content || '(调用工具中)',
                         tool_calls: toolCalls,
                     } as any);
                     for (const tc of toolCalls) {
@@ -971,7 +976,8 @@ export const useChatAI = ({
                     if (!toolCalls || !toolCalls.length) break;
                     loopMessages.push({
                         role: 'assistant',
-                        content: data.choices[0].message.content || '',
+                        // 空 content + tool_calls 在 Gemini 兼容层会被判 INVALID_ARGUMENT, 给个占位
+                        content: data.choices[0].message.content || '(调用工具中)',
                         tool_calls: toolCalls,
                     } as any);
                     for (const tc of toolCalls) {
@@ -1067,7 +1073,8 @@ export const useChatAI = ({
                     if (!toolCalls || !toolCalls.length) break;
                     loopMessages.push({
                         role: 'assistant',
-                        content: data.choices[0].message.content || '',
+                        // 空 content + tool_calls 在 Gemini 兼容层会被判 INVALID_ARGUMENT, 给个占位
+                        content: data.choices[0].message.content || '(调用工具中)',
                         tool_calls: toolCalls,
                     } as any);
                     for (const tc of toolCalls) {
