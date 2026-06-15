@@ -62,7 +62,7 @@ const LuckinLocationModal: React.FC<{
                     <button onClick={onClose} className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-white active:scale-90">✕</button>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-3 space-y-3">
+                <div className="flex-1 overflow-y-auto p-3 space-y-3" style={{ paddingBottom: 'calc(0.75rem + var(--safe-bottom))' }}>
                     <button onClick={useGeo} disabled={locating}
                         className="w-full p-3 rounded-xl bg-white border border-[#E6DFCF] text-[13px] font-bold text-[#0B1F3A] active:scale-[0.98] disabled:opacity-60">
                         {locating ? '定位中…' : '📡 用我的定位'}

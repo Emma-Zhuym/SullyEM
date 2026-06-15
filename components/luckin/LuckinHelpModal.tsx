@@ -52,7 +52,7 @@ const LuckinHelpModal: React.FC<{ open: boolean; onClose: () => void }> = ({ ope
                     <div className="text-[10px] text-slate-400 text-center pt-1">下单 / 支付都在最后那张「结账卡」上点, 商品卡只是 ta 给你看的</div>
                 </div>
 
-                <div className="border-t border-[#DDD3BC] bg-gradient-to-r from-[#EFE9DC] to-[#E7DFC9] px-3 py-2.5 shrink-0">
+                <div className="border-t border-[#DDD3BC] bg-gradient-to-r from-[#EFE9DC] to-[#E7DFC9] px-3 py-2.5 shrink-0" style={{ paddingBottom: 'calc(0.625rem + var(--safe-bottom))' }}>
                     <button onClick={onClose} className="w-full px-3 py-2.5 bg-[#0B1F3A] text-white text-[13px] font-bold rounded-xl active:scale-95">知道啦, 开点</button>
                 </div>
             </div>
