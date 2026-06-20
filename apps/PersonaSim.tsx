@@ -589,13 +589,18 @@ const vibeTint: Record<Vibe, string> = {
     tender: '#e6c9ff',
 };
 
-// 逐字敲出的内心独白（底部），按情绪微调色调
+// 内心独白气泡（逐字敲出，按情绪微调色调）
+const MonoBubble: React.FC<{ text: string; vibe?: Vibe }> = ({ text, vibe = 'calm' }) => (
+    <span className="inline-block px-3 py-1 rounded-2xl bg-black/70">
+        <Typewriter drafts={[]} sent={text} placeholder=""
+            className={`text-[15px] leading-relaxed ${vibe === 'anxious' ? 'tracking-tight' : ''}`} />
+    </span>
+);
+
+// 浮在屏幕底部的内心独白（用于锁屏 / 通知等无底部输入框的场景）
 const MonoLine: React.FC<{ text: string; vibe?: Vibe }> = ({ text, vibe = 'calm' }) => (
     <div className="absolute left-0 right-0 bottom-6 px-8 text-center pointer-events-none z-20">
-        <span className="inline-block px-3 py-1 rounded-2xl bg-black/70">
-            <Typewriter drafts={[]} sent={text} placeholder=""
-                className={`text-[15px] leading-relaxed ${vibe === 'anxious' ? 'tracking-tight' : ''}`} />
-        </span>
+        <MonoBubble text={text} vibe={vibe} />
     </div>
 );
 
@@ -730,10 +735,16 @@ const ScreenContent: React.FC<{ beat: Beat; char: CharacterProfile; showMono: bo
                     {appIcon(a.view)}
                     <span className="text-[12.5px] font-medium">{a.name}</span>
                 </div>
-                <div className="flex-1 overflow-hidden relative">
+                <div className="flex-1 min-h-0 overflow-hidden relative">
                     <AppView app={a} char={char} />
                 </div>
-                {dim}{mono}
+                {/* app 场景里独白走「页脚」而非浮层，避免盖住聊天/搜索/输入框 */}
+                {showMono && beat.monologue && (
+                    <div className="shrink-0 px-8 pb-6 pt-2 text-center">
+                        <MonoBubble text={beat.monologue} vibe={beat.vibe} />
+                    </div>
+                )}
+                {dim}
             </div>
         );
     };
