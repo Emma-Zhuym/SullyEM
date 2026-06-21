@@ -76,8 +76,9 @@ export interface OSTheme {
   wallpaper: string;
   darkMode: boolean;
   contentColor?: string;
-  /** 桌面整体皮肤。'animalcrossing' = 动森风格（NookPhone 彩色圆角图标 + 暖色界面）。默认 'default'。 */
-  skin?: 'default' | 'animalcrossing';
+  /** 桌面整体皮肤。'animalcrossing' = 动森风格（NookPhone 彩色圆角图标 + 暖色界面）；
+   *  'mobilegame' = 二次元手游首页风格（角色卡 + 等级经验条 + 货币栏 + 网格卡 + 罗盘 dock）。默认 'default'。 */
+  skin?: 'default' | 'animalcrossing' | 'mobilegame';
   /** 动森皮肤下，聊天 App 是否也跟随换成动森界面。默认 true（undefined 视为 true）。关掉则聊天保持原样式。 */
   acnhChatSync?: boolean;
   launcherWidgetImage?: string; // DEPRECATED: always stripped on load — never renders.
@@ -559,19 +560,34 @@ export interface ChatTheme {
 export interface PhoneCustomApp {
     id: string;
     name: string;
-    icon: string; 
-    color: string; 
-    prompt: string; 
+    icon: string;
+    color: string;
+    prompt: string;
+    layout?: 'generic' | 'shop' | 'feed' | 'forum' | 'novel'; // 参考样板 UI 风格，默认 generic
 }
 
 export interface PhoneEvidence {
     id: string;
-    type: 'chat' | 'order' | 'social' | 'delivery' | string; 
-    title: string; 
-    detail: string; 
+    type: 'chat' | 'order' | 'social' | 'delivery' | string;
+    title: string;
+    detail: string;
     timestamp: number;
-    systemMessageId?: number; 
-    value?: string; 
+    systemMessageId?: number;
+    value?: string;
+}
+
+// 「人格模拟」演出结束后写入「生活记录」的一条留存（角色不记得，仅作为用户的体验档案）
+export interface PhoneSimLog {
+    id: string;
+    mode: 'daily' | 'event';
+    theme: string;        // 体验内容（如「平凡的周二」）
+    title: string;        // 演出标题
+    summary: string;      // 收尾留白文字
+    ending?: string;      // 多结局版本标签
+    beatsCount: number;
+    buff?: { label: string; emoji?: string; color?: string };
+    memoryText?: string;  // 演出可读梗概，作为回忆发给角色时用（让角色真的"知道"发生了什么）
+    timestamp: number;
 }
 
 export interface Worldbook {
@@ -1635,7 +1651,10 @@ export interface CharacterProfile {
 
   phoneState?: {
       records: PhoneEvidence[];
-      customApps?: PhoneCustomApp[]; 
+      customApps?: PhoneCustomApp[];
+      simLogs?: PhoneSimLog[]; // 「生活记录」：人格模拟演出留存
+      chatReadAt?: number;     // 上次打开 Messages 的时间戳，用于计算未读
+      sendToChat?: boolean;    // 查手机生成的内容是否同步到私聊（默认 true）
   };
 
   voiceProfile?: {
@@ -2313,7 +2332,7 @@ export interface GameSession {
     lastPlayedAt: number;
 }
 
-export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'luckin_card' | 'html_card' | 'news_card' | 'vr_card' | 'trpg_card' | 'world_card';
+export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'luckin_card' | 'html_card' | 'news_card' | 'vr_card' | 'trpg_card' | 'world_card' | 'sim_card' | 'phone_card' | 'webpage_card';
 
 export interface Message {
     id: number;

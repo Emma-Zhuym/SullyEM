@@ -145,6 +145,41 @@ export function normalizeMessageContent(
         return '[TRPG游戏片段]';
     }
 
+    // 小红书卡片：把笔记标题 + 正文 desc + 作者翻成可读文本喂给角色。标题来自分享文案
+    // （无需后端），desc/作者来自 MCP 抓取（可能没有）。没专门分支时会走默认只给 content(=标题)，
+    // 抓空时甚至空字符串，角色读不到任何东西。
+    if (type === 'xhs_card') {
+        const note: any = msg.metadata?.xhsNote || {};
+        const title = (note.title || msg.content || '').trim();
+        const desc = (note.desc || '').trim();
+        const author = (note.author || '').trim();
+        const authorPart = author ? `（作者：${author}）` : '';
+        const head = `[小红书笔记] ${userName}分享了一篇小红书笔记${title ? `《${title}》` : ''}${authorPart}`;
+        if (desc) return `${head}\n笔记正文：\n${desc}`;
+        // 只有标题（没部署 MCP / 没抓到正文）：角色至少知道是哪篇笔记，但别假装读过正文。
+        if (title) return `${head}\n（注：只拿到了笔记标题，正文/图片没抓到——要读完整内容需部署小红书功能。别假装读过正文。）`;
+        return `${head}\n（注：这篇笔记的内容没能获取到。）`;
+    }
+
+    // 网页卡片：用户粘贴链接分享的网页。卡片只给人看封面，上下文/归档/palace 要读到
+    // 提取出的正文纯文字，角色才"看见"了网页内容（正文截到 ~1500 字防 token 爆）。
+    if (type === 'webpage_card') {
+        const meta: any = msg.metadata?.webpage || {};
+        const title = meta.title || msg.content || '网页';
+        const site = meta.siteName ? `（来自 ${meta.siteName}）` : '';
+        const url = meta.finalUrl || meta.url || '';
+        const bodyRaw = (typeof meta.content === 'string' && meta.content.trim())
+            ? meta.content.trim()
+            : (typeof meta.excerpt === 'string' ? meta.excerpt.trim() : '');
+        const head = `[网页分享] ${userName}分享了一个网页《${title}》${site}${url ? `\n链接：${url}` : ''}`;
+        // 正文抓空（登录墙 / SPA 动态渲染等）：明确告诉角色没读到正文，避免它对着标题瞎编网页内容。
+        if (!bodyRaw) {
+            return `${head}\n（注：这个网页的正文没能抓取到——可能需要登录，或是用 JS 动态渲染的页面。你只看到标题和链接，不知道正文写了什么，别假装读过内容。）`;
+        }
+        const body = bodyRaw.length > 1500 ? bodyRaw.slice(0, 1500) + '…（正文过长已截断）' : bodyRaw;
+        return `${head}\n网页正文：\n${body}`;
+    }
+
     // 默认：text / 未知类型 → 用 content
     return msg.content || '';
 }
@@ -187,5 +222,5 @@ export function isMessageSemanticallyRelevant(msg: Message): boolean {
     const type = msg.type as string;
     if (type === 'image' || type === 'emoji' || type === 'voice') return false;
     // 有内容或有结构化 metadata 才算
-    return !!(msg.content?.trim() || msg.metadata?.scoreCard || msg.metadata?.amount || msg.metadata?.song || msg.metadata?.trpg);
+    return !!(msg.content?.trim() || msg.metadata?.scoreCard || msg.metadata?.amount || msg.metadata?.song || msg.metadata?.trpg || msg.metadata?.webpage);
 }

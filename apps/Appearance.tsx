@@ -137,6 +137,8 @@ const CHAT_LAYOUT_COMBOS: { name: string; desc: string; config: Partial<OSTheme>
 // --- 桌面整机风格（皮肤）---
 // 动森壁纸：NookPhone 同款奶油底（#F8F4E8），底部极淡草色透气。纯 CSS 渐变，让彩色图标平铺更跳。
 const ACNH_WALLPAPER = 'linear-gradient(180deg, #F8F4E8 0%, #F3EFDD 58%, #E6EECE 100%)';
+// 手游主题壁纸：近白底 + 极淡薰衣草/粉光晕（照搬原创参考图，整体偏白不发紫）。
+const MOBILEGAME_WALLPAPER = 'radial-gradient(95% 55% at 85% 0%, #fdeef7 0%, transparent 50%), radial-gradient(85% 55% at 6% 10%, #f6f2fc 0%, transparent 55%), linear-gradient(180deg, #fdfbff 0%, #f9f6fd 55%, #f4f0fa 100%)';
 
 const DESKTOP_SKINS: { id: string; name: string; desc: string; swatch: string; config: Partial<OSTheme> }[] = [
   {
@@ -152,6 +154,23 @@ const DESKTOP_SKINS: { id: string; name: string; desc: string; swatch: string; c
       chatAvatarShape: 'rounded', chatAvatarSize: 'medium',
       chatBubbleStyle: 'modern', chatMessageSpacing: 'spacious',
       chatHeaderStyle: 'default', chatInputStyle: 'rounded',
+      chatChromeStyle: 'soft', chatBackgroundStyle: 'paper',
+      chatShowTimestamp: 'hover',
+    },
+  },
+  {
+    id: 'mobilegame',
+    name: '手游风格',
+    desc: '梦幻粉紫二次元手游首页 · 星芒满屏 · 圆润可爱',
+    swatch: 'linear-gradient(135deg,#f7d9ec 0%,#d9d4f5 55%,#a8b8e8 100%)',
+    config: {
+      skin: 'mobilegame',
+      hue: 270, saturation: 45, lightness: 70,
+      contentColor: '#6b5b95',
+      wallpaper: MOBILEGAME_WALLPAPER,
+      chatAvatarShape: 'circle', chatAvatarSize: 'medium',
+      chatBubbleStyle: 'modern', chatMessageSpacing: 'default',
+      chatHeaderStyle: 'gradient', chatInputStyle: 'rounded',
       chatChromeStyle: 'soft', chatBackgroundStyle: 'paper',
       chatShowTimestamp: 'hover',
     },
@@ -821,14 +840,15 @@ const Appearance: React.FC = () => {
   // 切回默认时还原，避免覆盖用户自己设的桌面壁纸。
   const ACNH_WP_BACKUP_KEY = 'acnh_wallpaper_backup';
   const applyDesktopSkin = async (skin: { id: string; name: string; config: Partial<OSTheme> }) => {
-      const goingAcnh = skin.id === 'animalcrossing';
-      const currentlyAcnh = (theme.skin || 'default') === 'animalcrossing';
+      const goingDefault = skin.id === 'default';
+      const currentlyThemed = (theme.skin || 'default') !== 'default';
 
       let wallpaper: string;
-      if (goingAcnh) {
-          wallpaper = ACNH_WALLPAPER;
-          // 仅从「默认 → 动森」时备份一次，避免重复点动森把 AC 壁纸当成用户壁纸备份
-          if (!currentlyAcnh) {
+      if (!goingDefault) {
+          // 非默认皮肤（动森 / 手游 …）使用各自预设的壁纸
+          wallpaper = (skin.config.wallpaper as string) || DEFAULT_WALLPAPER;
+          // 仅从「默认 → 某皮肤」时备份一次用户原壁纸；皮肤之间互切不再覆盖备份，保住最初的用户壁纸
+          if (!currentlyThemed) {
               const dbWp = await DB.getAsset('wallpaper'); // 用户若用 data URI 壁纸，真值在这
               const cur = dbWp || theme.wallpaper || '';
               if (cur && cur.startsWith('data:')) {
@@ -852,7 +872,7 @@ const Appearance: React.FC = () => {
       }
 
       const existing = (theme.desktopDecorations || []).filter(d => !d.id.startsWith(ACNH_LEAF_PREFIX));
-      const desktopDecorations = goingAcnh ? [...existing, ...buildAcnhLeaves()] : existing;
+      const desktopDecorations = skin.id === 'animalcrossing' ? [...existing, ...buildAcnhLeaves()] : existing;
       // skin.config 里写死的 wallpaper 不用，改用上面算出的（备份/还原后的）值
       const { wallpaper: _ignored, ...restConfig } = skin.config;
       updateTheme({ ...restConfig, wallpaper, desktopDecorations });

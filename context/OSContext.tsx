@@ -219,7 +219,7 @@ interface OSContextType {
   characters: CharacterProfile[];
   activeCharacterId: string;
   addCharacter: () => void;
-  updateCharacter: (id: string, updates: Partial<CharacterProfile>) => void;
+  updateCharacter: (id: string, updates: Partial<CharacterProfile> | ((prev: CharacterProfile) => Partial<CharacterProfile>)) => void;
   deleteCharacter: (id: string) => void;
   setActiveCharacterId: (id: string) => void;
   
@@ -2160,7 +2160,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     setActiveCharacterId(newChar.id);
     await DB.saveCharacter(newChar);
   };
-  const updateCharacter = async (id: string, updates: Partial<CharacterProfile>) => { setCharacters(prev => { const updated = prev.map(c => c.id === id ? normalizeCharacterImpression({ ...c, ...updates }) : c); const target = updated.find(c => c.id === id); if (target) DB.saveCharacter(target); return updated; }); };
+  const updateCharacter = async (id: string, updates: Partial<CharacterProfile> | ((prev: CharacterProfile) => Partial<CharacterProfile>)) => { setCharacters(prev => { const updated = prev.map(c => c.id === id ? normalizeCharacterImpression({ ...c, ...(typeof updates === 'function' ? updates(c) : updates) }) : c); const target = updated.find(c => c.id === id); if (target) DB.saveCharacter(target); return updated; }); };
   const deleteCharacter = async (id: string) => { setCharacters(prev => { const remaining = prev.filter(c => c.id !== id); if (remaining.length > 0 && activeCharacterId === id) { setActiveCharacterId(remaining[0].id); } return remaining; }); await DB.deleteCharacter(id); };
   
   // Group Methods
@@ -2598,7 +2598,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               // 剧院的 vr_scripts(投稿剧本) / vr_plays(角色演过的话剧) / vr_presets(写作风格预设)
               // 之前也漏在这份清单外，导出后这三类剧院数据全丢（导入端其实早已支持恢复）
               'vr_novels', 'vr_annotations', 'cc_custom_parts', 'vr_music', 'vr_guestbook', 'vr_letters', 'vr_settings',
-              'vr_scripts', 'vr_plays', 'vr_presets'
+              'vr_scripts', 'vr_plays', 'vr_presets',
+              // 家园（同世界观多角色大世界）——世界定义 + 演绎历史。导入端早已支持恢复
+              // （worldHomeLocal 本机配置也已随导出带走），但这两个 store 之前漏在清单外，
+              // 导致导出的备份不含家园数据。
+              'worlds', 'world_episodes'
           ];
 
           if (mode === 'full') {
@@ -2973,6 +2977,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   // 单例 store：导入端期望单个对象（取首条），非数组
                   case 'vr_music': backupData.vrMusicRoom = Array.isArray(processedData) ? (processedData[0] || undefined) : (processedData || undefined); break;
                   case 'vr_guestbook': backupData.vrGuestbook = Array.isArray(processedData) ? (processedData[0] || undefined) : (processedData || undefined); break;
+                  // 家园 —— 键名须与 importFullData 读取的字段（data.worlds / data.worldEpisodes）对齐
+                  case 'worlds': backupData.worlds = processedData; break;
+                  case 'world_episodes': backupData.worldEpisodes = processedData; break;
               }
 
               await new Promise(resolve => setTimeout(resolve, 10));
@@ -2994,7 +3001,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               'roomTodos', 'roomNotes', 'tasks', 'anniversaries', 'groups',
               'savedJournalStickers', 'emojiCategories', 'xhsStockImages',
               'scheduledMessages', 'handbooks', 'trackers', 'trackerEntries', 'hotNewsSnapshots',
-              'dailySchedules', 'memoryBatches', 'pixelHomeAssets', 'pixelHomeLayouts'] as const;
+              'dailySchedules', 'memoryBatches', 'pixelHomeAssets', 'pixelHomeLayouts',
+              'worldEpisodes'] as const;
 
           // Build metadata (small fields) separately
           const metadata: Record<string, any> = {};

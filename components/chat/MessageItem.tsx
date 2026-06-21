@@ -1554,6 +1554,57 @@ const MessageItem = React.memo(({
         );
     }
 
+    // --- Webpage Share Card (用户分享的网页) ---
+    if (m.type === 'webpage_card' && m.metadata?.webpage) {
+        const wp = m.metadata.webpage;
+        let host = (wp.siteName || '').trim();
+        try { host = new URL(wp.finalUrl || wp.url).hostname.replace(/^www\./, ''); } catch { /* 用 siteName 兜底 */ }
+        const openPage = () => {
+            const u = wp.finalUrl || wp.url;
+            if (u) window.open(u, '_blank', 'noopener,noreferrer');
+        };
+        const excerpt = (wp.excerpt || '').trim();
+        return commonLayout(
+            <div
+                onClick={openPage}
+                className="w-64 bg-white rounded-2xl overflow-hidden border border-slate-200/80 shadow-[0_2px_10px_rgba(0,0,0,0.05)] cursor-pointer active:opacity-90 transition-opacity">
+                {/* 封面图（og:image / 正文首图），加载失败自动隐藏 */}
+                {wp.image && (
+                    <div className="w-full h-32 bg-slate-100 overflow-hidden">
+                        <img
+                            src={wp.image}
+                            alt=""
+                            className="w-full h-full object-cover"
+                            loading="lazy"
+                            referrerPolicy="no-referrer"
+                            onError={(e: any) => { const c = e.target?.parentElement; if (c) c.style.display = 'none'; }}
+                        />
+                    </div>
+                )}
+                <div className="p-3.5">
+                    {/* 域名行 */}
+                    <div className="flex items-center gap-1.5 mb-2">
+                        <span className="w-4 h-4 rounded-full bg-slate-100 flex items-center justify-center shrink-0">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-2.5 h-2.5 text-slate-400">
+                                <path fillRule="evenodd" d="M12.232 4.232a2.5 2.5 0 0 1 3.536 3.536l-1.225 1.224a.75.75 0 0 0 1.061 1.06l1.224-1.224a4 4 0 0 0-5.656-5.656l-3 3a4 4 0 0 0 .225 5.865.75.75 0 0 0 .977-1.138 2.5 2.5 0 0 1-.142-3.667l3-3Z" clipRule="evenodd" />
+                                <path fillRule="evenodd" d="M11.603 7.963a.75.75 0 0 0-.977 1.138 2.5 2.5 0 0 1 .142 3.667l-3 3a2.5 2.5 0 0 1-3.536-3.536l1.225-1.224a.75.75 0 0 0-1.061-1.06l-1.224 1.224a4 4 0 1 0 5.656 5.656l3-3a4 4 0 0 0-.225-5.865Z" clipRule="evenodd" />
+                            </svg>
+                        </span>
+                        <span className="text-[11px] text-slate-400 font-medium truncate">{host || '网页'}</span>
+                    </div>
+                    {/* 标题 */}
+                    <div className="font-semibold text-[15px] text-slate-800 line-clamp-2 leading-snug">{wp.title || host || '网页'}</div>
+                    {/* 摘要 / 抓空占位 */}
+                    {excerpt ? (
+                        <p className="text-xs text-slate-500 line-clamp-3 leading-relaxed mt-1.5">{excerpt}</p>
+                    ) : (
+                        <p className="text-[11px] text-slate-300 mt-1.5">未能提取到正文预览，点开看原网页</p>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
     if (m.type === 'mcd_card') {
         const meta = m.metadata || {};
         const kind = meta.mcdCardKind;
@@ -1723,6 +1774,87 @@ const MessageItem = React.memo(({
                     <div className="px-3 py-1.5 border-t border-white/10 flex items-center justify-between">
                         <span className="text-[9px] text-indigo-300/60 italic">{md.userBoardPost ? '你发布到留言墙' : 'Ta 独自度过的时间'}</span>
                         <span className="text-[9px] text-amber-200/70 font-bold tracking-wide">{md.userBoardPost ? '彼方' : '＋记忆'}</span>
+                    </div>
+                </div>
+            </div>
+        );
+        return commonLayout(card);
+    }
+
+    if (m.type === 'sim_card') {
+        const sc: any = m.metadata?.simCard || {};
+        const timeStr = new Date(m.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        const accent = '#b89bff';
+        const card = (
+            <div className="w-64">
+                <div className="relative rounded-2xl overflow-hidden border shadow-[0_8px_28px_rgba(40,30,70,0.45)]"
+                    style={{ borderColor: 'rgba(184,155,255,0.3)', background: 'linear-gradient(160deg,#221c33 0%,#171327 55%,#100d1c 100%)' }}>
+                    <div className="absolute -top-7 -right-5 w-24 h-24 rounded-full pointer-events-none" style={{ background: 'radial-gradient(circle,rgba(184,155,255,.4),transparent 70%)' }} />
+                    <div className="absolute inset-0 pointer-events-none opacity-50" style={{ backgroundImage: 'radial-gradient(1px 1px at 22% 24%,#c9b8ec,transparent),radial-gradient(1px 1px at 62% 18%,#e7c9f0,transparent),radial-gradient(1px 1px at 42% 36%,#bcd0f0,transparent)' }} />
+                    {/* 头部 */}
+                    <div className="relative px-3 pt-2.5 pb-2 flex items-center gap-2 border-b" style={{ borderColor: 'rgba(184,155,255,0.18)' }}>
+                        <span className="text-base leading-none" style={{ color: accent, filter: 'drop-shadow(0 1px 4px rgba(184,155,255,.5))' }}>✦</span>
+                        <div className="flex-1 min-w-0">
+                            <div className="text-[9px] tracking-[0.25em] font-bold uppercase" style={{ color: accent }}>体验卡 · {sc.mode === 'event' ? '事件' : '日常'}</div>
+                            <div className="text-[12px] text-white/90 font-semibold truncate" style={{ fontFamily: "'Shippori Mincho','Noto Sans SC',serif" }}>{sc.title || '一段回忆'}</div>
+                        </div>
+                        <span className="text-[9px] text-white/35">{timeStr}</span>
+                    </div>
+                    {/* 正文 */}
+                    <div className="relative px-3 py-2.5">
+                        {sc.theme && (
+                            <span className="inline-block text-[9px] px-2 py-0.5 rounded-full mb-2" style={{ color: accent, background: 'rgba(184,155,255,0.14)' }}>{sc.theme}</span>
+                        )}
+                        {sc.summary && (
+                            <p className="text-[12px] leading-[1.7] text-white/70 whitespace-pre-wrap max-h-44 overflow-y-auto no-scrollbar" style={{ fontFamily: "'Shippori Mincho','Noto Sans SC',serif" }}>
+                                {sc.summary}
+                            </p>
+                        )}
+                        {sc.ending && <div className="mt-2 text-[10px] text-white/40">结局 · {sc.ending}</div>}
+                    </div>
+                    {/* 页脚 */}
+                    <div className="relative px-3 py-1.5 border-t flex items-center justify-between" style={{ borderColor: 'rgba(184,155,255,0.18)' }}>
+                        <span className="text-[9px] italic text-white/35">你真实经历过的一天</span>
+                        <span className="text-[9px] font-bold tracking-wide" style={{ color: accent }}>＋ 收藏为回忆</span>
+                    </div>
+                </div>
+            </div>
+        );
+        return commonLayout(card);
+    }
+
+    if (m.type === 'phone_card') {
+        const pc: any = m.metadata?.phoneCard || {};
+        const timeStr = new Date(m.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        const accent = '#7dd3fc';
+        const isChat = pc.kind === 'chat';
+        const card = (
+            <div className="w-64">
+                <div className="relative rounded-2xl overflow-hidden border shadow-[0_8px_24px_rgba(20,30,45,0.4)]"
+                    style={{ borderColor: 'rgba(125,211,252,0.28)', background: 'linear-gradient(160deg,#10202b 0%,#0d1822 55%,#0a1019 100%)' }}>
+                    <div className="absolute -top-7 -right-5 w-24 h-24 rounded-full pointer-events-none" style={{ background: 'radial-gradient(circle,rgba(125,211,252,.3),transparent 70%)' }} />
+                    {/* 头部 */}
+                    <div className="relative px-3 pt-2.5 pb-2 flex items-center gap-2 border-b" style={{ borderColor: 'rgba(125,211,252,0.16)' }}>
+                        <span className="text-sm leading-none" style={{ color: accent }}>🔍</span>
+                        <div className="flex-1 min-w-0">
+                            <div className="text-[9px] tracking-[0.25em] font-bold uppercase" style={{ color: accent }}>查手机 · {pc.app || '手机'}</div>
+                            <div className="text-[12px] text-white/90 font-semibold truncate">{pc.title || '一条痕迹'}</div>
+                        </div>
+                        <span className="text-[9px] text-white/35">{timeStr}</span>
+                    </div>
+                    {/* 正文 */}
+                    <div className="relative px-3 py-2.5">
+                        {pc.value && (
+                            <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full mb-1.5" style={{ color: accent, background: 'rgba(125,211,252,0.14)' }}>{pc.value}</span>
+                        )}
+                        {pc.detail && (
+                            <p className="text-[12px] leading-[1.6] text-white/65 whitespace-pre-wrap max-h-40 overflow-y-auto no-scrollbar">{pc.detail}</p>
+                        )}
+                    </div>
+                    {/* 页脚 */}
+                    <div className="relative px-3 py-1.5 border-t flex items-center justify-between" style={{ borderColor: 'rgba(125,211,252,0.16)' }}>
+                        <span className="text-[9px] italic text-white/35">{isChat ? 'TA 手机里的一段对话' : 'TA 手机里的一条记录'}</span>
+                        <span className="text-[9px] font-bold tracking-wide" style={{ color: accent }}>来自查手机</span>
                     </div>
                 </div>
             </div>
