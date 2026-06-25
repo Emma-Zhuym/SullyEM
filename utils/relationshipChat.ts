@@ -1,0 +1,378 @@
+// 人际关系系统 · 核心引擎
+// 查手机「人际关系」模块的纯逻辑 + LLM 链路：真假甄别、好感、双 LLM 私下对话（A 发 B 回）、AI 玩 AI。
+// UI 层（CheckPhone.tsx）负责把这里的结果落库 / 镜像到对方角色，本文件只产数据，不碰 React。
+
+import { CharacterProfile, PhoneContact, UserProfile } from '../types';
+import { ContextBuilder } from './context';
+import { injectMemoryPalace } from './memoryPalace/pipeline';
+import { DB } from './db';
+import { safeResponseJson } from './safeApi';
+
+export interface MiniApiConfig {
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+}
+
+// ============================================================
+//  纯函数（可单测，不触网）
+// ============================================================
+
+/** 归一化人名用于匹配：去空白、去括号身份后缀、转小写 */
+export function normName(s: string): string {
+    return (s || '')
+        .replace(/[（(].*?[）)]/g, '') // 去掉「名字(身份)」里的身份部分
+        .replace(/\s+/g, '')
+        .trim()
+        .toLowerCase();
+}
+
+/**
+ * 真假甄别兜底：把一个联系人名字跟神经链接里的真实角色名单做匹配。
+ * 命中返回该角色 id；否则 undefined（=纯 NPC）。
+ * 先精确匹配，再做包含匹配（「学长阿哲」含「阿哲」也算命中）。
+ */
+export function matchRealChar(
+    name: string,
+    roster: { id: string; name: string }[],
+): string | undefined {
+    const n = normName(name);
+    if (!n) return undefined;
+    const exact = roster.find(r => normName(r.name) === n);
+    if (exact) return exact.id;
+    const contains = roster.find(r => {
+        const rn = normName(r.name);
+        return rn.length >= 2 && (n.includes(rn) || rn.includes(n));
+    });
+    return contains?.id;
+}
+
+/** 好感度钳制到 -100..100 */
+export function clampAffinity(n: number): number {
+    if (!Number.isFinite(n)) return 0;
+    return Math.max(-100, Math.min(100, Math.round(n)));
+}
+
+/**
+ * 以 name 为键把一条联系人 upsert 进列表（不可变，返回新数组）。
+ * 已存在则浅合并（保留原 id/affinity/createdAt，除非 incoming 显式带了）。
+ */
+export function upsertContact(
+    contacts: PhoneContact[],
+    incoming: Partial<PhoneContact> & { name: string },
+): PhoneContact[] {
+    const key = normName(incoming.name);
+    const idx = contacts.findIndex(c => normName(c.name) === key);
+    if (idx === -1) {
+        const fresh: PhoneContact = {
+            id: incoming.id || `ct-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            name: incoming.name,
+            identity: incoming.identity,
+            note: incoming.note,
+            avatar: incoming.avatar,
+            kind: incoming.kind || 'npc',
+            linkedCharId: incoming.linkedCharId,
+            affinity: clampAffinity(incoming.affinity ?? 0),
+            status: incoming.status || 'friend',
+            lastInteraction: incoming.lastInteraction,
+            createdAt: Date.now(),
+            isAgent: incoming.isAgent,
+            agentOf: incoming.agentOf,
+        };
+        return [...contacts, fresh];
+    }
+    const next = [...contacts];
+    const cur = next[idx];
+    next[idx] = {
+        ...cur,
+        ...incoming,
+        affinity: incoming.affinity != null ? clampAffinity(incoming.affinity) : cur.affinity,
+        createdAt: cur.createdAt,
+        id: cur.id,
+    };
+    return next;
+}
+
+/**
+ * 把一段「我:/对方:」对话脚本翻转视角。
+ * A 视角的 detail（"我"=A，"对方"=B）→ B 视角（"我"=B，"对方"=A）。
+ * 用于把同一段真实对话镜像写进对方角色的手机。
+ */
+export function flipTranscript(detail: string): string {
+    return (detail || '')
+        .split('\n')
+        .map(line => {
+            const m = line.match(/^\s*(我|对方|Me|Them)\s*[:：]\s*(.*)$/);
+            if (!m) return line;
+            const who = m[1];
+            const isMe = who === '我' || who === 'Me';
+            return `${isMe ? '对方' : '我'}: ${m[2]}`;
+        })
+        .join('\n');
+}
+
+// ============================================================
+//  LLM 调用
+// ============================================================
+
+async function chatCompletion(
+    api: MiniApiConfig,
+    userContent: string,
+    temperature = 0.85,
+): Promise<string> {
+    const res = await fetch(`${api.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${api.apiKey}` },
+        body: JSON.stringify({
+            model: api.model,
+            messages: [{ role: 'user', content: userContent }],
+            temperature,
+        }),
+    });
+    if (!res.ok) throw new Error(`LLM ${res.status}`);
+    const data = await safeResponseJson(res);
+    return (data?.choices?.[0]?.message?.content || '').trim();
+}
+
+/** 取某角色最近上下文（按 chatapp 设置的 contextLimit，默认 500），压成纯文本 */
+async function recentContextText(
+    char: CharacterProfile,
+    selfLabel: string,
+    userName: string,
+): Promise<string> {
+    const limit = char.contextLimit && char.contextLimit > 0 ? char.contextLimit : 500;
+    const msgs = await DB.getRecentMessagesByCharId(char.id, limit);
+    if (!msgs.length) return '（暂无最近聊天）';
+    return msgs
+        .map(m => {
+            const who = m.role === 'user' ? userName : selfLabel;
+            const body = m.type === 'text' ? m.content : `[${m.type}]`;
+            return `${who}: ${body}`;
+        })
+        .join('\n');
+}
+
+/**
+ * 按需注入记忆宫殿，query=对方的人名（用户指定的输入契约），返回 buildCoreContext 结果。
+ * 记忆宫殿关闭时自动跳过（injectMemoryPalace 内部已 guard）。
+ */
+async function buildSpeakerContext(
+    speaker: CharacterProfile,
+    user: UserProfile,
+    otherName: string,
+): Promise<string> {
+    try {
+        if (speaker.memoryPalaceEnabled) {
+            const recent = await DB.getRecentMessagesByCharId(
+                speaker.id,
+                speaker.contextLimit && speaker.contextLimit > 0 ? speaker.contextLimit : 500,
+            );
+            await injectMemoryPalace(speaker, recent, otherName, user.name);
+        }
+    } catch {
+        /* 记忆宫殿失败不阻塞对话 */
+    }
+    return ContextBuilder.buildCoreContext(speaker, user, true);
+}
+
+export interface RealConversationResult {
+    /** A 机主视角脚本（"我"=A，"对方"=B） */
+    aDetail: string;
+    /** B 机主视角脚本（"我"=B，"对方"=A） */
+    bDetail: string;
+    aDelta: number;
+    bDelta: number;
+}
+
+interface RunRealConversationParams {
+    a: CharacterProfile;
+    b: CharacterProfile;
+    user: UserProfile;
+    api: MiniApiConfig;
+    /** A 对 B 的当前好感 */
+    affinityA: number;
+    /** B 对 A 的当前好感 */
+    affinityB: number;
+    /** 往返轮数（每轮 = A 说一次 + B 回一次），默认 3 */
+    rounds?: number;
+    /** 续写时已有的 A 视角脚本（"我"=A） */
+    existingDetail?: string;
+    aNote?: string;
+    bNote?: string;
+}
+
+/**
+ * 双 LLM 私下对话：A 用 A 自己的人设/记忆/上下文发消息，B 用 B 自己的人设/记忆/上下文回。
+ * 每一方都按用户指定的输入契约：buildCoreContext(true) + 记忆宫殿(query=对方名) + 最近上下文(contextLimit)。
+ */
+export async function runRealConversation(
+    p: RunRealConversationParams,
+): Promise<RealConversationResult> {
+    const { a, b, user, api, affinityA, affinityB } = p;
+    const rounds = Math.max(1, Math.min(8, p.rounds ?? 3));
+
+    const ctxA = await buildSpeakerContext(a, user, b.name);
+    const ctxB = await buildSpeakerContext(b, user, a.name);
+    const recentA = await recentContextText(a, a.name, user.name);
+    const recentB = await recentContextText(b, b.name, user.name);
+
+    // transcript: 用名字标注，喂给两边的 prompt
+    const turns: { speaker: 'A' | 'B'; text: string }[] = [];
+
+    // 续写：把已有 A 视角脚本解析回 turns
+    if (p.existingDetail) {
+        for (const line of p.existingDetail.split('\n')) {
+            const m = line.match(/^\s*(我|对方|Me|Them)\s*[:：]\s*(.*)$/);
+            if (!m || !m[2].trim()) continue;
+            const isA = m[1] === '我' || m[1] === 'Me';
+            turns.push({ speaker: isA ? 'A' : 'B', text: m[2].trim() });
+        }
+    }
+
+    const labeled = () =>
+        turns.length
+            ? turns.map(t => `${t.speaker === 'A' ? a.name : b.name}: ${t.text}`).join('\n')
+            : '';
+
+    for (let i = 0; i < rounds; i++) {
+        // ---- A 发 ----
+        const aPrompt = `${ctxA}
+
+### [你的最近上下文（和用户的私聊）]
+${recentA}
+
+### [人际关系 · 私下对话（用户看不到）]
+你是「${a.name}」。你正在用手机和「${b.name}」私聊，这是你背着用户的真实社交。${
+            p.bNote ? `\n你对 ${b.name} 的备注：${p.bNote}` : ''
+        }
+你对 TA 的好感度：${affinityA}（范围 -100~100，负数=反感）。
+
+已经发生的对话（"${a.name}:" 是你，"${b.name}:" 是对方）：
+"""
+${labeled() || '（还没开始，由你起头）'}
+"""
+
+任务：以「${a.name}」的身份，说出你接下来要发给「${b.name}」的下一条消息（2-4 句，IM 聊天风格，贴合你的人设和当前好感）。只输出消息正文，不要加「${a.name}:」之类前缀，不要解释、不要旁白。`;
+        let aLine = '';
+        try {
+            aLine = await chatCompletion(api, aPrompt);
+        } catch {
+            break;
+        }
+        aLine = aLine.replace(/^[「"']|[」"']$/g, '').replace(/^.*?[:：]\s*/, '').trim();
+        if (aLine) turns.push({ speaker: 'A', text: aLine });
+
+        // ---- B 回 ----
+        const bPrompt = `${ctxB}
+
+### [你的最近上下文（和用户的私聊）]
+${recentB}
+
+### [人际关系 · 私下对话（用户看不到）]
+你是「${b.name}」。「${a.name}」正在用手机私聊你。${
+            p.aNote ? `\n你对 ${a.name} 的备注：${p.aNote}` : ''
+        }
+你对 TA 的好感度：${affinityB}（范围 -100~100）。
+
+对话记录（"${b.name}:" 是你，"${a.name}:" 是对方）：
+"""
+${labeled()}
+"""
+
+任务：以「${b.name}」的身份回复「${a.name}」（2-4 句，IM 风格，贴合人设与好感）。只输出回复正文，不要前缀，不要解释、不要旁白。`;
+        let bLine = '';
+        try {
+            bLine = await chatCompletion(api, bPrompt);
+        } catch {
+            break;
+        }
+        bLine = bLine.replace(/^[「"']|[」"']$/g, '').replace(/^.*?[:：]\s*/, '').trim();
+        if (bLine) turns.push({ speaker: 'B', text: bLine });
+    }
+
+    // A 视角脚本（"我"=A）
+    const aDetail = turns
+        .map(t => `${t.speaker === 'A' ? '我' : '对方'}: ${t.text}`)
+        .join('\n');
+    const bDetail = flipTranscript(aDetail);
+
+    // 好感增减：best-effort，单独一次轻量打分；失败则 0
+    let aDelta = 0;
+    let bDelta = 0;
+    try {
+        const judgePrompt = `下面是「${a.name}」和「${b.name}」的一段私下对话。请判断这段互动让双方对彼此的好感分别变化多少。
+对话：
+"""
+${labeled()}
+"""
+只输出 JSON：{"aDelta": <-20~20 之间，${a.name}对${b.name}好感变化>, "bDelta": <-20~20 之间，${b.name}对${a.name}好感变化>}`;
+        const raw = await chatCompletion(api, judgePrompt, 0.3);
+        const s = raw.indexOf('{');
+        const e = raw.lastIndexOf('}');
+        if (s > -1 && e > -1) {
+            const parsed = JSON.parse(raw.slice(s, e + 1));
+            aDelta = clampAffinity(parsed.aDelta || 0);
+            bDelta = clampAffinity(parsed.bDelta || 0);
+            // delta 本身限制在 ±20
+            aDelta = Math.max(-20, Math.min(20, aDelta));
+            bDelta = Math.max(-20, Math.min(20, bDelta));
+        }
+    } catch {
+        /* 打分失败不影响对话产出 */
+    }
+
+    return { aDetail, bDetail, aDelta, bDelta };
+}
+
+interface RunAgentConversationParams {
+    /** 机主角色 */
+    host: CharacterProfile;
+    user: UserProfile;
+    api: MiniApiConfig;
+    /** 智能体模拟谁：'user' 或某个 npc 名字 */
+    agentOf: 'user' | string;
+    agentName: string;
+    rounds?: number;
+    existingDetail?: string;
+}
+
+/**
+ * P2 · AI 玩 AI：机主角色和「TA 脑内构建的某人智能体」对话。
+ * 另一方不是真实角色，而是机主基于自己认知模拟出来的人格（user 用 userProfile + 印象反推）。
+ * 单 LLM 分饰两角即可（智能体只是机主想象的产物），产出供用户偷窥的只读脚本。
+ */
+export async function runAgentConversation(
+    p: RunAgentConversationParams,
+): Promise<{ detail: string }> {
+    const rounds = Math.max(1, Math.min(8, p.rounds ?? 4));
+    const ctxHost = ContextBuilder.buildCoreContext(p.host, p.user, true);
+
+    const agentProfile =
+        p.agentOf === 'user'
+            ? `「${p.agentName}」是你脑内对【用户本人】的模拟体。已知用户信息：姓名「${p.user.name}」，设定「${
+                  p.user.bio || '（未知）'
+              }」。请基于你对 TA 的全部印象与认知去演这个智能体——它会怎么说话、在意什么，由你的理解决定（可能和真实用户有偏差，这正是趣味所在）。`
+            : `「${p.agentName}」是你脑内构建的一个智能体，模拟你认知里的「${p.agentName}」。请基于你的人设与世界观去演它。`;
+
+    const prompt = `${ctxHost}
+
+### [AI 玩 AI · 你在和自己构建的智能体对话（用户在偷窥）]
+你是「${p.host.name}」。你闲来无事，用 AISandbox 跑了一个智能体来陪你聊天。
+${agentProfile}
+
+${p.existingDetail ? `已经聊了：\n"""\n${p.existingDetail}\n"""\n请接着往下聊。` : '现在开始这段对话。'}
+
+任务：生成你（${p.host.name}）和这个智能体（${p.agentName}）接下来的 ${rounds} 轮你来我往的对话。
+格式：每行一句，"我: ..." 代表你（${p.host.name}），"对方: ..." 代表智能体（${p.agentName}）。
+只输出对话行，不要解释、不要旁白、不要重复已有内容。`;
+
+    let out = '';
+    try {
+        out = await chatCompletion(p.api, prompt, 0.9);
+    } catch {
+        return { detail: p.existingDetail || '' };
+    }
+    out = out.replace(/```/g, '').trim();
+    const detail = p.existingDetail ? `${p.existingDetail}\n${out}` : out;
+    return { detail };
+}

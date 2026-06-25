@@ -587,6 +587,37 @@ export interface PhoneEvidence {
     timestamp: number;
     systemMessageId?: number;
     value?: string;
+    /** 人际关系系统：本条记录归属的联系人（phoneState.contacts 里的 id） */
+    contactId?: string;
+}
+
+/**
+ * 人际关系系统 · 联系人。
+ * 角色（机主）通讯录里的一个人，可能是神经链接里真实存在的角色（real），
+ * 也可能是纯按人设虚构的路人（npc），或角色脑内构建的智能体（agent）。
+ */
+export interface PhoneContact {
+    id: string;
+    name: string;
+    /** 身份/关系标签，如「辅导员」「中间人」 */
+    identity?: string;
+    /** 机主对此人的备注 */
+    note?: string;
+    avatar?: string;
+    /** 真假甄别结果：real=神经链接里真有这人；npc=纯虚构；agent=脑内智能体（见 isAgent） */
+    kind: 'real' | 'npc' | 'agent';
+    /** kind==='real' 时绑定的真实角色 id（指向 characters 里的某个角色） */
+    linkedCharId?: string;
+    /** 机主对此人的好感度，-100..100（负=厌恶，可触发自动删友；正=亲近） */
+    affinity: number;
+    /** 关系状态 */
+    status: 'friend' | 'pending' | 'blocked' | 'deleted';
+    lastInteraction?: number;
+    createdAt: number;
+    /** P2：是否为机主构建的智能体（AI 玩 AI） */
+    isAgent?: boolean;
+    /** P2：智能体模拟的对象，'user'=模拟用户，或某个 npc 名字 */
+    agentOf?: 'user' | string;
 }
 
 // 「人格模拟」演出运行时脚本模型（生成后驱动播放，也用于生活记录重播）
@@ -1771,6 +1802,7 @@ export interface CharacterProfile {
       simLogs?: PhoneSimLog[]; // 「生活记录」：人格模拟演出留存
       chatReadAt?: number;     // 上次打开 Messages 的时间戳，用于计算未读
       sendToChat?: boolean;    // 查手机生成的内容是否同步到私聊（默认 true）
+      contacts?: PhoneContact[]; // 人际关系系统：机主的通讯录
   };
 
   // 「梦的残页」：在小屋里偷看到的梦境演出留存（角色不记得，仅供用户回看）

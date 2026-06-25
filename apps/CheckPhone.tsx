@@ -1,18 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { CharacterProfile, PhoneEvidence, PhoneCustomApp } from '../types';
+import { CharacterProfile, PhoneEvidence, PhoneCustomApp, PhoneContact } from '../types';
 import { ContextBuilder } from '../utils/context';
 import Modal from '../components/os/Modal';
 import { safeResponseJson } from '../utils/safeApi';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
+import {
+    runRealConversation, runAgentConversation, upsertContact, matchRealChar,
+    clampAffinity, normName,
+} from '../utils/relationshipChat';
 import PersonaSim, { LifeLog, generatePersonaScript } from './PersonaSim';
 import { usePersonaSim, personaSimStore } from '../utils/personaSimStore';
 import { getLastInnerState } from '../utils/emotionApply';
 import {
     User, Phone, ChatCircleDots, ChatCircle, ShoppingBag, Hamburger, Compass, GearSix,
     Plus, SignOut, CaretLeft, CaretRight, Cloud, ImagesSquare, LockSimple, Package,
-    Storefront, Heart, ArrowsClockwise, Tray, DotsThree, ClockCounterClockwise, Sparkle
+    Storefront, Heart, ArrowsClockwise, Tray, DotsThree, ClockCounterClockwise, Sparkle,
+    UsersThree, Robot, UserPlus, Prohibit, LinkSimple, PaperPlaneTilt, PencilSimple, Trash
 } from '@phosphor-icons/react';
 
 type LayoutId = NonNullable<PhoneCustomApp['layout']>;
@@ -138,6 +143,16 @@ const CheckPhone: React.FC = () => {
     const [selectedChatRecord, setSelectedChatRecord] = useState<PhoneEvidence | null>(null);
     const chatEndRef = useRef<HTMLDivElement>(null);
 
+    // 人际关系系统 State
+    const [selectedContact, setSelectedContact] = useState<PhoneContact | null>(null);
+    const [noteDraft, setNoteDraft] = useState('');
+    const [editingNote, setEditingNote] = useState(false);
+    const [showContactModal, setShowContactModal] = useState(false);
+    const [ncName, setNcName] = useState('');
+    const [ncKind, setNcKind] = useState<'real' | 'npc' | 'agent'>('npc');
+    const [ncLinkedId, setNcLinkedId] = useState('');
+    const [ncAgentOf, setNcAgentOf] = useState('user');
+
     // Custom App Creation State
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [newAppName, setNewAppName] = useState('');
@@ -157,6 +172,7 @@ const CheckPhone: React.FC = () => {
     // Derived state for evidence records
     const records = targetChar?.phoneState?.records || [];
     const customApps = targetChar?.phoneState?.customApps || [];
+    const contacts = targetChar?.phoneState?.contacts || [];
 
     useEffect(() => {
         if (targetChar) {
@@ -166,6 +182,10 @@ const CheckPhone: React.FC = () => {
                 if (selectedChatRecord) {
                     const freshRecord = updated.phoneState?.records?.find(r => r.id === selectedChatRecord.id);
                     if (freshRecord && freshRecord !== selectedChatRecord) setSelectedChatRecord(freshRecord);
+                }
+                if (selectedContact) {
+                    const freshContact = updated.phoneState?.contacts?.find(c => c.id === selectedContact.id);
+                    if (freshContact && freshContact !== selectedContact) setSelectedContact(freshContact);
                 }
             }
         }
@@ -305,11 +325,21 @@ const CheckPhone: React.FC = () => {
             const lastMsg = msgs[msgs.length - 1];
             const timeGap = getTimeGapHint(lastMsg?.timestamp);
 
-            const recentMsgs = msgs.slice(-50).map(m => {
+            // 聊天/通讯录类按 chatapp 的上下文设置（默认 500）取，其它 App 维持轻量 50 条
+            const recentWindow = (type === 'chat' || type === 'contacts')
+                ? (targetChar.contextLimit && targetChar.contextLimit > 0 ? targetChar.contextLimit : 500)
+                : 50;
+            const recentMsgs = msgs.slice(-recentWindow).map(m => {
                 const roleName = m.role === 'user' ? userProfile.name : targetChar.name;
                 const content = m.type === 'text' ? m.content : `[${m.type}]`;
                 return `${roleName}: ${content}`;
             }).join('\n');
+
+            // 真假甄别用：神经链接里真实存在的其他角色名单
+            const roster = characters.filter(c => c.id !== targetChar.id).map(c => ({ id: c.id, name: c.name }));
+            const rosterHint = roster.length
+                ? roster.map(r => r.name).join('、')
+                : '（无其他真实角色）';
 
             let promptInstruction = "";
             let logPrefix = "";
@@ -331,12 +361,32 @@ ${layoutHint[layout || 'generic']}`;
             } else {
                 if (type === 'chat') {
                     promptInstruction = `生成 3 个该角色手机聊天软件(Message/Line)中的**对话片段**。
-    要求：
-    1. **自动匹配角色**: 根据人设，虚构 3 个合理的联系人（如：如果是学生，联系人可以是“辅导员”、“社团学长”；如果是杀手，联系人可以是“中间人”）。不要使用“User”作为联系人。
-    2. **对话感**: 内容必须是有来有回的对话脚本（3-4句），体现他们之间的关系。
-    3. **格式**: 必须严格使用 "我:..." 代表主角(你)，"对方:..." 或 "人名:..." 代表联系人。
-    格式JSON数组: [{ "title": "联系人名称 (身份)", "detail": "对方: 最近怎么样？\\n我: 还活着。\\n对方: 那就好。" }, ...]`;
+
+**真实存在的人（神经链接名单）**: ${rosterHint}
+**真假甄别规则（重要）**:
+- 如果某个联系人就是上面名单里的人 → 输出 "kind":"real" 并在 "linkedName" 里填名单里的原名。
+- 否则（按人设虚构的路人）→ 输出 "kind":"npc"。
+- 优先复用名单里的真实角色作为联系人（让 TA 的社交圈和真实角色产生交集），其余再虚构 NPC。
+
+要求：
+1. **联系人**: 根据人设给出合理的联系人（学生→辅导员/社团学长；杀手→中间人）。不要用“User”。
+2. **对话感**: 有来有回的对话脚本（3-4句），体现关系。
+3. **格式**: 严格用 "我:..." 代表主角(你)，"对方:..." 代表联系人。
+4. **好感**: 给出该角色对此联系人的好感度 "affinity"（-100~100）。
+格式JSON数组: [{ "title": "联系人名称 (身份)", "kind": "real|npc", "linkedName": "若 real 填真实角色名否则留空", "identity": "身份标签", "affinity": 30, "detail": "对方: 最近怎么样？\\n我: 还活着。\\n对方: 那就好。" }, ...]`;
                     logPrefix = "聊天软件";
+                } else if (type === 'contacts') {
+                    promptInstruction = `扫描并生成该角色手机通讯录里的 4-6 个**联系人**（不要对话，只要联系人本身）。
+
+**真实存在的人（神经链接名单）**: ${rosterHint}
+**真假甄别规则（重要）**:
+- 联系人若是名单里的人 → "kind":"real" + "linkedName" 填原名。
+- 否则虚构路人 → "kind":"npc"。
+- 尽量让名单里的真实角色出现在通讯录里，其余按人设虚构。
+
+每个联系人给出：姓名、身份标签、机主对 TA 的好感度(-100~100)、一句机主视角的备注。
+格式JSON数组: [{ "title": "姓名", "kind": "real|npc", "linkedName": "", "identity": "同事/前任/网友…", "affinity": 20, "detail": "一句备注，比如：欠我一顿饭，最近老是已读不回。" }, ...]`;
+                    logPrefix = "通讯录";
                 } else if (type === 'call') {
                     promptInstruction = `生成 3 条该角色的近期**通话记录**。
     格式JSON数组: [{ "title": "联系人名称", "value": "呼入 (5分钟) / 未接 / 呼出 (30秒)", "detail": "关于下周聚会的事..." }, ...]`;
@@ -384,10 +434,41 @@ ${layoutHint[layout || 'generic']}`;
             // 是否把查手机内容同步到私聊（默认开），关闭则只存本地、不进聊天/上下文
             const pushToChat = targetChar.phoneState?.sendToChat !== false;
 
+            // 人际关系：累积本轮甄别出的联系人（chat / contacts 两种生成都会喂这里）
+            let contactsAcc: PhoneContact[] = [...(targetChar.phoneState?.contacts || [])];
+            const isContactBearing = type === 'chat' || type === 'contacts';
+
             if (Array.isArray(json)) {
                 for (const item of json) {
                     const recordTitle = item.title || 'Unknown';
                     const recordDetail = item.detail || '...';
+
+                    // ---- 真假甄别 + 联系人 upsert ----
+                    let contactId: string | undefined;
+                    if (isContactBearing) {
+                        // 名字可能带「(身份)」后缀，剥出纯名字
+                        const pureName = recordTitle.replace(/[（(].*?[）)]/g, '').trim() || recordTitle;
+                        const linkedId = item.kind === 'real'
+                            ? (matchRealChar(item.linkedName || pureName, roster) || matchRealChar(pureName, roster))
+                            : matchRealChar(pureName, roster); // npc 也兜底匹配一次，防 LLM 漏标
+                        const kind: PhoneContact['kind'] = linkedId ? 'real' : 'npc';
+                        contactsAcc = upsertContact(contactsAcc, {
+                            name: pureName,
+                            identity: item.identity,
+                            kind,
+                            linkedCharId: linkedId,
+                            affinity: typeof item.affinity === 'number' ? item.affinity : undefined,
+                            note: type === 'contacts' ? recordDetail : undefined,
+                            lastInteraction: Date.now(),
+                        });
+                        contactId = contactsAcc.find(c => normName(c.name) === normName(pureName))?.id;
+                    }
+
+                    // contacts 模式只建联系人，不落聊天卡片/记录
+                    if (type === 'contacts') {
+                        await new Promise(r => setTimeout(r, 30));
+                        continue;
+                    }
 
                     let savedMsgId: number | undefined;
                     if (pushToChat) {
@@ -413,7 +494,8 @@ ${layoutHint[layout || 'generic']}`;
                         detail: recordDetail,
                         value: item.value,
                         timestamp: Date.now(),
-                        systemMessageId: savedMsgId
+                        systemMessageId: savedMsgId,
+                        contactId,
                     });
 
                     await new Promise(r => setTimeout(r, 50));
@@ -423,10 +505,18 @@ ${layoutHint[layout || 'generic']}`;
             // 基于最新状态合并：生成是异步的，期间若有演出落库 simLogs，
             // 用过期的 targetChar 快照覆盖会把 simLogs 等字段抹掉。
             updateCharacter(targetChar.id, (cur) => ({
-                phoneState: { ...cur.phoneState, records: [...(cur.phoneState?.records || []), ...newRecordsToAdd] }
+                phoneState: {
+                    ...cur.phoneState,
+                    records: [...(cur.phoneState?.records || []), ...newRecordsToAdd],
+                    ...(isContactBearing ? { contacts: contactsAcc } : {}),
+                }
             }));
 
-            addToast(`已刷新 ${newRecordsToAdd.length} 条数据`, 'success');
+            if (type === 'contacts') {
+                addToast(`已扫描 ${contactsAcc.length} 位联系人`, 'success');
+            } else {
+                addToast(`已刷新 ${newRecordsToAdd.length} 条数据`, 'success');
+            }
 
         } catch (e: any) {
             console.error(e);
@@ -442,7 +532,12 @@ ${layoutHint[layout || 'generic']}`;
         setIsLoading(true);
 
         try {
-            await injectMemoryPalace(targetChar);
+            // 记忆宫殿按「对方人名」检索（人际关系系统输入契约）
+            const recentForMp = await DB.getRecentMessagesByCharId(
+                targetChar.id,
+                targetChar.contextLimit && targetChar.contextLimit > 0 ? targetChar.contextLimit : 500,
+            );
+            await injectMemoryPalace(targetChar, recentForMp, selectedChatRecord.title, userProfile.name);
             const context = ContextBuilder.buildCoreContext(targetChar, userProfile, true);
             const prompt = `${context}
 
@@ -490,6 +585,156 @@ Format:
         } catch (e) {
             console.error(e);
             addToast('续写失败', 'error');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    // ============================================================
+    //  人际关系系统 · Handlers
+    // ============================================================
+
+    // 通用：更新当前机主的 contacts（函数式合并，避免覆盖并发落库的 simLogs/records）
+    const mutateContacts = (updater: (cs: PhoneContact[]) => PhoneContact[]) => {
+        if (!targetChar) return;
+        updateCharacter(targetChar.id, (cur) => ({
+            phoneState: { ...cur.phoneState, records: cur.phoneState?.records || [], contacts: updater(cur.phoneState?.contacts || []) },
+        }));
+    };
+
+    const handleSetContactStatus = (contact: PhoneContact, status: PhoneContact['status']) => {
+        mutateContacts(cs => cs.map(c => c.id === contact.id ? { ...c, status } : c));
+        addToast(status === 'deleted' ? '已删好友' : status === 'blocked' ? '已拉黑' : status === 'friend' ? '已加好友' : '已更新', 'success');
+    };
+
+    const handleSaveNote = (contact: PhoneContact) => {
+        mutateContacts(cs => cs.map(c => c.id === contact.id ? { ...c, note: noteDraft } : c));
+        setEditingNote(false);
+        addToast('备注已保存', 'success');
+    };
+
+    const handleRemoveContact = (contact: PhoneContact) => {
+        mutateContacts(cs => cs.filter(c => c.id !== contact.id));
+        setSelectedContact(null);
+        setActiveAppId('contacts');
+        addToast('联系人已移除', 'success');
+    };
+
+    const handleCreateContact = () => {
+        if (!targetChar) return;
+        let name = ncName.trim();
+        let linkedCharId: string | undefined;
+        let isAgent: boolean | undefined;
+        let agentOf: string | undefined;
+        if (ncKind === 'real') {
+            const rc = characters.find(c => c.id === ncLinkedId);
+            if (!rc) { addToast('请选择要绑定的真实角色', 'error'); return; }
+            name = rc.name; linkedCharId = rc.id;
+        } else if (ncKind === 'agent') {
+            isAgent = true; agentOf = ncAgentOf;
+            if (!name) name = ncAgentOf === 'user' ? `${userProfile.name} (智能体)` : '';
+            if (!name) { addToast('请填写智能体名字', 'error'); return; }
+        } else if (!name) {
+            addToast('请填写联系人名字', 'error'); return;
+        }
+        mutateContacts(cs => upsertContact(cs, { name, kind: ncKind, linkedCharId, isAgent, agentOf, affinity: 0, status: 'friend' }));
+        setShowContactModal(false);
+        setNcName(''); setNcKind('npc'); setNcLinkedId(''); setNcAgentOf('user');
+        addToast('已添加联系人', 'success');
+    };
+
+    // 给某个机主侧落一段真实对话：更新好感/状态 + 写 chat 记录 + （机主开了同步才）镜像进私聊 + 自动加删友播报
+    const commitConversationSide = async (
+        owner: CharacterProfile, partnerName: string, partnerCharId: string,
+        detail: string, delta: number, partnerNote?: string,
+    ) => {
+        // upsert 指向对方的真实联系人
+        let contacts = upsertContact(owner.phoneState?.contacts || [], {
+            name: partnerName, kind: 'real', linkedCharId: partnerCharId, lastInteraction: Date.now(), note: partnerNote,
+        });
+        const cid = contacts.find(c => c.linkedCharId === partnerCharId || normName(c.name) === normName(partnerName))?.id;
+        // 好感增减 + 自动加删友
+        let broadcast = '';
+        contacts = contacts.map(c => {
+            if (c.id !== cid) return c;
+            const newAff = clampAffinity(c.affinity + delta);
+            let status = c.status;
+            if (newAff <= -60 && c.status === 'friend') { status = 'deleted'; broadcast = `（我把 ${c.name} 删了，懒得再联系。）`; }
+            else if (newAff >= 60 && c.status !== 'friend' && c.status !== 'blocked') { status = 'friend'; broadcast = `（我又把 ${c.name} 加回来了。）`; }
+            return { ...c, affinity: newAff, status, lastInteraction: Date.now() };
+        });
+        // chat 记录（按联系人 upsert）
+        const recs = owner.phoneState?.records || [];
+        const existing = recs.find(r => r.type === 'chat' && (r.contactId === cid || (!r.contactId && normName(r.title) === normName(partnerName))));
+        const ownerSendToChat = owner.phoneState?.sendToChat !== false;
+        let msgId: number | undefined;
+        if (ownerSendToChat) {
+            msgId = await DB.saveMessage({
+                charId: owner.id, role: 'assistant', type: 'phone_card',
+                content: `[在 TA 手机的聊天软件里看到与「${partnerName}」的对话] ${detail.replace(/\n/g, ' ')}`,
+                metadata: { phoneCard: { app: '聊天软件', kind: 'chat', title: partnerName, detail } },
+            } as any);
+        }
+        const now = Date.now();
+        const nextRecs = existing
+            ? recs.map(r => r.id === existing.id ? { ...r, detail, timestamp: now, contactId: cid, systemMessageId: msgId ?? r.systemMessageId } : r)
+            : [...recs, { id: `rec-${now}-${Math.random()}`, type: 'chat', title: partnerName, detail, timestamp: now, contactId: cid, systemMessageId: msgId }];
+        // 自动加删友播报：进机主与用户的私聊（同样受 sendToChat 控制）
+        if (broadcast && ownerSendToChat) {
+            await DB.saveMessage({ charId: owner.id, role: 'assistant', type: 'text', content: broadcast } as any);
+        }
+        updateCharacter(owner.id, (cur) => ({ phoneState: { ...cur.phoneState, contacts, records: nextRecs } }));
+    };
+
+    // P1：真角色双向对话（A 发 B 回，双 LLM，镜像到 B）
+    const handleRealConversation = async (contact: PhoneContact) => {
+        if (!targetChar || !apiConfig.apiKey) { addToast('请先配置 API', 'error'); return; }
+        const b = characters.find(c => c.id === contact.linkedCharId);
+        if (!b) { addToast('该联系人未绑定真实角色', 'error'); return; }
+        setIsLoading(true);
+        try {
+            const existing = (targetChar.phoneState?.records || []).find(r => r.type === 'chat' && (r.contactId === contact.id || normName(r.title) === normName(contact.name)));
+            const bToA = (b.phoneState?.contacts || []).find(c => c.linkedCharId === targetChar.id || normName(c.name) === normName(targetChar.name));
+            const result = await runRealConversation({
+                a: targetChar, b, user: userProfile, api: apiConfig as any,
+                affinityA: contact.affinity, affinityB: bToA?.affinity ?? 0,
+                rounds: 3, existingDetail: existing?.detail, aNote: contact.note, bNote: bToA?.note,
+            });
+            if (!result.aDetail.trim()) { addToast('对方没有回应…', 'error'); return; }
+            await commitConversationSide(targetChar, contact.name, b.id, result.aDetail, result.aDelta, contact.note);
+            await commitConversationSide(b, targetChar.name, targetChar.id, result.bDetail, result.bDelta, bToA?.note);
+            addToast(`${targetChar.name} 和 ${b.name} 聊了一会儿`, 'success');
+        } catch (e) {
+            console.error(e);
+            addToast('真实对话生成失败', 'error');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    // P2：AI 玩 AI（机主和脑内智能体对话，只读偷窥，不镜像、不进私聊）
+    const handleAgentConversation = async (contact: PhoneContact) => {
+        if (!targetChar || !apiConfig.apiKey) { addToast('请先配置 API', 'error'); return; }
+        setIsLoading(true);
+        try {
+            const existing = (targetChar.phoneState?.records || []).find(r => r.type === 'chat' && (r.contactId === contact.id || normName(r.title) === normName(contact.name)));
+            const { detail } = await runAgentConversation({
+                host: targetChar, user: userProfile, api: apiConfig as any,
+                agentOf: contact.agentOf || (contact.isAgent ? 'user' : contact.name), agentName: contact.name, rounds: 4, existingDetail: existing?.detail,
+            });
+            if (!detail.trim()) { addToast('智能体没有响应', 'error'); return; }
+            const now = Date.now();
+            updateCharacter(targetChar.id, (cur) => {
+                const recs = cur.phoneState?.records || [];
+                const next = existing
+                    ? recs.map(r => r.id === existing.id ? { ...r, detail, timestamp: now } : r)
+                    : [...recs, { id: `rec-${now}-${Math.random()}`, type: 'chat', title: contact.name, detail, timestamp: now, contactId: contact.id }];
+                return { phoneState: { ...cur.phoneState, records: next } };
+            });
+            addToast('偷窥到一段新对话', 'success');
+        } catch (e) {
+            console.error(e);
+            addToast('智能体对话失败', 'error');
         } finally {
             setIsLoading(false);
         }
@@ -842,6 +1087,171 @@ Format:
         );
     };
 
+    // ============================================================
+    //  人际关系系统 · 视图
+    // ============================================================
+    const affColor = (a: number) => a >= 40 ? '#4ade80' : a >= 0 ? '#8b9cff' : a >= -40 ? '#fbbf24' : '#fb7185';
+    const kindBadge = (c: PhoneContact) => {
+        if (c.isAgent || c.kind === 'agent') return { icon: <Robot size={11} weight="fill" />, label: '智能体', color: '#22d3ee' };
+        if (c.kind === 'real') return { icon: <LinkSimple size={11} weight="bold" />, label: '真人', color: '#a78bfa' };
+        return { icon: <User size={11} weight="fill" />, label: 'NPC', color: '#94a3b8' };
+    };
+
+    const renderContactsList = () => {
+        const accent = '#f472b6';
+        const list = [...contacts].sort((a, b) => (b.lastInteraction || b.createdAt) - (a.lastInteraction || a.createdAt));
+        return (
+            <SubAppShell>
+                <TermHeader title="人际关系" sub={`${list.length} contacts`} accent={accent} onBack={() => setActiveAppId('home')}
+                    right={<button onClick={() => setShowContactModal(true)} className="text-white/80 active:scale-90 transition"><UserPlus size={20} weight="bold" /></button>} />
+                <div className="flex-1 overflow-y-auto px-4 pt-2 space-y-2.5 no-scrollbar pb-28 overscroll-contain">
+                    {list.length === 0 && <EmptyState text="还没有联系人 · 扫描通讯录看看" />}
+                    {list.map(c => {
+                        const badge = kindBadge(c);
+                        const dimmed = c.status === 'deleted' || c.status === 'blocked';
+                        return (
+                            <div key={c.id} onClick={() => { setSelectedContact(c); setNoteDraft(c.note || ''); setEditingNote(false); setActiveAppId('contact_detail'); }}
+                                className={`group relative flex items-center gap-3.5 rounded-2xl p-3.5 bg-white/[0.035] border border-white/[0.06] active:scale-[0.99] transition cursor-pointer animate-fade-in ${dimmed ? 'opacity-45' : ''}`}>
+                                <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 text-white font-semibold text-lg"
+                                    style={{ background: `linear-gradient(135deg, ${accent}40, ${accent}10)`, boxShadow: `inset 0 0 18px ${accent}25` }}>
+                                    {c.name[0]}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                        <span className="font-semibold text-[13.5px] text-white/95 truncate">{c.name}</span>
+                                        <span className="flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full shrink-0" style={{ color: badge.color, background: `${badge.color}1f` }}>{badge.icon}{badge.label}</span>
+                                        {c.status === 'deleted' && <span className="text-[9px] text-rose-300/80 shrink-0">已删</span>}
+                                        {c.status === 'blocked' && <span className="text-[9px] text-rose-300/80 shrink-0">已拉黑</span>}
+                                    </div>
+                                    <div className="text-[11px] text-white/40 truncate mt-0.5">{c.identity || c.note || '—'}</div>
+                                    <div className="flex items-center gap-2 mt-1.5">
+                                        <div className="h-1 flex-1 rounded-full bg-white/[0.08] overflow-hidden">
+                                            <div className="h-full rounded-full" style={{ width: `${(c.affinity + 100) / 2}%`, background: affColor(c.affinity) }} />
+                                        </div>
+                                        <span className="text-[9px] tabular-nums shrink-0" style={{ color: affColor(c.affinity) }}>{c.affinity > 0 ? '+' : ''}{c.affinity}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+                <RefreshFab onClick={() => handleGenerate('contacts')} label="扫描通讯录" accent={accent} loading={isLoading} />
+            </SubAppShell>
+        );
+    };
+
+    const renderContactDetail = () => {
+        if (!selectedContact || !targetChar) return null;
+        const c = selectedContact;
+        const accent = '#f472b6';
+        const badge = kindBadge(c);
+        const isReal = c.kind === 'real' && !!c.linkedCharId;
+        const isAgent = !!c.isAgent || c.kind === 'agent';
+        const rec = records.find(r => r.type === 'chat' && (r.contactId === c.id || normName(r.title) === normName(c.name)));
+        const lines = rec ? rec.detail.split('\n').filter(l => l.trim()) : [];
+        const parsed = lines.map(line => {
+            const isMe = line.startsWith('我') || line.startsWith('Me');
+            return { isMe, content: line.replace(/^(我|Me|对方|Them|[\w一-龥]+)[:：]\s*/, '') };
+        });
+        return (
+            <SubAppShell>
+                <TermHeader title={c.name} sub={badge.label} accent={accent} onBack={() => setActiveAppId('contacts')}
+                    right={<button onClick={() => handleRemoveContact(c)} className="text-rose-300/80 active:scale-90 transition"><Trash size={18} weight="bold" /></button>} />
+                <div className="flex-1 overflow-y-auto px-4 pt-1 no-scrollbar pb-28 overscroll-contain space-y-3">
+                    {/* 关系卡 */}
+                    <div className="rounded-2xl p-4 bg-white/[0.035] border border-white/[0.06]">
+                        <div className="flex items-center gap-2 mb-2.5">
+                            <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full" style={{ color: badge.color, background: `${badge.color}1f` }}>{badge.icon}{badge.label}</span>
+                            {c.identity && <span className="text-[11px] text-white/55">{c.identity}</span>}
+                            <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-white/[0.06] text-white/55">{c.status === 'friend' ? '好友' : c.status === 'deleted' ? '已删除' : c.status === 'blocked' ? '已拉黑' : '待定'}</span>
+                        </div>
+                        <div className="flex items-center gap-2.5">
+                            <span className="text-[11px] text-white/45 shrink-0">好感</span>
+                            <div className="h-2 flex-1 rounded-full bg-white/[0.08] overflow-hidden">
+                                <div className="h-full rounded-full transition-all" style={{ width: `${(c.affinity + 100) / 2}%`, background: affColor(c.affinity) }} />
+                            </div>
+                            <span className="text-[12px] font-bold tabular-nums shrink-0" style={{ color: affColor(c.affinity) }}>{c.affinity > 0 ? '+' : ''}{c.affinity}</span>
+                        </div>
+                    </div>
+
+                    {/* 备注 */}
+                    <div className="rounded-2xl p-4 bg-white/[0.035] border border-white/[0.06]">
+                        <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-[10px] tracking-[0.2em] uppercase text-white/40">备注</span>
+                            <button onClick={() => { setEditingNote(!editingNote); setNoteDraft(c.note || ''); }} className="text-white/50 active:scale-90 transition"><PencilSimple size={14} weight="bold" /></button>
+                        </div>
+                        {editingNote ? (
+                            <div className="space-y-2">
+                                <textarea value={noteDraft} onChange={e => setNoteDraft(e.target.value)} placeholder="机主对 TA 的备注…"
+                                    className="w-full h-16 bg-white/[0.05] border border-white/[0.08] rounded-xl p-2.5 text-[12px] text-white/90 resize-none" />
+                                <button onClick={() => handleSaveNote(c)} className="w-full py-2 rounded-xl text-[12px] font-semibold text-white" style={{ background: accent }}>保存</button>
+                            </div>
+                        ) : (
+                            <p className="text-[12.5px] text-white/70 leading-relaxed whitespace-pre-wrap">{c.note || '（无备注）'}</p>
+                        )}
+                    </div>
+
+                    {/* 对话预览 */}
+                    {parsed.length > 0 && (
+                        <div className="rounded-2xl p-3 bg-white/[0.025] border border-white/[0.06] space-y-2.5">
+                            {parsed.slice(-12).map((m, i) => (
+                                <div key={i} className={`flex ${m.isMe ? 'justify-end' : 'justify-start'}`}>
+                                    <div className={`px-3 py-2 rounded-2xl max-w-[78%] text-[12.5px] leading-relaxed break-words ${m.isMe ? 'text-white rounded-br-md' : 'bg-white/[0.07] text-white/90 border border-white/[0.06] rounded-bl-md'}`}
+                                        style={m.isMe ? { background: `linear-gradient(135deg, ${accent}, ${accent}bb)` } : undefined}>{m.content}</div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {isLoading && (
+                        <div className="flex justify-center py-3">
+                            <div className="flex gap-1.5">
+                                <div className="w-2 h-2 rounded-full animate-dot-pulse" style={{ background: accent }} />
+                                <div className="w-2 h-2 rounded-full animate-dot-pulse" style={{ background: accent, animationDelay: '0.2s' }} />
+                                <div className="w-2 h-2 rounded-full animate-dot-pulse" style={{ background: accent, animationDelay: '0.4s' }} />
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* 操作区 */}
+                <div className="shrink-0 w-full p-4 pb-6 space-y-2">
+                    {isReal && (
+                        <button onClick={() => handleRealConversation(c)} disabled={isLoading}
+                            className="w-full py-3 rounded-2xl text-[13px] font-semibold text-white active:scale-[0.99] transition flex items-center justify-center gap-2"
+                            style={{ background: `linear-gradient(135deg, ${accent}, ${accent}bb)` }}>
+                            <PaperPlaneTilt size={16} weight="fill" /> {rec ? '继续真实对话（双方同步）' : '发起真实对话（A 发 B 回）'}
+                        </button>
+                    )}
+                    {isAgent && (
+                        <button onClick={() => handleAgentConversation(c)} disabled={isLoading}
+                            className="w-full py-3 rounded-2xl text-[13px] font-semibold text-white active:scale-[0.99] transition flex items-center justify-center gap-2"
+                            style={{ background: 'linear-gradient(135deg, #22d3ee, #0891b2)' }}>
+                            <Robot size={16} weight="fill" /> {rec ? '继续偷窥 TA 聊 AI' : '让 TA 跑个智能体来聊'}
+                        </button>
+                    )}
+                    {!isReal && !isAgent && (
+                        <button onClick={() => handleAgentConversation(c)} disabled={isLoading}
+                            className="w-full py-3 rounded-2xl text-[13px] font-semibold text-white/90 bg-white/[0.06] border border-white/[0.08] active:scale-[0.99] transition flex items-center justify-center gap-2">
+                            <ChatCircleDots size={16} weight="fill" /> {rec ? '续写脑补对话' : '脑补一段对话'}
+                        </button>
+                    )}
+                    <div className="flex gap-2">
+                        {c.status !== 'friend' && (
+                            <button onClick={() => handleSetContactStatus(c, 'friend')} className="flex-1 py-2.5 rounded-xl text-[12px] font-semibold text-emerald-200 bg-emerald-400/15 border border-emerald-400/20 active:scale-[0.99] transition flex items-center justify-center gap-1.5"><UserPlus size={14} weight="bold" /> 加好友</button>
+                        )}
+                        {c.status === 'friend' && (
+                            <button onClick={() => handleSetContactStatus(c, 'deleted')} className="flex-1 py-2.5 rounded-xl text-[12px] font-semibold text-rose-200 bg-rose-400/15 border border-rose-400/20 active:scale-[0.99] transition flex items-center justify-center gap-1.5"><Trash size={14} weight="bold" /> 删好友</button>
+                        )}
+                        {c.status !== 'blocked' && (
+                            <button onClick={() => handleSetContactStatus(c, 'blocked')} className="flex-1 py-2.5 rounded-xl text-[12px] font-semibold text-white/60 bg-white/[0.05] border border-white/[0.08] active:scale-[0.99] transition flex items-center justify-center gap-1.5"><Prohibit size={14} weight="bold" /> 拉黑</button>
+                        )}
+                    </div>
+                </div>
+            </SubAppShell>
+        );
+    };
+
     const renderCustomItem = (r: PhoneEvidence, idx: number, total: number, accent: string, layout: LayoutId, app: PhoneCustomApp) => {
         switch (layout) {
             case 'shop':
@@ -1002,6 +1412,21 @@ Format:
                 <HomeCard icon={<ShoppingBag size={24} weight="light" />} label="Taobao" sub={taobaoSub} accent="#ff7a45"
                     onClick={() => setActiveAppId('taobao')} />
             </div>
+
+            {/* 人际关系入口 */}
+            <button onClick={() => setActiveAppId('contacts')}
+                className="relative w-full rounded-[22px] p-4 mb-3.5 text-left overflow-hidden border border-white/[0.09] active:scale-[0.98] transition-transform flex items-center gap-3.5"
+                style={{ background: 'linear-gradient(115deg, rgba(244,114,182,0.2), rgba(168,85,247,0.08) 60%, rgba(20,18,30,0.4))' }}>
+                <div className="absolute -top-8 -right-6 w-32 h-32 rounded-full blur-3xl pointer-events-none" style={{ background: 'radial-gradient(circle, rgba(244,114,182,0.45), transparent 70%)' }} />
+                <div className="w-12 h-12 rounded-2xl flex items-center justify-center border border-white/[0.08] relative z-10 shrink-0" style={{ background: 'linear-gradient(135deg, #f472b633, #f472b60a)', color: '#f9a8d4', boxShadow: 'inset 0 0 16px #f472b622' }}>
+                    <UsersThree size={24} weight="light" />
+                </div>
+                <div className="relative z-10 min-w-0">
+                    <div className="text-[14px] font-semibold text-white">人际关系</div>
+                    <div className="text-[11px] text-white/50 mt-0.5">{contacts.length ? `${contacts.length} 位联系人 · TA 背着你的社交圈` : '扫描 TA 的通讯录'}</div>
+                </div>
+                <CaretRight size={16} weight="bold" className="ml-auto text-white/40 relative z-10 shrink-0" />
+            </button>
 
             {/* Add app + my apps row */}
             <div className="grid grid-cols-2 gap-3.5 mb-7">
@@ -1264,6 +1689,8 @@ Format:
                 <>
                     {activeAppId === 'chat' && renderChatList()}
                     {activeAppId === 'chat_detail' && renderChatDetail()}
+                    {activeAppId === 'contacts' && renderContactsList()}
+                    {activeAppId === 'contact_detail' && renderContactDetail()}
                     {activeAppId === 'call' && renderCallList()}
                     {activeAppId === 'taobao' && renderShop()}
                     {activeAppId === 'waimai' && renderFood()}
@@ -1362,6 +1789,54 @@ Format:
                             })}
                         </div>
                     </div>
+                </div>
+            </Modal>
+
+            {/* 新建联系人 / 智能体 Modal */}
+            <Modal isOpen={showContactModal} title="添加联系人" onClose={() => setShowContactModal(false)}
+                footer={<button onClick={handleCreateContact} className="w-full py-3 bg-pink-500 text-white font-bold rounded-2xl">添加</button>}>
+                <div className="space-y-4">
+                    <div>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase block mb-2">类型</label>
+                        <div className="grid grid-cols-3 gap-2">
+                            {([
+                                { id: 'npc', name: 'NPC', desc: '虚构路人' },
+                                { id: 'real', name: '真人', desc: '绑定真实角色' },
+                                { id: 'agent', name: '智能体', desc: 'AI 玩 AI' },
+                            ] as const).map(opt => {
+                                const active = ncKind === opt.id;
+                                return (
+                                    <button key={opt.id} type="button" onClick={() => setNcKind(opt.id)}
+                                        className={`text-left rounded-xl p-2.5 border transition ${active ? 'border-transparent bg-pink-500 text-white' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
+                                        <div className="text-[12px] font-bold leading-tight">{opt.name}</div>
+                                        <div className={`text-[9px] leading-tight ${active ? 'text-white/80' : 'text-slate-400'}`}>{opt.desc}</div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                    {ncKind === 'real' ? (
+                        <div>
+                            <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">绑定真实角色</label>
+                            <select value={ncLinkedId} onChange={e => setNcLinkedId(e.target.value)} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                                <option value="">— 选择一个角色 —</option>
+                                {characters.filter(c => c.id !== targetChar?.id).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                            </select>
+                            <p className="text-[9px] text-slate-400 mt-1">真人之间可发起双向对话，对话会同步进对方的手机。</p>
+                        </div>
+                    ) : ncKind === 'agent' ? (
+                        <div className="space-y-2">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">智能体模拟谁</label>
+                            <div className="flex gap-2">
+                                <button type="button" onClick={() => setNcAgentOf('user')} className={`flex-1 py-2 rounded-lg text-[12px] font-semibold border ${ncAgentOf === 'user' ? 'bg-cyan-500 text-white border-transparent' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>用户本人</button>
+                                <button type="button" onClick={() => setNcAgentOf('custom')} className={`flex-1 py-2 rounded-lg text-[12px] font-semibold border ${ncAgentOf !== 'user' ? 'bg-cyan-500 text-white border-transparent' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>其他人</button>
+                            </div>
+                            <input value={ncName} onChange={e => setNcName(e.target.value)} placeholder={ncAgentOf === 'user' ? `留空默认「${userProfile.name} (智能体)」` : '智能体名字（要模拟的人）'} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+                            <p className="text-[9px] text-slate-400">机主会脑补出这个人的人格来聊，对话只供你偷窥，不会进任何人的私聊。</p>
+                        </div>
+                    ) : (
+                        <input value={ncName} onChange={e => setNcName(e.target.value)} placeholder="联系人名字（虚构）" className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+                    )}
                 </div>
             </Modal>
         </div>
