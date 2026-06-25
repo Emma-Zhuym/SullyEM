@@ -636,6 +636,73 @@ export interface PhoneSimLog {
     script?: SimScript;   // 完整脚本快照——存在则「生活记录」可原样重播（旧记录没有，仅可发送）
 }
 
+// ============================================================
+//  梦境演出系统 (Dream Theater) — 偷看一场角色已经忘记的梦。
+//  与「人格模拟」演出不同：梦不写实、不连贯、允许中度幻觉与矛盾，
+//  以拼贴诗 / 电影字幕 / 碎片记忆的方式呈现，留白与沉默本身就是演出。
+// ============================================================
+export type DreamArchetype =
+    | 'sweet'      // 甜梦
+    | 'nightmare'  // 噩梦
+    | 'flower'     // 花之梦
+    | 'flying'     // 飞翔之梦
+    | 'falling'    // 坠落之梦
+    | 'starry'     // 星空之梦
+    | 'ocean'      // 海之梦
+    | 'childhood'  // 童年之梦
+    | 'anxiety'    // 焦虑之梦
+    | 'forgotten'  // 遗忘之梦
+    | 'prophetic'  // 预言之梦
+    | 'lucid'      // 清醒梦
+    | 'deepsleep'; // 隐藏 · 深眠（无梦，沉默即是奖励）
+
+// 一个梦境碎片 —— 不同 kind 决定它在屏幕上的排版与呈现方式
+export type DreamFragmentKind =
+    | 'line'       // 一句飘过的字幕
+    | 'word'       // 单字 / 单词，巨大、孤立
+    | 'silence'    // 留白 · 沉默（空行，长停顿）
+    | 'repeat'     // 同一个词反复
+    | 'dialogue'   // 极短的对话碎片
+    | 'stage'      // 舞台提示（[门在微笑]）
+    | 'list'       // 清单
+    | 'screenplay' // 剧本片段
+    | 'diary'      // 日记残页
+    | 'message'    // 发给无人的消息
+    | 'image';     // 象征性画面 + 配文
+
+export interface DreamFragment {
+    kind: DreamFragmentKind;
+    text?: string;          // line / word / stage / diary / message / repeat 的词
+    lines?: string[];       // dialogue / list / screenplay 的多行
+    count?: number;         // repeat 的重复次数
+    caption?: string;       // image 的配文
+    date?: string;          // diary / image 的模糊日期口径
+    tint?: string;          // image 的色调 hex
+    emphasis?: 'whisper' | 'normal' | 'loud' | 'fade'; // 视觉强弱
+    align?: 'left' | 'center' | 'right';
+    pace?: 1 | 2 | 3;       // 停留时长：1 普通 / 2 稍慢 / 3 漫长
+}
+
+export interface DreamScript {
+    archetype: DreamArchetype;
+    title?: string;         // 梦的标题（可以晦涩、诗意）
+    fragments: DreamFragment[];
+    afterglow?: string;     // 醒来时残留的感觉（留白，不解释）
+    buff?: { name?: string; label: string; emoji?: string; color?: string; intensity?: 1 | 2 | 3; description?: string };
+}
+
+// 一场梦的留存（角色不记得，仅作为用户偷看到的档案 · 「梦的残页」）
+export interface DreamLog {
+    id: string;
+    archetype: DreamArchetype;
+    title?: string;
+    afterglow?: string;
+    fragmentsCount: number;
+    buff?: { label: string; emoji?: string; color?: string };
+    timestamp: number;
+    script?: DreamScript;   // 完整快照 → 可原样重看
+}
+
 export interface Worldbook {
     id: string;
     title: string;
@@ -1705,6 +1772,9 @@ export interface CharacterProfile {
       chatReadAt?: number;     // 上次打开 Messages 的时间戳，用于计算未读
       sendToChat?: boolean;    // 查手机生成的内容是否同步到私聊（默认 true）
   };
+
+  // 「梦的残页」：在小屋里偷看到的梦境演出留存（角色不记得，仅供用户回看）
+  dreamLogs?: DreamLog[];
 
   voiceProfile?: {
       provider?: 'minimax' | 'custom';
