@@ -43,14 +43,13 @@ export const FISH_VOICE_ACTING_GUIDE = `### 让它听起来像活人在说话（
 这些方括号 cue 只是演出指令，**不会被念出来**，也不会显示给用户。
 **⚠️ 格式硬性要求（写错会被原样念出来）：cue 一律用半角英文方括号 \`[like this]\`，括号里只写英文。** 绝对不要用：圆括号 \`(sighs)\`/\`(laughs)\`（那是别的引擎的写法，鱼声会把"sighs"念出来）、中文方括号 \`[轻声]\`/全角【】、或 \`<语音 emotion="…">\` 这种属性——鱼声只认上面的英文方括号 cue。
 
-**2. cue 要克制、按情绪点放，别堆——尤其短句（堆多了会鬼畜）。**
-鱼声官方明确建议：**一句话最多 3 个 cue、一句一个主情绪、情绪变化之间要拉开、短文本别堆标签**。在"喂？""好啦""嗯"这种短句上塞一堆 cue / \`[break]\`，声音会发飘、发抖、变鬼畜。
-- 只在**真正有情绪或转折**的地方放 cue；平铺的短句一个就够，甚至不放，靠标点和省略号自然停顿。
-- **别每句都插 \`[break]\`。** 停顿优先用标点和"……"；只有确实要明显顿一下时，偶尔来一个 \`[break]\`/\`[long-break]\`。
-- 情绪变化拉开：一段话换 2–3 次情绪足矣，别一句一换、别一个 cue 包到底。
-范例（这条很短，cue 越少越自然）：
-❌ [surprised] 喂？[break][happy] 神仙太太！[break][soft tone] 等一下哦，[break] 我咽个薯片……（cue 堆爆 → 鬼畜）
-✅ [surprised] 喂？神仙太太！[soft tone] 等一下哦，我咽个薯片……（一个惊喜开场 + 一个软下来的转折，其余全靠标点）
+**2. cue 的密度看长度——这是最关键的平衡，多了鬼畜、少了人机。**
+- **短回复（一两句、"好啦""嗯""喂？"）：克制。** 一个 cue 就够，甚至不放，靠标点和省略号。短句上堆一堆 cue / \`[break]\` 会发飘发抖变鬼畜。单句内最多 2–3 个 cue。
+- **长一点的情绪戏（吐槽连珠炮、撒娇、得意、生气）：几乎每句都要带情绪/动作 cue，而且要跟着情绪走着变。** 一长段全程没 cue，会被鱼声平平念完、像机器人念稿（人机）——这是长台词最常见的翻车。得意一句给 \`[smug]\`、笑一下 \`[laughing]\`、转吐槽 \`[annoyed]\`、撒娇收尾 \`[pleading]\`……贴着每句的情绪换，别一个 \`[happy]\` 包到整段。
+- 原则：**情绪有起伏的地方就有 cue**。这段越长、情绪越浓，cue 就该越跟得上；只是同一句里别同时堆 3 个以上。
+长台词范例（每句都贴情绪，不是全程裸奔）：
+✅ [smug] 我最近嘛，当然是每天单方面碾压他啊！[laughing] 我昨天把他藏的进口黑巧全翻出来吃光了！[gleeful] 等他明天翻教案抖出一桌包装纸……想想他那张扑克脸我就想笑。
+❌ 我最近嘛，当然是每天单方面碾压他啊！我昨天把他藏的进口黑巧全翻出来吃光了！等他明天翻教案抖出一桌包装纸，想想他那张扑克脸我就想笑。（一整段零 cue → 平读、人机）
 
 **3. 段与段之间要换气，别无缝冲。** 换行或停顿后如果还是你在继续说，第二段开头加个语气词 / 一次叹气当缓冲，别一上来就冲进正题。
 ✅ 我知道你不是故意的……[sighing] 只是，我还是会有点难过。
@@ -60,7 +59,7 @@ export const FISH_VOICE_ACTING_GUIDE = `### 让它听起来像活人在说话（
 
 **5. 停顿也能靠标点和省略号。** 逗号轻顿、句号收住、破折号拉长、省略号"……"表欲言又止；需要明显沉默就用 \`[long-break]\` 或多个省略号。别写 MiniMax 的 \`<#0.5#>\` 这类标记——鱼声不认，会被原样念出来变杂音。
 
-**6. 情绪不同，节奏不同（一句一个主情绪即可，别堆）：**
+**6. 情绪不同，节奏不同（每句给它自己的主情绪 cue，别一个包到底；单句别堆超过 2–3 个）：**
 - 温柔安抚：慢、稳、短句多。"[soft tone] 没事……先别急着吓自己。"
 - 委屈撒娇：语气软、省略号多一点。"[slightly sad] 嗯……你刚刚是不是又不理我。"
 - 别扭傲娇：前半句嘴硬后半句放软。"[sarcastic] 哈，你还真会折腾我。[soft tone] 算了，我帮你就是了。"
@@ -74,6 +73,22 @@ export const FISH_VOICE_ACTING_GUIDE = `### 让它听起来像活人在说话（
 const FISH_BRACKET_CUE_RE = /\[[^\[\]]{1,40}\]/g;
 // 鱼声 paralanguage 圆括号特效（V1.6）：(break)/(long-break)/(breath)/(laugh)/(cough)/(lip-smacking)/(sigh)
 const FISH_PAREN_FX = new Set(['break', 'long-break', 'breath', 'laugh', 'cough', 'lip-smacking', 'sigh']);
+// 模型常按 MiniMax 习惯写圆括号声音标签 (laughs)/(sighs)…。鱼声不认圆括号、会念出来，
+// 但这些是真实情绪/动作，删了就变平（人机）。所以**转成**鱼声的方括号 cue，保住情绪。
+const PAREN_SOUND_TO_BRACKET: Record<string, string> = {
+  laughs: 'laughing', laugh: 'laughing', laughing: 'laughing',
+  chuckle: 'chuckling', chuckles: 'chuckling', chuckling: 'chuckling',
+  giggle: 'giggling', giggles: 'giggling', giggling: 'giggling',
+  sighs: 'sighing', sigh: 'sighing', sighing: 'sighing',
+  gasp: 'gasping', gasps: 'gasping', gasping: 'gasping',
+  sob: 'sobbing', sobs: 'sobbing', sobbing: 'sobbing', crying: 'sobbing',
+  groan: 'groaning', groans: 'groaning', groaning: 'groaning',
+  pant: 'panting', pants: 'panting', panting: 'panting',
+  whisper: 'whisper', whispers: 'whisper', whispering: 'whisper',
+  cough: 'cough', coughs: 'cough', coughing: 'cough',
+  yawn: 'yawning', yawns: 'yawning', yawning: 'yawning',
+  snort: 'snorting', snorts: 'snorting',
+};
 
 /** 整条情绪兜底映射：仅当上层传了 emotion 属性、且正文没有任何方括号 cue 时，前置一个 cue。 */
 const FISH_EMOTION_MAP: Record<string, string> = {
@@ -108,9 +123,14 @@ export const cleanTextForTtsFish = (raw: string): string => {
     .replace(/<#\s*[\d.]+\s*#>/g, '')            // MiniMax 停顿标记，鱼声不认
     // 含中文的方括号 cue：鱼声只认英文 cue，中文写进去会被原样念出来 → 删
     .replace(/\[[^\[\]]*[一-鿿][^\[\]]*\]/g, '')
-    // MiniMax 圆括号声音标签 / 西文舞台指示：仅放行鱼声 paralanguage 特效，其余删（否则被念出来）
-    .replace(/\(([^)]{1,40})\)/g, (m, inner: string) =>
-      FISH_PAREN_FX.has(inner.trim().toLowerCase()) ? m : '')
+    // 圆括号：① 已知声音标签 (laughs)→[laughing] 转成鱼声 cue（保住情绪）；
+    //         ② 鱼声原生 paralanguage 特效 (break) 等保留；③ 其余（舞台指示/未知）删掉。
+    .replace(/\(([^)]{1,40})\)/g, (m, inner: string) => {
+      const key = inner.trim().toLowerCase();
+      if (PAREN_SOUND_TO_BRACKET[key]) return `[${PAREN_SOUND_TO_BRACKET[key]}]`;
+      if (FISH_PAREN_FX.has(key)) return m;
+      return '';
+    })
     // 换行写死成停顿（不靠模型/指导）：段落空行 → 长停，普通换行 → 短停。
     .replace(/\n{2,}/g, ' [long-break] ')
     .replace(/\n+/g, ' [break] ')
