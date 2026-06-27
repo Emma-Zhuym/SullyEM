@@ -1045,8 +1045,8 @@ ${olderText}
         setAiInput('');
         try {
             // 潜入永远是「你扮 AI/卡（对方），LLM 演 char（我）」——三个服务统一
-            const myPrefix = '对方';   // 你输入的这一行（你扮 AI / 卡）
-            const replyPrefix = '我';  // LLM 续写的那一行（char 本人）
+            const myPrefix: string = '对方';   // 你输入的这一行（你扮 AI / 卡）
+            const replyPrefix: string = '我';  // LLM 续写的那一行（char 本人）
             const recap = recapOf(session);
             // 发出去就是发出去了：先把你这条立刻落库显示，再等对方回
             const transcript = `${session.transcript}\n${myPrefix}: ${text}`;
