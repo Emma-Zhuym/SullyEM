@@ -1387,14 +1387,13 @@ ${olderText}
     // 联系人多选 / 批量删除
     const toggleContactSelect = (id: string) => setSelectedContactIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
     const exitContactSelect = () => { setContactSelectMode(false); setSelectedContactIds([]); };
-    const handleBatchRemoveContacts = async () => {
+    // 批量「清空对话」：保留联系人，只把这几段聊天删掉重来（不满这轮生成时用）
+    const handleBatchClearConversations = async () => {
         const ids = [...selectedContactIds];
         const targets = (targetChar?.phoneState?.contacts || []).filter(c => ids.includes(c.id));
         exitContactSelect();
-        for (const c of targets) await handleRemoveContact(c); // 复用「彻底移除」：连记录/卡片/镜像一起清
-        setSelectedContact(null);
-        setActiveAppId('contacts');
-        addToast(`已移除 ${targets.length} 个聊天`, 'success');
+        for (const c of targets) await handleClearContactConversation(c, true); // 静默，结尾统一一个 toast
+        addToast(`已清空 ${targets.length} 段对话`, 'success');
     };
 
     // 改绑定：把联系人改绑到「正确的真实角色」或「转为虚构 NPC」，保留这段对话 + 备注 + 了解 + 好感。
@@ -1689,17 +1688,21 @@ ${olderText}
 
     // 清空某联系人的这段对话（生成错位/不满意时一键抹掉重来）。
     // 真人联系人连对方手机里的镜像记录一起清，保持两边一致。
-    const handleClearContactConversation = async (contact: PhoneContact) => {
+    const handleClearContactConversation = async (contact: PhoneContact, silent = false) => {
         if (!targetChar) return;
         const isChatWith = (r: PhoneEvidence, cId: string | undefined, nm: string) =>
             r.type === 'chat' && (r.contactId === cId || normName(r.title) === normName(nm));
-        // 机主侧
+        // 机主侧：删聊天记录 + 清这段对话派生的话题盒记忆/水位线（删了重来＝干净起点）
         const myRec = (targetChar.phoneState?.records || []).find(r => isChatWith(r, contact.id, contact.name));
         if (myRec?.systemMessageId) await DB.deleteMessage(myRec.systemMessageId);
         updateCharacter(targetChar.id, (cur) => ({
-            phoneState: { ...cur.phoneState, records: (cur.phoneState?.records || []).filter(r => !isChatWith(r, contact.id, contact.name)) },
+            phoneState: {
+                ...cur.phoneState,
+                records: (cur.phoneState?.records || []).filter(r => !isChatWith(r, contact.id, contact.name)),
+                contacts: (cur.phoneState?.contacts || []).map(c => c.id === contact.id ? { ...c, topicBox: [], archivedThru: 0 } : c),
+            },
         }));
-        // 对方侧镜像（真人）
+        // 对方侧镜像（真人）：同样清记录 + 话题盒/水位线
         if (contact.kind === 'real' && contact.linkedCharId) {
             const b = characters.find(c => c.id === contact.linkedCharId);
             if (b) {
@@ -1707,11 +1710,15 @@ ${olderText}
                 const bRec = (b.phoneState?.records || []).find(r => isChatWith(r, bContact?.id, targetChar.name));
                 if (bRec?.systemMessageId) await DB.deleteMessage(bRec.systemMessageId);
                 updateCharacter(b.id, (cur) => ({
-                    phoneState: { ...cur.phoneState, records: (cur.phoneState?.records || []).filter(r => !isChatWith(r, bContact?.id, targetChar.name)) },
+                    phoneState: {
+                        ...cur.phoneState,
+                        records: (cur.phoneState?.records || []).filter(r => !isChatWith(r, bContact?.id, targetChar.name)),
+                        contacts: (cur.phoneState?.contacts || []).map(c => (bContact && c.id === bContact.id) ? { ...c, topicBox: [], archivedThru: 0 } : c),
+                    },
                 }));
             }
         }
-        addToast('已清空这段对话', 'success');
+        if (!silent) addToast('已清空这段对话', 'success');
     };
 
     // ----- 人格模拟：后台生成（生成期间用户可离开本 App 去别处逛） -----
@@ -2199,12 +2206,12 @@ ${olderText}
                         </button>
                         <button disabled={!selectedContactIds.length}
                             onClick={() => askConfirm({
-                                title: `批量移除选中的 ${selectedContactIds.length} 个聊天？`,
-                                desc: '会把选中的联系人连同各自的聊天记录、私聊卡片，以及真人对方手机里的镜像，一并彻底删除。',
-                                confirmLabel: '彻底移除', danger: true, onConfirm: handleBatchRemoveContacts,
+                                title: `清空选中的 ${selectedContactIds.length} 段对话？`,
+                                desc: '只清掉这几段聊天记录（保留联系人；真人对方手机里的镜像、相关私聊卡片、话题盒记忆一并清），之后可重新生成。',
+                                confirmLabel: '清空对话', danger: true, onConfirm: handleBatchClearConversations,
                             })}
                             className="pointer-events-auto px-6 py-3 rounded-full text-[12px] font-semibold text-white bg-rose-500 disabled:opacity-40 active:scale-95 transition flex items-center gap-1.5 shadow-[0_8px_30px_rgba(0,0,0,0.5)]">
-                            <Trash size={14} weight="bold" /> 移除 {selectedContactIds.length || ''}
+                            <ChatCircle size={14} weight="bold" /> 清空对话 {selectedContactIds.length || ''}
                         </button>
                     </div>
                 ) : (
@@ -2747,8 +2754,8 @@ ${olderText}
                                     <button onClick={() => { closeProfile(); askConfirm({
                                         title: '清空这段对话？',
                                         desc: c.kind === 'real' && c.linkedCharId
-                                            ? `会把「${c.name}」这段聊天记录清掉（对方手机里的镜像也一并清除），之后可重新生成。`
-                                            : `会把「${c.name}」这段聊天记录清掉，之后可重新生成。`,
+                                            ? `会把「${c.name}」这段聊天记录、话题盒记忆清掉（对方手机里的镜像也一并清除），回到干净起点、之后可重新生成。`
+                                            : `会把「${c.name}」这段聊天记录和话题盒记忆清掉，回到干净起点、之后可重新生成。`,
                                         confirmLabel: '清空', danger: true, onConfirm: () => handleClearContactConversation(c),
                                     }); }} className="flex-1 py-2.5 rounded-xl text-[12px] font-semibold text-white/60 bg-white/[0.05] border border-white/[0.08] active:scale-[0.99] transition flex items-center justify-center gap-1.5"><ChatCircle size={14} weight="bold" /> 清空对话</button>
                                 )}
