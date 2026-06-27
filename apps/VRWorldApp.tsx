@@ -247,7 +247,7 @@ const VRWorldApp: React.FC = () => {
         if (!t) return;
         const board = (await DB.getVRGuestbook()) || { id: 'board', messages: [], updatedAt: Date.now() };
         const id = `gb_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
-        board.messages = [...board.messages, { id, authorId: 'user', authorName: userName, content: t, createdAt: Date.now() }].slice(-200);
+        board.messages = [...board.messages, { id, authorId: 'user', authorName: userName, content: t, createdAt: Date.now() }];
         board.updatedAt = Date.now();
         await DB.saveVRGuestbook(board);
         const enabled = characters.filter(c => c.vrState?.enabled);

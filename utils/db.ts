@@ -1746,8 +1746,8 @@ export const DB = {
   saveVRGuestbook: async (state: VRGuestbookState): Promise<void> => {
       const db = await openDB();
       const transaction = db.transaction(STORE_VR_GUESTBOOK, 'readwrite');
-      // 只保留最近 200 条
-      const messages = (state.messages || []).slice(-200);
+      // 不限存储条数：留言墙已支持每 50 条翻页，旧留言全部保留可翻看
+      const messages = state.messages || [];
       transaction.objectStore(STORE_VR_GUESTBOOK).put({ ...state, id: 'board', messages });
   },
 
