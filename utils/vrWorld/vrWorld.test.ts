@@ -314,6 +314,11 @@ describe('信号坠落处 · parseSignalOutput', () => {
         expect(out.line).toBe('电量剩下百分之三');
     });
 
+    it('起新篇：标题里自带的书名号被剥掉（UI 会自己包一层，避免《《…》》）', () => {
+        const out = parseSignalOutput('<彼方><标题>《物理隔离》</标题><第一句>门没锁</第一句></彼方>', 'start', 24);
+        expect(out.title).toBe('物理隔离');
+    });
+
     it('每句字数硬截断到 cap', () => {
         const long = '一二三四五六七八九十一二三四五六七八九十';
         const out = parseSignalOutput(`<续句>${long}</续句>`, 'append', 24);

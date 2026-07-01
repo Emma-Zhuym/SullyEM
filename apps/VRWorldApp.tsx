@@ -1636,6 +1636,8 @@ const signalHashX = (id: string): number => {
     let h = 0; for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
     return 12 + (h % 62); // 12%–74%，避免贴边
 };
+// 剥掉标题里可能自带的书名号——UI 统一包一层《》，兼容旧诗里存成《《…》》的数据
+const cleanTitle = (t?: string) => (t || '').replace(/^[《〈「『【]+/, '').replace(/[》〉」』】]+$/, '') || '无题';
 const isMineLine = (l: SignalPoem['lines'][number]) => !!l.mine;
 
 /** 一句诗的展示行：mine 暖光 +「你」（有本地归属则「你 · 角色名」）。 */
@@ -1724,7 +1726,7 @@ const SignalAdminPanel: React.FC<{ onClose: () => void; addToast?: (m: string, t
                 ) : poems.map(p => (
                     <div key={p.id} className="rounded-xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}>
                         <div className="flex items-center gap-2 px-3 py-2 border-b border-white/8">
-                            <span className="text-[12px] font-bold text-indigo-50 truncate" style={{ fontFamily: `'Noto Serif SC',serif` }}>《{p.title}》</span>
+                            <span className="text-[12px] font-bold text-indigo-50 truncate" style={{ fontFamily: `'Noto Serif SC',serif` }}>《{cleanTitle(p.title)}》</span>
                             <span className="text-[8.5px] tabular-nums shrink-0" style={{ color: p.status === 'open' ? 'rgba(134,239,172,.7)' : 'rgba(165,180,252,.5)' }}>{p.status === 'open' ? `写作中 ${p.lineCount}/${p.targetLines}` : `已封存 ${p.lineCount}句`}</span>
                             {confirmPoem === p.id ? (
                                 <span className="ml-auto flex items-center gap-1 shrink-0">
@@ -1852,7 +1854,7 @@ const SignalPanel: React.FC<{ addToast?: (m: string, t?: any) => void; character
                         {poem ? (
                             <div>
                                 <div className="text-center mb-1">
-                                    <div className="text-[16.5px]" style={{ fontFamily: `'Noto Serif SC',serif`, color: '#ecdcb2', letterSpacing: '.08em', textShadow: '0 0 12px rgba(201,168,106,.3)' }}>《{poem.title}》</div>
+                                    <div className="text-[16.5px]" style={{ fontFamily: `'Noto Serif SC',serif`, color: '#ecdcb2', letterSpacing: '.08em', textShadow: '0 0 12px rgba(201,168,106,.3)' }}>《{cleanTitle(poem.title)}》</div>
                                     <div className="my-1.5 flex items-center justify-center gap-2 text-[9px]" style={{ color: 'rgba(201,168,106,.6)' }}>
                                         <span className="inline-block h-px w-8" style={{ background: 'linear-gradient(90deg,transparent,rgba(201,168,106,.55))' }} />❦<span className="inline-block h-px w-8" style={{ background: 'linear-gradient(90deg,rgba(201,168,106,.55),transparent)' }} />
                                     </div>
@@ -1876,26 +1878,29 @@ const SignalPanel: React.FC<{ addToast?: (m: string, t?: any) => void; character
                     feed.length === 0 ? (
                         <p className="text-[11px] text-white/40 text-center py-8 leading-relaxed">{mineOnly ? '你的回声还没落进任何一颗卫星。' : '还没有写完封存的诗。'}</p>
                     ) : (
-                        // 星图：每首封存的诗一颗卫星，竖向铺开、横向按 id 散落；参与过的带光晕
-                        <div className="relative px-2 py-3" style={{ minHeight: '100%' }}>
-                            {/* 极淡的星尘背景 */}
-                            <div className="pointer-events-none absolute inset-0 opacity-50" style={{ backgroundImage: 'radial-gradient(1px 1px at 20% 12%, rgba(255,255,255,.4), transparent), radial-gradient(1px 1px at 66% 30%, rgba(200,210,255,.35), transparent), radial-gradient(1px 1px at 40% 60%, rgba(230,225,255,.3), transparent), radial-gradient(1px 1px at 82% 78%, rgba(255,255,255,.35), transparent)' }} />
-                            <div className="relative space-y-3.5">
+                        // 星图（做旧星图调）：每首封存的诗一颗星子，竖向铺开、横向按 id 散落；
+                        // 陌生人的诗＝暗金羊皮纸色，你参与过的＝亮金光晕。
+                        <div className="relative px-2 py-4" style={{ minHeight: '100%' }}>
+                            {/* 暖调星尘 */}
+                            <div className="pointer-events-none absolute inset-0 opacity-60" style={{ backgroundImage: 'radial-gradient(1px 1px at 20% 12%, rgba(230,213,168,.5), transparent), radial-gradient(1px 1px at 66% 30%, rgba(201,168,106,.4), transparent), radial-gradient(1px 1px at 40% 60%, rgba(236,220,178,.35), transparent), radial-gradient(1px 1px at 82% 78%, rgba(201,168,106,.4), transparent)' }} />
+                            <div className="relative space-y-4">
                                 {feed.map(p => {
                                     const mine = (p.mineCount || 0) > 0;
-                                    const sz = 12 + Math.min(16, p.lineCount * 1.4);
+                                    const sz = 11 + Math.min(15, p.lineCount * 1.3);
                                     return (
                                         <button key={p.id} onClick={() => setOpenPoem(p)}
-                                            className="relative block w-full text-left active:opacity-80" style={{ height: `${sz + 6}px` }}>
-                                            <span className="absolute -translate-y-1/2 top-1/2 flex items-center gap-2" style={{ left: `${signalHashX(p.id)}%` }}>
-                                                {/* 卫星 */}
+                                            className="relative block w-full text-left active:opacity-80" style={{ height: `${sz + 8}px` }}>
+                                            <span className="absolute -translate-y-1/2 top-1/2 flex items-center gap-2.5" style={{ left: `${signalHashX(p.id)}%` }}>
+                                                {/* 星子 */}
                                                 <span className="rounded-full shrink-0" style={{
                                                     width: sz, height: sz,
-                                                    background: mine ? 'radial-gradient(circle at 35% 35%, #ffe7a8, #f5b94f)' : 'radial-gradient(circle at 35% 35%, #cfd6ff, #7b86d6)',
-                                                    boxShadow: mine ? '0 0 14px 3px rgba(251,191,36,.5), 0 0 0 4px rgba(251,191,36,.14)' : '0 0 10px 1px rgba(150,160,255,.4)',
+                                                    background: mine ? 'radial-gradient(circle at 34% 32%, #fff0c4, #e6ce97 55%, #c9a86a)' : 'radial-gradient(circle at 34% 32%, #d8c8a0, #a89066 60%, #6f5d3e)',
+                                                    boxShadow: mine
+                                                        ? '0 0 16px 3px rgba(230,206,151,.6), 0 0 0 4px rgba(201,168,106,.18)'
+                                                        : '0 0 9px 1px rgba(201,168,106,.35)',
                                                 }} />
-                                                <span className="text-[11px] truncate max-w-[42vw]" style={{ fontFamily: `'Noto Serif SC',serif`, color: mine ? 'rgba(253,230,170,.95)' : 'rgba(220,224,255,.82)' }}>《{p.title}》</span>
-                                                <span className="text-[8.5px] tabular-nums shrink-0" style={{ color: mine ? 'rgba(251,191,36,.6)' : 'rgba(165,180,252,.45)' }}>{p.lineCount}句</span>
+                                                <span className="text-[11.5px] truncate max-w-[42vw]" style={{ fontFamily: `'Noto Serif SC',serif`, letterSpacing: '.04em', color: mine ? '#f0dca8' : 'rgba(224,208,176,.72)' }}>《{cleanTitle(p.title)}》</span>
+                                                <span className="text-[8.5px] tabular-nums shrink-0" style={{ fontFamily: `'Noto Serif SC',serif`, color: mine ? 'rgba(240,220,168,.6)' : 'rgba(201,168,106,.45)' }}>{p.lineCount} 句</span>
                                             </span>
                                         </button>
                                     );
@@ -1919,7 +1924,7 @@ const SignalPanel: React.FC<{ addToast?: (m: string, t?: any) => void; character
                     <div className="pointer-events-none absolute inset-0" style={{ background: 'radial-gradient(120% 90% at 50% 30%, transparent 52%, rgba(6,4,10,.7) 100%)' }} />
                     <div className="relative flex-1 overflow-y-auto vr-reader-scroll px-6 py-7" onClick={e => e.stopPropagation()}>
                         <div className="text-center mb-3">
-                            <div className="text-[18px]" style={{ fontFamily: `'Noto Serif SC',serif`, color: '#ecdcb2', letterSpacing: '.08em', textShadow: '0 0 14px rgba(201,168,106,.35)' }}>《{openPoem.title}》</div>
+                            <div className="text-[18px]" style={{ fontFamily: `'Noto Serif SC',serif`, color: '#ecdcb2', letterSpacing: '.08em', textShadow: '0 0 14px rgba(201,168,106,.35)' }}>《{cleanTitle(openPoem.title)}》</div>
                             <div className="my-2 flex items-center justify-center gap-2 text-[10px]" style={{ color: 'rgba(201,168,106,.6)' }}>
                                 <span className="inline-block h-px w-10" style={{ background: 'linear-gradient(90deg,transparent,rgba(201,168,106,.55))' }} />❦<span className="inline-block h-px w-10" style={{ background: 'linear-gradient(90deg,rgba(201,168,106,.55),transparent)' }} />
                             </div>
