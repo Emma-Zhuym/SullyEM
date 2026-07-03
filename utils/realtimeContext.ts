@@ -6,6 +6,8 @@
 import { safeResponseJson } from './safeApi';
 import { DB } from './db';
 import type { NotionDiaryExtraProperty, NotionExtraDatabase } from '../types';
+import { getProxyWorkerUrl } from './proxyWorker';
+import { nowInTimeZone } from './timezone';
 
 export interface WeatherData {
     temp: number;
@@ -60,6 +62,7 @@ export interface RealtimeConfig {
     xhsMcpConfig?: {
         enabled: boolean;
         serverUrl: string;
+        cookie?: string;        // Lite 模式：登录后的完整小红书 cookie
         loggedInNickname?: string;
         loggedInUserId?: string;
         userXsecToken?: string; // 从 feed 列表自动获取，用于 getUserProfile 等
@@ -83,7 +86,7 @@ export const defaultRealtimeConfig: RealtimeConfig = {
     notionDiaryExtraProperties: [],
     notionExtraDatabases: [],
     xhsEnabled: false,
-    xhsMcpConfig: { enabled: false, serverUrl: 'http://localhost:18060/mcp', loggedInNickname: undefined, loggedInUserId: undefined, userXsecToken: undefined },
+    xhsMcpConfig: { enabled: false, serverUrl: `${getProxyWorkerUrl()}/api`, cookie: undefined, loggedInNickname: undefined, loggedInUserId: undefined, userXsecToken: undefined },
     cacheMinutes: 30
 };
 
@@ -305,7 +308,7 @@ export const RealtimeContextManager = {
     fetchBraveNews: async (apiKey: string): Promise<NewsItem[]> => {
         try {
             // 使用自建的 Cloudflare Worker 代理
-            const workerUrl = 'https://sullymeow.ccwu.cc/news?q=热点新闻&count=5&country=cn';
+            const workerUrl = `${getProxyWorkerUrl()}/news?q=热点新闻&count=5&country=cn`;
 
             const response = await fetch(workerUrl, {
                 headers: {
@@ -411,8 +414,8 @@ export const RealtimeContextManager = {
     /**
      * 获取时间上下文
      */
-    getTimeContext: () => {
-        const now = new Date();
+    getTimeContext: (tz?: string) => {
+        const now = nowInTimeZone(tz);
         const hour = now.getHours();
         const dayNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
         const dayOfWeek = dayNames[now.getDay()];
@@ -516,7 +519,7 @@ export const RealtimeContextManager = {
     /**
      * 构建完整的实时上下文（注入到系统提示词）
      */
-    buildFullContext: async (config: RealtimeConfig): Promise<string> => {
+    buildFullContext: async (config: RealtimeConfig, tz?: string): Promise<string> => {
         const parts: string[] = [];
 
         // 开头强调：这是真实世界的信息
@@ -524,8 +527,9 @@ export const RealtimeContextManager = {
         parts.push(`⚠️ 重要：以下信息来自真实世界，不是虚构的。你现在真的能"看到"外面的世界。`);
         parts.push('');
 
-        // 1. 时间信息（总是包含）
-        const time = RealtimeContextManager.getTimeContext();
+        // 1. 时间信息（总是包含）。tz 非空时按角色所在时区折算。
+        //    时差提示（tzAwarenessNote）统一由 ContextBuilder.buildCoreContext 注入，这里不再追加，避免双份。
+        const time = RealtimeContextManager.getTimeContext(tz);
         parts.push(`📅 当前真实时间: ${time.dateStr} ${time.dayOfWeek} ${time.timeOfDay} ${time.timeStr}`);
 
         // 2. 特殊日期
@@ -626,7 +630,7 @@ export const RealtimeContextManager = {
 
         try {
             // 使用自建的 Cloudflare Worker 代理
-            const workerUrl = `https://sullymeow.ccwu.cc/search?q=${encodeURIComponent(query)}&count=5`;
+            const workerUrl = `${getProxyWorkerUrl()}/search?q=${encodeURIComponent(query)}&count=5`;
 
             const response = await fetch(workerUrl, {
                 method: 'GET',
@@ -824,8 +828,8 @@ export interface DiaryPreview {
 
 export const NotionManager = {
 
-    // Worker 代理地址
-    WORKER_URL: 'https://sullymeow.ccwu.cc',
+    // Worker 代理地址（中心配置，用户可在设置里换成自部署实例）
+    get WORKER_URL() { return getProxyWorkerUrl(); },
 
     /**
      * 测试 Notion 连接（通过 Worker 代理）
@@ -2149,7 +2153,8 @@ function formatFeishuDiaryContent(content: string, mood?: string, characterName?
 
 export const FeishuManager = {
 
-    WORKER_URL: 'https://sullymeow.ccwu.cc',
+    // Worker 代理地址（中心配置，用户可在设置里换成自部署实例）
+    get WORKER_URL() { return getProxyWorkerUrl(); },
 
     /**
      * 获取飞书 tenant_access_token（通过 Worker 代理，带缓存）

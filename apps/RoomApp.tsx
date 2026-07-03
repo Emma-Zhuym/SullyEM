@@ -2,19 +2,41 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { RoomItem, CharacterProfile, RoomTodo, RoomNote, DailySchedule } from '../types';
+import { RoomItem, CharacterProfile, RoomTodo, RoomNote, DailySchedule, AppID } from '../types';
 import ScheduleCard from '../components/schedule/ScheduleCard';
 import { ContextBuilder } from '../utils/context';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { processImage } from '../utils/file';
 import Modal from '../components/os/Modal';
 import { safeResponseJson } from '../utils/safeApi';
-import { Door, Sparkle, Image, GearSix, Camera } from '@phosphor-icons/react';
+import { Door, Sparkle, Image, GearSix, Camera, MoonStars } from '@phosphor-icons/react';
 import { FURNITURE_ICONS } from '../utils/furnitureIcons';
 import PixelHomeView from './pixelHome/PixelHomeView';
+import WorldHomeApp from './WorldHomeApp';
+import DreamTheater from './DreamTheater';
+import { useDreamSim, dreamSimStore } from '../utils/dreamSimStore';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
 const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
+
+/** 拜访小屋卡片的柔色底（按序循环，营造每个房间各有色调的奇幻感）。 */
+const ROOM_CARD_TINTS = [
+    'linear-gradient(180deg,rgba(120,92,170,.42),rgba(34,26,62,.6))',
+    'linear-gradient(180deg,rgba(70,80,135,.42),rgba(26,28,56,.62))',
+    'linear-gradient(180deg,rgba(150,132,192,.4),rgba(52,42,86,.6))',
+    'linear-gradient(180deg,rgba(110,150,200,.4),rgba(34,52,86,.6))',
+    'linear-gradient(180deg,rgba(132,96,176,.42),rgba(46,30,78,.6))',
+    'linear-gradient(180deg,rgba(70,64,92,.46),rgba(24,22,40,.64))',
+];
+/** 浅色（小小窝/家园分区）卡片柔色底——粉/薰衣草/浅蓝渐变。 */
+const ROOM_CARD_TINTS_LIGHT = [
+    'linear-gradient(180deg,rgba(250,212,228,.85),rgba(242,228,246,.8))',
+    'linear-gradient(180deg,rgba(232,228,248,.85),rgba(242,238,250,.8))',
+    'linear-gradient(180deg,rgba(226,216,246,.85),rgba(238,230,249,.8))',
+    'linear-gradient(180deg,rgba(212,230,247,.85),rgba(234,240,250,.8))',
+    'linear-gradient(180deg,rgba(226,212,245,.85),rgba(238,228,249,.8))',
+    'linear-gradient(180deg,rgba(234,231,242,.88),rgba(242,240,247,.82))',
+];
 
 // --- 1. 免版权贴纸素材库 (Sticker Library) ---
 // 使用手绘 SVG 图标替代 Twemoji，更精致的视觉体验
@@ -237,11 +259,14 @@ const renderNotebookContent = (text: string) => {
 };
 
 const RoomApp: React.FC = () => {
-    const { closeApp, characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, addToast, userProfile } = useOS();
-    
+    const { closeApp, openApp, characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, addToast, userProfile } = useOS();
+
     // Core State
     const [viewState, setViewState] = useState<'select' | 'room' | 'pixelHome'>('select');
-    const [homeTab, setHomeTab] = useState<'room' | 'pixelHome'>('room');
+    // 小小窝里的三个独立分区：房间 / 像素家园 / 家园（家园是另一套体系，单独成区）
+    const [homeTab, setHomeTab] = useState<'room' | 'pixelHome' | 'worldHome'>('room');
+    // 家园「正式开始玩」（进世界/编辑）时全屏，隐去顶部三栏
+    const [worldHomeFull, setWorldHomeFull] = useState(false);
     const [mode, setMode] = useState<'view' | 'edit'>('view');
     const [items, setItems] = useState<RoomItem[]>([]);
     
@@ -260,6 +285,7 @@ const RoomApp: React.FC = () => {
     const [showRefreshConfirm, setShowRefreshConfirm] = useState(false);
     const [showDevModal, setShowDevModal] = useState(false); // Developer Mode
     const [showSettingsModal, setShowSettingsModal] = useState(false); // New: Room Settings
+    const [showDream, setShowDream] = useState(false); // 查看梦境 · Dream Theater overlay
     const [lastPrompt, setLastPrompt] = useState<string>(''); // Debug: Store last sent prompt
     
     // Actor & Room State
@@ -409,7 +435,17 @@ const RoomApp: React.FC = () => {
 
             addToast('已恢复今日房间状态', 'info');
         } else {
-            initializeRoomState(c, loadedItems || []);
+            // 不在进门时阻塞生成——直接进屋（否则用户要干等很久才进得来）。
+            // 今天的房间内容交给用户进屋后点「更新这一天」再生成；
+            // 这里只把聊天期间可能已生成的 todo / 随笔 / 日程读出来填上。
+            const existingTodo = await DB.getRoomTodo(c.id, today);
+            const existingNotes = await DB.getRoomNotes(c.id);
+            const existingSchedule = await DB.getDailySchedule(c.id, today);
+            setTodaysTodo(existingTodo);
+            setNotebookEntries(existingNotes.sort((a, b) => b.timestamp - a.timestamp));
+            setRoomSchedule(existingSchedule);
+            setRoomDescriptions({});
+            setAiBubble({ text: '', visible: false });
         }
     };
 
@@ -420,7 +456,26 @@ const RoomApp: React.FC = () => {
         }
     };
 
-// Fallback Initialization: Used when main generation fails due to Safety Block
+    // 「更新这一天」：进屋后由用户主动触发今日房间生成（首次生成无需二次确认）
+    const handleGenerateToday = () => {
+        if (char) initializeRoomState(char, items, true);
+    };
+
+    // 梦境全局指示条深链：点一下 → 直接进入对应角色的房间并打开梦境演出
+    const dreamSim = useDreamSim();
+    const dreamSimCharId = dreamSim.status === 'idle' ? undefined : dreamSim.charId;
+    useEffect(() => {
+        if (!dreamSim.deepLink || !dreamSimCharId) return;
+        const c = characters.find(x => x.id === dreamSimCharId);
+        if (c) {
+            setHomeTab('room');
+            handleEnterRoom(c);   // 设激活角色 + 进房间 + 载入家具（不阻塞生成）
+            setShowDream(true);
+        }
+        dreamSimStore.clearDeepLink();
+    }, [dreamSim.deepLink, dreamSimCharId, characters]);
+
+    // Fallback Initialization: Used when main generation fails due to Safety Block
     const initializeFallback = async (c: CharacterProfile) => {
         try {
             console.warn("Triggering Room Fallback Initialization");
@@ -462,7 +517,7 @@ const RoomApp: React.FC = () => {
                             actorAction: 'idle'
                         }
                     });
-                    addToast("已启动安全模式 (Safety Fallback)", "info");
+                    addToast("这次房间没完全生成好，先用了简化版，可稍后重试。", "info");
                 } catch (e) {
                     throw new Error("Fallback Parse Error");
                 }
@@ -516,12 +571,12 @@ const RoomApp: React.FC = () => {
 
             await injectMemoryPalace(c, recentMsgs);
             const baseContext = ContextBuilder.buildCoreContext(c, userProfile, true); // Keep Full Context
-            
+
             // DEBUG FIX: Sanitize and truncate interactables context to prevent huge Base64 leakage
-            const interactables = currentItems.filter(i => i.isInteractive).map(i => ({ 
-                id: i.id, 
-                name: i.name, 
-                context: (i.descriptionPrompt || '').substring(0, 200) 
+            const interactables = currentItems.filter(i => i.isInteractive).map(i => ({
+                id: i.id,
+                name: i.name,
+                context: (i.descriptionPrompt || '').substring(0, 200)
             }));
 
             let prompt = `${baseContext}
@@ -578,8 +633,8 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
                 body: JSON.stringify({ 
-                    model: apiConfig.model, 
-                    messages: [{ role: "user", content: prompt }], 
+                    model: apiConfig.model,
+                    messages: [{ role: "user", content: prompt }],
                     temperature: 0.5, // Lower temp for stability
                     max_tokens: 8000,
                     // Safety Settings injection for Gemini-based proxies
@@ -1054,61 +1109,140 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
 
     // SELECT SCREEN
     if (viewState === 'select') {
+        // 像素家园=深色，小小窝/家园=浅色（参考稿）
+        const dark = homeTab === 'pixelHome';
+        const th = dark ? {
+            pageBg: 'linear-gradient(180deg,#0c1024 0%,#141031 45%,#1a1330 100%)',
+            stars: 'radial-gradient(1px 1px at 12% 18%,rgba(255,255,255,.5),transparent),radial-gradient(1px 1px at 78% 12%,rgba(255,230,180,.5),transparent),radial-gradient(1.5px 1.5px at 40% 30%,rgba(207,226,255,.4),transparent),radial-gradient(1px 1px at 88% 40%,rgba(255,255,255,.4),transparent),radial-gradient(1px 1px at 24% 64%,rgba(255,255,255,.35),transparent),radial-gradient(1px 1px at 64% 78%,rgba(255,230,180,.35),transparent)',
+            back: 'text-amber-100/70 hover:text-amber-100',
+            title: '#fdf6ee', titleShadow: 'rgba(180,160,255,.45)',
+            line: 'rgba(212,185,120,.55)', sub: 'text-amber-200/70',
+            tabWrapBg: 'rgba(255,255,255,.04)', tabWrapBorder: 'rgba(212,185,120,.25)',
+            tabActive: { background: 'linear-gradient(180deg,rgba(124,92,180,.5),rgba(80,60,140,.35))', color: '#f4ecff', border: '1px solid rgba(190,160,255,.4)', boxShadow: '0 0 18px rgba(150,110,220,.4)' } as React.CSSProperties,
+            tabIdle: 'rgba(220,215,240,.55)', diamond: '#b89cff',
+            desc: 'text-amber-100/45', empty: 'text-amber-100/40',
+            tints: ROOM_CARD_TINTS, cardBorder: 'rgba(212,185,120,.28)', cardShadow: '0 10px 26px rgba(0,0,0,.4)',
+            inner: 'rgba(212,185,120,.22)', gem: 'rgba(226,200,130,.7)',
+            tick: 'rgba(212,185,120,.16)', halo: 'rgba(190,160,235,.22)', ring1: 'rgba(212,185,120,.4)', ring2: 'rgba(212,185,120,.18)', avGlow: 'rgba(160,130,225,.5)',
+            badgeBg: 'rgba(246,241,231,.95)', badgeIcon: 'text-amber-700', badgeShadow: '0 1px 5px rgba(0,0,0,.45)',
+            name: 'text-amber-50', cardSub: 'text-amber-100/45', footer: 'text-amber-200/35', dot: 'text-amber-200/20',
+        } : {
+            pageBg: 'linear-gradient(180deg,#efe9f7 0%,#f4eff9 45%,#f7f2fb 100%)',
+            stars: 'radial-gradient(1.5px 1.5px at 14% 16%,rgba(190,160,225,.45),transparent),radial-gradient(1px 1px at 80% 12%,rgba(220,190,235,.5),transparent),radial-gradient(1.5px 1.5px at 42% 28%,rgba(180,200,240,.4),transparent),radial-gradient(1px 1px at 86% 42%,rgba(200,175,230,.4),transparent),radial-gradient(1px 1px at 22% 66%,rgba(210,185,235,.35),transparent),radial-gradient(1px 1px at 66% 80%,rgba(200,210,240,.35),transparent)',
+            back: 'text-purple-300 hover:text-purple-500',
+            title: '#6a5790', titleShadow: 'rgba(170,150,220,.4)',
+            line: 'rgba(150,120,190,.5)', sub: 'text-purple-400/70',
+            tabWrapBg: 'rgba(255,255,255,.55)', tabWrapBorder: 'rgba(160,130,200,.22)',
+            tabActive: { background: 'linear-gradient(180deg,#ffffff,#f0e9fa)', color: '#5b4b7a', border: '1px solid rgba(170,140,210,.5)', boxShadow: '0 2px 12px rgba(160,120,210,.25)' } as React.CSSProperties,
+            tabIdle: 'rgba(110,90,140,.6)', diamond: '#a78bd6',
+            desc: 'text-purple-400/70', empty: 'text-purple-300/70',
+            tints: ROOM_CARD_TINTS_LIGHT, cardBorder: 'rgba(170,140,210,.3)', cardShadow: '0 8px 22px rgba(150,120,200,.18)',
+            inner: 'rgba(170,140,210,.22)', gem: 'rgba(190,160,220,.85)',
+            tick: 'rgba(170,140,210,.16)', halo: 'rgba(200,175,235,.3)', ring1: 'rgba(180,150,215,.5)', ring2: 'rgba(180,150,215,.25)', avGlow: 'rgba(190,160,235,.4)',
+            badgeBg: '#ffffff', badgeIcon: 'text-purple-500', badgeShadow: '0 1px 5px rgba(120,90,170,.3)',
+            name: 'text-purple-900', cardSub: 'text-purple-400/70', footer: 'text-purple-300/70', dot: 'text-purple-300/40',
+        };
         return (
-            <div className="h-full w-full bg-slate-50 flex flex-col font-light">
-                <div className="pt-12 pb-3 px-6 bg-white sticky top-0 z-20 shrink-0">
-                    <div className="flex items-center justify-between h-12">
-                        <button onClick={closeApp} className="p-2 -ml-2 rounded-full hover:bg-slate-100 active:scale-90 transition-transform">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6 text-slate-600"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
-                        </button>
-                        <span className="font-bold text-slate-700 text-lg tracking-wide">
-                            {homeTab === 'room' ? '拜访谁的房间?' : '谁的像素家园?'}
-                        </span>
-                        <div className="w-8"></div>
-                    </div>
-                    {/* Tab 切换 */}
-                    <div className="flex gap-1 mt-2 bg-slate-100 rounded-xl p-1">
-                        <button
-                            onClick={() => setHomeTab('room')}
-                            className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
-                                homeTab === 'room' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400'
-                            }`}
-                        >
-                            🏠 小小窝
-                        </button>
-                        <button
-                            onClick={() => setHomeTab('pixelHome')}
-                            className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
-                                homeTab === 'pixelHome' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400'
-                            }`}
-                        >
-                            🎮 像素家园
-                        </button>
-                    </div>
-                </div>
-               <div className="p-6 grid grid-cols-2 gap-4 overflow-y-auto pb-20 no-scrollbar">
-    {characters.map(c => (
-        <div key={c.id} onClick={() => {
-            if (homeTab === 'pixelHome') {
-                setActiveCharacterId(c.id);
-                setViewState('pixelHome');
-            } else {
-                handleEnterRoom(c);
-            }
-        }} className="min-h-[180px] bg-white rounded-2xl shadow-sm border border-slate-100 p-4 flex flex-col items-center justify-center gap-3 cursor-pointer active:scale-95 transition-all relative overflow-hidden group hover:shadow-md">
-                            <div className="w-20 h-20 rounded-full p-1 border-2 border-slate-100 relative">
-                                <img src={c.avatar} className="w-full h-full rounded-full object-cover" />
-                                <div className="absolute bottom-0 right-0 w-6 h-6 bg-green-400 rounded-full border-2 border-white flex items-center justify-center">
-                                    {homeTab === 'pixelHome'
-                                        ? <span className="text-[10px]">🎮</span>
-                                        : <img src={twemojiUrl('1f3e0')} alt="home" className="w-3 h-3" />
-                                    }
-                                </div>
-                            </div>
-                            <span className="font-bold text-slate-700 text-sm">{c.name}</span>
+            <div className="h-full w-full flex flex-col font-light relative overflow-hidden" style={{ background: th.pageBg }}>
+                {/* 星点氛围 */}
+                <div className="absolute inset-0 pointer-events-none opacity-70" style={{ backgroundImage: th.stars }} />
+
+                {/* 顶部：标题 + Tab（家园正式开始玩——进世界/编辑——时整块隐去，全屏沉浸） */}
+                <div className={`relative z-10 px-6 shrink-0 ${homeTab === 'worldHome' && worldHomeFull ? 'hidden' : ''}`} style={{ paddingTop: 'max(3rem, var(--safe-top))' }}>
+                    <button onClick={closeApp} className={`absolute left-4 p-2 rounded-full active:scale-90 transition-all ${th.back}`} style={{ top: 'max(3rem, var(--safe-top))' }}>
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
+                    </button>
+                    <div className="text-center">
+                        <h1 className="text-[26px] tracking-[0.15em]" style={{ fontFamily: `'Noto Serif SC',serif`, color: th.title, textShadow: `0 2px 18px ${th.titleShadow}` }}>拜访谁的房间？</h1>
+                        <div className="flex items-center justify-center gap-2 mt-1.5">
+                            <span className="h-px w-10" style={{ background: `linear-gradient(90deg,transparent,${th.line})` }} />
+                            <span className={`text-[9px] tracking-[0.45em] font-bold ${th.sub}`}>✦ VISIT ROOM ✦</span>
+                            <span className="h-px w-10" style={{ background: `linear-gradient(270deg,transparent,${th.line})` }} />
                         </div>
-                    ))}
+                    </div>
+
+                    {/* Tab 栏：三个分区都在这一页内切换，不跳走 */}
+                    <div className="mt-5 rounded-2xl p-1.5 flex gap-1" style={{ background: th.tabWrapBg, border: `1px solid ${th.tabWrapBorder}`, boxShadow: 'inset 0 1px 0 rgba(255,255,255,.06)' }}>
+                        {([
+                            { id: 'room', label: '🏠 小小窝' },
+                            { id: 'worldHome', label: '🌍 家园' },
+                            { id: 'pixelHome', label: '🎮 像素家园' },
+                        ] as const).map(tab => {
+                            const active = homeTab === tab.id;
+                            return (
+                                <button key={tab.id}
+                                    onClick={() => setHomeTab(tab.id)}
+                                    className="relative flex-1 py-2.5 rounded-xl text-[12px] font-bold tracking-wide transition-all"
+                                    style={active ? th.tabActive : { color: th.tabIdle }}>
+                                    {tab.label}
+                                    {active && <span className="absolute -bottom-[7px] left-1/2 -translate-x-1/2 w-2 h-2 rotate-45" style={{ background: th.diamond, boxShadow: `0 0 8px ${th.diamond}` }} />}
+                                </button>
+                            );
+                        })}
+                    </div>
                 </div>
+
+                {homeTab === 'worldHome' ? (
+                    /* 家园分区：直接内嵌大世界本体，保持顶部三栏（不再跳走/不再多一层封面） */
+                    <div className={`relative z-10 flex-1 min-h-0 overflow-hidden ${worldHomeFull ? '' : 'mt-3'}`}>
+                        <WorldHomeApp embedded onFullscreen={setWorldHomeFull} />
+                    </div>
+                ) : (
+                    <>
+                        {/* 描述 */}
+                        <p className={`relative z-10 text-center text-[11px] mt-4 px-8 leading-relaxed ${th.desc}`}>
+                            {homeTab === 'pixelHome' ? '像素风的家——自由装修、布置房间、潜入记忆。' : '走进谁的房间，看看 ta 此刻在做什么、翻翻屋里的小物件。'}
+                        </p>
+
+                        {/* 角色网格 */}
+                        <div className="relative z-10 flex-1 overflow-y-auto no-scrollbar px-5 pt-4 pb-4">
+                            {characters.length === 0 ? (
+                                <div className={`text-center text-[12px] py-16 ${th.empty}`}>还没有角色，先去「神经链接」创建一个吧。</div>
+                            ) : (
+                                <div className="grid grid-cols-2 gap-4">
+                                    {characters.map((c, i) => {
+                                        const pixel = homeTab === 'pixelHome';
+                                        const tint = th.tints[i % th.tints.length];
+                                        return (
+                                            <button key={c.id} onClick={() => { if (pixel) { setActiveCharacterId(c.id); setViewState('pixelHome'); } else handleEnterRoom(c); }}
+                                                className="group relative rounded-2xl px-3 pt-8 pb-5 flex flex-col items-center active:scale-95 transition-all overflow-hidden"
+                                                style={{ background: tint, border: `1px solid ${th.cardBorder}`, boxShadow: th.cardShadow }}>
+                                                {/* 内描金细框 + 四角宝石 */}
+                                                <div className="absolute inset-[7px] rounded-xl pointer-events-none" style={{ border: `1px solid ${th.inner}` }} />
+                                                <span className="absolute top-[10px] left-[10px] w-1.5 h-1.5 rotate-45" style={{ background: th.gem }} />
+                                                <span className="absolute top-[10px] right-[10px] w-1.5 h-1.5 rotate-45" style={{ background: th.gem }} />
+                                                <span className="absolute bottom-[10px] left-[10px] w-1.5 h-1.5 rotate-45" style={{ background: th.gem }} />
+                                                <span className="absolute bottom-[10px] right-[10px] w-1.5 h-1.5 rotate-45" style={{ background: th.gem }} />
+                                                {/* 头像 + 罗盘纹 + 双层环 */}
+                                                <div className="relative w-[92px] h-[92px] flex items-center justify-center">
+                                                    <div className="absolute w-[124px] h-[124px] rounded-full" style={{ background: `repeating-conic-gradient(from 0deg, ${th.tick} 0deg 2.4deg, transparent 2.4deg 9deg)`, WebkitMaskImage: 'radial-gradient(circle, transparent 40%, #000 44%, #000 50%, transparent 55%)', maskImage: 'radial-gradient(circle, transparent 40%, #000 44%, #000 50%, transparent 55%)' }} />
+                                                    <div className="absolute w-[110px] h-[110px] rounded-full" style={{ background: `radial-gradient(circle, ${th.halo}, transparent 62%)` }} />
+                                                    <div className="absolute inset-[8px] rounded-full" style={{ border: `1px solid ${th.ring1}` }} />
+                                                    <div className="absolute inset-[12px] rounded-full" style={{ border: `1px solid ${th.ring2}` }} />
+                                                    <div className="w-[70px] h-[70px] rounded-full overflow-hidden" style={{ boxShadow: `0 0 18px ${th.avGlow}` }}>
+                                                        <img src={c.avatar} className="w-full h-full object-cover" alt={c.name} />
+                                                    </div>
+                                                    <div className="absolute bottom-0 right-1.5 w-[22px] h-[22px] rounded-full flex items-center justify-center" style={{ background: th.badgeBg, boxShadow: th.badgeShadow }}>
+                                                        {pixel ? <span className="text-[10px]">🎮</span> : (
+                                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className={`w-3.5 h-3.5 ${th.badgeIcon}`}><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75" /></svg>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                <span className={`mt-3 text-[14px] font-semibold tracking-wide ${th.name}`} style={{ fontFamily: `'Noto Serif SC',serif` }}>{c.name}</span>
+                                                <span className={`mt-0.5 text-[10px] ${th.cardSub}`}>{pixel ? '进 ta 的像素家园' : '拜访 ta 的房间'}</span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* 底部装饰 */}
+                        <div className={`relative z-10 shrink-0 pb-4 flex items-center justify-center gap-2.5 text-[8.5px] tracking-[0.35em] font-bold ${th.footer}`}>
+                            <span>EXPLORE</span><span className={th.dot}>◆</span><span>CONNECT</span><span className={th.dot}>◆</span><span>DISCOVER</span>
+                        </div>
+                    </>
+                )}
             </div>
         );
     }
@@ -1149,13 +1283,22 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
     // Sully Check
     const isSully = char?.id === 'preset-sully-v2' || char?.name === 'Sully';
 
+    // 今天的房间是否已生成（lastRoomDate 命中今日即视为已生成）——决定是否提示「更新这一天」
+    const todayGenerated = !!char && char.lastRoomDate === getVirtualDay();
+
     return (
         <div className="h-full w-full bg-[#f8fafc] flex flex-col relative overflow-hidden font-sans select-none">
-            
+
+            {/* 「更新这一天」时一趟把整个房间生成出来（按次计费，所以一趟读完，之后逛屋不再等待）。
+                慢是必然的，这里用小字向用户解释清楚为什么。进门本身不再触发它。 */}
             {isInitializing && (
-                <div className="absolute inset-0 z-[500] bg-white flex flex-col items-center justify-center animate-fade-in">
-<div className="text-4xl mb-4 animate-bounce"><Door size={48} className="text-slate-400" /></div>
+                <div className="absolute inset-0 z-[500] bg-white flex flex-col items-center justify-center animate-fade-in px-10 text-center">
+                    <div className="text-4xl mb-4 animate-bounce"><Door size={48} className="text-slate-400" /></div>
                     <p className="text-sm font-bold text-slate-500">{initStatusText}</p>
+                    <p className="text-[11px] text-slate-400/90 leading-[1.7] mt-3 max-w-[268px]">
+                        正在一趟把整个房间「读」出来——ta 此刻的状态、屋里<b className="text-slate-500">每一件物品</b>的样子和 ta 的反应、今天的计划与随笔，都在这一次里生成。
+                        <br />物件越多越久，但只生成这一次，生成后就能一口气全看完，之后点哪件都不再等待。
+                    </p>
                 </div>
             )}
 
@@ -1197,13 +1340,26 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                 </div>
             </div>
 
+            {/* 查看梦境入口 · 左中边缘的「月亮」按钮（只在浏览模式露出，与右侧「生活碎片」对称） */}
+            {mode === 'view' && (
+                <button onClick={() => setShowDream(true)} title="查看梦境"
+                    className="absolute left-0 top-1/2 -translate-y-1/2 flex flex-col items-center gap-1 px-2.5 py-3 rounded-r-2xl shadow-lg border border-l-0 z-[300] active:scale-95 transition-transform"
+                    style={{ background: 'linear-gradient(135deg, #2a2440, #1a1730)', borderColor: 'rgba(205,214,255,0.25)' }}>
+                    <MoonStars size={20} weight="fill" style={{ color: '#cdd6ff' }} />
+                    <span className="text-[8px] font-bold tracking-wider text-[#cdd6ff]/80 [writing-mode:vertical-rl]">梦境</span>
+                </button>
+            )}
+
+            {/* 梦境演出 · 全屏覆盖（角色不记得梦，但用户偷看到了） */}
+            {showDream && char && <DreamTheater char={char} onExit={() => setShowDream(false)} />}
+
             {/* Sidebar Toggle Button */}
             <button onClick={() => setShowSidebar(true)} className={`absolute right-0 top-1/2 -translate-y-1/2 bg-white/90 p-3 rounded-l-2xl shadow-lg border border-r-0 border-slate-200 transition-transform duration-300 z-[300] ${showSidebar ? 'translate-x-full' : 'translate-x-0'}`}>
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 text-slate-500"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
             </button>
             {showSidebar && <div className="absolute inset-0 z-[290] bg-black/20" onClick={() => setShowSidebar(false)}></div>}
             <div className={`absolute right-0 top-0 bottom-0 w-3/4 max-w-sm bg-white shadow-2xl z-[300] transition-transform duration-300 ease-out flex flex-col ${showSidebar ? 'translate-x-0' : 'translate-x-full'}`}>
-                <div className="p-6 pb-2 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                <div className="p-6 pb-2 border-b border-slate-100 flex justify-between items-center bg-slate-50" style={{ paddingTop: 'max(1.5rem, var(--safe-top))' }}>
                     <h3 className="text-lg font-bold text-slate-700 tracking-tight">生活碎片</h3>
                     <button onClick={() => setShowSidebar(false)} className="p-2 -mr-2 text-slate-400 hover:text-slate-600"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg></button>
                 </div>
@@ -1269,11 +1425,11 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
             </div>
 
             {/* UI Overlay */}
-            <div className="absolute top-0 w-full pt-12 px-4 pb-2 flex justify-between z-30 pointer-events-none">
+            <div className="absolute top-0 w-full px-4 pb-2 flex justify-between z-30 pointer-events-none" style={{ paddingTop: 'max(3rem, var(--safe-top))' }}>
                 <button onClick={() => setViewState('select')} className="bg-white/90 p-2 rounded-full shadow-md pointer-events-auto active:scale-90 transition-transform text-slate-600"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg></button>
                 <div className="flex gap-2 pointer-events-auto">
-                    {/* REFRESH BUTTON */}
-                    {mode === 'view' && (
+                    {/* REFRESH BUTTON — 仅在今天已生成时露出（未生成时走下方「更新这一天」横幅） */}
+                    {mode === 'view' && todayGenerated && (
                         <button onClick={() => setShowRefreshConfirm(true)} className="p-2 bg-white/90 rounded-full shadow-md text-slate-500 hover:text-primary active:scale-90 transition-transform" title="强制刷新今日">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
                         </button>
@@ -1284,6 +1440,22 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
 
             {/* Observation Card (Bottom) */}
             {observationText && mode === 'view' && <div className="absolute bottom-6 left-4 right-4 bg-white p-5 rounded-2xl shadow-2xl border border-slate-100 z-[150] animate-slide-up"><div className="flex justify-between items-start mb-2"><span className="text-xs font-bold text-blue-500 uppercase tracking-widest">OBSERVATION</span><button onClick={() => setObservationText('')} className="text-slate-400 hover:text-slate-600">×</button></div><p className="text-sm text-slate-700 leading-relaxed font-medium text-justify">{observationText}</p></div>}
+
+            {/* 「更新这一天」横幅 —— 今天尚未生成时露出（进门不再阻塞，由用户主动触发） */}
+            {mode === 'view' && !todayGenerated && !isInitializing && !observationText && (
+                <div className="absolute bottom-6 left-4 right-4 bg-white p-4 rounded-2xl shadow-2xl border border-slate-100 z-[150] animate-slide-up flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-primary-light flex items-center justify-center shrink-0">
+                        <Door size={22} className="text-primary" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-slate-700 leading-tight">今天还没走进 {char?.name} 的一天</p>
+                        <p className="text-[11px] text-slate-400 leading-snug mt-0.5">物品反应、今日计划与随笔会在这一次里生成，需要一点时间。</p>
+                    </div>
+                    <button onClick={handleGenerateToday} className="shrink-0 px-4 py-2.5 rounded-xl bg-primary text-white text-xs font-bold shadow-md active:scale-95 transition-transform">
+                        更新这一天
+                    </button>
+                </div>
+            )}
 
             {/* Edit Mode Toolbar - Collapsible */}
             {mode === 'edit' && (
@@ -1435,7 +1607,7 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                         </div>
                     </div>
                     <div>
-                        <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">物品描述 (Context)</label>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">物品描述</label>
                         <input value={customItemDescription} onChange={e => setCustomItemDescription(e.target.value)} placeholder="例如: 一个很软的沙发，坐上去就陷进去了。" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-purple-500" />
                         <p className="text-[9px] text-slate-400 mt-1">这段描述会告诉 AI 这是什么，以及如何互动。</p>
                     </div>

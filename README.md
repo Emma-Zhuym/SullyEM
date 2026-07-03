@@ -252,15 +252,96 @@ A: 就是我也不知道什么意思。系统正在哈我。
 
 所有数据都是 **local-first**，没有后端服务器这个概念（除了那个可选的云端备份）。
 
+### 右下角的 build badge 怎么关
+
+跑非 `main` / `master` 分支时，右下角会堆三行小字标记构建版本：
+
+```
+sw@<service-worker 版本>
+<分支>@<commit hash>
+开发中内容，不代表最终效果
+```
+
+这玩意叫 `BuildBadge`（`components/BuildBadge.tsx`），用来一眼区分线上版和 fork / 开发版，免得拿半成品截图当正式版到处发。可见性在 **构建时** 决定：
+
+| 情况 | 显示？ |
+|------|--------|
+| 在 `main` / `master` 上构建 | ❌ 默认隐藏（视为正式发布）|
+| 其他分支上构建 | ✅ 默认显示 |
+| `VITE_HIDE_BUILD_BADGE=1` | ❌ 强制隐藏（覆盖默认）|
+| `VITE_SHOW_BUILD_BADGE=1` | ✅ 强制显示（在 release 分支本地调试用）|
+
+CI detached HEAD 状态会按 `GITHUB_REF_NAME` → `VERCEL_GIT_COMMIT_REF` → `CF_PAGES_BRANCH` 顺序识别分支，所以 Vercel / Cloudflare Pages / GitHub Actions 部署 release 分支会自动隐藏，不用手动配。
+
+**注意**：这是 Vite `define` 注入的**编译时常量**，不是运行时 env——`npm run build` 之后再设环境变量没用，esbuild 那时候已经把 `__BUILD_BADGE_VISIBLE__` 直接干成 `true` / `false` 常量、把整个组件树摇掉了。要在构建命令前面加：
+
+```bash
+VITE_HIDE_BUILD_BADGE=1 npm run build
+```
+
+或者在 Vercel / Cloudflare Pages 的环境变量面板挂一条 `VITE_HIDE_BUILD_BADGE=1`，省得每次记。
+
+> 叮叮叮！把 badge 藏了不会让你的 fork 变正式版本，但截图会干净点。
+
+### 开发调试面板（DevDebugPanel）
+
+非 release 分支构建时（即 `__BUILD_BADGE_VISIBLE__` 为 `true`），右下角除了 build badge 还会多一颗小扳手浮球。点开就是 **DevDebugPanel**——一个可拖拽的调试面板，专治"角色怎么又不说话了"综合症。
+
+面板里有两类开关——**行为开关**（改变跑的逻辑）和**分类捕获**（勾哪类抓哪类日志）：
+
+| 开关 | 类型 | 干嘛的 |
+|------|------|--------|
+| **Skip Prompt Build** | 行为 | 跳过 `ContextBuilder` 的整套 prompt 组装，直接把你的裸消息怼给 LLM。用来避免它被人设束缚、不配合你输出你想要的调试内容 |
+| **Skip Emotion Eval** | 行为 | 跳过消息落库后的情绪评估管线（Russell 空间那套）。不需要调试情绪的时候可以打开（不配置日程也行）。 |
+| **记录 LLM 日志** | 捕获 | 勾上就录制所有 LLM 请求/响应（含 Instant Push 通道）。密钥字段自动 `<redacted>` 不用手动打码。以后想抓别的（MCP 调用之类）就再加一个捕获类，互不串桶 |
+
+捕获日志同时写 `localStorage` 和内存，各类混存、全局最多保留 100 条 / 1 MB（先到先淘汰）。为了省空间 / 隐私，**长文本默认写入时就折叠成前 10 字 + `...`**（那堆 system prompt 和聊天历史不会塞满 localStorage）；真要看完整请求体，打开「记录完整内容」开关再复现一次。录完可以**一键复制成 JSON** 或**下载成文件**丢给别人 debug，导出会自动带上当前分支和 commit hash，方便定位"到底是哪个版本炸的"。
+
+**注意**：跟 build badge 一样，这整套调试 UI 走的是 Vite `define` 编译时注入。在 `main` / `master` 上 `npm run build` 出来的产物里，`DevDebugPanel` 组件连同相关代码会被 esbuild 整棵树摇掉，不会出现在生产包里。换句话说——**用户永远看不到这个扳手，除非你故意在 release 分支 `VITE_SHOW_BUILD_BADGE=1`**。
+
+> 想加新开关 / 加 debug-only 日志？照着 [`docs/dev-debug.md`](./docs/dev-debug.md) 抄就行，里面有逐步指南和容易踩的坑。
+
+> 叮叮叮！调试面板不会让你的 Bug 自动修好，但至少能让你知道 Bug 在哪。大概。
+
 ### Instant Push 走独立 Worker
 
-Instant Push 是基于 `@rei-standard/amsg-instant 0.2.0` 的 LLM-driven Web Push 通道
+Instant Push 是基于 `@rei-standard/amsg-instant 0.8` 的 LLM-driven Web Push 通道
 （跟上面 sfworker 里的 push 加速器是两套独立链路）。每个 fork 用户自己部署一个
 Cloudflare Worker，跟仓库作者的 sully-n / 备份 Worker 完全无关。零数据库、零 cron、
 明文协议（HTTPS 已加密传输；攻击者拿到 Worker URL 也榨不出东西）。
 
 部署流程见 `worker/instant-push/README.md`，或打开 SullyOS Settings →
 Instant Push → 配置。
+
+#### Phase 2 Round 2 起：worker 端 agentic loop + reasoning + 副作用 directive
+
+Phase 2 Round 2 起 push 路径跟本地 fetch 路径**功能对齐**，不再降级：
+
+- **Agentic loop**：worker hook 看到 LLM 输出里的数据型标签（`[[RECALL/SEARCH/READ_DIARY/
+  FS_READ_DIARY/READ_NOTE/XHS_SEARCH/BROWSE/MY_PROFILE/DETAIL]]`）就走 `decision: 'tool-request'`，
+  推一条 `messageKind: tool_request` 给客户端。`utils/instantToolRunner.ts` 接到后用
+  `agenticTools.dispatchAgenticTool` 跑本地 MCP/DB/缓存，结果 OpenAI-shape POST 到
+  worker `/continue`，由它继续下一轮 LLM。一次推送最多 10 轮（`maxLoopIterations: 10`）。
+- **Reasoning chain**：worker 端 amsg-instant 0.8 在带 `reasoning_content` 的 LLM 响应上
+  自动 emit 一条独立 `ReasoningPush`。SW (sw-keep-alive 1.5.0+) 写到 `reasoning_buffer`
+  IndexedDB store，客户端处理同 sessionId 的第一条 content 时 atomic-claim，挂到
+  `Message.metadata.thinkingChain`（跟本地 fetch 路径一致的卡片渲染）。
+- **副作用 directive**：worker 端识别 `[[ACTION:POKE/TRANSFER/ADD_EVENT]]`、`[schedule_message...]`、
+  `[[MUSIC_ACTION:...]]`、`[[XHS_LIKE/FAV/COMMENT/REPLY/POST/SHARE:...]]`，**不执行**，把指令塞进
+  `ContentPush.metadata.directives`。客户端 `applyAssistantPostProcessing` 反向重建原 tag 字符串
+  喂给 `chatParser.parseAndExecuteActions` + 内联 XHS handler，**复用本地 fetch 路径的执行代码**
+  （单源真理）。当前 MUSIC_ACTION 在 push 路径仍降级（需要 musicHooks，跨 React 边界），下一版补。
+- **Memory Palace + 情绪评估**：`utils/activeMsgRuntime.ts:runPushTailPipeline` 在 push 路径
+  落库后跑跟 `useChatAI.ts:finally` 一致的尾段（`processNewMessages` + `evaluateEmotionBackground`）。
+  失败 fire-and-forget 不阻塞主链路。
+- **可选 D1 BlobStore**：agentic loop + reasoning 场景下 push payload p99 容易超 2.6 KB 安全线。
+  部署时给 worker 加 `DB` binding 即启用（见 `worker/instant-push/schema.sql` + `wrangler.toml`
+  的 `[[d1_databases]]` 注释块）；不配也能跑，小 payload 链路不受影响。
+- **离线兜底**：SW 收到 tool_request push 但当前 window 不 visible → `showNotification` 等
+  用户点开应用；启动时 `ActiveMsgRuntime.init` 排空 `pending_tool_calls` store 自动续跑
+  （iOS PWA swipe-kill 场景也兜得住）。
+
+详细决策映射 + 验证矩阵看 `~/.claude/plans/instant-push-agentic-loop-phase2.md` §四 / §六。
 
 ### ⚠️ 后端有几处接了我的 sfworker，二改请换成自己的
 
@@ -284,15 +365,24 @@ Instant Push → 配置。
 **主动消息 2.0**  
 对接了 TO 佬的 [ReiStandard](https://github.com/Tosd0/ReiStandard/) 协议，让角色能主动发消息烦你。
 
+**Instant 消息**  
+Instant Push（发完消息就能锁屏走人、角色回复好了自己以推送的形式回到你手机上）同样出自 **TO 佬**之手。而且 TO 现在还在持续帮忙做**社区维护**、跟进修一些**小 Bug**——热心又靠谱，项目能稳稳往前走，多亏有他。再次感谢 TO 佬。
+
 **小红书 Skill**  
 对接了 [xiaohongshu-skills](https://github.com/autoclaw-cc/xiaohongshu-skills)，让角色能真·发小红书。  
 本地部署教程看这里：[真实小红书本地部署指南](https://www.kdocs.cn/l/chctbSTPfm4L)
+
+**小红书 Lite**  
+对接了 [Spider_XHS](https://github.com/cv-cat/Spider_XHS)（by cv-cat），小红书 Lite 模式靠它实现，让角色不用折腾复杂的本地部署也能刷小红书。
 
 **音乐**  
 对接了 [NeteaseCloudMusicApi Enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced)，让你能在系统里搜歌、听歌、看歌词。自备网易云会员 Cookie 即可解锁 VIP 音质。原项目 [Binaryify/NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) 被迫归档后，Enhanced 版本一直在跟进网易云的协议变化，感谢维护者们的坚持。
 
 **热点**  
 对接了 [hot_news](https://github.com/orz-ai/hot_news)（by orz-ai，MIT License），提供微博、知乎、百度、B站、抖音等多平台中文热榜 API。角色聊天时能"刷到"真实热点当背景认知，分时段缓存，偶尔还会发张新闻卡片找你唠两句。
+
+**动森主题（外观 · 动森风格）**  
+桌面「动森风格」皮肤的视觉语言参考了 [animal-island-ui](https://github.com/guokaigdg/animal-island-ui)（by guokaigdg，MIT License）——一套受《集合啦！动物森友会》启发的 React 组件库。我们沿用了它的设计 token（大地棕文字、薄荷青绿、奶油米白背景）、NookPhone 应用色板、Time 时钟组件配色等，自绘了同风格的图标与界面。仅借鉴设计语言，未使用任天堂的任何商标或角色形象。
 
 ---
 

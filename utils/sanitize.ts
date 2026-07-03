@@ -15,6 +15,8 @@
  *  - notification 专用 / Step 9-相关规则: utils/applyAssistantPostProcessing.ts:normalizeAiContent
  */
 
+import { segmentTextWithProtectedBlocks } from '@rei-standard/amsg-instant';
+
 // ─── 底层 helper (共享, 无歧义清理) ─────────────────────────────────────────
 
 /** `\\n` 字面 → 真实换行. 必须先跑, 否则后续 ^ 行锚定失效. */
@@ -60,12 +62,15 @@ const stripBusinessTagsForNotification = (t: string): string =>
     .replace(/\[\[(?:READ_NOTE|XHS_[A-Z_]+)[:\s][\s\S]*?\]\]/g, '')
     .replace(/\[\[XHS_[A-Z_]+\]\]/g, '');
 
-/** 引用类: `[[QUOTE|引用]] / [QUOTE|引用] / [回复 "..."]` */
+/** 引用类: `[[QUOTE|引用]] / [QUOTE|引用] / [回复 "..."] / 模仿历史渲染的 [xx引用了xx「…」…]` */
 const stripQuotes = (t: string): string =>
   t
     .replace(/\[\[(?:QU[OA]TE|引用)[：:][\s\S]*?\]\]/g, '')
     .replace(/\[(?:QU[OA]TE|引用)[：:][^\]]*\]/g, '')
-    .replace(/\[回复\s*[""“][^""”]*?[""”](?:\.{0,3})\]\s*[：:]?\s*/g, '');
+    .replace(/\[回复\s*[""“][^""”]*?[""”](?:\.{0,3})\]\s*[：:]?\s*/g, '')
+    // buildMessageHistory 把引用渲染成 [xx引用了xx说的「…」，并回复了 ↓]，模型会学这个格式输出。
+    // 解析端 (applyAssistantPostProcessing QUOTE_RE_NL) 已把它认作引用，这里保证残留不漏进气泡/通知。
+    .replace(/\[[^\[\]\n「」]{0,24}引用了[^\[\]\n「」]{0,24}「[^」\n]*?」[^\[\]\n]{0,24}\]\s*/g, '');
 
 /** markdown 标题 `# heading` → `heading` (保留文字) */
 const stripMarkdownHeaders = (t: string): string => t.replace(/^#{1,6}\s+/gm, '');
@@ -116,6 +121,17 @@ const replaceEmojiReverseTag = (t: string): string =>
 /** `[html]...[/html]` → `[HTML 卡片]` */
 const replaceHtmlBlocks = (t: string): string =>
   t.replace(/\[html\][\s\S]*?\[\/html\]/gi, '[HTML 卡片]');
+
+/** `<翻译>...</翻译>` → `<原文>` 内容 (banner 用; segment 路径里有专门 sentinel 保护跳过这条) */
+const replaceTranslationForBanner = (t: string): string =>
+  t
+    .replace(/<翻译>\s*<原文>([\s\S]*?)<\/原文>\s*<译文>[\s\S]*?<\/译文>\s*<\/翻译>/g, '$1')
+    .replace(/<译文>[\s\S]*?<\/译文>/g, '')
+    .replace(/<\/?(?:翻译|原文)>/g, '');
+
+/** `<语音>...</语音>` → 内部文字 (banner 用; segment 路径里有 sentinel 保护跳过这条) */
+const replaceVoiceForBanner = (t: string): string =>
+  t.replace(/<(语音|語音)[^>]*>([\s\S]*?)<\/\1>/g, (_m, _tag, inner) => (inner || '').trim());
 
 /**
  * 翻译块只保留原文.
@@ -222,35 +238,51 @@ export function sanitizeForBubble(
   return result;
 }
 
-// ─── Segments API (amsg-instant 0.8.0-next.4+ pushPayloads) ────────────────
+// ─── Segments API (amsg-instant 0.8+ pushPayloads) ─────────────────────────
 
 /**
  * 一段内容 → 一条 push.
- *  - `raw`: 给客户端 `message` 字段, 保留 SEND_EMOJI / [html] 等业务标签让
- *           applyAssistantPostProcessing Step 5/8/9 正确渲染气泡 (sticker / HTML 卡)
+ *  - `raw`: 给客户端 `message` 字段, 保留 SEND_EMOJI / [html] / <翻译> / <语音> /
+ *           [[QUOTE|引用]] 等业务标签让 applyAssistantPostProcessing Step 5/7/8/9 +
+ *           Chat.tsx extractVoiceTag 正确接管 (HTML 卡 / 引用回复 / 双语气泡 / sticker / 语音条)
  *  - `sanitized`: 给 `notification.body`, OS banner 显示用的可读 placeholder
  *
- * 两个字段在大多数 chunk 上是一样的 (普通文本); 只有原子单元 (SEND_EMOJI / [html])
- * 时两者才分叉.
+ * 两个字段在大多数 chunk 上是一样的 (普通文本); 只有原子单元 (SEND_EMOJI / [html] /
+ * <翻译> / <语音>) 时两者才分叉.
  */
 export interface Segment {
   raw: string;
   sanitized: string;
 }
 
+interface ProtectedAtomSegment {
+  raw: string;
+  sanitized: unknown;
+  protect: boolean;
+}
+
 /**
  * worker push notification + bubble 共用的分段器.
  *
  * 算法:
- *  1. Phase 1 — 全文 strip suppress content (think 块 / INNER_STATE / 业务标签 /
- *     时间戳 leak / 引用 / source tag / 历史 leak / divider / 老 trans). 必须先全文
- *     跑, 因为 think 跨多行, 单行 chunk 看不到完整块.
- *  2. Phase 2 — chunkText: 按 `\n` 切 + 按 CJK 字符之间的空格切, 跟客户端
- *     `chatParser.chunkText` 字节对齐 (LLM 在 prompt 引导下用换行断句).
- *  3. Phase 3 — 每个 chunk 内拆 SEND_EMOJI 独立成段, 文字段跑 banner-only 替换
- *     (markdown link / [html] / markdown header/bold/backtick).
+ *  1. Phase 1   — 全文 strip suppress content (think 块 / INNER_STATE / 业务标签 /
+ *                  时间戳 leak / source tag / 历史 leak / divider / 老 trans). 必须先全文
+ *                  跑, 因为 think 跨多行, 单行 chunk 看不到完整块.
+ *  1.5. Phase 1.5 — 用 amsg-instant 标准保护分段器识别客户端要二次消费的"原子语义块",
+ *                   防止 chunkText 按 \n 把它们切碎: [html]...[/html] / <翻译>...</翻译> /
+ *                   <语音>...</语音>. 保护块两侧按旧逻辑补 \n, 让 chunkText 必把它独立成 chunk.
+ *  2. Phase 2   — chunkText: 按 `\n` 切 + 按 CJK 字符之间的空格切, 跟客户端
+ *                  `chatParser.chunkText` 字节对齐 (LLM 在 prompt 引导下用换行断句).
+ *  3. Phase 3   — 还原占位符 (独占 chunk → 直接成单 segment; 同行 inline → 替换回原文 +
+ *                  banner 兜底). 每个文字 chunk 内拆 SEND_EMOJI 独立成段, 文字段跑
+ *                  banner-only 替换 (markdown link / [html] / markdown header/bold/backtick /
+ *                  引用 / <翻译> / <语音>).
  *
  * 不切句号 — 客户端 chunkText 也不切, 保持气泡数 == banner 数.
+ *
+ * 引用 ([[QUOTE|引用]] / [回复 "..."]) 跟 SEND_EMOJI 一样**不**剥, 留给客户端
+ * applyAssistantPostProcessing Step 7 / per-chunk QUOTE_RE 配对设置 aiReplyTarget.
+ * banner 那边在 sanitizeTextForBanner 里单独剥, 保证通知干净.
  *
  * 返回空数组的情况: LLM 整段输出 sanitize 完只剩 think / 业务标签 / 空白 — 此时
  * 不发任何 banner / bubble (skip-push 语义).
@@ -259,14 +291,49 @@ export function sanitizeIntoSegments(text: string): Segment[] {
   // Phase 1: 全文 suppress
   let cleaned = stripLiteralBackslashN(text);
   cleaned = stripThinkBlocks(cleaned);
-  cleaned = extractTranslationOriginal(cleaned);
+
+  // Phase 1.5: 原子语义块交给 amsg-instant 标准 protected-block splitter 识别,
+  // 再桥回旧 pipeline。这样只替换"如何保护原子块", 不改变后续清洗/分段语义。
+  const ATOM_MARKER = String.fromCharCode(2);
+  const atomBlocks: Segment[] = [];
+  const atomSegments = segmentTextWithProtectedBlocks(cleaned, {
+    splitText: (plainText: string) => [plainText],
+    protectedPatterns: [
+      {
+        pattern: /\[html\][\s\S]*?\[\/html\]/i,
+        preview: '[HTML 卡片]',
+      },
+      {
+        pattern: /<翻译>\s*<原文>([\s\S]*?)<\/原文>\s*<译文>[\s\S]*?<\/译文>\s*<\/翻译>/,
+        preview: (_raw: string, match: RegExpMatchArray) => (match[1] || '').trim() || '[翻译]',
+      },
+      {
+        pattern: /<(语音|語音)[^>]*>([\s\S]*?)<\/\1>/,
+        preview: (_raw: string, match: RegExpMatchArray) => (match[2] || '').trim() || '[语音]',
+      },
+    ],
+  }) as ProtectedAtomSegment[];
+  cleaned = atomSegments.map((seg) => {
+    if (!seg.protect) return seg.raw;
+    const idx = atomBlocks.length;
+    atomBlocks.push({
+      raw: seg.raw,
+      sanitized: typeof seg.sanitized === 'string'
+        ? seg.sanitized
+        : sanitizeTextForBanner(seg.raw),
+    });
+    return `\n${ATOM_MARKER}B${idx}${ATOM_MARKER}\n`;
+  }).join('');
+
+  cleaned = extractTranslationOriginal(cleaned); // 兜底吃残留的 <译文> / <翻译> 标签
   cleaned = stripInnerState(cleaned);
   cleaned = stripBusinessTagsForNotification(cleaned);
   cleaned = stripTimestamps(cleaned);
   cleaned = stripChineseDate(cleaned);
   cleaned = stripRoleNamePrefix(cleaned);
   cleaned = stripSourceTags(cleaned);
-  cleaned = stripQuotes(cleaned);
+  // 注意: 这里**不**剥 stripQuotes — 引用要带到客户端让 Step 7 配 aiReplyTarget.
+  // sanitizeTextForBanner 单独剥引用给 notification.
   cleaned = stripLegacyTrans(cleaned);
   cleaned = stripMarkdownDividers(cleaned);
 
@@ -274,9 +341,17 @@ export function sanitizeIntoSegments(text: string): Segment[] {
   // 把 DB / React / Capacitor 依赖拖进 worker bundle)
   const rawChunks = chunkText(cleaned);
 
-  // Phase 3: 拆 SEND_EMOJI + banner-only 替换
+  // Phase 3: 还原原子块占位符 + 拆 SEND_EMOJI + banner-only 替换
+  const SOLO_RE = new RegExp(`^${ATOM_MARKER}B(\\d+)${ATOM_MARKER}$`);
+  const GLOBAL_RE = new RegExp(`${ATOM_MARKER}B(\\d+)${ATOM_MARKER}`, 'g');
   const segments: Segment[] = [];
   for (const rawChunk of rawChunks) {
+    const soloMatch = rawChunk.trim().match(SOLO_RE);
+    if (soloMatch) {
+      const blk = atomBlocks[Number(soloMatch[1])];
+      if (blk) segments.push({ raw: blk.raw, sanitized: blk.sanitized });
+      continue;
+    }
     const parts = splitOnSendEmoji(rawChunk);
     for (const part of parts) {
       if (part.kind === 'emoji') {
@@ -286,7 +361,13 @@ export function sanitizeIntoSegments(text: string): Segment[] {
         });
         continue;
       }
-      const rawText = part.text.trim();
+      // 安全网: 占位符跟正文同行 (chunkText 没拆开) 时把整块还原回 raw,
+      // sanitized 路径 sanitizeTextForBanner 会再把 [html]/<翻译>/<语音>/引用 折成 placeholder.
+      let rawText = part.text.replace(
+        GLOBAL_RE,
+        (_m, n) => atomBlocks[Number(n)]?.raw || '',
+      );
+      rawText = rawText.trim();
       if (!rawText) continue;
       const sanitized = sanitizeTextForBanner(rawText).trim();
       if (!sanitized) continue;
@@ -299,12 +380,19 @@ export function sanitizeIntoSegments(text: string): Segment[] {
 /**
  * 单个文字 chunk 的 banner-side 替换. 不动 raw 文字, 只产 sanitized 版本.
  * SEND_EMOJI 已经在 splitOnSendEmoji 阶段独立成段, 这里不处理.
+ *
+ * 注意: 引用 / <翻译> / <语音> 在 sanitizeIntoSegments Phase 1.5 protect 路径里
+ * 已经被占位符兜走, 走到这里的只可能是同行 inline / 残留 / 老格式 — 这里全部
+ * 强制剥成 banner 友好的形态, 保证通知干净.
  */
 function sanitizeTextForBanner(text: string): string {
   let result = text;
-  result = replaceHtmlBlocks(result);       // [html]...[/html] → [HTML 卡片] (chunk 内 inline)
-  result = replaceEmojiReverseTag(result);  // [xxx 发送了表情包: yyy] → [表情：yyy]
-  result = replaceMarkdownLinks(result);    // [text](url) → [链接：text]
+  result = replaceHtmlBlocks(result);            // [html]...[/html] → [HTML 卡片]
+  result = replaceTranslationForBanner(result);  // <翻译>...</翻译> → 原文
+  result = replaceVoiceForBanner(result);        // <语音>...</语音> → 内部文字
+  result = stripQuotes(result);                  // 引用 / 回复 → ''
+  result = replaceEmojiReverseTag(result);       // [xxx 发送了表情包: yyy] → [表情：yyy]
+  result = replaceMarkdownLinks(result);         // [text](url) → [链接：text]
   result = stripMarkdownHeaders(result);
   result = stripMarkdownBold(result);
   result = stripBackticks(result);
@@ -320,21 +408,25 @@ function sanitizeTextForBanner(text: string): string {
  */
 function chunkText(text: string): string[] {
   const CJK = '\\u4e00-\\u9fff\\u3400-\\u4dbf\\u3000-\\u303f\\uff00-\\uffef\\u2000-\\u206f\\u2e80-\\u2eff\\u3001-\\u3003\\u2018-\\u201f\\u300a-\\u300f\\uff01-\\uff0f\\uff1a-\\uff20';
-  const cjkSpaceRe = new RegExp(`(?<=[${CJK}])\\s+(?=[${CJK}])`);
+  // No lookbehind (?<=): iOS Safari <16.4 JSC doesn't support it; old devices throw
+  // "invalid group specifier name" at new RegExp. Capture the left CJK char + zero-width
+  // lookahead on the right, restore via $1. Byte-equivalent (see utils/lookbehindFree.test.ts).
+  const cjkSplitRe = new RegExp(`([${CJK}])\\s+(?=[${CJK}])`, 'g');
+  const SPLIT = String.fromCharCode(1);  // CJK split marker (distinct slot from SPACE_SENTINEL below)
 
   const lineChunks = text.split(/(?:\r\n|\r|\n|\u2028|\u2029)+/)
     .map((c) => c.trim())
     .filter((c) => c.length > 0);
 
-  // \u62ec\u53f7\u5185\u7684\u7a7a\u683c\u8981\u4fdd\u62a4: \u5426\u5219\u88f8\u62ec\u53f7\u8868\u60c5\u5305 / \u6807\u7b7e (\u5982 "[\u4f60 \u4ea4\u7ed9\u6211\u5427]" \u6216 "[[SEND_EMOJI: a b]]")
-  // \u4f1a\u88ab CJK-\u7a7a\u683c\u65ad\u884c\u89c4\u5219\u5288\u6210 "[\u4f60" + "\u4ea4\u7ed9\u6211\u5427]" \u6389\u683c\u5f0f. \u5148\u628a [...] / [[...]] \u5185\u7a7a\u683c\u6362\u6210
-  // \u5360\u4f4d\u7b26, split \u540e\u518d\u6362\u56de. \u8ddf chatParser.chunkText \u540c\u4e00\u4efd\u903b\u8f91, \u4fdd\u6301\u5b57\u8282\u5bf9\u9f50.
-  const SENTINEL = String.fromCharCode(0);
+  // 括号内的空格要保护: 否则裸括号表情包 / 标签 (如 "[你 交给我吧]" 或 "[[SEND_EMOJI: a b]]")
+  // 会被 CJK-空格断行规则劈成 "[你" + "交给我吧]" 掉格式. 先把 [...] / [[...]] 内空格换成
+  // 占位符, split 后再换回. 跟 chatParser.chunkText 同一份逻辑, 保持字节对齐.
+  const SPACE_SENTINEL = String.fromCharCode(0);
   const out: string[] = [];
   for (const chunk of lineChunks) {
-    const guarded = chunk.replace(/\[{1,2}[^\[\]]*\]{1,2}/g, (m) => m.replace(/\s/g, SENTINEL));
-    const sub = guarded.split(cjkSpaceRe)
-      .map((c) => c.split(SENTINEL).join(' ').trim())
+    const guarded = chunk.replace(/\[{1,2}[^\[\]]*\]{1,2}/g, (m) => m.replace(/\s/g, SPACE_SENTINEL));
+    const sub = guarded.replace(cjkSplitRe, `$1${SPLIT}`).split(SPLIT)
+      .map((c) => c.split(SPACE_SENTINEL).join(' ').trim())
       .filter((c) => c.length > 0);
     out.push(...sub);
   }

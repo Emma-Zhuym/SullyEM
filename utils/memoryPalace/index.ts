@@ -40,8 +40,8 @@ export { applyPriming, checkRumination } from './priming';
 export { expandAndFormat } from './formatter';
 
 // 集成
-export type { LightLLMConfig, PipelineResult } from './pipeline';
-export { retrieveMemories, injectMemoryPalace, processNewMessages, getMemoryPalaceHighWaterMark } from './pipeline';
+export type { LightLLMConfig, PipelineResult, DiaryIngestResult } from './pipeline';
+export { retrieveMemories, injectMemoryPalace, processNewMessages, getMemoryPalaceHighWaterMark, ingestDiaryToPalace } from './pipeline';
 
 // 期盼
 export {
@@ -70,3 +70,7 @@ export {
 // 一键清空（本地 + 云端）
 export { wipeAllMemoryPalace } from './wipe';
 export type { WipeResult } from './wipe';
+
+// 导出 / 导入（接入外置记忆库、跨设备迁移用）
+export { exportMemoryPalace, importMemoryPalace, isMemoryPalaceExportFile } from './export';
+export type { MemoryPalaceExportFile, CharacterMemoryPalaceExport, ExportedVector, ImportResult } from './export';

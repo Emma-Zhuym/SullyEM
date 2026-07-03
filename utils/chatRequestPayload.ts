@@ -20,7 +20,11 @@ import { buildHtmlPrompt } from './htmlPrompt';
 import { buildThinkingChainPrompt } from './thinkingChainPrompt';
 import { buildMcdMiniAppContextBlock } from './mcdToolBridge';
 import type { McdMiniAppSnapshot } from './mcdToolBridge';
+import { buildLuckinMiniAppContextBlock, buildLuckinChatSystemBlock } from './luckinToolBridge';
+import type { LuckinMiniAppSnapshot, LuckinChatState } from './luckinToolBridge';
 import type { MusicCfg, Song, LyricLine, MusicPlaybackSnapshot } from '../context/MusicContext';
+import { isPromptBuildSkipped } from './devDebug';
+import { injectWorldbookDepthEntries, resolveWorldbookEntries } from './worldbook';
 
 export interface UserListeningContext {
     songName: string;
@@ -43,6 +47,12 @@ export interface BuildChatPayloadInput {
      */
     recentMsgsHint?: Message[];
     contextLimit: number;
+    /**
+     * 额外的记忆召回提示词（拼进向量/BM25 检索的 context query）。
+     * 用途：彼方等场景下，把"此刻在场的其他玩家名字 / 房间上下文"塞进召回 query，
+     * 让角色能回忆起自己跟对面这些人的关系，而不是只按聊天历史召回。
+     */
+    recallQueryHint?: string;
 
     // 实时世界 / 角色情绪
     realtimeConfig?: RealtimeConfig;
@@ -61,6 +71,9 @@ export interface BuildChatPayloadInput {
     htmlMode?: { enabled: boolean; customPrompt?: string };
     thinkingChain?: { enabled: boolean; customPrompt?: string };
     mcdMiniSnap?: McdMiniAppSnapshot;
+    luckinMiniSnap?: LuckinMiniAppSnapshot;
+    /** 瑞幸聊天点单模式 (点"瑞一杯"激活, 角色直接调真实工具) */
+    luckinChat?: LuckinChatState;
 
     /** EM: 角色当前在线状态（busy 时注入简短回复提示） */
     charAvailability?: 'online' | 'busy' | 'offline';
@@ -76,7 +89,15 @@ export interface BuildChatPayloadResult {
     /** [system, ...cleanedApiMessages, 末尾 bilingual reminder?] —— 主 API 直接发这个 */
     fullMessages: Array<{ role: string; content: any }>;
     /** 调试用：bilingual / mcd 是否实际注入 */
-    flags: { bilingualActive: boolean; mcdActive: boolean; htmlActive: boolean; thinkingActive: boolean };
+    flags: {
+        bilingualActive: boolean;
+        mcdActive: boolean;
+        luckinActive: boolean;
+        luckinChatActive: boolean;
+        htmlActive: boolean;
+        thinkingActive: boolean;
+        promptBuildSkipped: boolean;
+    };
     /** EM: Token 面板用的上下文字符数分解 */
     contextBreakdown?: {
         coreContextChars: number;
@@ -122,6 +143,26 @@ function deriveListeningFromSnapshot(
 }
 
 /**
+ * 剥离历史里旧的双语标签: `%%BILINGUAL%%` 形态整条在标记处截断 (只留原文侧),
+ * `<翻译>` XML 形态只留 <原文>。导出仅为单测 — 引用头绝不能混入 %%BILINGUAL%%
+ * (见 chatPrompts.buildMessageHistory 的引用摘要清洗), 否则截断会吃掉用户的实际回复。
+ */
+export function cleanApiMessages(apiMessages: Array<{ role: string; content: any }>): Array<{ role: string; content: any }> {
+    return apiMessages.map((msg: any) => {
+        if (typeof msg.content !== 'string') return msg;
+        let c: string = msg.content;
+        if (c.toLowerCase().includes('%%bilingual%%')) {
+            const idx = c.toLowerCase().indexOf('%%bilingual%%');
+            c = c.substring(0, idx).trim();
+        }
+        if (c.includes('<翻译>')) {
+            c = c.replace(/<翻译>\s*<原文>([\s\S]*?)<\/原文>\s*<译文>[\s\S]*?<\/译文>\s*<\/翻译>/g, '$1').trim();
+        }
+        return { ...msg, content: c };
+    });
+}
+
+/**
  * 构造完整 chat 请求载荷。顺序严格对齐 useChatAI.ts 现有实现：
  *
  *   1. injectMemoryPalace（向量召回挂到 char.memoryPalaceInjection）
@@ -141,12 +182,32 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     const {
         char, userProfile, groups, emojis, categories, historyMsgs, contextLimit,
         realtimeConfig, innerState,
-        translationConfig, htmlMode, thinkingChain, mcdMiniSnap,
+        translationConfig, htmlMode, thinkingChain, mcdMiniSnap, luckinMiniSnap, luckinChat,
     } = input;
     const recentMsgsHint = input.recentMsgsHint ?? historyMsgs;
 
+    if (isPromptBuildSkipped()) {
+        const { apiMessages } = ChatPrompts.buildMessageHistory(historyMsgs, contextLimit, char, userProfile, emojis);
+        const cleanedApiMessages = cleanApiMessages(apiMessages);
+        console.warn('[DevDebug] Prompt Build skipped: sending chat history without system prompt injection.');
+        return {
+            systemPrompt: '',
+            cleanedApiMessages,
+            fullMessages: [...cleanedApiMessages],
+            flags: {
+                bilingualActive: false,
+                mcdActive: false,
+                luckinActive: false,
+                luckinChatActive: false,
+                htmlActive: false,
+                thinkingActive: false,
+                promptBuildSkipped: true,
+            },
+        };
+    }
+
     // ── 1. Memory Palace 向量召回 ─────────────────────────
-    await injectMemoryPalace(char, recentMsgsHint, undefined, userProfile?.name);
+    await injectMemoryPalace(char, recentMsgsHint, input.recallQueryHint, userProfile?.name);
 
     // ── 2. 解析音乐共听（如果 caller 没显式给，就从 snapshot 推） ──
     let userListeningContext = input.userListeningContext;
@@ -203,6 +264,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
 - 多句话就输出多个<翻译>标签，一句一个
 - <翻译>标签外不要写任何文字
 - 表情包命令 [[SEND_EMOJI: ...]] 放在所有<翻译>标签外面
+- 引用命令 [[QUOTE: ...]] 也放在所有<翻译>标签外面；引用内容请原样照抄用户说过的原文（不要翻译、不要包<翻译>标签）
 
 示例（${translationConfig.sourceLang}→${translationConfig.targetLang}）：
 <翻译>
@@ -236,18 +298,17 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     const { apiMessages } = ChatPrompts.buildMessageHistory(historyMsgs, contextLimit, char, userProfile, emojis);
 
     // ── 8. 剥离历史里旧的双语标签 ─────────────────────────
-    const cleanedApiMessages = apiMessages.map((msg: any) => {
-        if (typeof msg.content !== 'string') return msg;
-        let c: string = msg.content;
-        if (c.toLowerCase().includes('%%bilingual%%')) {
-            const idx = c.toLowerCase().indexOf('%%bilingual%%');
-            c = c.substring(0, idx).trim();
-        }
-        if (c.includes('<翻译>')) {
-            c = c.replace(/<翻译>\s*<原文>([\s\S]*?)<\/原文>\s*<译文>[\s\S]*?<\/译文>\s*<\/翻译>/g, '$1').trim();
-        }
-        return { ...msg, content: c };
-    });
+    const cleanedApiMessages = cleanApiMessages(apiMessages);
+    const resolvedWorldbookEntries = resolveWorldbookEntries(
+        char.mountedWorldbooks || [],
+        cleanedApiMessages,
+        char.name,
+        userProfile.name,
+    );
+    const messagesWithWorldbookDepth = injectWorldbookDepthEntries(
+        cleanedApiMessages,
+        resolvedWorldbookEntries.filter(entry => entry.position === 4),
+    );
 
     // ── 9. 麦当劳小程序上下文（在 cleanedApiMessages 之后追加到 systemPrompt） ──
     const mcdActive = !!mcdMiniSnap?.open;
@@ -258,10 +319,28 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         }
     }
 
+    // ── 9b. 瑞幸小程序上下文 ──
+    const luckinActive = !!luckinMiniSnap?.open;
+    if (luckinActive) {
+        const block = buildLuckinMiniAppContextBlock(luckinMiniSnap, userProfile?.name || '用户');
+        if (block) {
+            systemPrompt += block;
+        }
+    }
+
+    // ── 9c. 瑞幸聊天点单模式 (角色直接调真实工具) ──
+    const luckinChatActive = !!luckinChat?.active;
+    if (luckinChatActive) {
+        const block = buildLuckinChatSystemBlock(luckinChat, recentMsgsHint, userProfile?.name || '用户');
+        if (block) {
+            systemPrompt += block;
+        }
+    }
+
     // ── 10. 组装 fullMessages + 末尾双语 reminder ─────────
     const fullMessages: Array<{ role: string; content: any }> = [
         { role: 'system', content: systemPrompt },
-        ...cleanedApiMessages,
+        ...messagesWithWorldbookDepth,
     ];
     if (bilingualActive) {
         fullMessages.push({
@@ -272,9 +351,9 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
 
     return {
         systemPrompt,
-        cleanedApiMessages,
+        cleanedApiMessages: messagesWithWorldbookDepth,
         fullMessages,
-        flags: { bilingualActive, mcdActive, htmlActive, thinkingActive },
+        flags: { bilingualActive, mcdActive, luckinActive, luckinChatActive, htmlActive, thinkingActive, promptBuildSkipped: false },
         contextBreakdown: {
             coreContextChars,
             systemCharsBeforeBilingual,

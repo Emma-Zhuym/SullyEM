@@ -88,6 +88,7 @@ export async function drainPendingDiaries(
                     realtimeConfig.notionApiKey,
                     realtimeConfig.notionDatabaseId,
                     { title: entry.title, content: entry.content, mood: entry.mood || undefined, characterName: entry.charName },
+                    (realtimeConfig as any).notionDiaryExtraProperties,
                 );
                 if (r.success) {
                     await DB.saveMessage({ charId: entry.charId, role: 'system', type: 'text', content: `📔 ${entry.charName}写了一篇日记「${entry.title}」` } as any);

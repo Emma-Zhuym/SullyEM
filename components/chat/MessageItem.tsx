@@ -4,7 +4,11 @@
 import React, { useRef, useState } from 'react';
 import { Message, ChatTheme } from '../../types';
 import { tryParseLifeSimResetCard } from '../../utils/lifeSimChatCard';
+import { VALID_INTERJECTION_TAGS, cleanVoiceMarkupForDisplay } from '../../utils/minimaxTts';
+import { stripFishCuesForDisplay } from '../../utils/fishAudioTts';
 import McdCard from './McdCard';
+import LuckinCard from './LuckinCard';
+import LuckinCheckoutCard from './LuckinCheckoutCard';
 
 // 思考链卡片支持的 4 种风格预设 — 同时被 MessageItem 与 ThinkingChainSettingsModal 复用
 export type ThinkingChainStyleId = 'echo' | 'whisper' | 'minimal' | 'custom';
@@ -283,9 +287,9 @@ const ForwardCard: React.FC<{
 
             {/* Expanded Full-screen Overlay */}
             {expanded && (
-                <div className="fixed inset-0 z-[100] bg-slate-50 flex flex-col animate-fade-in" onClick={(e) => e.stopPropagation()}>
+                <div className="fixed inset-0 z-[100] bg-slate-50 flex flex-col animate-fade-in" style={{ paddingBottom: 'var(--safe-bottom)' }} onClick={(e) => e.stopPropagation()}>
                     {/* Header */}
-                    <div className="pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3 px-4 bg-white border-b border-slate-100 shrink-0 flex items-center gap-3">
+                    <div className="pt-[calc(var(--safe-top)+0.75rem)] pb-3 px-4 bg-white border-b border-slate-100 shrink-0 flex items-center gap-3">
                         <button onClick={() => setExpanded(false)} className="p-2 -ml-2 rounded-full hover:bg-slate-100 text-slate-600">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                         </button>
@@ -313,6 +317,395 @@ const ForwardCard: React.FC<{
                                 </div>
                             );
                         })}
+                    </div>
+                </div>
+            )}
+        </>
+    );
+};
+
+// ============================================================
+// 转账卡片：点开看精美详情，可接收 / 退回；回执则渲染成小卡
+// ============================================================
+
+type TransferStatus = 'pending' | 'accepted' | 'returned';
+
+const SullyPayMark: React.FC<{ className?: string }> = ({ className }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className={className}>
+        <path d="M12 7.5a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Z" />
+        <path fillRule="evenodd" d="M1.5 4.875C1.5 3.839 2.34 3 3.375 3h17.25c1.035 0 1.875.84 1.875 1.875v9.75c0 1.036-.84 1.875-1.875 1.875H3.375A1.875 1.875 0 0 1 1.5 14.625v-9.75ZM8.25 9.75a3.75 3.75 0 1 1 7.5 0 3.75 3.75 0 0 1-7.5 0ZM18.75 9a.75.75 0 0 0-.75.75v.008c0 .414.336.75.75.75h.008a.75.75 0 0 0 .75-.75V9.75a.75.75 0 0 0-.75-.75h-.008ZM4.5 9.75A.75.75 0 0 1 5.25 9h.008a.75.75 0 0 1 .75.75v.008a.75.75 0 0 1-.75.75H5.25a.75.75 0 0 1-.75-.75V9.75Z" clipRule="evenodd" />
+        <path d="M2.25 18a.75.75 0 0 0 0 1.5c5.4 0 10.63.722 15.6 2.075 1.19.324 2.4-.558 2.4-1.82V18.75a.75.75 0 0 0-.75-.75H2.25Z" />
+    </svg>
+);
+
+const TransferCard: React.FC<{
+    m: Message;
+    isUser: boolean;
+    charName: string;
+    commonLayout: (content: React.ReactNode) => JSX.Element;
+    selectionMode: boolean;
+    onResolveTransfer?: (m: Message, action: 'accepted' | 'returned') => void;
+}> = ({ m, isUser, charName, commonLayout, selectionMode, onResolveTransfer }) => {
+    const [open, setOpen] = useState(false);
+    const meta = m.metadata || {};
+    const amount = meta.amount;
+    const note: string | undefined = meta.note;
+    const receipt: 'accepted' | 'returned' | undefined = meta.receipt;
+    const status: TransferStatus = (meta.status as TransferStatus) || 'pending';
+
+    const actor = isUser ? '你' : charName;
+    const counterparty = isUser ? charName : '你';
+
+    // ---- 回执小卡：接收 / 退回的轻量结算条 ----
+    if (receipt) {
+        const accepted = receipt === 'accepted';
+        return commonLayout(
+            <div className={`flex items-center gap-2.5 px-3.5 py-2.5 rounded-2xl shadow-sm border w-fit max-w-[240px] ${
+                accepted
+                    ? 'bg-gradient-to-br from-emerald-50 to-teal-50 border-emerald-100'
+                    : 'bg-gradient-to-br from-slate-50 to-slate-100 border-slate-200'
+            }`}>
+                <div className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center ${accepted ? 'bg-emerald-400/90 text-white' : 'bg-slate-300/90 text-white'}`}>
+                    {accepted ? (
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" strokeWidth={3} stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
+                    ) : (
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" strokeWidth={2.5} stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" /></svg>
+                    )}
+                </div>
+                <div className="min-w-0">
+                    <div className={`text-xs font-semibold ${accepted ? 'text-emerald-700' : 'text-slate-600'}`}>
+                        {actor}{accepted ? '已收款' : '退回了转账'}
+                    </div>
+                    {amount !== undefined && (
+                        <div className="text-[10px] text-slate-400">₩ {amount}</div>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
+    // ---- 主转账卡（可点开）----
+    const resolved = status !== 'pending';
+    // 用户是「收到方」才出现接收/退回入口：即这条是角色发来的、且仍待处理。
+    const canResolve = !isUser && !resolved && !!onResolveTransfer;
+
+    const statusBadge = status === 'accepted' ? '已收款' : status === 'returned' ? '已退还' : '';
+
+    const handleResolve = (action: 'accepted' | 'returned') => {
+        onResolveTransfer?.(m, action);
+        setOpen(false);
+    };
+
+    return (
+        <>
+            {commonLayout(
+                <div
+                    onClick={(e) => { if (selectionMode) return; e.stopPropagation(); setOpen(true); }}
+                    className={`w-64 rounded-2xl p-4 text-white shadow-lg relative overflow-hidden cursor-pointer active:scale-[0.98] transition-transform ${
+                        resolved ? 'bg-gradient-to-br from-amber-300/80 to-orange-400/80' : 'bg-gradient-to-br from-amber-400 to-orange-500'
+                    }`}
+                >
+                    <div className="absolute top-0 right-0 p-4 opacity-20"><SullyPayMark className="w-12 h-12" /></div>
+                    <div className="flex items-center gap-3 mb-2">
+                        <div className="p-2 bg-white/20 rounded-full"><SullyPayMark className="w-5 h-5" /></div>
+                        <span className="font-medium text-white/90">Sully Pay</span>
+                    </div>
+                    <div className="text-2xl font-bold tracking-tight mb-1">₩ {amount}</div>
+                    {note ? (
+                        <div className="text-[11px] text-white/80 truncate mb-0.5">{note}</div>
+                    ) : null}
+                    <div className="flex items-center justify-between">
+                        <div className="text-[10px] text-white/70">转账给{counterparty}</div>
+                        {statusBadge && (
+                            <span className="text-[9px] bg-white/25 backdrop-blur-sm px-1.5 py-0.5 rounded-full">{statusBadge}</span>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {open && (
+                <div className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm flex items-center justify-center p-6 animate-fade-in" onClick={(e) => { e.stopPropagation(); setOpen(false); }}>
+                    <div
+                        className="w-full max-w-[320px] bg-white rounded-3xl overflow-hidden shadow-2xl"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        {/* 顶部金额区 */}
+                        <div className="bg-gradient-to-br from-amber-400 to-orange-500 px-6 pt-7 pb-8 text-white relative overflow-hidden">
+                            <div className="absolute -top-4 -right-4 opacity-15"><SullyPayMark className="w-28 h-28" /></div>
+                            <div className="flex items-center gap-2 mb-5">
+                                <div className="p-1.5 bg-white/20 rounded-full"><SullyPayMark className="w-4 h-4" /></div>
+                                <span className="text-sm font-medium text-white/90">Sully Pay 转账</span>
+                            </div>
+                            <div className="text-[11px] text-white/70 mb-1">{isUser ? `你向${charName}转账` : `${charName}向你转账`}</div>
+                            <div className="text-4xl font-bold tracking-tight">₩ {amount}</div>
+                        </div>
+
+                        {/* 详情区 */}
+                        <div className="px-6 py-5 space-y-3.5">
+                            {note && (
+                                <div className="bg-slate-50 rounded-xl px-3.5 py-2.5">
+                                    <div className="text-[10px] text-slate-400 mb-0.5">转账留言</div>
+                                    <div className="text-sm text-slate-700 break-words">{note}</div>
+                                </div>
+                            )}
+                            <div className="flex items-center justify-between text-xs">
+                                <span className="text-slate-400">付款方</span>
+                                <span className="text-slate-700 font-medium">{isUser ? '你' : charName}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs">
+                                <span className="text-slate-400">收款方</span>
+                                <span className="text-slate-700 font-medium">{isUser ? charName : '你'}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs">
+                                <span className="text-slate-400">状态</span>
+                                <span className={`font-medium ${
+                                    status === 'accepted' ? 'text-emerald-600' : status === 'returned' ? 'text-slate-500' : 'text-amber-600'
+                                }`}>
+                                    {status === 'accepted' ? '已收款' : status === 'returned' ? '已退还' : '等待对方处理'}
+                                </span>
+                            </div>
+
+                            {canResolve ? (
+                                <div className="flex gap-3 pt-2">
+                                    <button
+                                        onClick={() => handleResolve('returned')}
+                                        className="flex-1 py-2.5 rounded-xl text-sm font-medium text-slate-500 bg-slate-100 active:scale-95 transition-transform"
+                                    >退回</button>
+                                    <button
+                                        onClick={() => handleResolve('accepted')}
+                                        className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-r from-amber-400 to-orange-500 shadow-md active:scale-95 transition-transform"
+                                    >接收</button>
+                                </div>
+                            ) : (
+                                <button
+                                    onClick={() => setOpen(false)}
+                                    className="w-full py-2.5 rounded-xl text-sm font-medium text-slate-500 bg-slate-100 active:scale-95 transition-transform mt-1"
+                                >关闭</button>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+        </>
+    );
+};
+
+// ============================================================
+// Like520 卡片：520 限定典藏，展开后看完整合照 + 信
+// ============================================================
+
+const Like520ChatCard: React.FC<{ data: any }> = ({ data }) => {
+    const [open, setOpen] = useState(false);
+    const stop = (e: React.MouseEvent | React.TouchEvent) => e.stopPropagation();
+    const dateStr = (() => {
+        try {
+            const d = new Date(data.timestamp || Date.now());
+            return `${d.getFullYear()} · ${String(d.getMonth() + 1).padStart(2, '0')} · ${String(d.getDate()).padStart(2, '0')}`;
+        } catch { return '5 · 2 · 0'; }
+    })();
+
+    return (
+        <>
+            {/* 拍立得 / 复古剪贴本：照片 + 胶带 + 手写感落款 */}
+            <div
+                onClick={() => setOpen(true)}
+                style={{
+                    width: 256,
+                    padding: '14px 14px 18px',
+                    background: 'linear-gradient(180deg, #fdf6e3 0%, #f7eed4 100%)',
+                    boxShadow:
+                        '0 1px 2px rgba(74,36,24,0.18), ' +
+                        '0 8px 22px rgba(74,36,24,0.22), ' +
+                        '0 0 0 1px rgba(184,146,63,0.3)',
+                    cursor: 'pointer',
+                    position: 'relative',
+                    transform: 'rotate(-1.4deg)',
+                    transformOrigin: 'center',
+                    marginTop: 8,
+                }}
+            >
+                {/* 左上胶带 */}
+                <div style={{
+                    position: 'absolute', top: -6, left: 18,
+                    width: 36, height: 14,
+                    background: 'linear-gradient(135deg, rgba(218,190,140,0.55), rgba(184,146,63,0.4))',
+                    boxShadow: '0 1px 2px rgba(74,36,24,0.15)',
+                    transform: 'rotate(-6deg)',
+                    pointerEvents: 'none',
+                }} />
+                {/* 右上胶带 */}
+                <div style={{
+                    position: 'absolute', top: -6, right: 18,
+                    width: 36, height: 14,
+                    background: 'linear-gradient(135deg, rgba(218,190,140,0.55), rgba(184,146,63,0.4))',
+                    boxShadow: '0 1px 2px rgba(74,36,24,0.15)',
+                    transform: 'rotate(6deg)',
+                    pointerEvents: 'none',
+                }} />
+
+                {/* 照片本体 */}
+                <div style={{
+                    position: 'relative',
+                    background: '#fff',
+                    padding: 0,
+                    boxShadow: '0 2px 6px rgba(74,36,24,0.18), inset 0 0 0 1px rgba(184,146,63,0.25)',
+                }}>
+                    {data.photoDataUrl
+                        ? <img src={data.photoDataUrl} alt="合照" style={{ width: '100%', display: 'block' }} />
+                        : <div style={{ width: '100%', aspectRatio: '1200 / 780', background: 'linear-gradient(180deg, #FFE0E8, #FFD3DC)' }} />}
+                </div>
+
+                {/* 手写感标题 */}
+                <div style={{
+                    marginTop: 12,
+                    textAlign: 'center',
+                    fontFamily: '"Cormorant Garamond", "Noto Serif SC", serif',
+                    fontStyle: 'italic',
+                    fontSize: 14,
+                    color: '#7a2e3a',
+                    letterSpacing: 1,
+                    lineHeight: 1.35,
+                }}>
+                    「 {data.title || '我们的下午'} 」
+                </div>
+
+                {/* 日期 + 落款 */}
+                <div style={{
+                    marginTop: 6,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'baseline',
+                    paddingTop: 6,
+                    borderTop: '0.5px dashed rgba(184,146,63,0.4)',
+                    fontFamily: 'Cinzel, serif',
+                    fontSize: 9.5,
+                    letterSpacing: 2,
+                    color: '#8b6914',
+                    fontWeight: 600,
+                }}>
+                    <span>{dateStr}</span>
+                    <span style={{ fontFamily: '"Cormorant Garamond", serif', fontStyle: 'italic', fontWeight: 400, letterSpacing: 1, fontSize: 10 }}>
+                        — {data.charName}
+                    </span>
+                </div>
+
+                {/* 暗示有信 */}
+                <div style={{
+                    marginTop: 6,
+                    textAlign: 'center',
+                    fontFamily: '"Cormorant Garamond", "Noto Serif SC", serif',
+                    fontStyle: 'italic',
+                    fontSize: 10.5,
+                    color: '#b8923f',
+                    letterSpacing: 2,
+                }}>
+                    ❦ 点 开 看 信 ❦
+                </div>
+
+                {/* 左下角复古火漆/印章："♥ 520" */}
+                <div style={{
+                    position: 'absolute',
+                    bottom: -8, left: -8,
+                    width: 44, height: 44,
+                    borderRadius: '50%',
+                    background: 'radial-gradient(circle at 35% 35%, #d4516a 0%, #a04050 50%, #7a2e3a 100%)',
+                    color: '#fff8ec',
+                    display: 'grid', placeItems: 'center',
+                    fontFamily: '"Cormorant Garamond", serif',
+                    fontSize: 9,
+                    fontWeight: 700,
+                    letterSpacing: 0,
+                    lineHeight: 1.1,
+                    transform: 'rotate(-12deg)',
+                    boxShadow: '0 3px 8px rgba(74,36,24,0.4), inset 0 2px 2px rgba(255,255,255,0.18), inset 0 -2px 2px rgba(0,0,0,0.25)',
+                    border: '1px solid rgba(212,177,106,0.5)',
+                    textAlign: 'center',
+                    pointerEvents: 'none',
+                }}>
+                    <div>
+                        <div style={{ fontSize: 14, lineHeight: 1, fontFamily: 'serif' }}>♥</div>
+                        <div style={{ fontSize: 7, letterSpacing: 1, marginTop: 1, fontFamily: 'Cinzel, serif' }}>5·20</div>
+                    </div>
+                </div>
+            </div>
+
+            {open && (
+                <div
+                    onClick={() => setOpen(false)}
+                    style={{
+                        position: 'fixed', inset: 0, zIndex: 9999,
+                        background: 'rgba(74,36,24,0.55)',
+                        backdropFilter: 'blur(8px)',
+                        overflowY: 'auto', padding: 16,
+                        animation: 'l520-card-mask-in .25s ease',
+                    }}
+                >
+                    <style>{`
+                        @keyframes l520-card-mask-in { from { opacity: 0; } to { opacity: 1; } }
+                        @keyframes l520-card-pop-in { from { opacity: 0; transform: scale(0.94) translateY(20px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+                    `}</style>
+                    <div
+                        onClick={stop}
+                        style={{
+                            maxWidth: 420, margin: '24px auto',
+                            background: 'linear-gradient(180deg, #fffcf3, #f9efd9)',
+                            borderRadius: 4,
+                            position: 'relative',
+                            padding: '22px 18px 26px',
+                            boxShadow: '0 0 0 1px #b8923f, 0 0 0 4px #faf3e7, 0 0 0 5px #d4b16a, 0 20px 60px rgba(74,36,24,0.5)',
+                            animation: 'l520-card-pop-in .35s cubic-bezier(.4,1.4,.5,1)',
+                        }}
+                    >
+                        <button
+                            onClick={() => setOpen(false)}
+                            title="关闭"
+                            style={{
+                                position: 'absolute', top: 10, right: 10, zIndex: 5,
+                                width: 30, height: 30, borderRadius: '50%',
+                                background: 'rgba(255,248,236,0.95)',
+                                border: '1px solid #b8923f',
+                                color: '#7a2e3a',
+                                fontSize: 14,
+                                fontFamily: '"Cormorant Garamond", serif',
+                                cursor: 'pointer',
+                                display: 'grid', placeItems: 'center',
+                            }}
+                        >✕</button>
+
+                        <div style={{ textAlign: 'center', marginBottom: 12 }}>
+                            <div style={{ fontSize: 9, letterSpacing: 6, color: '#8b6914', fontFamily: 'Cinzel, serif', fontWeight: 600 }}>5 · 2 · 0 · TRÉSOR</div>
+                            <div style={{ fontSize: 13, color: '#7a2e3a', fontFamily: '"Noto Serif SC", serif', fontWeight: 500, letterSpacing: 4, marginTop: 4 }}>{data.title || '我们的下午'}</div>
+                        </div>
+
+                        {data.photoDataUrl ? (
+                            <>
+                                <img src={data.photoDataUrl} alt="合照" draggable={false} style={{ width: '100%', display: 'block', borderRadius: 8, boxShadow: '0 8px 20px rgba(122,46,58,0.2), 0 0 0 1px rgba(184,146,63,0.4)' }} />
+                                <div style={{ fontSize: 10, fontStyle: 'italic', color: '#9D7585', textAlign: 'center', marginTop: 4, fontFamily: '"Cormorant Garamond", serif', letterSpacing: 2 }}>长按图片保存到相册</div>
+                            </>
+                        ) : null}
+
+                        <div style={{
+                            marginTop: 18,
+                            padding: '22px 18px',
+                            background: 'linear-gradient(180deg, #fffcf3, #f9efd9)',
+                            border: '1px solid #d4b16a',
+                            backgroundImage: 'repeating-linear-gradient(transparent, transparent 28px, rgba(184,146,63,0.05) 28px, rgba(184,146,63,0.05) 29px)',
+                            borderRadius: 2,
+                            position: 'relative',
+                        }}>
+                            <div style={{ textAlign: 'center', marginBottom: 14 }}>
+                                <div style={{ fontFamily: '"Cormorant Garamond", serif', fontStyle: 'italic', fontSize: 11, color: '#8b6914', letterSpacing: 3 }}>致 · 我的</div>
+                                <div style={{ fontFamily: '"Noto Serif SC", serif', fontSize: 20, color: '#7a2e3a', letterSpacing: 6, marginTop: 4 }}>{data.userName}</div>
+                                <div style={{ color: '#b8923f', fontSize: 11, letterSpacing: 8, marginTop: 6 }}>❦ ⸙ ❦</div>
+                            </div>
+                            <div style={{ fontFamily: '"Noto Serif SC", serif', fontSize: 13.5, lineHeight: 2.05, color: '#3a2418', textIndent: '2em', whiteSpace: 'pre-wrap', letterSpacing: 0.5 }}>
+                                {data.letter}
+                            </div>
+                            <div style={{ textAlign: 'right', marginTop: 16, paddingTop: 8, borderTop: '0.5px dashed rgba(184,146,63,0.3)' }}>
+                                <div style={{ color: '#b8923f', fontSize: 11, letterSpacing: 6, marginBottom: 4 }}>~ ❦ ~</div>
+                                <div style={{ fontFamily: '"Noto Serif SC", serif', fontSize: 13, color: '#7a2e3a', letterSpacing: 3 }}>— {data.charName}</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}
@@ -424,6 +817,7 @@ interface MessageItemProps {
     charName: string;
     userAvatar: string;
     onLongPress: (m: Message) => void;
+    onReply: (m: Message) => void;
     selectionMode: boolean;
     isSelected: boolean;
     onToggleSelect: (id: number) => void;
@@ -438,8 +832,8 @@ interface MessageItemProps {
     voiceData?: { url: string; originalText: string; spokenText?: string; lang?: string };
     voiceLoading?: boolean;
     isVoicePlaying?: boolean;
-    onPlayVoice?: () => void;
-// Chat layout customization
+    onPlayVoice?: (id: number) => void;
+    // Chat layout customization
     avatarShape?: 'circle' | 'rounded' | 'square';
     avatarSize?: 'small' | 'medium' | 'large';
     avatarMode?: 'grouped' | 'every_message';
@@ -453,6 +847,11 @@ interface MessageItemProps {
     /** 麦当劳菜单卡里点了"发送给角色"时调用 */
     onMcdSendCart?: (items: import('./McdCard').McdCartItem[]) => void;
     onMcdCandidate?: (item: import('./McdCard').McdCartItem) => void;
+    /** 瑞幸菜单卡 (与麦当劳同构) */
+    onLuckinSendCart?: (items: import('./LuckinCard').LuckinCartItem[]) => void;
+    onLuckinCandidate?: (item: import('./LuckinCard').LuckinCartItem) => void;
+    /** 用户点「收到的转账」卡 → 接收 / 退回 */
+    onResolveTransfer?: (m: Message, action: 'accepted' | 'returned') => void;
     /** 思考链卡片视觉与交互 */
     thinkingChainOptions?: {
         styleId?: ThinkingChainStyleId;
@@ -470,6 +869,7 @@ const MessageItem = React.memo(({
     charName,
     userAvatar,
     onLongPress,
+    onReply,
     selectionMode,
     isSelected,
     onToggleSelect,
@@ -492,6 +892,9 @@ avatarShape = 'circle',
     pendingIndicator = true,
     onMcdSendCart,
     onMcdCandidate,
+    onLuckinSendCart,
+    onLuckinCandidate,
+    onResolveTransfer,
     thinkingChainOptions,
 }: MessageItemProps) => {
     const isUser = m.role === 'user';
@@ -503,54 +906,100 @@ avatarShape = 'circle',
     const avatarSizePx = avatarSize === 'small' ? 28 : avatarSize === 'large' ? 48 : 36;
     const shouldShowAvatar = avatarMode === 'every_message' || isLastInGroup;
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const startPos = useRef({ x: 0, y: 0 }); // Track touch start position
+    const startPos = useRef({ x: 0, y: 0 });
+    const activePointerId = useRef<number | null>(null);
+    const activePointerType = useRef<string>('');
+    const replyGestureActiveRef = useRef(false);
+    const replyReadyRef = useRef(false);
 
     const styleConfig = isUser ? activeTheme.user : activeTheme.ai;
     const [showVoiceText, setShowVoiceText] = useState(false);
+    const [replyOffset, setReplyOffset] = useState(0);
+    const [isReplyGestureActive, setIsReplyGestureActive] = useState(false);
+    const [isReplyReady, setIsReplyReady] = useState(false);
 
-    const handleTouchStart = (e: React.TouchEvent | React.MouseEvent) => {
-        // Record initial position
-        if ('touches' in e) {
-            startPos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-        } else {
-            startPos.current = { x: e.clientX, y: e.clientY };
-        }
-        
+    const clearLongPressTimer = () => {
+        if (!longPressTimer.current) return;
+        clearTimeout(longPressTimer.current);
+        longPressTimer.current = null;
+    };
+
+    const resetReplyGesture = () => {
+        replyGestureActiveRef.current = false;
+        replyReadyRef.current = false;
+        setIsReplyGestureActive(false);
+        setIsReplyReady(false);
+        setReplyOffset(0);
+    };
+
+    const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+        if (selectionMode || e.button !== 0) return;
+        activePointerId.current = e.pointerId;
+        activePointerType.current = e.pointerType;
+        startPos.current = { x: e.clientX, y: e.clientY };
+        document.getSelection()?.removeAllRanges();
+
+        clearLongPressTimer();
         longPressTimer.current = setTimeout(() => {
-            if (!selectionMode) {
-                onLongPress(m);
-            }
+            longPressTimer.current = null;
+            activePointerId.current = null;
+            activePointerType.current = '';
+            resetReplyGesture();
+            onLongPress(m);
         }, 600);
     };
 
-    const handleTouchEnd = () => {
-        if (longPressTimer.current) {
-            clearTimeout(longPressTimer.current);
-            longPressTimer.current = null;
+    const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+        if (activePointerId.current !== e.pointerId) return;
+        const diffX = e.clientX - startPos.current.x;
+        const diffY = e.clientY - startPos.current.y;
+        const isTouchPointer = activePointerType.current !== 'mouse';
+
+        if (!replyGestureActiveRef.current) {
+            const startsReplySwipe = isTouchPointer
+                && !isSystem
+                && diffX < -8
+                && Math.abs(diffX) > Math.abs(diffY);
+            if (!startsReplySwipe) {
+                if (Math.abs(diffX) > 10 || Math.abs(diffY) > 10) clearLongPressTimer();
+                return;
+            }
+            clearLongPressTimer();
+            replyGestureActiveRef.current = true;
+            setIsReplyGestureActive(true);
         }
+
+        if (Math.abs(diffY) > 24 && Math.abs(diffY) > Math.abs(diffX)) {
+            resetReplyGesture();
+            return;
+        }
+
+        e.preventDefault();
+        document.getSelection()?.removeAllRanges();
+        const nextOffset = Math.max(-72, Math.min(0, diffX));
+        const nextReady = nextOffset <= -52;
+        replyReadyRef.current = nextReady;
+        setReplyOffset(nextOffset);
+        setIsReplyReady(nextReady);
     };
 
-    // New handler to cancel long press if user drags/scrolls
-    const handleMove = (e: React.TouchEvent | React.MouseEvent) => {
-        if (!longPressTimer.current) return;
+    const handlePointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
+        if (activePointerId.current !== e.pointerId) return;
+        clearLongPressTimer();
+        activePointerId.current = null;
+        activePointerType.current = '';
 
-        let clientX, clientY;
-        if ('touches' in e) {
-            clientX = e.touches[0].clientX;
-            clientY = e.touches[0].clientY;
-        } else {
-            clientX = e.clientX;
-            clientY = e.clientY;
-        }
+        const shouldReply = replyGestureActiveRef.current && replyReadyRef.current;
+        resetReplyGesture();
 
-        const diffX = Math.abs(clientX - startPos.current.x);
-        const diffY = Math.abs(clientY - startPos.current.y);
+        if (shouldReply) onReply(m);
+    };
 
-        // If moved more than 10px, assume scrolling and cancel long press
-        if (diffX > 10 || diffY > 10) {
-            clearTimeout(longPressTimer.current);
-            longPressTimer.current = null;
-        }
+    const handlePointerCancel = () => {
+        clearLongPressTimer();
+        activePointerId.current = null;
+        activePointerType.current = '';
+        resetReplyGesture();
     };
 
     const handleClick = (e: React.MouseEvent) => {
@@ -562,18 +1011,20 @@ avatarShape = 'circle',
     };
 
     const interactionProps = {
-        onMouseDown: handleTouchStart,
-        onMouseUp: handleTouchEnd,
-        onMouseLeave: handleTouchEnd,
-        onMouseMove: handleMove,
-        onTouchStart: handleTouchStart,
-        onTouchEnd: handleTouchEnd,
-        onTouchMove: handleMove,
-        onTouchCancel: handleTouchEnd, // Handle system interruptions
+        onPointerDown: handlePointerDown,
+        onPointerUp: handlePointerEnd,
+        onPointerMove: handlePointerMove,
+        onPointerCancel: handlePointerCancel,
         onContextMenu: (e: React.MouseEvent) => {
             e.preventDefault();
-            if (!selectionMode) onLongPress(m);
+            if (selectionMode || replyGestureActiveRef.current) return;
+            clearLongPressTimer();
+            activePointerId.current = null;
+            activePointerType.current = '';
+            resetReplyGesture();
+            onLongPress(m);
         },
+        onDragStart: (e: React.DragEvent) => e.preventDefault(),
         onClick: handleClick
     };
 
@@ -631,6 +1082,77 @@ width: `${avatarSizePx * (styleConfig.avatarDecorationScale ?? 1)}px`,
                         <div className="w-full px-4 my-3" {...interactionProps}>
 <div className="mx-auto w-72">
                                 <LifeSimResetCardView card={scoreData} />
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+            if (scoreData?.type === 'diary_card') {
+                const dateParts = (scoreData.date || '').split('-');
+                const monthDay = dateParts.length === 3 ? `${dateParts[1]}/${dateParts[2]}` : (scoreData.date || '');
+                const year = dateParts[0] || '';
+                const userText = (scoreData.userText || '').trim();
+                const charText = (scoreData.charText || '').trim();
+                const truncate = (s: string, n: number) => (s.length > n ? s.slice(0, n) + '…' : s);
+                return (
+                    <div className={`flex items-center w-full ${selectionMode ? 'pl-8' : ''} animate-fade-in relative transition-[padding] duration-300`}>
+                        {selectionMode && (
+                            <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
+                                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
+                                    {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
+                                </div>
+                            </div>
+                        )}
+                        <div className="w-full px-4 my-3" {...interactionProps}>
+                            <div className="w-72 mx-auto rounded-2xl overflow-hidden shadow-md" style={{ border: '1.5px solid rgba(217,180,120,0.35)', background: 'linear-gradient(180deg, #fff9ec 0%, #fffdf6 35%, #fdf2dc 100%)' }}>
+                                {/* Header — date stamp + char avatar */}
+                                <div className="px-4 pt-3 pb-2.5 flex items-center gap-2.5" style={{ borderBottom: '1px dashed rgba(200,160,100,0.3)', background: 'linear-gradient(135deg, rgba(245,210,150,0.25), rgba(240,195,130,0.15))' }}>
+                                    {scoreData.charAvatar ? (
+                                        <img src={scoreData.charAvatar} className="w-9 h-9 rounded-xl object-cover shadow-sm shrink-0" style={{ boxShadow: '0 0 0 2px rgba(220,180,110,0.5)' }} />
+                                    ) : (
+                                        <div className="w-9 h-9 rounded-xl flex items-center justify-center text-white text-sm font-bold shrink-0" style={{ background: 'linear-gradient(135deg, #d4a55a, #b8843a)' }}>{scoreData.charName?.[0] || '?'}</div>
+                                    )}
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-[9px] font-bold tracking-widest uppercase" style={{ color: '#a07840' }}>Exchange Diary · 交换日记</div>
+                                        <div className="text-xs font-bold truncate" style={{ color: '#5c3e1a' }}>与 {scoreData.charName} · {scoreData.date}</div>
+                                    </div>
+                                    <div className="shrink-0 text-right leading-none">
+                                        <div className="text-[8px] font-mono opacity-60" style={{ color: '#8a6230' }}>{year}</div>
+                                        <div className="text-base font-black font-mono" style={{ color: '#7a4e1a' }}>{monthDay}</div>
+                                    </div>
+                                </div>
+
+                                {/* User page */}
+                                <div className="px-4 pt-3 pb-2">
+                                    <div className="flex items-center justify-between mb-1.5">
+                                        <span className="text-[9px] font-bold tracking-widest uppercase" style={{ color: '#a07840' }}>● {scoreData.userName || '我'} 写道</span>
+                                        {scoreData.userPaperName && <span className="text-[8px] font-mono opacity-50" style={{ color: '#a07840' }}>{scoreData.userPaperName}</span>}
+                                    </div>
+                                    <div className="rounded-xl px-3 py-2.5 text-[11px] leading-relaxed whitespace-pre-wrap" style={{ background: 'rgba(255,253,245,0.85)', border: '1px solid rgba(217,180,120,0.25)', color: '#4a3520', fontFamily: 'ui-serif, Georgia, serif' }}>
+                                        {userText ? truncate(userText, 160) : <span className="opacity-40 italic">(空白页)</span>}
+                                    </div>
+                                </div>
+
+                                {/* Char page */}
+                                <div className="px-4 pb-3 pt-1.5">
+                                    <div className="flex items-center justify-between mb-1.5">
+                                        <span className="text-[9px] font-bold tracking-widest uppercase" style={{ color: '#a07840' }}>● {scoreData.charName} 回道</span>
+                                        {scoreData.charPaperName && <span className="text-[8px] font-mono opacity-50" style={{ color: '#a07840' }}>{scoreData.charPaperName}</span>}
+                                    </div>
+                                    <div className="rounded-xl px-3 py-2.5 text-[11px] leading-relaxed whitespace-pre-wrap" style={{ background: 'linear-gradient(135deg, rgba(255,245,220,0.85), rgba(255,238,200,0.7))', border: '1px solid rgba(217,180,120,0.3)', color: '#4a3520', fontFamily: 'ui-serif, Georgia, serif' }}>
+                                        {charText ? truncate(charText, 200) : <span className="opacity-40 italic">(空白页)</span>}
+                                    </div>
+                                </div>
+
+                                {/* Footer */}
+                                <div className="px-4 py-2 flex items-center justify-between" style={{ borderTop: '1px dashed rgba(200,160,100,0.25)', background: 'linear-gradient(135deg, rgba(245,210,150,0.12), rgba(240,195,130,0.06))' }}>
+                                    <span className="text-[9px]" style={{ color: '#b89060' }}>
+                                        {(scoreData.userStickerCount || 0) + (scoreData.charStickerCount || 0) > 0
+                                            ? `贴了 ${(scoreData.userStickerCount || 0) + (scoreData.charStickerCount || 0)} 张贴纸`
+                                            : '今天的纸面很干净'}
+                                    </span>
+                                    <span className="text-[9px] font-bold" style={{ color: '#a07840' }}>交换日记 ✿</span>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -808,7 +1330,7 @@ const timeHint = durationSec <= 240 ? '差不多是一杯咖啡的时间' : '像
 
                 {showPendingDots && (
                     <span
-                        className="inline-flex items-center gap-[3px] mb-2 mr-1.5 select-none pointer-events-none"
+                        className="inline-flex items-center gap-[3px] mb-2 mr-0.5 select-none pointer-events-none"
                         aria-label="发送准备中"
                         role="status"
                     >
@@ -823,7 +1345,32 @@ const timeHint = durationSec <= 240 ? '差不多是一杯咖啡的时间' : '像
                     Added min-w-0 to prevent flexbox overflow issues.
                     Added explicit margins to clear absolute avatars.
                 */}
-                <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} max-w-[72%] min-w-0 ${!isUser ? 'ml-12' : 'mr-12'}`} {...interactionProps}>
+                <div className={`relative max-w-[72%] min-w-0 ${!isUser ? 'ml-12' : 'mr-12'}`}>
+                    <div
+                        aria-hidden="true"
+                        className={`absolute -right-10 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full flex items-center justify-center pointer-events-none transition-all duration-150 ${isReplyReady ? 'bg-indigo-500 text-white shadow-md shadow-indigo-200' : 'bg-white/90 text-slate-400 shadow-sm'}`}
+                        style={{
+                            opacity: Math.min(1, Math.abs(replyOffset) / 36),
+                            transform: `translateY(-50%) scale(${isReplyReady ? 1 : 0.86})`,
+                        }}
+                    >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+                            <path d="M9 17 4 12l5-5" />
+                            <path d="M4 12h10a6 6 0 0 1 6 6v1" />
+                        </svg>
+                    </div>
+                    <div
+                        className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} min-w-0`}
+                        style={{
+                            transform: `translateX(${replyOffset}px)`,
+                            transition: isReplyGestureActive ? 'none' : 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)',
+                            touchAction: 'pan-y',
+                            userSelect: 'none',
+                            WebkitUserSelect: 'none',
+                            WebkitTouchCallout: 'none',
+                        } as React.CSSProperties}
+                        {...interactionProps}
+                    >
                     {!isUser && m.metadata?.thinkingChain && (
                         <div className={`relative w-full ${selectionMode ? 'pl-7' : ''}`}>
                             {selectionMode && onToggleThinkingSelect && (
@@ -852,6 +1399,7 @@ const timeHint = durationSec <= 240 ? '差不多是一杯咖啡的时间' : '像
 {isLastInGroup && showTimestamp !== 'never' && (
                         <div className={`text-[9px] text-slate-400/80 px-1 mt-1 font-medium ${showTimestamp === 'hover' ? 'opacity-0 group-hover:opacity-100 transition-opacity' : ''}`}>{formatTime(m.timestamp)}</div>
                     )}
+                    </div>
                 </div>
 
                 {/* User Avatar - Absolute Positioned */}
@@ -1021,8 +1569,17 @@ const timeHint = durationSec <= 240 ? '差不多是一杯咖啡的时间' : '像
     // --- XHS Card Rendering (小红书笔记卡片) ---
     if (m.type === 'xhs_card' && m.metadata?.xhsNote) {
         const note = m.metadata.xhsNote;
+        const openXhsNote = () => {
+            const nid = note.noteId || note.note_id || note.id;
+            if (!nid) return;
+            const token = note.xsecToken || note.xsec_token;
+            const url = `https://www.xiaohongshu.com/explore/${nid}${token ? `?xsec_token=${encodeURIComponent(token)}&xsec_source=pc_feed` : ''}`;
+            window.open(url, '_blank', 'noopener,noreferrer');
+        };
         return commonLayout(
-            <div className="w-64 bg-white rounded-xl overflow-hidden shadow-sm border border-slate-100 cursor-pointer active:opacity-90 transition-opacity">
+            <div
+                onClick={openXhsNote}
+                className="w-64 bg-white rounded-xl overflow-hidden shadow-sm border border-slate-100 cursor-pointer active:opacity-90 transition-opacity">
                 {/* Cover image */}
                 {note.coverUrl ? (
                     <div className="relative w-full h-36 bg-slate-100 overflow-hidden">
@@ -1084,6 +1641,57 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
         );
     }
 
+    // --- Webpage Share Card (用户分享的网页) ---
+    if (m.type === 'webpage_card' && m.metadata?.webpage) {
+        const wp = m.metadata.webpage;
+        let host = (wp.siteName || '').trim();
+        try { host = new URL(wp.finalUrl || wp.url).hostname.replace(/^www\./, ''); } catch { /* 用 siteName 兜底 */ }
+        const openPage = () => {
+            const u = wp.finalUrl || wp.url;
+            if (u) window.open(u, '_blank', 'noopener,noreferrer');
+        };
+        const excerpt = (wp.excerpt || '').trim();
+        return commonLayout(
+            <div
+                onClick={openPage}
+                className="w-64 bg-white rounded-2xl overflow-hidden border border-slate-200/80 shadow-[0_2px_10px_rgba(0,0,0,0.05)] cursor-pointer active:opacity-90 transition-opacity">
+                {/* 封面图（og:image / 正文首图），加载失败自动隐藏 */}
+                {wp.image && (
+                    <div className="w-full h-32 bg-slate-100 overflow-hidden">
+                        <img
+                            src={wp.image}
+                            alt=""
+                            className="w-full h-full object-cover"
+                            loading="lazy"
+                            referrerPolicy="no-referrer"
+                            onError={(e: any) => { const c = e.target?.parentElement; if (c) c.style.display = 'none'; }}
+                        />
+                    </div>
+                )}
+                <div className="p-3.5">
+                    {/* 域名行 */}
+                    <div className="flex items-center gap-1.5 mb-2">
+                        <span className="w-4 h-4 rounded-full bg-slate-100 flex items-center justify-center shrink-0">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-2.5 h-2.5 text-slate-400">
+                                <path fillRule="evenodd" d="M12.232 4.232a2.5 2.5 0 0 1 3.536 3.536l-1.225 1.224a.75.75 0 0 0 1.061 1.06l1.224-1.224a4 4 0 0 0-5.656-5.656l-3 3a4 4 0 0 0 .225 5.865.75.75 0 0 0 .977-1.138 2.5 2.5 0 0 1-.142-3.667l3-3Z" clipRule="evenodd" />
+                                <path fillRule="evenodd" d="M11.603 7.963a.75.75 0 0 0-.977 1.138 2.5 2.5 0 0 1 .142 3.667l-3 3a2.5 2.5 0 0 1-3.536-3.536l1.225-1.224a.75.75 0 0 0-1.061-1.06l-1.224 1.224a4 4 0 1 0 5.656 5.656l3-3a4 4 0 0 0-.225-5.865Z" clipRule="evenodd" />
+                            </svg>
+                        </span>
+                        <span className="text-[11px] text-slate-400 font-medium truncate">{host || '网页'}</span>
+                    </div>
+                    {/* 标题 */}
+                    <div className="font-semibold text-[15px] text-slate-800 line-clamp-2 leading-snug">{wp.title || host || '网页'}</div>
+                    {/* 摘要 / 抓空占位 */}
+                    {excerpt ? (
+                        <p className="text-xs text-slate-500 line-clamp-3 leading-relaxed mt-1.5">{excerpt}</p>
+                    ) : (
+                        <p className="text-[11px] text-slate-300 mt-1.5">未能提取到正文预览，点开看原网页</p>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
     if (m.type === 'mcd_card') {
         const meta = m.metadata || {};
         const kind = meta.mcdCardKind;
@@ -1134,6 +1742,462 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
                 candidateItem={meta.mcdCandidate}
             />
         );
+    }
+
+    if (m.type === 'luckin_card') {
+        const meta = m.metadata || {};
+        const kind = meta.luckinCardKind;
+        // 来自小程序的卡片 (proposal / cart / candidate) → 主聊天里只渲染一张"刷卡"占位
+        if (kind === 'proposal' || kind === 'cart' || kind === 'candidate' || meta.fromLuckinMiniApp) {
+            const label = kind === 'proposal' ? '推荐了几样'
+                : kind === 'cart' ? '想下单的购物车'
+                : kind === 'candidate' ? '问问意见'
+                : '瑞幸卡片';
+            const summary = kind === 'proposal' && Array.isArray(meta.luckinProposal?.items)
+                ? `${meta.luckinProposal.items.length} 件: ${meta.luckinProposal.items.slice(0, 3).map((i: any) => i.name).join(' / ')}${meta.luckinProposal.items.length > 3 ? '…' : ''}`
+                : kind === 'cart' && Array.isArray(meta.luckinCartItems)
+                ? `${meta.luckinCartItems.length} 件: ${meta.luckinCartItems.slice(0, 3).map((i: any) => i.name).join(' / ')}${meta.luckinCartItems.length > 3 ? '…' : ''}`
+                : kind === 'candidate' && meta.luckinCandidate?.name
+                ? `「${meta.luckinCandidate.name}」`
+                : '';
+            return commonLayout(
+                <div className="w-60 rounded-2xl overflow-hidden border border-blue-200 shadow-sm bg-gradient-to-br from-blue-50 to-sky-50 select-none">
+                    <div className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-blue-600 to-sky-500">
+                        <span className="text-lg">🦌</span>
+                        <div className="flex-1 min-w-0">
+                            <div className="text-[10px] text-white/70 leading-none">瑞幸卡片</div>
+                            <div className="text-[11px] font-bold text-white leading-tight">{label}</div>
+                        </div>
+                    </div>
+                    <div className="px-3 py-2 text-[10px] text-slate-500 leading-snug min-h-[28px]">
+                        {summary || '在瑞幸小程序里查看完整内容'}
+                    </div>
+                    <div className="px-3 pb-2 text-[9px] text-blue-700/60 italic">
+                        💳 已记录在瑞幸记录里
+                    </div>
+                </div>
+            );
+        }
+        // 结账卡 (聊天点单 previewOrder 的终点): 可改数量 + 直接扫码支付
+        if (kind === 'checkout' && meta.luckinToolResult) {
+            return commonLayout(
+                <LuckinCheckoutCard
+                    deptId={meta.luckinToolArgs?.deptId}
+                    args={meta.luckinToolArgs}
+                    preview={meta.luckinToolResult}
+                    loc={meta.luckinLoc}
+                />
+            );
+        }
+        // 工具结果卡 (门店/商品/订单) 或老的 luckin_card → 走 LuckinCard 渲染
+        return commonLayout(
+            <LuckinCard
+                toolName={meta.luckinToolName || m.content || 'luckin_tool'}
+                args={meta.luckinToolArgs}
+                result={meta.luckinToolResult}
+                error={meta.luckinToolError}
+                rawText={meta.luckinToolRawText}
+                kind={kind || 'generic'}
+                onSendCart={onLuckinSendCart}
+                onCandidate={onLuckinCandidate}
+                cartItems={meta.luckinCartItems}
+                candidateItem={meta.luckinCandidate}
+            />
+        );
+    }
+
+    if (m.type === 'vr_card') {
+        const md: any = m.metadata || {};
+        const roomNameMap: Record<string, string> = {
+            library: '图书馆', music: '听歌房', guestbook: '留言簿', gym: '娱乐室', postoffice: '邮局',
+        };
+        const roomInfo = { name: roomNameMap[md.room] || '彼方' };
+        const activity: string = md.activity || '在彼方度过了一段时间。';
+        const excerpts: string[] = Array.isArray(md.annotationExcerpts) ? md.annotationExcerpts : [];
+        const timeStr = new Date(m.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        const card = (
+            <div className="w-64">
+                <div
+                    className="rounded-xl overflow-hidden border border-indigo-300/40 shadow-[0_4px_16px_rgba(60,40,120,0.22)]"
+                    style={{ background: 'linear-gradient(155deg,#2a2350 0%,#1b1838 100%)' }}
+                >
+                    {/* 头部：彼方 · 房间 */}
+                    <div className="px-3 pt-2.5 pb-2 flex items-center gap-2 border-b border-white/10">
+                        <span className="text-base leading-none text-indigo-200/80" style={{ filter: 'drop-shadow(0 0 5px rgba(170,180,255,.6))' }}>✦</span>
+                        <div className="flex-1 min-w-0">
+                            <div className="text-[9px] tracking-[0.25em] text-indigo-300/80 font-bold uppercase">彼方 · 动态</div>
+                            <div className="text-[12px] text-indigo-100 font-semibold truncate">{roomInfo.name}{md.novelTitle ? ` · 《${md.novelTitle}》` : ''}</div>
+                        </div>
+                        <span className="text-[9px] text-indigo-300/60">{timeStr}</span>
+                    </div>
+                    {/* 活动播报 */}
+                    <div className="px-3 py-2.5">
+                        <p className="text-[12.5px] leading-[1.5] text-indigo-50/95">
+                            {md.userBoardPost
+                                ? activity
+                                : <><span className="font-bold text-amber-200">{charName || 'Ta'}</span> {activity}</>}
+                        </p>
+                        {excerpts.length > 0 && (
+                            <div className="mt-2 space-y-1">
+                                {excerpts.map((ex, i) => (
+                                    <div key={i} className="text-[11px] leading-snug text-indigo-200/80 pl-2 border-l-2 border-amber-300/50">
+                                        {ex}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                        {/* 留言簿：把角色在墙上留的原话也显示出来 */}
+                        {Array.isArray(md.boardPosts) && md.boardPosts.length > 0 && (
+                            <div className="mt-2 space-y-1">
+                                {md.boardPosts.map((p: any, i: number) => (
+                                    <div key={i} className="text-[11px] leading-snug text-indigo-100/90 pl-2 border-l-2 border-indigo-300/50">
+                                        {p?.replyToName && <span className="text-indigo-300/70">回 {p.replyToName}：</span>}{p?.content}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                    {/* 页脚 */}
+                    <div className="px-3 py-1.5 border-t border-white/10 flex items-center justify-between">
+                        <span className="text-[9px] text-indigo-300/60 italic">{md.userBoardPost ? '你发布到留言墙' : 'Ta 独自度过的时间'}</span>
+                        <span className="text-[9px] text-amber-200/70 font-bold tracking-wide">{md.userBoardPost ? '彼方' : '＋记忆'}</span>
+                    </div>
+                </div>
+            </div>
+        );
+        return commonLayout(card);
+    }
+
+    if (m.type === 'sim_card') {
+        const sc: any = m.metadata?.simCard || {};
+        const timeStr = new Date(m.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        const accent = '#b89bff';
+        const card = (
+            <div className="w-64">
+                <div className="relative rounded-2xl overflow-hidden border shadow-[0_8px_28px_rgba(40,30,70,0.45)]"
+                    style={{ borderColor: 'rgba(184,155,255,0.3)', background: 'linear-gradient(160deg,#221c33 0%,#171327 55%,#100d1c 100%)' }}>
+                    <div className="absolute -top-7 -right-5 w-24 h-24 rounded-full pointer-events-none" style={{ background: 'radial-gradient(circle,rgba(184,155,255,.4),transparent 70%)' }} />
+                    <div className="absolute inset-0 pointer-events-none opacity-50" style={{ backgroundImage: 'radial-gradient(1px 1px at 22% 24%,#c9b8ec,transparent),radial-gradient(1px 1px at 62% 18%,#e7c9f0,transparent),radial-gradient(1px 1px at 42% 36%,#bcd0f0,transparent)' }} />
+                    {/* 头部 */}
+                    <div className="relative px-3 pt-2.5 pb-2 flex items-center gap-2 border-b" style={{ borderColor: 'rgba(184,155,255,0.18)' }}>
+                        <span className="text-base leading-none" style={{ color: accent, filter: 'drop-shadow(0 1px 4px rgba(184,155,255,.5))' }}>✦</span>
+                        <div className="flex-1 min-w-0">
+                            <div className="text-[9px] tracking-[0.25em] font-bold uppercase" style={{ color: accent }}>体验卡 · {sc.mode === 'event' ? '事件' : '日常'}</div>
+                            <div className="text-[12px] text-white/90 font-semibold truncate" style={{ fontFamily: "'Shippori Mincho','Noto Sans SC',serif" }}>{sc.title || '一段回忆'}</div>
+                        </div>
+                        <span className="text-[9px] text-white/35">{timeStr}</span>
+                    </div>
+                    {/* 正文 */}
+                    <div className="relative px-3 py-2.5">
+                        {sc.theme && (
+                            <span className="inline-block text-[9px] px-2 py-0.5 rounded-full mb-2" style={{ color: accent, background: 'rgba(184,155,255,0.14)' }}>{sc.theme}</span>
+                        )}
+                        {sc.summary && (
+                            <p className="text-[12px] leading-[1.7] text-white/70 whitespace-pre-wrap max-h-44 overflow-y-auto no-scrollbar" style={{ fontFamily: "'Shippori Mincho','Noto Sans SC',serif" }}>
+                                {sc.summary}
+                            </p>
+                        )}
+                        {sc.ending && <div className="mt-2 text-[10px] text-white/40">结局 · {sc.ending}</div>}
+                    </div>
+                    {/* 页脚 */}
+                    <div className="relative px-3 py-1.5 border-t flex items-center justify-between" style={{ borderColor: 'rgba(184,155,255,0.18)' }}>
+                        <span className="text-[9px] italic text-white/35">你真实经历过的一天</span>
+                        <span className="text-[9px] font-bold tracking-wide" style={{ color: accent }}>＋ 收藏为回忆</span>
+                    </div>
+                </div>
+            </div>
+        );
+        return commonLayout(card);
+    }
+
+    if (m.type === 'phone_card') {
+        const pc: any = m.metadata?.phoneCard || {};
+        const timeStr = new Date(m.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+
+        // 智能体卡片（偷看到 TA 在玩 AI：助手 / 树洞 / 酒馆）
+        if (typeof pc.kind === 'string' && pc.kind.startsWith('ai_')) {
+            const svc = pc.service || pc.kind.replace('ai_', '');
+            const meta: Record<string, { label: string; accent: string; bg: string; glyph: string }> = {
+                assistant: { label: 'AI 助手', accent: '#34d399', bg: 'linear-gradient(150deg,#0e2a22 0%,#0b1f1a 55%,#0a1512 100%)', glyph: '🤖' },
+                claude: { label: '深度对话', accent: '#a78bfa', bg: 'linear-gradient(150deg,#1e1830 0%,#171228 55%,#100c1c 100%)', glyph: '✻' },
+                tavern: { label: '酒馆', accent: '#fb7185', bg: 'linear-gradient(150deg,#2a1620 0%,#1d1018 55%,#130a0f 100%)', glyph: '🎭' },
+            };
+            const mm = meta[svc] || meta.assistant;
+            const card = (
+                <div className="w-64">
+                    {/* 用原生 <details> 折叠：默认收起，点头部展开（无需 React state，避免在分支里用 hook） */}
+                    <details className="group relative rounded-2xl overflow-hidden border shadow-[0_8px_24px_rgba(10,12,20,0.5)] [&_summary]:list-none [&::-webkit-details-marker]:hidden"
+                        style={{ borderColor: `${mm.accent}44`, background: mm.bg }}>
+                        <div className="absolute -top-8 -right-6 w-28 h-28 rounded-full blur-2xl pointer-events-none" style={{ background: `radial-gradient(circle, ${mm.accent}55, transparent 70%)` }} />
+                        <summary className="relative px-3 pt-2.5 pb-2 flex items-center gap-2 border-b cursor-pointer select-none" style={{ borderColor: `${mm.accent}22` }}>
+                            <span className="w-6 h-6 rounded-lg flex items-center justify-center text-[13px] shrink-0" style={{ background: `${mm.accent}22` }}>{mm.glyph}</span>
+                            <div className="flex-1 min-w-0">
+                                <div className="text-[9px] tracking-[0.22em] font-bold uppercase" style={{ color: mm.accent }}>智能体 · {mm.label}</div>
+                                <div className="text-[12px] text-white/90 font-semibold truncate">{pc.serviceName ? `${pc.serviceName} · ${pc.title || ''}` : (pc.title || '一段对话')}</div>
+                            </div>
+                            <span className="shrink-0 text-[12px] font-bold leading-none transition-transform group-open:rotate-90" style={{ color: mm.accent }}>›</span>
+                        </summary>
+                        <div className="relative px-3 py-2.5">
+                            <p className="text-[12px] leading-[1.7] text-white/65 whitespace-pre-wrap max-h-40 overflow-y-auto no-scrollbar">{pc.detail || ''}</p>
+                        </div>
+                        <div className="relative px-3 py-1.5 border-t flex items-center justify-between" style={{ borderColor: `${mm.accent}1e` }}>
+                            <span className="text-[9px] italic text-white/35">TA 自己手机上的 AI · {timeStr}</span>
+                            <span className="text-[9px] font-bold tracking-wide" style={{ color: mm.accent }}>来自查手机</span>
+                        </div>
+                    </details>
+                </div>
+            );
+            return commonLayout(card);
+        }
+
+        // 人际关系变动卡片（用户在查手机里删/拉黑了角色的好友）
+        if (pc.kind === 'relationship') {
+            const isBlock = pc.action === 'blocked';
+            const rAccent = isBlock ? '#fca5a5' : '#fb7185';
+            const card = (
+                <div className="w-64">
+                    <div className="relative rounded-2xl overflow-hidden border shadow-[0_8px_24px_rgba(45,20,30,0.45)]"
+                        style={{ borderColor: 'rgba(251,113,133,0.3)', background: 'linear-gradient(160deg,#2a1620 0%,#1d1018 55%,#130a0f 100%)' }}>
+                        <div className="absolute -top-7 -right-5 w-24 h-24 rounded-full pointer-events-none" style={{ background: 'radial-gradient(circle,rgba(251,113,133,.3),transparent 70%)' }} />
+                        <div className="relative px-3 pt-2.5 pb-2 flex items-center gap-2 border-b" style={{ borderColor: 'rgba(251,113,133,0.18)' }}>
+                            <span className="text-sm leading-none">{isBlock ? '🚫' : '💔'}</span>
+                            <div className="flex-1 min-w-0">
+                                <div className="text-[9px] tracking-[0.25em] font-bold uppercase" style={{ color: rAccent }}>人际关系 · 关系变动</div>
+                                <div className="text-[12px] text-white/90 font-semibold truncate">{pc.title || '好友关系变动'}</div>
+                            </div>
+                            <span className="text-[9px] text-white/35">{timeStr}</span>
+                        </div>
+                        <div className="relative px-3 py-2.5">
+                            <p className="text-[12px] leading-[1.6] text-white/70 whitespace-pre-wrap">
+                                <span className="font-semibold" style={{ color: rAccent }}>{pc.by || '对方'}</span> 把你和
+                                <span className="font-semibold text-white/90">「{pc.contactName || '某人'}」</span>
+                                的好友关系{isBlock ? '拉黑' : '删除'}了。
+                            </p>
+                        </div>
+                        <div className="relative px-3 py-1.5 border-t flex items-center justify-between" style={{ borderColor: 'rgba(251,113,133,0.16)' }}>
+                            <span className="text-[9px] italic text-white/40">你察觉到是 TA 动的手</span>
+                            <span className="text-[9px] font-bold tracking-wide" style={{ color: rAccent }}>来自查手机</span>
+                        </div>
+                    </div>
+                </div>
+            );
+            return commonLayout(card);
+        }
+
+        const accent = '#7dd3fc';
+        const isChat = pc.kind === 'chat';
+        const card = (
+            <div className="w-64">
+                <div className="relative rounded-2xl overflow-hidden border shadow-[0_8px_24px_rgba(20,30,45,0.4)]"
+                    style={{ borderColor: 'rgba(125,211,252,0.28)', background: 'linear-gradient(160deg,#10202b 0%,#0d1822 55%,#0a1019 100%)' }}>
+                    <div className="absolute -top-7 -right-5 w-24 h-24 rounded-full pointer-events-none" style={{ background: 'radial-gradient(circle,rgba(125,211,252,.3),transparent 70%)' }} />
+                    {/* 头部 */}
+                    <div className="relative px-3 pt-2.5 pb-2 flex items-center gap-2 border-b" style={{ borderColor: 'rgba(125,211,252,0.16)' }}>
+                        <span className="text-sm leading-none" style={{ color: accent }}>🔍</span>
+                        <div className="flex-1 min-w-0">
+                            <div className="text-[9px] tracking-[0.25em] font-bold uppercase" style={{ color: accent }}>查手机 · {pc.app || '手机'}</div>
+                            <div className="text-[12px] text-white/90 font-semibold truncate">{pc.title || '一条痕迹'}</div>
+                        </div>
+                        <span className="text-[9px] text-white/35">{timeStr}</span>
+                    </div>
+                    {/* 正文 */}
+                    <div className="relative px-3 py-2.5">
+                        {pc.value && (
+                            <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full mb-1.5" style={{ color: accent, background: 'rgba(125,211,252,0.14)' }}>{pc.value}</span>
+                        )}
+                        {pc.detail && (
+                            <p className="text-[12px] leading-[1.6] text-white/65 whitespace-pre-wrap max-h-40 overflow-y-auto no-scrollbar">{pc.detail}</p>
+                        )}
+                    </div>
+                    {/* 页脚 */}
+                    <div className="relative px-3 py-1.5 border-t flex items-center justify-between" style={{ borderColor: 'rgba(125,211,252,0.16)' }}>
+                        <span className="text-[9px] italic text-white/35">{isChat ? 'TA 手机里的一段对话' : 'TA 手机里的一条记录'}</span>
+                        <span className="text-[9px] font-bold tracking-wide" style={{ color: accent }}>来自查手机</span>
+                    </div>
+                </div>
+            </div>
+        );
+        return commonLayout(card);
+    }
+
+    if (m.type === 'theater_card') {
+        const tMeta: any = m.metadata || {};
+        const t: any = tMeta.theater || {};
+        const lines: any[] = Array.isArray(t.lines) ? t.lines : [];
+        const timeStr = new Date(m.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        const HUE = 262;
+        const accent = `hsl(${HUE},75%,72%)`;
+        const exposed = tMeta.exposed !== false; // 缺省按已暴露（兼容旧卡片）
+        // 由该时段起始时间，给每一拍合成「行为轨迹」时间戳（HH:MM:SS），与窥视面板一致。
+        const beatClock = (idx: number): string => {
+            const [h, mm] = String(tMeta.slotTime || '00:00').split(':').map((n: string) => parseInt(n, 10));
+            const base = (Number.isFinite(h) ? h : 0) * 3600 + (Number.isFinite(mm) ? mm : 0) * 60 + idx * 17;
+            const pad = (n: number) => String(n).padStart(2, '0');
+            return `${pad(Math.floor(base / 3600) % 24)}:${pad(Math.floor((base % 3600) / 60))}:${pad(base % 60)}`;
+        };
+        const card = (
+            <div className="w-64">
+                <div className="relative rounded-2xl overflow-hidden border shadow-[0_8px_28px_rgba(30,18,48,0.5)]"
+                    style={{ borderColor: `hsla(${HUE},55%,55%,0.32)`, background: `linear-gradient(160deg,hsl(${HUE},38%,20%) 0%,hsl(${HUE},42%,13%) 58%,#0f0a18 100%)` }}>
+                    <div className="absolute -top-7 -right-5 w-24 h-24 rounded-full pointer-events-none" style={{ background: `radial-gradient(circle,hsla(${HUE},70%,60%,.35),transparent 70%)` }} />
+                    <div className="absolute inset-0 pointer-events-none opacity-50" style={{ backgroundImage: 'radial-gradient(1px 1px at 22% 30%,rgba(200,180,255,.4),transparent),radial-gradient(1px 1px at 78% 18%,rgba(220,200,255,.35),transparent)' }} />
+                    {/* 头部：窥视回放 · LIVE */}
+                    <div className="relative px-3 pt-2.5 pb-2 flex items-center gap-2 border-b" style={{ borderColor: `hsla(${HUE},55%,55%,0.2)` }}>
+                        <span className="text-sm leading-none" style={{ color: accent, filter: `drop-shadow(0 1px 4px hsla(${HUE},70%,60%,.6))` }}>👁</span>
+                        <div className="flex-1 min-w-0">
+                            <div className="text-[8.5px] tracking-[0.22em] font-bold uppercase flex items-center gap-1.5" style={{ color: accent }}>
+                                <span>窥视回放 · {tMeta.slotTime || ''}</span>
+                                <span className="w-1 h-1 rounded-full bg-[#ff5a78] animate-pulse" />
+                            </div>
+                            <div className="text-[12px] text-white/90 font-semibold truncate">{tMeta.emoji ? `${tMeta.emoji} ` : ''}{tMeta.activity || '某个时段'}</div>
+                        </div>
+                        <span className="text-[9px] text-white/35">{timeStr}</span>
+                    </div>
+                    {/* 正文：逐拍回放（时间戳 + 氛围图标方块 + 文本） */}
+                    <div className="relative px-2.5 py-2.5 max-h-52 overflow-y-auto no-scrollbar space-y-1.5">
+                        {lines.length > 0 ? lines.map((l: any, i: number) => (
+                            <div key={i} className="flex items-stretch gap-1.5">
+                                <span className="flex-shrink-0 w-[42px] pt-1 text-right text-[8px] font-mono leading-tight whitespace-nowrap text-white/28 select-none">{beatClock(i)}</span>
+                                <span
+                                    className="flex-shrink-0 self-start mt-0.5 w-5 h-5 rounded-md flex items-center justify-center text-[11px]"
+                                    style={{ background: `hsl(${HUE},42%,30%)`, border: `1px solid hsla(${HUE},60%,58%,0.45)` }}
+                                >
+                                    {l?.emotion || '·'}
+                                </span>
+                                <p
+                                    className={`flex-1 min-w-0 text-[12.5px] leading-[1.55] whitespace-pre-wrap break-words ${/[「」“”"]/.test(l?.text || '') ? 'text-white font-medium' : 'text-white/90'}`}
+                                >{l?.text || ''}</p>
+                            </div>
+                        )) : (
+                            <p className="text-[11px] text-white/40 italic">（这段窥视没有内容）</p>
+                        )}
+                    </div>
+                    {/* 页脚 */}
+                    <div className="relative px-3 py-1.5 border-t flex items-center justify-between" style={{ borderColor: `hsla(${HUE},55%,55%,0.2)` }}>
+                        <span className="text-[9px] italic text-white/40">你偷看了 TA 的这一刻</span>
+                        <span className="text-[9px] font-bold tracking-wide" style={{ color: exposed ? accent : 'rgba(255,255,255,0.4)' }}>
+                            {exposed ? 'TA 已察觉' : 'TA 不知情'}
+                        </span>
+                    </div>
+                </div>
+            </div>
+        );
+        return commonLayout(card);
+    }
+
+    if (m.type === 'world_card') {
+        const md: any = m.metadata || {};
+        const timeStr = new Date(m.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        const narrative: string = md.narrative || '';
+        const panel: Record<string, any> = (md.statusPanel && typeof md.statusPanel === 'object') ? md.statusPanel : {};
+        const posts: string[] = Array.isArray(md.phonePosts) ? md.phonePosts : [];
+        const card = (
+            <div className="w-64">
+                <div
+                    className="relative rounded-2xl overflow-hidden border border-violet-200/70 shadow-[0_6px_20px_rgba(150,130,200,0.22)]"
+                    style={{ background: 'linear-gradient(160deg,#fbf7ff 0%,#f1ebfa 55%,#eae3f6 100%)' }}
+                >
+                    {/* 顶部淡紫光晕 + 月亮 + 星点（浅色系，和彼方的深色拉开差异） */}
+                    <div className="absolute -top-6 -right-4 w-24 h-24 rounded-full pointer-events-none" style={{ background: 'radial-gradient(circle,rgba(214,196,244,.55),transparent 70%)' }} />
+                    <div className="absolute top-2.5 right-3.5 w-5 h-5 rounded-full pointer-events-none" style={{ background: 'radial-gradient(circle at 38% 35%,#ffffff,#d9cdf0 72%)', boxShadow: '0 0 10px 2px rgba(200,180,245,.5)' }} />
+                    <div className="absolute inset-0 pointer-events-none opacity-60" style={{ backgroundImage: 'radial-gradient(1px 1px at 20% 22%,#c9b8ec,transparent),radial-gradient(1px 1px at 60% 16%,#e7c9f0,transparent),radial-gradient(1px 1px at 40% 34%,#bcd0f0,transparent)' }} />
+                    {/* 头部：家园 · 世界名 · 剧情时间 */}
+                    <div className="relative px-3 pt-2.5 pb-2 flex items-center gap-2 border-b border-violet-200/50">
+                        <span className="text-base leading-none text-violet-400" style={{ filter: 'drop-shadow(0 1px 3px rgba(180,150,230,.5))' }}>⌂</span>
+                        <div className="flex-1 min-w-0">
+                            <div className="text-[9px] tracking-[0.25em] text-violet-400/90 font-bold uppercase">家园 · {md.storyTime || '生活记录'}</div>
+                            <div className="text-[12px] text-[#5b4b7a] font-semibold truncate font-serif">{md.worldName || '共同世界'}</div>
+                        </div>
+                        <span className="text-[9px] text-violet-400/60">{timeStr}</span>
+                    </div>
+                    {/* 行为描述 */}
+                    <div className="relative px-3 py-2.5">
+                        <p className="text-[11px] text-[#6a5790] mb-1">
+                            <span className="font-bold text-rose-400">{charName || 'Ta'}</span>
+                            {md.location ? ` 在${md.location}` : ''}{md.mood ? ` · ${md.mood}` : ''}
+                        </p>
+                        {narrative && (
+                            <p className="text-[12px] leading-[1.6] text-[#4a3f63] whitespace-pre-wrap max-h-44 overflow-y-auto no-scrollbar">
+                                {narrative}
+                            </p>
+                        )}
+                        {/* 数值面板 */}
+                        {Object.keys(panel).length > 0 && (
+                            <div className="mt-2 flex flex-wrap gap-1">
+                                {Object.entries(panel).map(([k, v]) => (
+                                    <span key={k} className="text-[9px] px-1.5 py-0.5 rounded-full bg-violet-100/80 text-violet-600 border border-violet-200/70">
+                                        {k} {String(v)}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
+                        {/* 发的动态 */}
+                        {posts.length > 0 && (
+                            <div className="mt-2 space-y-1">
+                                {posts.map((p, i) => (
+                                    <div key={i} className="text-[11px] leading-snug text-violet-700/85 pl-2 border-l-2 border-rose-300/70">
+                                        {p}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                    {/* 页脚 */}
+                    <div className="relative px-3 py-1.5 border-t border-violet-200/50 flex items-center justify-between">
+                        <span className="text-[9px] text-violet-400/70 italic">Ta 在那个世界的生活</span>
+                        <span className="text-[9px] text-rose-400/80 font-bold tracking-wide">＋记忆</span>
+                    </div>
+                </div>
+            </div>
+        );
+        return commonLayout(card);
+    }
+
+    if (m.type === 'trpg_card') {
+        const t: any = m.metadata?.trpg || {};
+        const gameTitle: string = t.gameTitle || 'TRPG 跑团';
+        const partyNames: string[] = Array.isArray(t.partyNames) ? t.partyNames.filter((n: string) => n && n !== charName) : [];
+        const excerpt: Array<{ speaker?: string; text?: string; role?: string }> = Array.isArray(t.excerpt) ? t.excerpt : [];
+        const card = (
+            <div className="w-72">
+                <div
+                    className="rounded-2xl overflow-hidden border border-purple-300/30 shadow-[0_6px_20px_rgba(70,40,110,0.28)]"
+                    style={{ background: 'linear-gradient(155deg,#2c1c44 0%,#1a1230 100%)' }}
+                >
+                    {/* 头部 */}
+                    <div className="px-3.5 pt-3 pb-2.5 flex items-center gap-2.5 border-b border-white/10">
+                        <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ background: 'linear-gradient(135deg,#a855f7,#ec4899)' }}>
+                            <svg viewBox="0 0 24 24" fill="none" className="w-4 h-4 text-white"><path d="M12 2 4 6v6c0 5 3.4 8.5 8 10 4.6-1.5 8-5 8-10V6l-8-4Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/></svg>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <div className="text-[9px] tracking-[0.25em] text-purple-300/80 font-bold uppercase">TRPG · 一起玩的游戏</div>
+                            <div className="text-[13px] text-purple-50 font-semibold truncate font-serif">{gameTitle}</div>
+                        </div>
+                    </div>
+                    {/* 剧情节选 */}
+                    <div className="px-3.5 py-3 space-y-2 max-h-60 overflow-hidden">
+                        {excerpt.length === 0 && <p className="text-[12px] text-purple-200/70 italic">一段冒险剧情</p>}
+                        {excerpt.slice(0, 6).map((e, i) => {
+                            const isGM = e.role === 'gm';
+                            const text = (e.text || '').replace(/^\*|\*$/g, '').trim();
+                            return (
+                                <div key={i} className={`text-[12px] leading-relaxed ${isGM ? 'text-purple-100/90 italic' : 'text-purple-50/95'}`}>
+                                    {!isGM && e.speaker && <span className="text-pink-300/90 font-semibold mr-1">{e.speaker}:</span>}
+                                    <span className={isGM ? 'border-l-2 border-purple-400/40 pl-2 block' : ''}>{text}</span>
+                                </div>
+                            );
+                        })}
+                        {excerpt.length > 6 && <div className="text-[10px] text-purple-300/60 text-center pt-0.5">…共 {excerpt.length} 条剧情</div>}
+                    </div>
+                    {/* 页脚 */}
+                    <div className="px-3.5 py-2 border-t border-white/10 flex items-center justify-between">
+                        <span className="text-[9px] text-purple-300/70 italic truncate">{partyNames.length ? `与 ${partyNames.join('、')} 同行` : '我们的冒险'}</span>
+                        <span className="text-[9px] text-pink-200/80 font-bold tracking-wide shrink-0 ml-2">＋共同回忆</span>
+                    </div>
+                </div>
+            </div>
+        );
+        return commonLayout(card);
     }
 
     if (m.type === 'news_card') {
@@ -1211,7 +2275,7 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
         // srcDoc 用一个全宽中心化的 wrapper, 让 270px 的卡片在 iframe 里居中、背景透明。
         const srcDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;padding:0;background:transparent;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#334155;}body{display:flex;justify-content:center;padding:0;}*{box-sizing:border-box;}img{max-width:100%;}</style></head><body>${html}</body></html>`;
         return commonLayout(
-            <div className="rounded-[18px] overflow-hidden bg-white/0 shadow-sm border border-fuchsia-100/60 max-w-[280px]">
+            <div className="rounded-[18px] overflow-hidden bg-transparent max-w-[280px]">
                 <iframe
                     title="html-card"
                     srcDoc={srcDoc}
@@ -1224,11 +2288,33 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
                     style={{ height: 200 }}
                     onLoad={(e) => {
                         try {
-                            const f = e.currentTarget;
+                            const f = e.currentTarget as HTMLIFrameElement & { __htmlCardRO?: ResizeObserver };
                             const doc = f.contentDocument;
                             if (!doc || !doc.body) return;
-                            const h = Math.min(800, Math.max(60, doc.body.scrollHeight + 4));
-                            f.style.height = h + 'px';
+                            // 量内容真实高度并把 iframe 调成等高，避免内部滚动。
+                            // 上限放宽到 2400，足够长卡片完整展开；真正超长的才会兜底滚动。
+                            const fit = () => {
+                                try {
+                                    const root = doc.documentElement;
+                                    const body = doc.body;
+                                    const natural = Math.max(
+                                        body.scrollHeight, body.offsetHeight,
+                                        root ? root.scrollHeight : 0,
+                                    );
+                                    const h = Math.min(2400, Math.max(60, natural + 4));
+                                    f.style.height = h + 'px';
+                                } catch { /* 同源读不到时静默 */ }
+                            };
+                            fit();
+                            // 交互卡片（:checked 展开 / 折叠）、动画、字体晚到都会改变高度，
+                            // 用 ResizeObserver 持续跟随，让高度始终自适应而不是只量一次。
+                            f.__htmlCardRO?.disconnect();
+                            if (typeof ResizeObserver !== 'undefined') {
+                                const ro = new ResizeObserver(() => fit());
+                                ro.observe(doc.body);
+                                if (doc.documentElement) ro.observe(doc.documentElement);
+                                f.__htmlCardRO = ro;
+                            }
                         } catch { /* 同源也读不到时静默 */ }
                     }}
                 />
@@ -1424,6 +2510,11 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
             );
         }
 
+        // === Like 520 Card === (必须放在 if (scoreData) 兜底前)
+        if (scoreData?.type === 'like520_card') {
+            return commonLayout(<Like520ChatCard data={scoreData} />);
+        }
+
         if (scoreData) {
             const coverGradients: Record<string, string> = {
                 sunset: 'from-orange-400 via-pink-500 to-purple-600',
@@ -1464,20 +2555,11 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
                 </div>
             );
         }
+
     }
 
     if (m.type === 'transfer') {
-        return commonLayout(
-            <div className="w-64 bg-gradient-to-br from-amber-400 to-orange-500 rounded-2xl p-4 text-white shadow-lg relative overflow-hidden group active:scale-[0.98] transition-transform">
-                    <div className="absolute top-0 right-0 p-4 opacity-20"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-12 h-12"><path d="M10.464 8.746c.227-.18.497-.311.786-.394v2.795a2.252 2.252 0 0 1-.786-.393c-.394-.313-.546-.681-.546-1.004 0-.324.152-.691.546-1.004ZM12.75 15.662v-2.824c.347.085.664.228.921.421.427.32.579.686.579.991 0 .305-.152.671-.579.991a2.534 2.534 0 0 1-.921.42Z" /><path fillRule="evenodd" d="M12 2.25c-5.385 0-9.75 4.365-9.75 9.75s4.365 9.75 9.75 9.75 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25ZM12.75 6a.75.75 0 0 0-1.5 0v.816a3.836 3.836 0 0 0-1.72.756c-.712.566-1.112 1.35-1.112 2.178 0 .829.4 1.612 1.113 2.178.502.4 1.102.647 1.719.756v2.978a2.536 2.536 0 0 1-.921-.421l-.879-.66a.75.75 0 0 0-.9 1.2l.879.66c.533.4 1.169.645 1.821.75V18a.75.75 0 0 0 1.5 0v-.81a4.124 4.124 0 0 0 1.821-.749c.745-.559 1.179-1.344 1.179-2.191 0-.847-.434-1.632-1.179-2.191a4.122 4.122 0 0 0-1.821-.75V8.354c.29.082.559.213.786.393l.415.33a.75.75 0 0 0 .933-1.175l-.415-.33a3.836 3.836 0 0 0-1.719-.755V6Z" clipRule="evenodd" /><path d="M2.25 18a.75.75 0 0 0 0 1.5c5.4 0 10.63.722 15.6 2.075 1.19.324 2.4-.558 2.4-1.82V18.75a.75.75 0 0 0-.75-.75H2.25Z" /></svg></div>
-                    <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 bg-white/20 rounded-full"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path d="M12 7.5a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Z" /><path fillRule="evenodd" d="M1.5 4.875C1.5 3.839 2.34 3 3.375 3h17.25c1.035 0 1.875.84 1.875 1.875v9.75c0 1.036-.84 1.875-1.875 1.875H3.375A1.875 1.875 0 0 1 1.5 14.625v-9.75ZM8.25 9.75a3.75 3.75 0 1 1 7.5 0 3.75 3.75 0 0 1-7.5 0ZM18.75 9a.75.75 0 0 0-.75.75v.008c0 .414.336.75.75.75h.008a.75.75 0 0 0 .75-.75V9.75a.75.75 0 0 0-.75-.75h-.008ZM4.5 9.75A.75.75 0 0 1 5.25 9h.008a.75.75 0 0 1 .75.75v.008a.75.75 0 0 1-.75-.75H5.25a.75.75 0 0 1-.75-.75V9.75Z" clipRule="evenodd" /><path d="M2.25 18a.75.75 0 0 0 0 1.5c5.4 0 10.63.722 15.6 2.075 1.19.324 2.4-.558 2.4-1.82V18.75a.75.75 0 0 0-.75-.75H2.25Z" /></svg></div>
-                        <span className="font-medium text-white/90">Sully Pay</span>
-                    </div>
-                    <div className="text-2xl font-bold tracking-tight mb-1">₩ {m.metadata?.amount}</div>
-                    <div className="text-[10px] text-white/70">转账给{isUser ? charName : '你'}</div>
-            </div>
-        );
+        return <TransferCard m={m} isUser={isUser} charName={charName} commonLayout={commonLayout} selectionMode={selectionMode} onResolveTransfer={onResolveTransfer} />;
     }
 
     if (m.type === 'emoji') {
@@ -1621,26 +2703,40 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
     };
 
     // Robust content cleanup: strip legacy markers, separators, bilingual tags, stray formatting
-    const stripJunk = (s: string) => s
+    const stripJunk = (s: string) => stripFishCuesForDisplay(s
         .replace(/%%TRANS%%[\s\S]*/gi, '')           // legacy translation marker
         .replace(/%%BILINGUAL%%/gi, '\n')            // raw bilingual marker → newline
         .replace(/<\/?翻译>|<\/?原文>|<\/?译文>/g, '')  // stray bilingual XML tags
         .replace(/\s*\[(?:聊天|通话|约会)\]\s*/g, '\n')   // source tags leaked from history context
         .replace(/\[\[(?:QU[OA]TE|引用)[：:][\s\S]*?\]\]/g, '')  // residual double-bracket quotes (incl. typos & Chinese)
         .replace(/\[(?:QU[OA]TE|引用)[：:][^\]]*\]/g, '')     // residual single-bracket quotes (incl. typos & Chinese)
+        .replace(/\[[^\[\]\n「」]{0,24}引用了[^\[\]\n「」]{0,24}「[^」\n]*?」[^\[\]\n]{0,24}\]\s*/g, '')  // imitated history render [xx引用了xx说的「…」，并回复了 ↓]
         .replace(/\[回复\s*[""\u201C][^""\u201D]*?[""\u201D](?:\.{0,3})\]\s*[：:]?\s*/g, '')  // [回复 "content"]: format
 // Residual action/system tags that may have leaked through
         .replace(/\[\[(?:ACTION|RECALL|SEARCH|DIARY|READ_DIARY|FS_DIARY|FS_READ_DIARY|SEND_EMOJI|DIARY_START|DIARY_END|FS_DIARY_START|FS_DIARY_END)[:\s][\s\S]*?\]\]/g, '')
         .replace(/\[schedule_message[^\]]*\]/g, '')
-        .replace(/<[语語]音>[\s\S]*?<\/[语語]音>/g, '')  // strip <语音>...</语音> voice tags
+        .replace(/<[语語]音[^>]*>[\s\S]*?<\/[语語]音>/g, '')  // strip <语音 ...>...</语音> voice tags (tolerate emotion attr)
         .replace(/^\s*---\s*$/gm, '')                // standalone --- lines
         .replace(/``+/g, '')                          // empty/stray backtick pairs
         .replace(/(^|\s)`(\s|$)/gm, '$1$2')         // lone backticks at boundaries
         .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')    // markdown links → just text
+        // TTS-only markup (<#秒#> 停顿、(sighs) 动作词) must never show in the bubble
+        .replace(/<#\s*[\d.]+\s*#>/g, '')
+        .replace(/\(([^)]{1,40})\)/g, (m, inner: string) =>
+            VALID_INTERJECTION_TAGS.has(inner.trim().toLowerCase()) ? '' : m)
+        .replace(/[ \t]{2,}/g, ' ')
+        .replace(/[ \t]+([，。！？、；：,.!?…])/g, '$1')
         .replace(/\n{3,}/g, '\n\n')                  // collapse excess newlines
-        .trim();
+        .trim());   // ⚠️ 末尾再洗一遍鱼声情绪 cue（[excited]/[pause]/(laughs) 等），避免漏到气泡/翻译里
 
     const rawContent = m.content;
+
+    // 语音文字（转文字面板 / 语音条预览）显示前：先洗 MiniMax 标记，再洗鱼声情绪 cue，
+    // 两家服务商的演出标记都不会漏给用户看。
+    const cleanVoiceText = (t?: string | null) => stripFishCuesForDisplay(cleanVoiceMarkupForDisplay(t ?? ''));
+
+    // 引用快照原样存着 %%BILINGUAL%% 等原始标记（双语消息），预览前先清洗
+    const replyPreview = m.replyTo ? stripJunk(m.replyTo.content) : '';
 
     // Parse %%BILINGUAL%% for bilingual display (langA = "选" language, langB = "译" language)
     const bilingualIdx = rawContent.toLowerCase().indexOf('%%bilingual%%');
@@ -1653,7 +2749,11 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
     const showTranslateButton = translationEnabled && hasBilingual && langBContent;
 
     // Check if raw content has a <语音> tag (voice-only message that hasn't been TTS'd yet)
-    const hasVoiceTag = !isUser && /<[语語]音>[\s\S]*?<\/[语語]音>/.test(m.content);
+    const hasVoiceTag = !isUser && /<[语語]音[^>]*>[\s\S]*?<\/[语語]音>/.test(m.content);
+    // Spoken text inside the <语音> tag — lets the placeholder bar offer a 转文字 toggle
+    // even when no audio was synthesized (e.g. character has no MiniMax voice configured),
+    // so fake voice messages stay readable just like real ones.
+    const voiceTagText = hasVoiceTag ? cleanVoiceText(m.content.match(/<[语語]音[^>]*>([\s\S]*?)<\/[语語]音>/)?.[1]?.trim() || '') : '';
     const hasVoiceContent = voiceData?.url || voiceLoading || hasVoiceTag;
     // Don't render empty bubbles (e.g. messages that were just "---"), unless voice data exists or pending
     if (!displayContent && !hasVoiceContent) return null;
@@ -1764,7 +2864,7 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
                     {voiceData?.url ? (
                         <div className="max-w-[260px]">
                             <button
-                                onClick={(e) => { e.stopPropagation(); e.preventDefault(); onPlayVoice?.(); }}
+                                onClick={(e) => { e.stopPropagation(); e.preventDefault(); onPlayVoice?.(m.id); }}
                                 className="group flex items-center gap-2.5 w-full px-3 py-2 rounded-2xl transition-all duration-300 active:scale-[0.97] select-none"
                                 style={{
                                     background: isVoicePlaying
@@ -1834,28 +2934,28 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
                                         {/* When foreign lang voice: show spoken text first, then Chinese translation */}
                                         {voiceData.lang && voiceData.spokenText ? (
                                             <>
-                                                <div className="whitespace-pre-wrap">{voiceData.spokenText}</div>
-                                                {(voiceData.originalText || displayContent) && (
+                                                <div className="whitespace-pre-wrap">{cleanVoiceText(voiceData.spokenText)}</div>
+                                                {(cleanVoiceText(voiceData.originalText) || displayContent) && (
                                                     <div
                                                         style={{ opacity: 0.65 }}
                                                         className="whitespace-pre-wrap text-[10px] mt-1 pt-1 border-t border-current/10"
                                                     >
-                                                        {voiceData.originalText || displayContent}
+                                                        {cleanVoiceText(voiceData.originalText) || displayContent}
                                                     </div>
                                                 )}
                                             </>
                                         ) : (
                                             <>
                                                 {/* Default: show original text */}
-                                                {(voiceData.originalText || displayContent) && (
-                                                    <div className="whitespace-pre-wrap">{voiceData.originalText || displayContent}</div>
+                                                {(cleanVoiceText(voiceData.originalText) || displayContent) && (
+                                                    <div className="whitespace-pre-wrap">{cleanVoiceText(voiceData.originalText) || displayContent}</div>
                                                 )}
-                                                {voiceData.spokenText && (
+                                                {cleanVoiceText(voiceData.spokenText) && (
                                                     <div
-                                                        style={{ opacity: (voiceData.originalText || displayContent) ? 0.55 : 1 }}
-                                                        className={`whitespace-pre-wrap ${(voiceData.originalText || displayContent) ? 'text-[10px] mt-1 pt-1 border-t border-current/10' : ''}`}
+                                                        style={{ opacity: (cleanVoiceText(voiceData.originalText) || displayContent) ? 0.55 : 1 }}
+                                                        className={`whitespace-pre-wrap ${(cleanVoiceText(voiceData.originalText) || displayContent) ? 'text-[10px] mt-1 pt-1 border-t border-current/10' : ''}`}
                                                     >
-                                                        {voiceData.spokenText}
+                                                        {cleanVoiceText(voiceData.spokenText)}
                                                     </div>
                                                 )}
                                             </>
@@ -1877,22 +2977,54 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
                             <span className="text-[10px] shrink-0 animate-pulse" style={{ color: vbText || '#94a3b8' }}>合成中</span>
                         </div>
                     ) : hasVoiceTag ? (
-                        /* Voice tag exists in content but TTS hasn't been generated yet (e.g. app restart, or auto-TTS pending) */
-                        <button
-                            onClick={(e) => { e.stopPropagation(); e.preventDefault(); onPlayVoice?.(); }}
-                            className="flex items-center gap-2 px-3 py-2 max-w-[200px] rounded-2xl active:scale-[0.97] transition-transform"
-                            style={{ background: vbBg || 'linear-gradient(135deg, rgba(0,0,0,0.03) 0%, rgba(0,0,0,0.06) 100%)', border: '1px solid rgba(0,0,0,0.05)' }}
-                        >
-                            <div className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center" style={{ backgroundColor: vbBg ? 'rgba(255,255,255,0.25)' : 'rgba(148,163,184,0.2)' }}>
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill={vbBtn || '#64748b'} className="w-3 h-3 ml-0.5"><path d="M6.3 2.84A1.5 1.5 0 0 0 4 4.11v11.78a1.5 1.5 0 0 0 2.3 1.27l9.344-5.891a1.5 1.5 0 0 0 0-2.538L6.3 2.841Z" /></svg>
+                        /* Voice tag exists in content but no audio yet — either TTS is still
+                           pending (app restart / auto-TTS) or the character has no MiniMax voice
+                           configured. Offer a 转文字 toggle here too so the text stays readable,
+                           aligning fake voice messages with real ones. */
+                        <div className="max-w-[260px]">
+                            <div
+                                className="flex items-center gap-2 px-3 py-2 rounded-2xl"
+                                style={{ background: vbBg || 'linear-gradient(135deg, rgba(0,0,0,0.03) 0%, rgba(0,0,0,0.06) 100%)', border: '1px solid rgba(0,0,0,0.05)' }}
+                            >
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); e.preventDefault(); onPlayVoice?.(m.id); }}
+                                    className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center active:scale-[0.92] transition-transform"
+                                    style={{ backgroundColor: vbBg ? 'rgba(255,255,255,0.25)' : 'rgba(148,163,184,0.2)' }}
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill={vbBtn || '#64748b'} className="w-3 h-3 ml-0.5"><path d="M6.3 2.84A1.5 1.5 0 0 0 4 4.11v11.78a1.5 1.5 0 0 0 2.3 1.27l9.344-5.891a1.5 1.5 0 0 0 0-2.538L6.3 2.841Z" /></svg>
+                                </button>
+                                <div className="flex-1 flex items-center gap-[3px] h-5 overflow-hidden">
+                                    {[4, 10, 6, 14, 8, 12, 5, 11, 7, 13, 4, 9, 6, 11, 5, 8, 10, 7, 12, 6].map((h, i) => (
+                                        <div key={i} className="w-[2.5px] rounded-full" style={{ height: `${Math.max(2, h * 0.4)}px`, backgroundColor: vbWave ? vbWave + '60' : `rgba(148, 163, 184, ${0.25 + (h / 14) * 0.35})` }} />
+                                    ))}
+                                </div>
+                                {(voiceTagText || displayContent) ? (
+                                    <div
+                                        className={`shrink-0 ml-0.5 px-1.5 py-0.5 rounded-lg text-[9px] font-medium transition-all ${showVoiceText ? 'ring-1 ring-current/20' : ''}`}
+                                        style={{
+                                            color: vbText || 'rgba(100,116,139,0.7)',
+                                            backgroundColor: showVoiceText ? 'rgba(0,0,0,0.08)' : 'rgba(0,0,0,0.04)',
+                                        }}
+                                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); setShowVoiceText(v => !v); }}
+                                    >
+                                        {showVoiceText ? '收起' : '转文字'}
+                                    </div>
+                                ) : (
+                                    <span className="text-[9px] shrink-0" style={{ color: vbText || 'rgba(100,116,139,0.7)' }}>语音</span>
+                                )}
                             </div>
-                            <div className="flex-1 flex items-center gap-[3px] h-5 overflow-hidden">
-                                {[4, 10, 6, 14, 8, 12, 5, 11, 7, 13, 4, 9, 6, 11, 5, 8, 10, 7, 12, 6].map((h, i) => (
-                                    <div key={i} className="w-[2.5px] rounded-full" style={{ height: `${Math.max(2, h * 0.4)}px`, backgroundColor: vbWave ? vbWave + '60' : `rgba(148, 163, 184, ${0.25 + (h / 14) * 0.35})` }} />
-                                ))}
-                            </div>
-                            <span className="text-[9px] shrink-0" style={{ color: vbText || 'rgba(100,116,139,0.7)' }}>语音</span>
-                        </button>
+                            {showVoiceText && (voiceTagText || displayContent) && (
+                                <div className="mt-1.5 px-3 py-2 rounded-xl text-[11px] leading-relaxed whitespace-pre-wrap"
+                                    style={{
+                                        backgroundColor: vbBg || 'rgba(0,0,0,0.02)',
+                                        color: vbText || '#475569',
+                                        border: '1px solid rgba(0,0,0,0.04)',
+                                    }}
+                                >
+                                    {voiceTagText || displayContent}
+                                </div>
+                            )}
+                        </div>
                     ) : null}
                 </div>
                 );

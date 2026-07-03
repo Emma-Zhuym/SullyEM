@@ -3,18 +3,25 @@ import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { useOS } from '../context/OSContext';
 import { useIntiface } from '../hooks/useIntiface';
 import { Capacitor } from '@capacitor/core';
-import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
+import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import { safeResponseJson } from '../utils/safeApi';
+import { EXPORT_CHUNK_SIZE, sliceRanges } from '../utils/backupExport';
 import Modal from '../components/os/Modal';
 import { NotionManager, FeishuManager } from '../utils/realtimeContext';
 import { XhsMcpClient } from '../utils/xhsMcpClient';
 import { getMcdToken, setMcdToken as saveMcdToken, isMcdEnabled, setMcdEnabled as saveMcdEnabled, testMcdConnection, resetMcdSession } from '../utils/mcdMcpClient';
-import { Sun, Newspaper, NotePencil, Notebook, Book, ForkKnife } from '@phosphor-icons/react';
+import { getLuckinToken, setLuckinToken as saveLuckinToken, isLuckinEnabled, setLuckinEnabled as saveLuckinEnabled, testLuckinConnection, resetLuckinSession } from '../utils/luckinMcpClient';
+import { getProxyWorkerUrl, setProxyWorkerUrl, DEFAULT_PROXY_WORKER } from '../utils/proxyWorker';
+import { VOICE_ACTING_GUIDE } from '../utils/minimaxTts';
+import { FISH_VOICE_ACTING_GUIDE } from '../utils/fishAudioTts';
+import { DATE_VOICE_GUIDE } from '../utils/datePrompts';
+import { Sun, Newspaper, NotePencil, Notebook, Book, ForkKnife, Coffee } from '@phosphor-icons/react';
 import { loadPushConfig, savePushConfig, registerScheduleOnWorker, startHeartbeat, stopHeartbeat, isPushConfigAvailable, ensureSubscribed, sendTestPush, getPushDiagnostics, resetSubscription, deepResetSubscription, type PushDiagnostics } from '../utils/proactivePushConfig';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { InstantPushSettingsModal } from '../components/settings/InstantPushSettingsModal';
 import { PushVapidSettingsModal } from '../components/settings/PushVapidSettingsModal';
+import VersionInfo from '../components/settings/VersionInfo';
 import { isPushVapidReady } from '../utils/pushVapid';
 import ActiveMsgGlobalSettingsModal from '../components/settings/ActiveMsgGlobalSettingsModal';
 import type { NotionDiaryExtraProperty, NotionExtraDatabase } from '../types';
@@ -24,6 +31,8 @@ import {
     normalizeNotionExtraTag,
     NOTION_USER_NOTES_TAG,
 } from '../utils/notionExtraConfig';
+import ApiCallLogModal from '../components/settings/ApiCallLogModal';
+import type { CsyMigrationReport } from '../utils/csyMigration';
 
 // hot_news（orz.ai）可选热榜平台。key 必须与 API 的 ?platform= 完全一致。
 const HOTNEWS_PLATFORM_OPTIONS: { key: string; label: string }[] = [
@@ -49,6 +58,10 @@ const HOTNEWS_PLATFORM_OPTIONS: { key: string; label: string }[] = [
     { key: 'tenxunwang', label: '腾讯网' },
 ];
 
+// 「主动消息 Push 加速」面板入口开关。底层逻辑（心跳、订阅、诊断）全部保留，
+// 这里设为 false 只是把设置页里的入口隐藏掉，想恢复改回 true 即可。
+const SHOW_PROACTIVE_PUSH_ACCEL_UI = false;
+
 const DiagRow: React.FC<{ label: string; value: string; bad?: boolean }> = ({ label, value, bad }) => (
     <div className="flex items-start justify-between gap-3">
         <span className="text-slate-500 shrink-0">{label}</span>
@@ -59,7 +72,7 @@ const DiagRow: React.FC<{ label: string; value: string; bad?: boolean }> = ({ la
 const Settings: React.FC = () => {
   const {
       apiConfig, updateApiConfig, closeApp, availableModels, setAvailableModels,
-      exportSystem, importSystem, addToast, resetSystem,
+      exportSystem, importSystem, previewCsySystem, importCsySystem, addToast, showError, resetSystem,
       apiPresets, addApiPreset, removeApiPreset,
       sysOperation, // Get progress state
       realtimeConfig, updateRealtimeConfig, // 实时感知配置
@@ -80,6 +93,16 @@ const Settings: React.FC = () => {
     apiConfig.minimaxRegion === 'overseas' ? 'overseas' : 'domestic'
   );
   const [localAceStepKey, setLocalAceStepKey] = useState(apiConfig.aceStepApiKey || '');
+  const [localTtsProvider, setLocalTtsProvider] = useState<'minimax' | 'fishaudio'>(
+    apiConfig.ttsProvider === 'fishaudio' ? 'fishaudio' : 'minimax'
+  );
+  const [localFishKey, setLocalFishKey] = useState(apiConfig.fishAudioApiKey || '');
+  const [localFishModel, setLocalFishModel] = useState(apiConfig.fishAudioModel || 's2.1-pro');
+  // 自定义语音表演指南（留空 → 用内置默认）。按服务商分两份。
+  const [localVoicePromptMinimax, setLocalVoicePromptMinimax] = useState(apiConfig.voicePrompts?.minimax || '');
+  const [localVoicePromptFish, setLocalVoicePromptFish] = useState(apiConfig.voicePrompts?.fishaudio || '');
+  const [localVoicePromptDate, setLocalVoicePromptDate] = useState(apiConfig.voicePrompts?.dateVoice || '');
+  const [showVoicePrompts, setShowVoicePrompts] = useState(false);
   const [showAceStepGuide, setShowAceStepGuide] = useState(false);
   const [otherStatusMsg, setOtherStatusMsg] = useState('');
 
@@ -100,8 +123,14 @@ const Settings: React.FC = () => {
   const [showModelModal, setShowModelModal] = useState(false);
   const [modelFilter, setModelFilter] = useState('');
   const [showExportModal, setShowExportModal] = useState(false); // Used for completion now
+  const [showCsyImportModal, setShowCsyImportModal] = useState(false);
+  const [showCsyHelpModal, setShowCsyHelpModal] = useState(false);
+  const [csyPreviewLoading, setCsyPreviewLoading] = useState(false);
+  const [csyPreview, setCsyPreview] = useState<CsyMigrationReport | null>(null);
+  const [pendingCsyFile, setPendingCsyFile] = useState<File | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showPresetModal, setShowPresetModal] = useState(false);
+  const [showApiCallLog, setShowApiCallLog] = useState(false);
   const [showRealtimeModal, setShowRealtimeModal] = useState(false);
   const [showCloudModal, setShowCloudModal] = useState(false);
   const [showGithubModal, setShowGithubModal] = useState(false);
@@ -125,6 +154,11 @@ const Settings: React.FC = () => {
   const [ghShowAdvanced, setGhShowAdvanced] = useState(false);
   const [ghTesting, setGhTesting] = useState(false);
   const [ghTestResult, setGhTestResult] = useState<string>('');
+
+  // 主代理 Worker 地址（联网搜索 / 备份代理 / Notion / 飞书 / MCD·瑞幸 MCP / 网页抓取 / 出图都走它）。
+  // 入口刻意低调：默认折叠，普通用户不需要碰，开箱即用。
+  const [proxyWorkerInput, setProxyWorkerInput] = useState(getProxyWorkerUrl());
+  const [showProxyConfig, setShowProxyConfig] = useState(false);
 
   // 实时感知配置的本地状态
   const [rtWeatherEnabled, setRtWeatherEnabled] = useState(realtimeConfig.weatherEnabled);
@@ -153,10 +187,32 @@ const Settings: React.FC = () => {
   const [rtFeishuBaseId, setRtFeishuBaseId] = useState(realtimeConfig.feishuBaseId);
   const [rtFeishuTableId, setRtFeishuTableId] = useState(realtimeConfig.feishuTableId);
   const [rtXhsEnabled, setRtXhsEnabled] = useState(realtimeConfig.xhsEnabled);
+  // lite 模式走中心配置的主代理 worker（/api 是 worker/index.js 里的 XHSLite 桥）。
+  // 用户改了「自定义网络代理」，lite 模式自动跟着切到新 worker。
+  const XHS_LITE_URL = `${getProxyWorkerUrl()}/api`;
+  const XHS_RISK_TEXT = '⚠️ 风险：本功能基于网页爬虫技术调用小红书，账号有被风控的概率。建议①用小号；②尽量别让角色主动发帖；③发出的笔记可能被屏蔽。';
+  const XHS_COOKIE_GUIDE = [
+    '【获取小红书 cookie 教程】',
+    '1. 用电脑浏览器(Chrome/Edge)登录 www.xiaohongshu.com',
+    '2. 按 F12 打开开发者工具，切到「Network/网络」标签',
+    '3. 刷新页面，点列表最上面那条「explore」(document 类型，发给 www.xiaohongshu.com 的主请求)',
+    '4. 右侧切到「Headers/标头」，往下滚到「Request Headers/请求标头」',
+    '5. 找到 cookie: 开头那一行(很长一串)',
+    '6. 复制它后面整段的值：可把 Request Headers 右边的「Raw」开关打开看纯文本更好选，或在值上右键 Copy value，或选中后 Ctrl+C',
+    '7. 确认这串里有 a1= 和 web_session= 两个字段(最关键)，粘到「小红书 Lite」的 cookie 框',
+    '注意：别用 Console 的 document.cookie，拿不到 web_session(httpOnly)。cookie 数天~数周会过期，失效重复制即可。',
+  ].join('\n');
+  const _xhsCfgUrl = realtimeConfig.xhsMcpConfig?.serverUrl || '';
+  // local MCP 地址不含 /api；lite bridge 含 /api。按这个判模式（与 xhsMcpClient.detectMode 一致），
+  // 比之前的 `!== XHS_LITE_URL` 更稳——换 worker 域名后老的 lite 配置不会被误判成 local。
+  const _xhsIsLocal = !!_xhsCfgUrl && !_xhsCfgUrl.includes('/api');
   const [rtXhsMcpEnabled, setRtXhsMcpEnabled] = useState(realtimeConfig.xhsMcpConfig?.enabled || false);
-  const [rtXhsMcpUrl, setRtXhsMcpUrl] = useState(realtimeConfig.xhsMcpConfig?.serverUrl || 'http://localhost:18060/mcp');
+  const [rtXhsMode, setRtXhsMode] = useState<'lite' | 'local'>(_xhsIsLocal ? 'local' : 'lite');
+  const [rtXhsLocalUrl, setRtXhsLocalUrl] = useState(_xhsIsLocal ? _xhsCfgUrl : 'http://localhost:18060/mcp');
   const [rtXhsNickname, setRtXhsNickname] = useState(realtimeConfig.xhsMcpConfig?.loggedInNickname || '');
   const [rtXhsUserId, setRtXhsUserId] = useState(realtimeConfig.xhsMcpConfig?.loggedInUserId || '');
+  const [rtXhsCookie, setRtXhsCookie] = useState(realtimeConfig.xhsMcpConfig?.cookie || '');
+  const [rtXhsGuideOpen, setRtXhsGuideOpen] = useState(false);
   const [rtTestStatus, setRtTestStatus] = useState('');
 
   // 麦当劳 MCP (token / 启用态都直接存 localStorage, 不进 realtimeConfig)
@@ -164,6 +220,12 @@ const Settings: React.FC = () => {
   const [mcdEnabled, setMcdEnabledState] = useState(() => isMcdEnabled());
   const [mcdTestStatus, setMcdTestStatus] = useState('');
   const [mcdTesting, setMcdTesting] = useState(false);
+
+  // 瑞幸 MCP (与麦当劳同构)
+  const [luckinToken, setLuckinTokenState] = useState(() => getLuckinToken());
+  const [luckinEnabled, setLuckinEnabledState] = useState(() => isLuckinEnabled());
+  const [luckinTestStatus, setLuckinTestStatus] = useState('');
+  const [luckinTesting, setLuckinTesting] = useState(false);
 
   // Proactive Push 加速器（Worker URL / VAPID 公钥写死在 proactivePushConfig.ts 常量里）
   const initialPushCfg = loadPushConfig();
@@ -324,11 +386,25 @@ const Settings: React.FC = () => {
 
   // For web download link
   const [downloadUrl, setDownloadUrl] = useState<string>('');
-  
+  // 用 ref 跟住当前的 object URL，关弹窗 / 重新导出 / 卸载时都能 revoke 到最新那个，
+  // 不受 state 闭包过期影响。
+  const downloadUrlRef = useRef<string>('');
+  const revokeDownloadUrl = useCallback(() => {
+      if (downloadUrlRef.current) {
+          URL.revokeObjectURL(downloadUrlRef.current);
+          downloadUrlRef.current = '';
+      }
+      setDownloadUrl('');
+  }, []);
+  useEffect(() => () => {
+      if (downloadUrlRef.current) URL.revokeObjectURL(downloadUrlRef.current);
+  }, []);
+
   const [statusMsg, setStatusMsg] = useState('');
   const [testingApi, setTestingApi] = useState(false);
   const [testApiResult, setTestApiResult] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
+  const csyImportInputRef = useRef<HTMLInputElement>(null);
 
   // Auto-save draft configs locally to prevent loss during typing
   useEffect(() => {
@@ -341,6 +417,12 @@ const Settings: React.FC = () => {
       setLocalMiniMaxGroupId(apiConfig.minimaxGroupId || '');
       setLocalMiniMaxRegion(apiConfig.minimaxRegion === 'overseas' ? 'overseas' : 'domestic');
       setLocalAceStepKey(apiConfig.aceStepApiKey || '');
+      setLocalTtsProvider(apiConfig.ttsProvider === 'fishaudio' ? 'fishaudio' : 'minimax');
+      setLocalFishKey(apiConfig.fishAudioApiKey || '');
+      setLocalFishModel(apiConfig.fishAudioModel || 's2.1-pro');
+      setLocalVoicePromptMinimax(apiConfig.voicePrompts?.minimax || '');
+      setLocalVoicePromptFish(apiConfig.voicePrompts?.fishaudio || '');
+      setLocalVoicePromptDate(apiConfig.voicePrompts?.dateVoice || '');
   }, [apiConfig]);
 
   const loadPreset = (preset: typeof apiPresets[0]) => {
@@ -389,9 +471,58 @@ const Settings: React.FC = () => {
       minimaxGroupId: localMiniMaxGroupId,
       minimaxRegion: localMiniMaxRegion,
       aceStepApiKey: localAceStepKey,
+      ttsProvider: localTtsProvider,
+      fishAudioApiKey: localFishKey,
+      fishAudioModel: localFishModel,
+      voicePrompts: {
+        minimax: localVoicePromptMinimax.trim() ? localVoicePromptMinimax : undefined,
+        fishaudio: localVoicePromptFish.trim() ? localVoicePromptFish : undefined,
+        dateVoice: localVoicePromptDate.trim() ? localVoicePromptDate : undefined,
+      },
     });
     setOtherStatusMsg('已保存');
     setTimeout(() => setOtherStatusMsg(''), 2000);
+  };
+
+  // 选「谁来做语音生成」立即落库——不需要再点下面的保存。
+  // 连同当前「其他 API」草稿一起提交（与保存按钮同一份 payload）：一是即时生效，
+  // 二是避免 [apiConfig] 同步 effect 把刚填、还没保存的 Key 草稿冲掉。
+  const selectTtsProvider = (provider: 'minimax' | 'fishaudio') => {
+    setLocalTtsProvider(provider);
+    updateApiConfig({
+      minimaxApiKey: localMiniMaxKey,
+      minimaxGroupId: localMiniMaxGroupId,
+      minimaxRegion: localMiniMaxRegion,
+      aceStepApiKey: localAceStepKey,
+      fishAudioApiKey: localFishKey,
+      fishAudioModel: localFishModel,
+      voicePrompts: {
+        minimax: localVoicePromptMinimax.trim() ? localVoicePromptMinimax : undefined,
+        fishaudio: localVoicePromptFish.trim() ? localVoicePromptFish : undefined,
+        dateVoice: localVoicePromptDate.trim() ? localVoicePromptDate : undefined,
+      },
+      ttsProvider: provider,
+    });
+    addToast(provider === 'fishaudio' ? '语音生成已切到鱼声 Fish' : '语音生成已切到 MiniMax', 'success');
+  };
+
+  // 选鱼声模型：立即落库（同上，连带草稿一起提交，避免被同步 effect 冲掉）。
+  const selectFishModel = (model: string) => {
+    setLocalFishModel(model);
+    updateApiConfig({
+      minimaxApiKey: localMiniMaxKey,
+      minimaxGroupId: localMiniMaxGroupId,
+      minimaxRegion: localMiniMaxRegion,
+      aceStepApiKey: localAceStepKey,
+      fishAudioApiKey: localFishKey,
+      ttsProvider: localTtsProvider,
+      fishAudioModel: model,
+      voicePrompts: {
+        minimax: localVoicePromptMinimax.trim() ? localVoicePromptMinimax : undefined,
+        fishaudio: localVoicePromptFish.trim() ? localVoicePromptFish : undefined,
+        dateVoice: localVoicePromptDate.trim() ? localVoicePromptDate : undefined,
+      },
+    });
   };
 
   const fetchModels = async () => {
@@ -429,38 +560,56 @@ const Settings: React.FC = () => {
           const blob = await exportSystem(mode);
           
           if (Capacitor.isNativePlatform()) {
-              // Convert Blob to Base64 for Native Write
-              const reader = new FileReader();
-              reader.readAsDataURL(blob);
-              reader.onloadend = async () => {
-                  const base64data = String(reader.result);
-                  const fileName = `Sully_Backup_${mode}_${Date.now()}.zip`;
-                  
-                  try {
-                      await Filesystem.writeFile({
-                          path: fileName,
-                          data: base64data, // Filesystem accepts data urls? Or need strip prefix
-                          directory: Directory.Cache,
-                      });
-                      const uriResult = await Filesystem.getUri({
-                          directory: Directory.Cache,
-                          path: fileName,
-                      });
-                      await Share.share({
-                          title: `Sully Backup`,
-                          files: [uriResult.uri],
-                      });
-                  } catch (e) {
-                      console.error("Native write failed", e);
-                      addToast("保存文件失败", "error");
+              // 手机端分片写盘：整包一次性 readAsDataURL 会把几十~上百 MB 的 base64
+              // 一股脑塞进内存，WebView 容易 OOM 闪退。改成按 3MiB 切片，每片转成纯
+              // base64 再 appendFile 追加。先写临时文件，全部写完才改名+分享；中途任何
+              // 一步失败都删掉残片，避免留下一个看着像成功、其实损坏的 .zip。
+              const fileName = `Sully_Backup_${mode}_${Date.now()}.zip`;
+              const tempName = `${fileName}.part`;
+
+              // 读一个 Blob 分片为纯 base64（去掉 data:...;base64, 前缀）。
+              const sliceToBase64 = (slice: Blob): Promise<string> => new Promise((resolve, reject) => {
+                  const reader = new FileReader();
+                  reader.onloadend = () => {
+                      const result = String(reader.result);
+                      const comma = result.indexOf(',');
+                      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+                  };
+                  reader.onerror = () => reject(reader.error || new Error('读取备份分片失败'));
+                  reader.onabort = () => reject(new Error('读取备份分片被中断'));
+                  reader.readAsDataURL(slice);
+              });
+
+              try {
+                  const ranges = sliceRanges(blob.size, EXPORT_CHUNK_SIZE);
+                  for (let i = 0; i < ranges.length; i++) {
+                      const [start, end] = ranges[i];
+                      const base64 = await sliceToBase64(blob.slice(start, end));
+                      if (i === 0) {
+                          await Filesystem.writeFile({ path: tempName, data: base64, directory: Directory.Cache });
+                      } else {
+                          await Filesystem.appendFile({ path: tempName, data: base64, directory: Directory.Cache });
+                      }
                   }
-              };
+                  // 全部分片写盘成功，才把临时文件改名为正式名并分享。
+                  await Filesystem.rename({ from: tempName, to: fileName, directory: Directory.Cache });
+                  const uriResult = await Filesystem.getUri({ directory: Directory.Cache, path: fileName });
+                  await Share.share({ title: `Sully Backup`, files: [uriResult.uri] });
+              } catch (e) {
+                  console.error("Native write failed", e);
+                  // 尽力清掉写了一半的残片，别留下损坏文件。
+                  try { await Filesystem.deleteFile({ path: tempName, directory: Directory.Cache }); } catch { /* ignore */ }
+                  addToast("保存文件失败", "error");
+              }
           } else {
               // Web Download
+              // 上一次导出的 object URL 先 revoke 掉，否则它会一直占着整包内存直到刷新页面。
+              if (downloadUrlRef.current) URL.revokeObjectURL(downloadUrlRef.current);
               const url = URL.createObjectURL(blob);
+              downloadUrlRef.current = url;
               setDownloadUrl(url);
               setShowExportModal(true);
-              
+
               // Auto click
               const a = document.createElement('a');
               a.href = url;
@@ -481,10 +630,46 @@ const Settings: React.FC = () => {
       // Pass the File object directly to importSystem
       importSystem(file).catch(err => {
           console.error(err);
-          addToast(err.message || '恢复失败', 'error');
+          const details = err?.stack || err?.message || String(err || '未知错误');
+          showError('导入失败', details);
+          addToast('导入失败，错误信息已展开', 'error');
       });
       
       if (importInputRef.current) importInputRef.current.value = '';
+  };
+
+  const handleCsyImportSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      setPendingCsyFile(file);
+      setCsyPreview(null);
+      setCsyPreviewLoading(true);
+      setShowCsyImportModal(true);
+      try {
+          setCsyPreview(await previewCsySystem(file));
+      } catch (err: any) {
+          setShowCsyImportModal(false);
+          setPendingCsyFile(null);
+          const details = err?.stack || err?.message || String(err || '未知错误');
+          showError('无法读取 CSY-OS 数据', details);
+          addToast('CSY-OS 迁移预检失败', 'error');
+      } finally {
+          setCsyPreviewLoading(false);
+          if (csyImportInputRef.current) csyImportInputRef.current.value = '';
+      }
+  };
+
+  const handleConfirmCsyImport = async () => {
+      if (!pendingCsyFile || !csyPreview) return;
+      const file = pendingCsyFile;
+      setShowCsyImportModal(false);
+      try {
+          await importCsySystem(file);
+      } catch (err: any) {
+          const details = err?.stack || err?.message || String(err || '未知错误');
+          showError('CSY-OS 迁移失败', details);
+          addToast('CSY-OS 迁移失败，原文件未被修改', 'error');
+      }
   };
 
   // Cloud Backup Handlers
@@ -513,6 +698,25 @@ const Settings: React.FC = () => {
       setShowCloudModal(false);
   };
 
+  // 保存 / 恢复主代理 Worker 地址
+  const handleSaveProxyWorker = () => {
+      const raw = proxyWorkerInput.trim();
+      if (raw && !/^https?:\/\//i.test(raw)) {
+          addToast('地址必须以 http:// 或 https:// 开头', 'error');
+          return;
+      }
+      setProxyWorkerUrl(raw);                 // 传空 / 默认地址 → 自动回落默认
+      const applied = getProxyWorkerUrl();
+      setProxyWorkerInput(applied);
+      addToast(applied === DEFAULT_PROXY_WORKER ? '已恢复为默认 Worker' : 'Worker 地址已保存', 'success');
+  };
+
+  const handleResetProxyWorker = () => {
+      setProxyWorkerUrl('');
+      setProxyWorkerInput(getProxyWorkerUrl());
+      addToast('已恢复为默认 Worker', 'info');
+  };
+
   const handleCloudBackup = async (mode: 'text_only' | 'full') => {
       try { await cloudBackupToWebDAV(mode); } catch { /* toast handled in context */ }
   };
@@ -528,7 +732,12 @@ const Settings: React.FC = () => {
 
   const handleCloudRestore = async (file: import('../types').CloudBackupFile) => {
       setShowCloudRestoreModal(false);
-      try { await cloudRestoreFromWebDAV(file); } catch { /* toast handled in context */ }
+      try {
+          await cloudRestoreFromWebDAV(file);
+      } catch (err: any) {
+          const details = err?.stack || err?.message || String(err || '未知错误');
+          showError('云端恢复失败', details);
+      }
   };
 
   // GitHub backup handlers — single "测试并连接" button does verify-token +
@@ -651,7 +860,8 @@ const Settings: React.FC = () => {
           xhsEnabled: rtXhsEnabled,
           xhsMcpConfig: {
               enabled: rtXhsMcpEnabled,
-              serverUrl: rtXhsMcpUrl,
+              serverUrl: rtXhsMode === 'lite' ? XHS_LITE_URL : rtXhsLocalUrl,
+              cookie: rtXhsMode === 'lite' ? (rtXhsCookie.trim() || undefined) : undefined,
               loggedInNickname: rtXhsNickname || undefined,
               loggedInUserId: rtXhsUserId || undefined,
               userXsecToken: realtimeConfig.xhsMcpConfig?.userXsecToken, // 保留自动获取的 token
@@ -714,19 +924,25 @@ const Settings: React.FC = () => {
 
   // 测试小红书 Bridge 连接
   const testXhsMcp = async () => {
-      if (!rtXhsMcpUrl) {
-          setRtTestStatus('请填写 Bridge Server URL');
+      const urlToUse = rtXhsMode === 'lite' ? XHS_LITE_URL : rtXhsLocalUrl;
+      const cookieToUse = rtXhsMode === 'lite' ? (rtXhsCookie.trim() || undefined) : undefined;
+      if (!urlToUse) {
+          setRtTestStatus('请填写服务器 URL');
           return;
       }
-      setRtTestStatus('正在连接 MCP Server...');
+      if (rtXhsMode === 'lite' && !cookieToUse) {
+          setRtTestStatus('请先粘贴小红书 cookie');
+          return;
+      }
+      setRtTestStatus('正在连接...');
       try {
-          const result = await XhsMcpClient.testConnection(rtXhsMcpUrl);
+          const result = await XhsMcpClient.testConnection(urlToUse, cookieToUse);
           if (result.connected) {
               const toolCount = result.tools?.length || 0;
               const tokenInfo = result.xsecToken ? ' | xsecToken 已获取' : '';
               const loginInfo = result.loggedIn
                   ? ` | ${result.nickname ? `账号: ${result.nickname}` : '已登录'}${result.userId ? ` (ID: ${result.userId})` : ''}${tokenInfo}`
-                  : ' | 未登录，请先在浏览器中登录小红书';
+                  : ' | 未登录，请检查 cookie 或登录小红书';
               setRtTestStatus(`连接成功! ${toolCount} 个功能可用${loginInfo}`);
               // 自动填充：只在用户未手动填写时覆盖
               if (result.nickname && !rtXhsNickname) setRtXhsNickname(result.nickname);
@@ -734,7 +950,8 @@ const Settings: React.FC = () => {
               updateRealtimeConfig({
                   xhsMcpConfig: {
                       enabled: rtXhsMcpEnabled,
-                      serverUrl: rtXhsMcpUrl,
+                      serverUrl: urlToUse,
+                      cookie: cookieToUse,
                       loggedInNickname: rtXhsNickname || result.nickname,
                       loggedInUserId: rtXhsUserId || result.userId,
                       userXsecToken: result.xsecToken,
@@ -779,6 +996,37 @@ const Settings: React.FC = () => {
       }
   };
 
+  // 瑞幸 MCP (与麦当劳同构)
+  const handleLuckinTokenChange = (v: string) => {
+      setLuckinTokenState(v);
+      saveLuckinToken(v);
+      resetLuckinSession();
+      setLuckinTestStatus('');
+  };
+  const handleLuckinEnabledChange = (v: boolean) => {
+      setLuckinEnabledState(v);
+      saveLuckinEnabled(v);
+      if (!v) resetLuckinSession();
+  };
+  const testLuckinApi = async () => {
+      if (!luckinToken.trim()) { setLuckinTestStatus('请先填写 MCP Token'); return; }
+      setLuckinTesting(true);
+      setLuckinTestStatus('正在连接瑞幸 MCP...');
+      try {
+          const r = await testLuckinConnection();
+          if (r.ok) {
+              const names = (r.tools || []).map(t => t.name).slice(0, 6).join(', ');
+              setLuckinTestStatus(`✅ ${r.message}${names ? `\n工具: ${names}${(r.tools || []).length > 6 ? ' ...' : ''}` : ''}`);
+          } else {
+              setLuckinTestStatus(`❌ ${r.message}`);
+          }
+      } catch (e: any) {
+          setLuckinTestStatus(`❌ ${e?.message || String(e)}`);
+      } finally {
+          setLuckinTesting(false);
+      }
+  };
+
   return (
     <div className="h-full w-full bg-slate-50/50 flex flex-col font-light relative">
 
@@ -787,7 +1035,7 @@ const Settings: React.FC = () => {
           <div className="absolute inset-0 z-50 bg-black/60 flex items-center justify-center animate-fade-in">
               <div className="bg-white p-6 rounded-3xl shadow-2xl flex flex-col items-center gap-4 w-64">
                   <div className="w-12 h-12 border-4 border-slate-200 border-t-primary rounded-full animate-spin"></div>
-                  <div className="text-sm font-bold text-slate-700">{sysOperation.message}</div>
+                  <div className="text-sm font-bold text-slate-700 text-center leading-relaxed whitespace-pre-wrap break-words max-w-full">{sysOperation.message}</div>
                   {sysOperation.progress > 0 && (
                       <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
                           <div className="h-full bg-primary transition-all duration-300" style={{ width: `${sysOperation.progress}%` }}></div>
@@ -798,7 +1046,8 @@ const Settings: React.FC = () => {
       )}
 
       {/* Header */}
-      <div className="h-20 bg-white/85 flex items-end pb-3 px-4 border-b border-white/40 shrink-0 z-10 sticky top-0">
+      <div className="bg-white/85 border-b border-white/40 shrink-0 z-10 sticky top-0" style={{ paddingTop: 'var(--safe-top)' }}>
+        <div className="flex items-center px-4 py-3">
         <div className="flex items-center gap-2 w-full">
             <button onClick={closeApp} className="p-2 -ml-2 rounded-full hover:bg-black/5 active:scale-90 transition-transform">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-slate-600">
@@ -806,6 +1055,7 @@ const Settings: React.FC = () => {
                 </svg>
             </button>
             <h1 className="text-xl font-medium text-slate-700 tracking-wide">系统设置</h1>
+        </div>
         </div>
       </div>
 
@@ -847,6 +1097,19 @@ const Settings: React.FC = () => {
                     <span>导入备份 (.zip / .json)</span>
                 </div>
                 <input type="file" ref={importInputRef} className="hidden" accept=".json,.zip" onChange={handleImport} />
+            </div>
+
+            <div className="flex items-center justify-center gap-2 -mt-1 mb-4">
+                <button
+                    onClick={() => csyImportInputRef.current?.click()}
+                    className="px-3 py-2 rounded-lg border border-cyan-200 bg-cyan-50 text-[10px] font-semibold text-cyan-700 active:scale-95 transition-all"
+                >从 CSY-OS 迁移</button>
+                <button
+                    onClick={() => setShowCsyHelpModal(true)}
+                    aria-label="CSY-OS 迁移说明"
+                    className="w-7 h-7 rounded-full border border-slate-200 bg-white text-[12px] font-bold text-slate-400 active:scale-90 transition-all"
+                >?</button>
+                <input type="file" ref={csyImportInputRef} className="hidden" accept=".json,.zip" onChange={handleCsyImportSelect} />
             </div>
             
             <p className="text-[10px] text-slate-400 px-1 mb-4 leading-relaxed">
@@ -1165,6 +1428,26 @@ const Settings: React.FC = () => {
             </div>
         </section>
 
+        {/* API 调用记录入口 — 点开看最近 5 天各 App / 角色 / 用途的调用明细 */}
+        <button
+            type="button"
+            onClick={() => setShowApiCallLog(true)}
+            className="w-full bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50 flex items-center gap-3 active:scale-[0.99] transition-transform text-left"
+        >
+            <div className="p-2 bg-sky-100/60 rounded-xl text-sky-600 shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 0 1-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0 1 15 18.257V17.25m6-12V15a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 15V5.25m18 0A2.25 2.25 0 0 0 18.75 3H5.25A2.25 2.25 0 0 0 3 5.25m18 0V12a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 12V5.25" />
+                </svg>
+            </div>
+            <div className="flex-1 min-w-0">
+                <h2 className="text-sm font-semibold text-slate-600 tracking-wider">API 调用记录</h2>
+                <p className="text-[11px] text-slate-400 mt-0.5">最近 5 天：时间 · 哪个 API · 哪个 App · 哪个角色 · 用途</p>
+            </div>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-slate-300 shrink-0">
+                <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clipRule="evenodd" />
+            </svg>
+        </button>
+
         {/* 其他 API 区域 — 非 LLM 类（语音、写歌等），不会跟随预设切换 */}
         <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
             <div className="flex items-center gap-2 mb-4">
@@ -1180,6 +1463,10 @@ const Settings: React.FC = () => {
             </p>
 
             <div className="space-y-4">
+                <p className="text-[11px] text-slate-400 -mt-1 pl-1 leading-relaxed">
+                    🎙️ 语音生成支持 <span className="font-semibold text-slate-500">MiniMax</span> 和 <span className="font-semibold text-slate-500">鱼声 Fish</span> 两家——下面两边都可以填，最后在底部「当前语音引擎」里二选一。
+                </p>
+
                 <div className="group">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">MiniMax 服务器</label>
                     <div className="flex bg-white/50 border border-slate-200/60 rounded-xl p-1 gap-1">
@@ -1207,7 +1494,7 @@ const Settings: React.FC = () => {
 
                 <div className="group">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">MiniMax Key (可选)</label>
-                    <input type="password" value={localMiniMaxKey} onChange={(e) => setLocalMiniMaxKey(e.target.value)} placeholder="MiniMax API Secret（留空则复用 Key）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                    <input type="password" name="minimax-api-secret" autoComplete="new-password" spellCheck={false} value={localMiniMaxKey} onChange={(e) => setLocalMiniMaxKey(e.target.value)} placeholder="MiniMax API Secret（留空则复用 Key）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
                     <p className="text-[11px] text-slate-400 mt-1 pl-1">电话 / 音色查询优先使用这个 Key，空着时回退通用 Key。</p>
                 </div>
 
@@ -1215,6 +1502,135 @@ const Settings: React.FC = () => {
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">MiniMax Group ID (可选)</label>
                     <input type="text" value={localMiniMaxGroupId} onChange={(e) => setLocalMiniMaxGroupId(e.target.value)} placeholder="group_id（部分账号/模型需要）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
                     <p className="text-[11px] text-slate-400 mt-1 pl-1">如控制台给了 group_id，请填这里；会透传到 TTS 请求体和代理日志。</p>
+                </div>
+
+                {/* 鱼声 Fish Audio —— 与 MiniMax 对等的另一套语音系统，中性样式、不做视觉偏向 */}
+                <div className="group">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">鱼声 Fish Audio Key</label>
+                    <input type="password" name="fish-api-key" autoComplete="new-password" spellCheck={false} value={localFishKey} onChange={(e) => setLocalFishKey(e.target.value)} placeholder="Fish Audio API Key（fish.audio 控制台签发）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                    <p className="text-[11px] text-slate-400 mt-1 pl-1">在 <a href="https://fish.audio/zh-CN/developers/" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline font-semibold">fish.audio 开发者页</a> 拿 Key（<span className="text-amber-600 font-medium">需梯子</span>）。角色音色在「角色 → 语音」里填 reference_id。</p>
+
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-3 mb-1.5 block pl-1">鱼声模型</label>
+                    <select
+                        value={localFishModel}
+                        onChange={(e) => selectFishModel(e.target.value)}
+                        className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-3 py-2.5 text-sm focus:bg-white transition-all"
+                    >
+                        <option value="s2.1-pro-free">s2.1-pro-free —— 免费（同款模型 $0，测试/个人首选）</option>
+                        <option value="s2.1-pro">s2.1-pro —— 付费，质量/延迟更优，生产推荐</option>
+                        <option value="s2-pro">s2-pro —— 上一代，多说话人 / 自然语言控制</option>
+                        <option value="s1">s1 —— 旧版，(圆括号) 情绪标签</option>
+                    </select>
+                    <p className="text-[11px] text-slate-400 mt-1 pl-1">
+                        {localFishModel === 's2.1-pro-free'
+                            ? '免费版：和 s2.1-pro 同一个模型、$0，但不保证 TTFA / DPA，适合自用测试。选了立即生效。'
+                            : '切换立即生效。角色也可在「角色 → 语音」单独覆盖模型（留空则用这里的全局默认）。'}
+                    </p>
+                </div>
+
+                {/* 底部：当前语音引擎二选一 —— radio 样式（不是 tab 切换，配置都在上面，这里只挑用哪家） */}
+                <div className="group rounded-2xl border border-slate-200/70 bg-slate-50/60 p-3">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-0.5 block">当前语音引擎（二选一）</label>
+                    <p className="text-[11px] text-slate-400 mb-2.5">聊天语音条 / 约会 / 电话用哪一家。上面两边的 Key 都会保留，这里只切换当前生效的。</p>
+                    <div className="space-y-2">
+                        {([
+                            ['minimax', 'MiniMax', '国内可直连，默认推荐'],
+                            ['fishaudio', '鱼声 Fish', '需科学上网（梯子 / 魔法），否则一直合成失败'],
+                        ] as const).map(([key, name, desc]) => {
+                            const active = localTtsProvider === key;
+                            return (
+                                <button
+                                    key={key}
+                                    type="button"
+                                    onClick={() => selectTtsProvider(key)}
+                                    className={`w-full flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-all ${active ? 'border-primary bg-primary/5 shadow-sm' : 'border-slate-200 bg-white/70 active:bg-white'}`}
+                                >
+                                    <span className={`shrink-0 w-4 h-4 rounded-full border-2 flex items-center justify-center ${active ? 'border-primary' : 'border-slate-300'}`}>
+                                        {active && <span className="w-2 h-2 rounded-full bg-primary" />}
+                                    </span>
+                                    <span className="flex-1 min-w-0">
+                                        <span className={`text-sm font-semibold ${active ? 'text-primary' : 'text-slate-700'}`}>{name}</span>
+                                        <span className="block text-[11px] text-slate-400 mt-0.5">{desc}</span>
+                                    </span>
+                                    {active && <span className="text-[10px] font-bold text-primary shrink-0">使用中</span>}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                {/* 语音提示词（高级）—— 自定义注入角色 system prompt 的「语音表演指南」，按服务商分两份 */}
+                <div className="group rounded-2xl border border-slate-200/70 bg-slate-50/60 p-3">
+                    <button
+                        type="button"
+                        onClick={() => setShowVoicePrompts(v => !v)}
+                        className="w-full flex items-center justify-between text-left"
+                    >
+                        <span>
+                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block">语音提示词（高级 · 可自定义）</span>
+                            <span className="block text-[11px] text-slate-400 mt-0.5">教模型怎么写出有情绪、有停顿的语音台词（聊天 / 电话 / 见面三处）。留空则用内置默认。</span>
+                        </span>
+                        <span className={`shrink-0 ml-2 text-slate-400 transition-transform ${showVoicePrompts ? 'rotate-180' : ''}`}>▾</span>
+                    </button>
+
+                    {showVoicePrompts && (
+                        <div className="mt-3 space-y-4">
+                            <p className="text-[11px] text-amber-600 leading-relaxed pl-0.5">
+                                ⚠️ 这是给模型的格式说明（停顿标记 / 情绪标签 / 动作词等），不是角色人设。改坏了可能导致语音标记解析失败——拿不准就点「清空」回到默认。改完记得点下面的「保存」。
+                            </p>
+
+                            {([
+                                ['minimax', 'MiniMax 语音指南', localVoicePromptMinimax, setLocalVoicePromptMinimax, VOICE_ACTING_GUIDE, '聊天 + 电话 · MiniMax 引擎时生效'] as const,
+                                ['fishaudio', '鱼声 Fish 语音指南', localVoicePromptFish, setLocalVoicePromptFish, FISH_VOICE_ACTING_GUIDE, '聊天 + 电话 · 鱼声引擎时生效'] as const,
+                                ['dateVoice', '见面（约会）语音情绪', localVoicePromptDate, setLocalVoicePromptDate, DATE_VOICE_GUIDE, '见面专用 [v:xxx] 规则 · 角色开了见面语音时生效，与引擎无关'] as const,
+                            ]).map(([key, title, value, setValue, def, hint]) => {
+                                const active = localTtsProvider === key;
+                                const usingDefault = !value.trim();
+                                return (
+                                    <div key={key}>
+                                        <div className="flex items-center justify-between mb-1 pl-0.5">
+                                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                                                {title}
+                                                {active && <span className="ml-1.5 text-[9px] font-bold text-primary normal-case tracking-normal">· 当前引擎</span>}
+                                            </label>
+                                            <span className={`text-[10px] font-medium ${usingDefault ? 'text-slate-400' : 'text-primary'}`}>
+                                                {usingDefault ? '使用内置默认' : '已自定义'}
+                                            </span>
+                                        </div>
+                                        <p className="text-[10px] text-slate-400 mb-1.5 pl-0.5">{hint}</p>
+                                        <textarea
+                                            value={value}
+                                            onChange={(e) => setValue(e.target.value)}
+                                            placeholder="留空 → 使用内置默认。点下方「载入默认模板」可把内置文案填进来再改。"
+                                            rows={6}
+                                            spellCheck={false}
+                                            className="w-full bg-white/60 border border-slate-200/60 rounded-xl px-3 py-2.5 text-xs font-mono leading-relaxed focus:bg-white transition-all resize-y"
+                                        />
+                                        <div className="flex items-center justify-between mt-1.5 pl-0.5">
+                                            <span className="text-[10px] text-slate-400">{value.length} 字</span>
+                                            <span className="flex gap-3">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setValue(def)}
+                                                    className="text-[11px] font-semibold text-slate-500 hover:text-primary active:scale-95 transition-all"
+                                                >
+                                                    载入默认模板
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setValue('')}
+                                                    disabled={usingDefault}
+                                                    className="text-[11px] font-semibold text-rose-500 hover:text-rose-600 active:scale-95 transition-all disabled:opacity-30 disabled:pointer-events-none"
+                                                >
+                                                    清空（恢复默认）
+                                                </button>
+                                            </span>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
                 </div>
 
                 <div className="group">
@@ -1231,7 +1647,7 @@ const Settings: React.FC = () => {
                             </svg>
                         </button>
                     </div>
-                    <input type="password" value={localAceStepKey} onChange={(e) => setLocalAceStepKey(e.target.value)} placeholder="r8_xxx（写歌 App 调 ACE-Step 出整首歌用）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                    <input type="password" name="ace-step-api-token" autoComplete="new-password" spellCheck={false} value={localAceStepKey} onChange={(e) => setLocalAceStepKey(e.target.value)} placeholder="r8_xxx（写歌 App 调 ACE-Step 出整首歌用）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
                     <p className="text-[11px] text-slate-400 mt-1 pl-1">填了之后写歌 App 的歌词页能一键调 ACE-Step 出真人声整首歌（约 ¥0.1/首，走 sfworker 代理免梯子）。</p>
 
                     {showAceStepGuide && (
@@ -1361,8 +1777,7 @@ const Settings: React.FC = () => {
                 </span>
             </div>
             <p className="text-xs text-slate-500 mb-3 leading-relaxed">
-                Proactive Push 和 Instant Push <b>共用同一份 VAPID 密钥对</b>。两边 key 不一致时会反复 unsubscribe 抢同一个 pushManager 订阅 ——
-                "推送成功但收不到"的常见原因。
+                Proactive Push 和 Instant Push <b>共用同一份 VAPID 密钥对</b>。重新生成会让已开的推送失效，需要重新开启。
             </p>
             <button
                 type="button"
@@ -1374,7 +1789,7 @@ const Settings: React.FC = () => {
         </section>
 
         {/* ───────── 主动消息 Push 加速器（开关） ───────── */}
-        {ppAvailable && (
+        {SHOW_PROACTIVE_PUSH_ACCEL_UI && ppAvailable && (
         <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
             <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
@@ -1722,9 +2137,57 @@ const Settings: React.FC = () => {
             </label>
         </section>
 
-        <div className="text-center text-[10px] text-slate-300 pb-8 font-mono tracking-widest uppercase">
-            v2.2 (Realtime Awareness)
-        </div>
+        {/* 自定义网络代理 — 刻意低调的高级入口。默认折叠，不主动指引基本发现不了。
+            普通用户无需配置：默认走作者部署的公共 Worker，所有功能开箱即用。 */}
+        {!showProxyConfig ? (
+            <button
+                onClick={() => setShowProxyConfig(true)}
+                className="w-full text-center text-[10px] text-slate-300 hover:text-slate-400 py-1 transition-colors"
+            >
+                · 自定义网络代理 ·
+            </button>
+        ) : (
+            <section className="bg-white/60 rounded-2xl p-4 border border-slate-100">
+                <div className="flex items-center justify-between mb-2">
+                    <h2 className="text-xs font-semibold text-slate-500">自定义网络代理 (Worker)</h2>
+                    <button onClick={() => { setShowProxyConfig(false); setProxyWorkerInput(getProxyWorkerUrl()); }} className="text-[10px] text-slate-400">收起</button>
+                </div>
+
+                <div className="text-[10px] text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-2 mb-3 leading-relaxed">
+                    ⚠️ <b>除非你清楚自己在做什么，否则不用动这里。</b>默认配置开箱即用，
+                    所有功能（联网搜索 / 备份代理 / Notion / 飞书 / 点单 / 网页抓取 / 出图）都正常。
+                    只有在你自己部署了 <b>worker/index.js</b>、想换成自己的实例时才需要填。
+                </div>
+
+                <input
+                    type="text"
+                    value={proxyWorkerInput}
+                    onChange={(e) => setProxyWorkerInput(e.target.value)}
+                    placeholder={DEFAULT_PROXY_WORKER}
+                    spellCheck={false}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-200 mb-2"
+                />
+
+                <div className="grid grid-cols-2 gap-2">
+                    <button onClick={handleResetProxyWorker} className="py-2 bg-slate-100 rounded-xl text-[11px] font-bold text-slate-500 active:scale-95 transition-transform">
+                        恢复默认
+                    </button>
+                    <button onClick={handleSaveProxyWorker} className="py-2 bg-slate-700 rounded-xl text-[11px] font-bold text-white active:scale-95 transition-transform">
+                        保存
+                    </button>
+                </div>
+
+                <p className="text-[10px] text-slate-400 px-1 mt-2 leading-relaxed">
+                    只填到域名（如 <b>{DEFAULT_PROXY_WORKER}</b>），不要带 /search、/webdav、/api 等路径。
+                    联网搜索 / 备份代理 / Notion / 飞书 / 点单 / 网页抓取 / 出图 / 小红书 Lite / 音乐 都会切到这里填的 Worker。
+                    （音乐播放器里还留了一个独立地址框，单独填了就以那个为准。）
+                </p>
+            </section>
+        )}
+
+        <VersionInfo />
       </div>
 
       {/* 主动消息 Push 加速 · 启用前确认 */}
@@ -2071,6 +2534,9 @@ const Settings: React.FC = () => {
         })()}
       </Modal>
 
+      {/* API 调用记录页面 */}
+      <ApiCallLogModal isOpen={showApiCallLog} onClose={() => setShowApiCallLog(false)} />
+
       {/* Preset Name Modal */}
       <Modal isOpen={showPresetModal} title="保存预设" onClose={() => setShowPresetModal(false)} footer={<button onClick={handleSavePreset} className="w-full py-3 bg-primary text-white font-bold rounded-2xl">保存</button>}>
           <div className="space-y-2">
@@ -2080,9 +2546,9 @@ const Settings: React.FC = () => {
       </Modal>
 
       {/* 强制导出 Modal */}
-      <Modal isOpen={showExportModal} title="备份下载" onClose={() => setShowExportModal(false)} footer={
+      <Modal isOpen={showExportModal} title="备份下载" onClose={() => { revokeDownloadUrl(); setShowExportModal(false); }} footer={
           <div className="flex gap-2 w-full">
-               <button onClick={() => setShowExportModal(false)} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl">关闭</button>
+               <button onClick={() => { revokeDownloadUrl(); setShowExportModal(false); }} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl">关闭</button>
           </div>
       }>
           <div className="space-y-4 text-center py-4">
@@ -2092,6 +2558,96 @@ const Settings: React.FC = () => {
               <p className="text-sm font-bold text-slate-700">备份文件已生成！</p>
               <p className="text-xs text-slate-500">如果浏览器没有自动下载，请点击下方链接。</p>
               {downloadUrl && <a href={downloadUrl} download="Sully_Backup.zip" className="text-primary text-sm underline block py-2">点击手动下载 .zip</a>}
+          </div>
+      </Modal>
+
+      <Modal
+          isOpen={showCsyImportModal}
+          title="迁移 CSY-OS 数据"
+          onClose={() => { if (!csyPreviewLoading) setShowCsyImportModal(false); }}
+          footer={
+              <div className="flex gap-2 w-full">
+                  <button
+                      onClick={() => setShowCsyImportModal(false)}
+                      disabled={csyPreviewLoading}
+                      className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl disabled:opacity-50"
+                  >取消</button>
+                  <button
+                      onClick={handleConfirmCsyImport}
+                      disabled={csyPreviewLoading || !csyPreview}
+                      className="flex-[1.5] py-3 bg-cyan-600 text-white font-bold rounded-2xl disabled:opacity-50"
+                  >确认迁移</button>
+              </div>
+          }
+      >
+          {csyPreviewLoading ? (
+              <div className="py-8 text-center text-sm text-slate-500">正在校验备份与统计向量记忆...</div>
+          ) : csyPreview ? (
+              <div className="space-y-4">
+                  <div className="grid grid-cols-3 gap-2">
+                      {[
+                          ['角色', csyPreview.characters],
+                          ['聊天', csyPreview.messages],
+                          ['记忆', csyPreview.vectorMemories],
+                      ].map(([label, value]) => (
+                          <div key={String(label)} className="rounded-2xl bg-cyan-50 p-3 text-center">
+                              <div className="text-lg font-bold text-cyan-700">{value}</div>
+                              <div className="text-[10px] text-cyan-600/70">{label}</div>
+                          </div>
+                      ))}
+                  </div>
+                  <div className="rounded-2xl bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-600">
+                      <div>可直接沿用的记忆：<b className="text-emerald-600">{csyPreview.reusableVectors}</b></div>
+                      <div>需要重新整理的记忆：<b className="text-amber-600">{csyPreview.rebuildRequired}</b></div>
+                      {csyPreview.embeddingModels.length > 0 && (
+                          <div className="mt-1 break-all text-[10px] text-slate-400">模型：{csyPreview.embeddingModels.join('、')}</div>
+                      )}
+                  </div>
+                  {csyPreview.warnings.length > 0 && (
+                      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-[10px] leading-relaxed text-amber-800">
+                          {csyPreview.warnings.map((warning, index) => <div key={index}>• {warning}</div>)}
+                      </div>
+                  )}
+                  <div className="rounded-2xl border border-rose-200 bg-rose-50 p-3 text-[11px] leading-relaxed text-rose-700">
+                      此迁移会用 CSY-OS 数据替换本机现有角色、聊天及对应应用数据。若本机已有 SullyOS 数据，请先完成一次完整备份。
+                  </div>
+              </div>
+          ) : null}
+      </Modal>
+
+      <Modal
+          isOpen={showCsyHelpModal}
+          title="CSY-OS 迁移说明"
+          onClose={() => setShowCsyHelpModal(false)}
+          footer={
+              <button
+                  onClick={() => setShowCsyHelpModal(false)}
+                  className="w-full py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl"
+              >我知道了</button>
+          }
+      >
+          <div className="space-y-3 text-[11px] leading-relaxed text-slate-600">
+              <section className="rounded-2xl bg-cyan-50 p-3">
+                  <div className="font-bold text-cyan-800 mb-1">哪些内容会迁移？</div>
+                  <p>角色、聊天、世界书、相册等兼容数据会正常恢复；CSY 本地向量记忆会转换为 SullyOS 记忆宫殿。能直接沿用的记忆会保留；剩下的会保留文字内容，之后自动重新整理。</p>
+              </section>
+
+              <section className="rounded-2xl bg-emerald-50 p-3">
+                  <div className="font-bold text-emerald-800 mb-1">CSY 特有信息会丢吗？</div>
+                  <p>不会。原始标题、正文、情绪旅程、激素快照、来源消息、失效原因和模型信息会保存在每条记忆的 <code className="font-mono">legacyCsy</code> 中。失效记忆也会保留，但默认不参与召回。</p>
+              </section>
+
+              <section className="rounded-2xl bg-violet-50 p-3">
+                  <div className="font-bold text-violet-800 mb-1">迁移后怎么再次导出？</div>
+                  <p>回到本页，点击上方的「整合导出」或「纯文字备份」。两份备份都会完整包含记忆内容。以后恢复这份 SullyOS 备份时，使用普通「导入备份」即可。</p>
+                  <p className="mt-1 font-semibold text-rose-600">不要只导出「媒体与美化素材」：它不包含记忆宫殿。</p>
+              </section>
+
+              <section className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-amber-800">
+                  <div className="font-bold mb-1">迁移前请注意</div>
+                  <p>迁移会替换本机现有角色、聊天和对应应用数据；已有 SullyOS 数据请先完整备份。CSY 文件里本来没有的后端记忆、定时消息、信件或语音音频，迁移器无法凭空恢复。</p>
+                  <p className="mt-1">接口相关设置会一并迁移，登录凭证需要重新填。</p>
+              </section>
           </div>
       </Modal>
 
@@ -2331,22 +2887,22 @@ const Settings: React.FC = () => {
                   <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                           <Book size={20} weight="fill" />
-                          <span className="text-sm font-bold text-red-700">小红书</span>
-                          <span className="text-[9px] bg-red-100 text-red-500 px-1.5 py-0.5 rounded-full">浏览器自动化</span>
+                          <span className="text-sm font-bold text-red-700">小红书 · 本地</span>
+                          <span className="text-[9px] bg-red-100 text-red-500 px-1.5 py-0.5 rounded-full">MCP / Skills</span>
                       </div>
                       <label className="relative inline-flex items-center cursor-pointer">
-                          <input type="checkbox" checked={rtXhsMcpEnabled} onChange={e => { setRtXhsMcpEnabled(e.target.checked); setRtXhsEnabled(e.target.checked); }} className="sr-only peer" />
+                          <input type="checkbox" checked={rtXhsMcpEnabled && rtXhsMode === 'local'} onChange={e => { if (e.target.checked) { setRtXhsMcpEnabled(true); setRtXhsEnabled(true); setRtXhsMode('local'); } else { setRtXhsMcpEnabled(false); setRtXhsEnabled(false); } }} className="sr-only peer" />
                           <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-500"></div>
                       </label>
                   </div>
                   <p className="text-[10px] text-red-500/70 leading-relaxed">
-                      角色可以搜索、浏览、发帖、评论小红书。支持两种后端，根据 URL 自动切换。
+                      本地后端：需在电脑上跑 xiaohongshu-mcp 或 xhs-bridge。想免电脑请用下面的「小红书 Lite」。
                   </p>
-                  {rtXhsMcpEnabled && (
+                  {rtXhsMcpEnabled && rtXhsMode === 'local' && (
                       <div className="space-y-2">
                           <div>
                               <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">服务器 URL</label>
-                              <input value={rtXhsMcpUrl} onChange={e => setRtXhsMcpUrl(e.target.value)} className="w-full bg-white/80 border border-red-200 rounded-xl px-3 py-2 text-[11px] font-mono" placeholder="http://localhost:18060/mcp" />
+                              <input value={rtXhsLocalUrl} onChange={e => setRtXhsLocalUrl(e.target.value)} className="w-full bg-white/80 border border-red-200 rounded-xl px-3 py-2 text-[11px] font-mono" placeholder="http://localhost:18060/mcp" />
                           </div>
                           <button onClick={testXhsMcp} className="w-full py-2 bg-red-100 text-red-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试连接</button>
                           <div className="grid grid-cols-2 gap-2">
@@ -2360,14 +2916,59 @@ const Settings: React.FC = () => {
                               </div>
                           </div>
                           <p className="text-[10px] text-red-500/70 leading-relaxed">
-                              <b>MCP 模式（默认，推荐）:</b> 下载 xiaohongshu-mcp + 运行脚本即可<br/>
-                              URL 填: http://localhost:18060/mcp（通过代理则 18061/mcp）<br/>
-                              <br/>
-                              <b>Skills 模式（高级）:</b> 额外支持视频发布、长文<br/>
-                              URL 填: http://localhost:18061/api<br/>
-                              需安装 Python + xiaohongshu-skills + 运行 xhs-bridge.mjs<br/>
-                              <br/>
-                              系统根据 URL 结尾自动判断模式（/mcp 或 /api）
+                              <b>MCP 模式:</b> 下载 xiaohongshu-mcp + 运行脚本，URL 填 http://localhost:18060/mcp（代理则 18061/mcp）<br/>
+                              <b>Skills 模式:</b> URL 填 http://localhost:18061/api（需 Python + xhs-bridge.mjs，额外支持视频/长文）<br/>
+                              系统按 URL 结尾自动判断（/mcp 或 /api）。
+                          </p>
+                      </div>
+                  )}
+              </div>
+
+              {/* 小红书 Lite (云端) */}
+              <div className="bg-rose-50/60 p-4 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                          <Book size={20} weight="fill" />
+                          <span className="text-sm font-bold text-rose-700">小红书 Lite</span>
+                          <span className="text-[9px] bg-rose-100 text-rose-500 px-1.5 py-0.5 rounded-full">云端 · 推荐</span>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                          <input type="checkbox" checked={rtXhsMcpEnabled && rtXhsMode === 'lite'} onChange={e => { if (e.target.checked) { if (!window.confirm(XHS_RISK_TEXT + '\n\n确定要开启吗？')) return; setRtXhsMcpEnabled(true); setRtXhsEnabled(true); setRtXhsMode('lite'); } else { setRtXhsMcpEnabled(false); setRtXhsEnabled(false); } }} className="sr-only peer" />
+                          <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-rose-500"></div>
+                      </label>
+                  </div>
+                  <p className="text-[10px] text-rose-500/70 leading-relaxed">
+                      免电脑、免扫码：粘贴一次小红书 cookie，即可搜索/浏览/详情/点赞/收藏/评论/发帖(带图)。地址已内置，无需填写。
+                  </p>
+                  <p className="text-[10px] text-amber-700 leading-relaxed bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">{XHS_RISK_TEXT}</p>
+                  {rtXhsMcpEnabled && rtXhsMode === 'lite' && (
+                      <div className="space-y-2">
+                          <div>
+                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">小红书 Cookie</label>
+                              <textarea value={rtXhsCookie} onChange={e => setRtXhsCookie(e.target.value)} rows={2} className="w-full bg-white/80 border border-rose-200 rounded-xl px-3 py-2 text-[10px] font-mono resize-y" placeholder="a1=...; web_session=...; （从浏览器登录后复制完整 cookie）" />
+                          </div>
+                          <button onClick={testXhsMcp} className="w-full py-2 bg-rose-100 text-rose-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试连接</button>
+                          <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">小红书昵称</label>
+                                  <input value={rtXhsNickname} onChange={e => setRtXhsNickname(e.target.value)} className="w-full bg-white/80 border border-rose-200 rounded-xl px-3 py-2 text-[11px]" placeholder="测试连接后自动获取" />
+                              </div>
+                              <div>
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">用户 ID</label>
+                                  <input value={rtXhsUserId} onChange={e => setRtXhsUserId(e.target.value)} className="w-full bg-white/80 border border-rose-200 rounded-xl px-3 py-2 text-[11px] font-mono" placeholder="自动获取" />
+                              </div>
+                          </div>
+                          <div>
+                              <button type="button" onClick={() => setRtXhsGuideOpen(v => !v)} className="text-[11px] font-bold text-rose-600 underline">📖 点击获取 cookie 教程 {rtXhsGuideOpen ? '▲' : '▼'}</button>
+                              {rtXhsGuideOpen && (
+                                  <div className="mt-1 bg-white/70 rounded-lg p-2 space-y-1.5">
+                                      <pre className="text-[10px] text-slate-600 whitespace-pre-wrap font-sans leading-relaxed">{XHS_COOKIE_GUIDE}</pre>
+                                      <button type="button" onClick={async () => { try { await navigator.clipboard.writeText(XHS_COOKIE_GUIDE); addToast('教程已复制，可粘贴去问别的 AI', 'success'); } catch { addToast('复制失败，请长按手动选择', 'error'); } }} className="w-full py-1.5 bg-rose-100 text-rose-600 text-[11px] font-bold rounded-lg active:scale-95 transition-transform">复制教程</button>
+                                  </div>
+                              )}
+                          </div>
+                          <p className="text-[10px] text-slate-400 leading-relaxed bg-slate-100/60 rounded-lg px-2 py-1.5">
+                              🔒 隐私：cookie 经 HTTPS 加密发到云端 Worker 仅用于请求签名，服务器<b>不保存、不记录</b>，运营方看不到。正常使用是安全的；但凡经第三方云服务都存在理论风险，介意可自行评估。
                           </p>
                       </div>
                   )}
@@ -2408,6 +3009,46 @@ const Settings: React.FC = () => {
                               2. 粘贴到上面的输入框（仅存本地，<b>不会上传服务器</b>）<br/>
                               3. 下单类操作涉及真实支付，角色会先复述清单等你确认再下单<br/>
                               4. 仅中国大陆 (不含港澳台)
+                          </p>
+                      </div>
+                  )}
+              </div>
+
+              {/* 瑞幸 MCP */}
+              <div className="bg-blue-50/60 p-4 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                          <Coffee size={20} weight="fill" className="text-blue-600" />
+                          <span className="text-sm font-bold text-blue-700">瑞幸咖啡</span>
+                          <span className="text-[9px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">官方 MCP</span>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                          <input type="checkbox" checked={luckinEnabled} onChange={e => handleLuckinEnabledChange(e.target.checked)} className="sr-only peer" />
+                          <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                      </label>
+                  </div>
+                  <p className="text-[10px] text-blue-700/70 leading-relaxed">
+                      启用后，在聊天里点 + 号 → 第二页 → 瑞一杯，发送"瑞一杯"激活，角色就能为你查门店、搜咖啡、选规格、下单到店自提、查取餐码。
+                  </p>
+                  {luckinEnabled && (
+                      <div className="space-y-2">
+                          <div>
+                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">MCP Token (个人)</label>
+                              <input type="password" value={luckinToken} onChange={e => handleLuckinTokenChange(e.target.value)} className="w-full bg-white/80 border border-blue-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="去 open.lkcoffee.com 登录后复制" />
+                          </div>
+                          <button onClick={testLuckinApi} disabled={luckinTesting} className="w-full py-2 bg-blue-100 text-blue-700 text-xs font-bold rounded-xl active:scale-95 transition-transform disabled:opacity-60">
+                              {luckinTesting ? '测试中…' : '测试连接'}
+                          </button>
+                          {luckinTestStatus && (
+                              <div className={`p-2 rounded-lg text-[11px] whitespace-pre-line leading-relaxed ${luckinTestStatus.startsWith('✅') ? 'bg-emerald-50 text-emerald-700' : luckinTestStatus.startsWith('❌') ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-600'}`}>
+                                  {luckinTestStatus}
+                              </div>
+                          )}
+                          <p className="text-[10px] text-blue-700/70 leading-relaxed">
+                              1. 访问 <a href="https://open.lkcoffee.com" target="_blank" className="underline">open.lkcoffee.com</a> 用瑞幸账号登录，复制 Token（有效期约 1 个月）<br/>
+                              2. 粘贴到上面的输入框（仅存本地，<b>不会上传服务器</b>）<br/>
+                              3. 下单类操作涉及真实支付，角色会先复述清单等你确认再下单<br/>
+                              4. 上游需经 Worker 代理 (/mcp/luckin)，请确保已部署最新 worker
                           </p>
                       </div>
                   )}

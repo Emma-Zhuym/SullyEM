@@ -9,6 +9,7 @@ import { ContextBuilder } from '../utils/context';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { processGroupNewMessages, deleteGroupMemoriesByGroupId } from '../utils/memoryPalace/groupPipeline';
 import { processImage } from '../utils/file';
+import { stickerNameFromUrl } from '../utils/messageFormat';
 import { DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import { UsersThree } from '@phosphor-icons/react';
 
@@ -176,7 +177,7 @@ const GroupMessageItem = React.memo(({
 // --- Main Component ---
 
 const GroupChat: React.FC = () => {
-    const { closeApp, groups, createGroup, deleteGroup, characters, updateCharacter, apiConfig, addToast, userProfile, virtualTime } = useOS();
+    const { closeApp, groups, createGroup, updateGroup, deleteGroup, characters, updateCharacter, apiConfig, addToast, userProfile, virtualTime } = useOS();
     const [view, setView] = useState<'list' | 'chat'>('list');
     const [activeGroup, setActiveGroup] = useState<GroupProfile | null>(null);
     const [messages, setMessages] = useState<Message[]>([]);
@@ -421,13 +422,13 @@ const GroupChat: React.FC = () => {
 
     const handleUpdateGroupInfo = async () => {
         if (!activeGroup) return;
-        const updatedGroup = {
-            ...activeGroup,
+        const updates = {
             name: tempGroupName || activeGroup.name,
             privateContextCap: tempPrivateContextCap,
         };
-        await DB.saveGroup(updatedGroup);
-        setActiveGroup(updatedGroup);
+        // 走 context 的 updateGroup：同步内存 groups + DB，避免退出后读回旧值
+        await updateGroup(activeGroup.id, updates);
+        setActiveGroup({ ...activeGroup, ...updates });
         setModalType('none');
         addToast('群信息已更新', 'success');
     };
@@ -437,9 +438,10 @@ const GroupChat: React.FC = () => {
         if (!file || !activeGroup) return;
         try {
             const base64 = await processImage(file);
-            const updatedGroup = { ...activeGroup, avatar: base64 };
-            await DB.saveGroup(updatedGroup);
-            setActiveGroup(updatedGroup);
+            // 走 context 的 updateGroup：同步内存 groups + DB，
+            // 否则只改了本地 activeGroup，退出回列表/再次进群会读回旧头像（恢复默认）
+            await updateGroup(activeGroup.id, { avatar: base64 });
+            setActiveGroup({ ...activeGroup, avatar: base64 });
             addToast('群头像已修改', 'success');
         } catch (err: any) {
             addToast('图片处理失败', 'error');
@@ -503,7 +505,7 @@ const GroupChat: React.FC = () => {
 
     const handleGroupSummary = async () => {
         if (!activeGroup || !apiConfig.apiKey) {
-            addToast('请检查配置', 'error');
+            addToast('请先在设置里填好 API。', 'error');
             return;
         }
 
@@ -684,7 +686,7 @@ ${logText.substring(0, 10000)}
             // 1. 共享场景块（用户档案 + 共有世界书 + 共有 worldview）
             //    每个角色都"看见"的舞台只描述一次，避免按成员数 N 倍复制。
             //    每个角色的人设/印象/记忆仍保持完整，不做任何压缩。
-            const sharedScene = ContextBuilder.buildGroupSharedScene(groupMembers, userProfile);
+            const sharedScene = ContextBuilder.buildGroupSharedScene(groupMembers, userProfile, currentMsgs);
 
             let context = `【系统：群聊模拟器配置】
 当前群名: "${activeGroup.name}"
@@ -705,7 +707,7 @@ ${sharedScene.text}`;
                     skipWorldview: sharedScene.worldviewIsShared,
                     skipWorldbookIds: sharedScene.sharedWorldbookIds,
                     headerOverride: `[Group Member Profile: ${member.name}]`,
-                });
+                }, { worldbookMessages: currentMsgs });
                 // Get private gap string
                 const privateGapInfo = await getPrivateTimeGap(member.id);
 
@@ -731,22 +733,51 @@ ${recentPrivate || '(暂无私聊)'}
             }
 
             // 3. Group History (uses configurable context limit)
-            const recentGroupMsgs = currentMsgs.slice(-contextLimit).map(m => {
+            // image 的 content 是 base64（processImage 压的 JPEG），emoji 是图床 URL——
+            // 都不能当文本内联进 prompt：base64 图片会把群上下文撑爆，URL 则是纯噪声。
+            // 卡片等富类型同理只留占位符。但导演要能"看见"图才能合理反应，所以仿照
+            // 私聊 buildMessageHistory 的做法：把最近 N 张图片走结构化 image_url 字段
+            // 附在 user 消息里，文本里用 [图片#k] 占位互相对齐。
+            const recentMsgsWindow = currentMsgs.slice(-contextLimit);
+            const MAX_ATTACHED_IMAGES = 3;
+            const validImageWindowIdx: number[] = [];
+            recentMsgsWindow.forEach((m, i) => {
+                if (m.type === 'image') {
+                    const url = typeof m.content === 'string' ? m.content.trim() : '';
+                    if (/^(data:|https?:\/\/)/i.test(url)) validImageWindowIdx.push(i);
+                }
+            });
+            const attachedSet = new Set(validImageWindowIdx.slice(-MAX_ATTACHED_IMAGES));
+            const attachedImages: { tag: number; url: string }[] = [];
+            const recentGroupMsgs = recentMsgsWindow.map((m, i) => {
                 let name = '用户';
                 if (m.role === 'assistant') {
                     name = characters.find(c => c.id === m.charId)?.name || '未知';
                 }
-                // image 的 content 是 base64（processImage 压的 JPEG），emoji 是图床 URL——
-                // 都不能当文本内联进 prompt：base64 图片会把群上下文撑爆，URL 则是纯噪声。
-                // 卡片等富类型同理只留占位符。
                 const rawText = typeof m.content === 'string' ? m.content : '';
-                const content = m.type === 'image' ? '[图片]'
-                    : m.type === 'emoji' ? '[表情包]'
-                    : m.type === 'transfer' ? `[发红包: ${m.metadata?.amount}]`
-                    : /^(data:|https?:\/\/)/i.test(rawText.trim()) ? '[媒体]'
-                    : rawText;
+                let content: string;
+                if (m.type === 'image') {
+                    if (attachedSet.has(i)) {
+                        const tag = attachedImages.length + 1;
+                        attachedImages.push({ tag, url: rawText.trim() });
+                        content = `[图片#${tag}]`;
+                    } else {
+                        content = '[图片]';
+                    }
+                } else if (m.type === 'emoji') {
+                    content = `[表情包: ${stickerNameFromUrl(emojis, rawText.trim())}]`;
+                } else if (m.type === 'transfer') {
+                    content = `[发红包: ${m.metadata?.amount}]`;
+                } else if (/^(data:|https?:\/\/)/i.test(rawText.trim())) {
+                    content = '[媒体]';
+                } else {
+                    content = rawText;
+                }
                 return `${name}: ${content}`;
             }).join('\n');
+            const attachedImagesNote = attachedImages.length > 0
+                ? `\n（本轮附带 ${attachedImages.length} 张最近的图片，对应记录里的 [图片#1] ~ [图片#${attachedImages.length}]。请基于实际图片内容自然反应，不要无视，也不要瞎猜没附上的旧图。）\n`
+                : '';
 
             // NEW: Build Categorized Emoji Context (filtered by group member visibility)
             const emojiContextStr = (() => {
@@ -783,6 +814,7 @@ ${recentPrivate || '(暂无私聊)'}
 当前场景：大家正在群里聊天。
 最近聊天记录：
 ${recentGroupMsgs}
+${attachedImagesNote}
 
 ### 任务：生成一段精彩的群聊互动 (Conversation Flow)
 请作为导演，接管所有角色，让群聊**自然地流动起来**。
@@ -850,12 +882,20 @@ ${recentGroupMsgs}
 ]
 `;
 
+            // 当本轮有要附带的图片时，user 消息走结构化 content（text + image_url），
+            // 否则保持原来的纯文本，避免对不支持多模态字段的端点产生兼容问题。
+            const userMessageContent: any = attachedImages.length > 0
+                ? [
+                    { type: 'text', text: prompt },
+                    ...attachedImages.map(img => ({ type: 'image_url', image_url: { url: img.url } })),
+                  ]
+                : prompt;
             const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
                 body: JSON.stringify({
                     model: apiConfig.model,
-                    messages: [{ role: "user", content: prompt }],
+                    messages: [{ role: "user", content: userMessageContent }],
                     temperature: 0.9, // High creativity for banter
                     max_tokens: 8000
                 })
@@ -886,7 +926,9 @@ ${recentGroupMsgs}
                 jsonStr = jsonStr.substring(firstBracket, lastBracket + 1);
             }
 
-            let actions = [];
+            // director 解析出的行动数组（形状由 LLM 输出决定，逐字段读取时再各自判型）。
+            // 显式标 any[]：不假装它有精确类型，同时避免 evolving-any 在严格检查下漏报。
+            let actions: any[] = [];
             try {
                 actions = JSON.parse(jsonStr);
                 if (!Array.isArray(actions)) actions = [];
@@ -972,7 +1014,15 @@ ${recentGroupMsgs}
 
                     // Fallback: split on spaces between CJK characters (中文里空格=AI想换行)
                     if (chunks.length <= 1 && textContent.trim().length > 50) {
-                        chunks = textContent.split(/(?<=[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef\u2000-\u206f\u2e80-\u2eff\u3001-\u3003\u2018-\u201f\u300a-\u300f\uff01-\uff0f\uff1a-\uff20])\s+(?=[\u4e00-\u9fff\u3400-\u4dbf])/)
+                        // No lookbehind (?<=): iOS Safari <16.4 JSC doesn't support it; old
+                        // devices throw "invalid group specifier name" at new RegExp. Capture the
+                        // left char (full punct set) + zero-width lookahead on the right (Han only),
+                        // mark split points with \x01, restore left char via $1. Left/right sets
+                        // differ, so they can't be merged. Byte-equivalent (see lookbehindFree.test.ts).
+                        const SPLIT = String.fromCharCode(1);
+                        chunks = textContent
+                            .replace(/([\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef\u2000-\u206f\u2e80-\u2eff\u3001-\u3003\u2018-\u201f\u300a-\u300f\uff01-\uff0f\uff1a-\uff20])\s+(?=[\u4e00-\u9fff\u3400-\u4dbf])/g, `$1${SPLIT}`)
+                            .split(SPLIT)
                             .map(c => c.trim())
                             .filter(c => c.length > 0);
                     }
@@ -1046,8 +1096,11 @@ ${recentGroupMsgs}
     if (view === 'list') {
         return (
             <div className="h-full w-full bg-slate-50 flex flex-col font-light">
-                <div className="h-20 bg-white/70 backdrop-blur-md flex items-end pb-3 px-4 border-b border-white/40 shrink-0 z-10 sticky top-0">
-                    <button onClick={closeApp} className="p-2 -ml-2 rounded-full hover:bg-black/5 active:scale-90 transition-transform">
+                {/* safe-top spacer 透明 + backdrop-blur，下方容器/list bubbles 透出+模糊（跟 iOS 系统 status bar 一致），避免 header 白 bg 在刘海下铺一条突兀白带 */}
+                <div className="shrink-0 z-10 sticky top-0">
+                    <div className="bg-transparent backdrop-blur-xl" style={{ height: 'var(--safe-top)' }} />
+                    <div className="bg-white/70 backdrop-blur-md flex items-end pb-3 px-4 border-b border-white/40 h-20">
+                        <button onClick={closeApp} className="p-2 -ml-2 rounded-full hover:bg-black/5 active:scale-90 transition-transform">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-slate-600"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                     </button>
                     <span className="font-medium text-slate-700 text-lg tracking-wide pl-2">群聊列表</span>
@@ -1055,8 +1108,9 @@ ${recentGroupMsgs}
                     <button onClick={() => { setModalType('create'); setSelectedMembers(new Set()); setTempGroupName(''); }} className="p-2 -mr-2 text-violet-500 bg-violet-50 hover:bg-violet-100 rounded-full transition-colors">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
                     </button>
+                    </div>
                 </div>
-                
+
                 <div className="p-4 space-y-3 overflow-y-auto">
                     {groups.map(g => (
                         <div key={g.id} onClick={() => { setActiveGroup(g); setView('chat'); }} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4 active:scale-[0.98] transition-all cursor-pointer group hover:bg-violet-50/30">
@@ -1145,8 +1199,10 @@ ${recentGroupMsgs}
                 </div>
             )}
 
-            {/* Header */}
-            <div className="h-24 bg-white/80 backdrop-blur-xl px-5 flex items-end pb-4 border-b border-slate-200/60 shrink-0 z-30 sticky top-0 shadow-sm transition-all">
+            {/* Header — safe-top spacer 透明 + backdrop-blur 自适应容器色，跟 iOS status bar 一致 */}
+            <div className="shrink-0 z-30 sticky top-0 transition-all">
+            <div className="bg-transparent backdrop-blur-xl" style={{ height: 'var(--safe-top)' }} />
+            <div className="bg-white/80 backdrop-blur-xl px-5 flex items-end pb-4 border-b border-slate-200/60 shadow-sm h-24">
                 {selectionMode ? (
                     <div className="flex items-center justify-between w-full">
                         <button onClick={() => { setSelectionMode(false); setSelectedMsgIds(new Set()); }} className="text-sm font-bold text-slate-500 px-2 py-1">取消</button>
@@ -1197,6 +1253,7 @@ ${recentGroupMsgs}
                         </button>
                     </div>
                 )}
+            </div>
             </div>
 
             {/* Messages Area */}
@@ -1266,13 +1323,13 @@ ${recentGroupMsgs}
                         </button>
 
                         {/* Input Field Container */}
-                        <div className="flex-1 bg-white rounded-xl flex items-end px-3 py-2 border border-slate-200 focus-within:border-violet-400 focus-within:ring-2 focus-within:ring-violet-100 transition-all">
+                        <div className="flex-1 min-w-0 overflow-hidden bg-white rounded-xl flex items-end px-3 py-2 border border-slate-200 focus-within:border-violet-400 focus-within:ring-2 focus-within:ring-violet-100 transition-all">
                             <textarea 
                                 rows={1} 
                                 value={input} 
                                 onChange={e => setInput(e.target.value)} 
                                 onKeyDown={e => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(input); }}} 
-                                className="flex-1 bg-transparent text-[16px] outline-none resize-none max-h-28 text-slate-800 placeholder:text-slate-400 py-1" 
+                                className="flex-1 min-w-0 bg-transparent text-[16px] outline-none resize-none max-h-28 text-slate-800 placeholder:text-slate-400 py-1"
                                 placeholder="Message..." 
                                 style={{ height: 'auto', minHeight: '24px' }} 
                             />
@@ -1289,7 +1346,7 @@ ${recentGroupMsgs}
                         {input.trim() ? (
                             <button 
                                 onClick={() => handleSendMessage(input)} 
-                                className="h-9 px-4 bg-violet-500 text-white rounded-xl font-bold text-sm shadow-md active:scale-95 transition-all"
+                                className="h-9 px-4 shrink-0 bg-violet-500 text-white rounded-xl font-bold text-sm shadow-md active:scale-95 transition-all"
                             >
                                 发送
                             </button>
@@ -1373,7 +1430,7 @@ ${recentGroupMsgs}
                         <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">AI 上下文条数 ({contextLimit})</label>
                         <input type="range" min="20" max="5000" step="10" value={contextLimit} onChange={e => { const v = parseInt(e.target.value); setContextLimit(v); localStorage.setItem('groupchat_context_limit', String(v)); }} className="w-full h-2 bg-slate-200 rounded-full appearance-none accent-violet-500" />
                         <div className="flex justify-between text-[10px] text-slate-400 mt-1"><span>20 (省流)</span><span>5000 (超长记忆)</span></div>
-                        <p className="text-[9px] text-slate-400 mt-1 leading-tight">控制每次触发AI导演时发送的群聊历史消息数量。越多上下文越丰富，但消耗更多token。</p>
+                        <p className="text-[9px] text-slate-400 mt-1 leading-tight">角色每次发言时参考多少条群聊历史。越多越连贯，但越慢、越费 token。</p>
                     </div>
 
                     {/* Private Chat Group Context Cap */}
@@ -1381,7 +1438,7 @@ ${recentGroupMsgs}
                         <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">私聊里"近期群活动"取条数 ({tempPrivateContextCap})</label>
                         <input type="range" min="20" max="500" step="10" value={tempPrivateContextCap} onChange={e => setTempPrivateContextCap(parseInt(e.target.value))} className="w-full h-2 bg-slate-200 rounded-full appearance-none accent-violet-500" />
                         <div className="flex justify-between text-[10px] text-slate-400 mt-1"><span>20 (省流)</span><span>500 (完整)</span></div>
-                        <p className="text-[9px] text-slate-400 mt-1 leading-tight">本群成员在自己的私聊里，最多看到本群最近多少条消息作为"近期群活动"上下文。每个群独立配额，避免活跃群把安静群挤掉。</p>
+                        <p className="text-[9px] text-slate-400 mt-1 leading-tight">本群成员在自己的私聊里，最多看到本群最近多少条消息作为"近期群活动"上下文。</p>
                     </div>
 
                     {/* Memory & Context Management */}

@@ -8,6 +8,11 @@ import {
     CHANGELOG_2026_05,
     CHANGELOG_2026_05_10,
     CHANGELOG_2026_05_17,
+    CHANGELOG_2026_05_27,
+    CHANGELOG_2026_06_05,
+    CHANGELOG_2026_06_14,
+    CHANGELOG_2026_06_21,
+    CHANGELOG_2026_06_26,
 } from '../components/UpdateNotificationEvent';
 
 const FAQ_DATA = [
@@ -94,6 +99,46 @@ interface ChangelogEntry {
 
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
     {
+        id: CHANGELOG_2026_06_26,
+        title: '2026 年 6 月 26 日 · 梦境盲盒',
+        subtitle: '小屋梦境系统（进屋刷新 · 集齐 13 款梦境盲盒）· 查手机联系人模式 + 智能体（char 的小手机）· 见面状态栏与设置前移 · 日程窥得更细 · 时间感知归位神经链接 · TTS 新增鱼声 API',
+        date: '2026-06-26',
+        src: 'changelogs/2026-6-26.html',
+        accent: 'from-indigo-100 to-violet-100 border-indigo-200',
+    },
+    {
+        id: CHANGELOG_2026_06_21,
+        title: '2026 年 6 月 21 日 · 查手机翻新',
+        subtitle: '查手机 UI 翻新 + 新增「人格模拟」（可指定一场 Screenlife 演出，设置里可选是否发送给角色）· 外观新增手游风 · 小红书 Lite 可直接分享帖子给角色',
+        date: '2026-06-21',
+        src: 'changelogs/2026-6-21.html',
+        accent: 'from-violet-100 to-fuchsia-100 border-violet-200',
+    },
+    {
+        id: CHANGELOG_2026_06_14,
+        title: '2026 年 6 月 14 日 · 家园上线',
+        subtitle: '小屋翻新 · 「家园」多角色大世界（真实时间 / 模拟时间二选一）· 瑞幸咖啡点单',
+        date: '2026-06-14',
+        src: 'changelogs/2026-6-14.html',
+        accent: 'from-violet-100 to-purple-100 border-violet-200',
+    },
+    {
+        id: CHANGELOG_2026_06_05,
+        title: '2026 年 6 月 5 日 · 彼方上线',
+        subtitle: '角色自主登入的 VR 小世界 · 邮局漂流信 · 留言簿原话上墙 · 隐藏小人',
+        date: '2026-06-05',
+        src: 'changelogs/2026-6-5.html',
+        accent: 'from-indigo-100 to-purple-100 border-indigo-200',
+    },
+    {
+        id: CHANGELOG_2026_05_27,
+        title: '2026 年 5 月 27 日 · 小更新',
+        subtitle: '情绪 buff 也接入 Instant Push · 发完即走，聊天和情绪都不用一直开着 App（附配置视频）',
+        date: '2026-05-27',
+        src: 'changelogs/2026-5-27.html',
+        accent: 'from-rose-100 to-amber-100 border-rose-200',
+    },
+    {
         id: CHANGELOG_2026_05_17,
         title: '2026 年 5 月 17 日 · 小更新',
         subtitle: 'Instant Push 上线 · 发完文本就能锁屏走人，AI 回复自己回来',
@@ -163,14 +208,16 @@ const FAQApp: React.FC = () => {
     return (
         <div className="h-full w-full bg-slate-50 flex flex-col font-light">
             {/* Header */}
-            <div className="h-20 bg-white/70 backdrop-blur-md flex items-end pb-3 px-4 border-b border-white/40 shrink-0 sticky top-0 z-10">
-                <div className="flex items-center gap-2 w-full">
-                    <button onClick={handleBack} className="p-2 -ml-2 rounded-full hover:bg-black/5 active:scale-90 transition-transform">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-slate-600">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
-                        </svg>
-                    </button>
-                    <h1 className="text-xl font-medium text-slate-700 tracking-wide">{headerTitle}</h1>
+            <div className="bg-white/70 backdrop-blur-md border-b border-white/40 shrink-0 sticky top-0 z-10" style={{ paddingTop: 'var(--safe-top)' }}>
+                <div className="flex items-center px-4 py-3">
+                    <div className="flex items-center gap-2 w-full">
+                        <button onClick={handleBack} className="p-2 -ml-2 rounded-full hover:bg-black/5 active:scale-90 transition-transform">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-slate-600">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
+                            </svg>
+                        </button>
+                        <h1 className="text-xl font-medium text-slate-700 tracking-wide">{headerTitle}</h1>
+                    </div>
                 </div>
             </div>
 

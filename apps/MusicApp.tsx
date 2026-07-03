@@ -454,7 +454,7 @@ const MusicApp: React.FC = () => {
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5 text-sm relative z-10 shizuku-scrollbar">
           <div className="rounded-2xl p-3.5 shizuku-glass" style={{ boxShadow: `0 2px 16px ${C.glow}08` }}>
             <div className="text-[10px] mb-2 tracking-wider flex items-center gap-1.5" style={{ color: C.muted }}>
-              <Sparkle size={6} color={C.glow} delay={0} /> 后端 Worker 地址
+              <Sparkle size={6} color={C.glow} delay={0} /> 服务地址
             </div>
             <input className="w-full rounded-xl px-3 py-2 outline-none text-xs shizuku-glass" value={cfg.workerUrl}
               onChange={e => setDraft({ workerUrl: e.target.value })} placeholder="https://..."
@@ -462,7 +462,7 @@ const MusicApp: React.FC = () => {
           </div>
           <div className="rounded-2xl p-3.5 shizuku-glass" style={{ boxShadow: `0 2px 16px ${C.glow}08` }}>
             <div className="text-[10px] mb-2 tracking-wider flex items-center gap-1.5" style={{ color: C.muted }}>
-              <Sparkle size={6} color={C.sakura} delay={0.5} /> 会员 Cookie (MUSIC_U)
+              <Sparkle size={6} color={C.sakura} delay={0.5} /> 会员 Cookie
             </div>
             <textarea className="w-full rounded-xl px-3 py-2 outline-none text-[10px] shizuku-glass" rows={3} value={cfg.cookie}
               onChange={e => setDraft({ cookie: e.target.value })} placeholder="MUSIC_U=xxx 或直接粘贴值..."
@@ -581,19 +581,21 @@ const MusicApp: React.FC = () => {
             style={{ background: `linear-gradient(180deg, #ffffff 0%, ${C.bg} 60%, ${C.bgDeep} 100%)` }}>
             <BokehBg />
             {/* Header */}
-            <div className="relative z-10 flex items-center justify-between h-12 px-4 shizuku-glass-strong"
-              style={{ borderBottom: `1px solid rgba(255,255,255,0.3)` }}>
-              <button onClick={() => setShowLyricSync(false)} className="text-[11px] px-2 py-1 rounded-full" style={{ color: C.muted }}>取消</button>
-              <div className="flex items-center gap-1.5">
-                <Crosshair size={13} weight="duotone" color={C.primary} />
-                <span className="text-[12px] tracking-[0.25em]" style={{ color: C.primary, fontFamily: 'Georgia, serif' }}>歌词对轴</span>
+            <div className="relative z-10 shizuku-glass-strong"
+              style={{ borderBottom: `1px solid rgba(255,255,255,0.3)`, paddingTop: 'var(--safe-top)' }}>
+              <div className="flex items-center justify-between h-12 px-4">
+                <button onClick={() => setShowLyricSync(false)} className="text-[11px] px-2 py-1 rounded-full" style={{ color: C.muted }}>取消</button>
+                <div className="flex items-center gap-1.5">
+                  <Crosshair size={13} weight="duotone" color={C.primary} />
+                  <span className="text-[12px] tracking-[0.25em]" style={{ color: C.primary, fontFamily: 'Georgia, serif' }}>歌词对轴</span>
+                </div>
+                <button onClick={saveSync} className="text-[11px] font-bold px-3 py-1 rounded-full"
+                  style={{
+                    background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`,
+                    color: 'white',
+                    boxShadow: `0 2px 10px ${C.glow}50`,
+                  }}>保存</button>
               </div>
-              <button onClick={saveSync} className="text-[11px] font-bold px-3 py-1 rounded-full"
-                style={{
-                  background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`,
-                  color: 'white',
-                  boxShadow: `0 2px 10px ${C.glow}50`,
-                }}>保存</button>
             </div>
 
             {/* Live progress + transport */}

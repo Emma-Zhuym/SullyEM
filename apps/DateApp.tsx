@@ -3,16 +3,16 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { CharacterProfile, Message, DateState } from '../types';
-import { ContextBuilder } from '../utils/context';
-import { ChatPrompts } from '../utils/chatPrompts';
-import { injectMemoryPalace, processNewMessages, mergePalaceFragmentsIntoMemories } from '../utils/memoryPalace/pipeline';
+import { DatePrompts, ApiMessage } from '../utils/datePrompts';
+import { processNewMessages, mergePalaceFragmentsIntoMemories, getMemoryPalaceHighWaterMark } from '../utils/memoryPalace/pipeline';
 import type { PipelineResult } from '../utils/memoryPalace/pipeline';
 import { incrementDigestRound, runCognitiveDigestion } from '../utils/memoryPalace';
+import { getRoomLabel } from '../utils/memoryPalace/types';
 import { safeResponseJson } from '../utils/safeApi';
 import Modal from '../components/os/Modal';
 import DateSession from '../components/date/DateSession';
 import DateSettings from '../components/date/DateSettings';
-import { BookOpen } from '@phosphor-icons/react';
+import { BookOpen, Sparkle, CaretLeft, GearSix } from '@phosphor-icons/react';
 import { buildDateWritingStylePrompt } from '../utils/dateWritingStyle';
 
 const DateApp: React.FC = () => {
@@ -34,7 +34,23 @@ const DateApp: React.FC = () => {
     const [mode, setMode] = useState<'select' | 'peek' | 'session' | 'settings' | 'history'>('select');
     // Track previous mode for Settings back navigation
     const [previousMode, setPreviousMode] = useState<'select' | 'peek'>('select');
-    
+
+    // 选择页分页（6 个角色一页，横向翻页）
+    const SELECT_PAGE_SIZE = 6;
+    const pagerRef = useRef<HTMLDivElement>(null);
+    const [selectPage, setSelectPage] = useState(0);
+    const onPagerScroll = () => {
+        const el = pagerRef.current;
+        if (!el || el.clientWidth === 0) return;
+        const p = Math.round(el.scrollLeft / el.clientWidth);
+        setSelectPage(prev => (prev === p ? prev : p));
+    };
+    const goSelectPage = (pi: number) => {
+        const el = pagerRef.current;
+        if (!el) return;
+        el.scrollTo({ left: pi * el.clientWidth, behavior: 'smooth' });
+    };
+
     const [peekStatus, setPeekStatus] = useState<string>('');
     const [peekLoading, setPeekLoading] = useState(false);
     
@@ -97,25 +113,25 @@ const DateApp: React.FC = () => {
 
     const formatTime = () => `${virtualTime.hours.toString().padStart(2, '0')}:${virtualTime.minutes.toString().padStart(2, '0')}`;
 
-    // Improved Time Gap Logic
-    const getTimeGapHint = (lastMsgTimestamp: number | undefined): string => {
-        if (!lastMsgTimestamp) return '这是你们的初次互动。';
-        const now = Date.now();
-        const diffMs = now - lastMsgTimestamp;
-        const diffMins = Math.floor(diffMs / (1000 * 60));
-        const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-        const currentHour = new Date().getHours();
-        const isNight = currentHour >= 23 || currentHour <= 6;
-
-        if (diffMins < 5) return ''; 
-        if (diffMins < 60) return `[系统提示: 距离上次互动: ${diffMins} 分钟。]`;
-        if (diffHours < 6) {
-            if (isNight) return `[系统提示: 距离上次互动: ${diffHours} 小时。现在是深夜/清晨。]`;
-            return `[系统提示: 距离上次互动: ${diffHours} 小时。]`;
-        }
-        if (diffHours < 24) return `[系统提示: 距离上次互动: ${diffHours} 小时。]`;
-        const days = Math.floor(diffHours / 24);
-        return `[系统提示: 距离上次互动: ${days} 天。]`;
+    // peek / send / reroll 共用的 LLM 调用（提示词构建统一在 utils/datePrompts.ts）
+    const callLLM = async (messages: ApiMessage[], temperature: number): Promise<string> => {
+        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+            body: JSON.stringify({
+                model: apiConfig.model,
+                messages,
+                temperature,
+                // max_tokens 是 Claude 原生 API 的必填字段；缺了它，糯米机/Csy 等
+                // OpenAI→Claude 中转会被上游打回，再包成 502 / bad_response_status_code。
+                // 与私聊 (useChatAI.ts) 对齐，统一带 8000。
+                max_tokens: 8000,
+                stream: apiConfig.stream ?? false,
+            })
+        });
+        if (!response.ok) throw new Error('API Error');
+        const data = await safeResponseJson(response);
+        return data.choices[0].message.content;
     };
 
     // --- Resume / Start Logic ---
@@ -179,57 +195,14 @@ const DateApp: React.FC = () => {
 
         try {
             const msgs = await DB.getMessagesByCharId(c.id, true);
-            const limit = c.contextLimit || 500;
-            const peekLimit = Math.min(limit, 50);
-            const lastMsg = msgs[msgs.length - 1];
-            const gapHint = getTimeGapHint(lastMsg?.timestamp);
-
-            const recentMsgs = msgs.slice(-peekLimit).map(m => {
-                const content = m.type === 'image' ? '[User sent an image]' : m.content;
-                const source = m.metadata?.source === 'call' ? '[通话]' : m.metadata?.source === 'date' ? '[约会]' : '[聊天]';
-                return `${m.role} ${source}: ${content}`;
-            }).join('\n');
-
-            const timeStr = `${virtualTime.day} ${formatTime()}`;
-            const baseContext = ContextBuilder.buildCoreContext(c, userProfile, false);
-
-            // 根据时间间隔选择合适的分隔符
-            const contextSeparator = gapHint
-                ? `\n\n--- [TIME SKIP: ${gapHint}] ---\n\n`
-                : `\n\n--- [SCENE CONTINUATION: 刚刚还在聊天，现在来到了面对面的场景] ---\n\n`;
-
-            const peekInstructions = `
-### 场景：感知 (Sense Presence)
-当前时间: ${timeStr}
-时间上下文: ${gapHint}
-
-### 任务
-你现在并不在和用户直接对话。用户正在悄悄靠近你所在的地点。
-请用**第三人称**描写一段话。
-描述：${c.name} 此时此刻正在做什么？周围环境是怎样的？状态如何？
-
-### 逻辑检查
-1. **上下文连贯性**: 参考 [最近记录]（注意消息来源标签：[聊天]是文字聊天、[约会]是面对面、[通话]是语音通话）。如果有 [TIME SKIP] 且间隔很久，开启新场景；如果是 [SCENE CONTINUATION]，说明刚刚还在聊天，**必须**自然衔接最近的聊天话题和情绪状态，不要无视之前的对话内容。
-2. **状态一致性**: ${gapHint.includes('很久') ? '因为很久没见，可能在发呆、忙碌或者有点落寞。' : '根据最近的聊天内容和情绪来决定当前状态。如果刚聊完，角色的状态应该与聊天内容相呼应。'}
-3. **描写风格**: 电影感，沉浸式，细节丰富。不要输出任何前缀，直接输出描写内容。`;
-
-            const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-                body: JSON.stringify({
-                    model: apiConfig.model,
-                    messages: [
-                        { role: "system", content: baseContext },
-                        { role: "user", content: `[最近记录 (Previous Context)]:${recentMsgs}${contextSeparator}${peekInstructions}\n\n(Start sensing...)` }
-                    ],
-                    temperature: apiConfig.temperature ?? 0.85,
-                    stream: apiConfig.stream ?? false,
-                })
+            const emojis = await DB.getEmojis();
+            const { messages } = DatePrompts.buildPeekPayload({
+                char: c,
+                userProfile,
+                allMsgs: msgs,
+                emojis,
             });
-
-            if (!response.ok) throw new Error('Failed to sense presence');
-            const data = await safeResponseJson(response);
-            const content = data.choices[0].message.content;
+            const content = await callLLM(messages, apiConfig.temperature ?? 0.85);
             setPeekStatus(content);
 
         } catch (e: any) {
@@ -274,16 +247,25 @@ const DateApp: React.FC = () => {
                 setMemoryPalaceResult(pipelineResult);
             }
 
-            if (pipelineResult?.autoArchive && (liveAfter as any).autoArchiveEnabled) {
+            if ((liveAfter as any).autoArchiveEnabled) {
                 try {
-                    const mergedMemories = mergePalaceFragmentsIntoMemories(
-                        liveAfter.memories || [],
-                        pipelineResult.autoArchive.fragments,
-                    );
-                    updateCharacter(charForHook.id, {
-                        memories: mergedMemories,
-                        hideBeforeMessageId: pipelineResult.autoArchive.hideBeforeMessageId,
-                    } as any);
+                    const patch: any = {};
+                    if (pipelineResult?.autoArchive) {
+                        patch.memories = mergePalaceFragmentsIntoMemories(
+                            liveAfter.memories || [],
+                            pipelineResult.autoArchive.fragments,
+                        );
+                    }
+                    // 隐藏线追平到向量高水位：覆盖「关闭期推进了 hwm 但 hide 被冻结」的历史空档。
+                    // 只要全自动记忆开着，每次自动总结都把 hide 追平到 hwm，无需用户手动操作。
+                    const hwm = getMemoryPalaceHighWaterMark(charForHook.id);
+                    const curHide = ((liveAfter as any).hideBeforeMessageId as number) || 0;
+                    if (hwm > curHide) {
+                        patch.hideBeforeMessageId = hwm;
+                    }
+                    if (Object.keys(patch).length > 0) {
+                        updateCharacter(charForHook.id, patch);
+                    }
                 } catch (e: any) {
                     console.warn(`📚 [DateApp AutoArchive] 失败: ${e?.message || e}`);
                 }
@@ -329,84 +311,21 @@ const DateApp: React.FC = () => {
         // Re-fetch messages. Since we saved the opening in handleEnterSession,
         // 'allMsgs' will now correctly contain: [History..., Opening, UserMsg]
         const allMsgs = await DB.getMessagesByCharId(char.id, true);
-        
+
         // Update local state for display
         const dateFiltered = allMsgs.filter(m => m.metadata?.source === 'date').sort((a,b) => a.timestamp - b.timestamp);
         setDateMessages(dateFiltered);
 
-        const limit = char.contextLimit || 500;
-
-        // 与 chat app 完全对齐的历史构建：
-        // 1. 开了记忆宫殿 → 按高水位线过滤掉已被向量记忆替代的旧消息（chat 是在 DB 层做的；这里 allMsgs
-        //    用 includeProcessed=true 因为 dateFiltered 显示 + injectMemoryPalace 还要全集，所以手动过一遍）
-        // 2. 复用 ChatPrompts.buildMessageHistory：emoji / html_card / mcd_card / chat_forward / score_card
-        //    等都会被压成短摘要，不再像旧版 mapper 那样把 m.content 原样塞，避免 prompt 暴涨。
-        // 3. 排除最后一条（刚保存的 user msg），下面单独追加带 System Note 的版本。
-        const hwm = parseInt(localStorage.getItem(`mp_lastMsgId_${char.id}`) || '0', 10);
-        const palaceFiltered = hwm > 0 ? allMsgs.filter(m => m.id > hwm) : allMsgs;
-        const historyForBuild = palaceFiltered.slice(0, -1);
         const emojis = await DB.getEmojis();
-        const { apiMessages: historyMsgs } = ChatPrompts.buildMessageHistory(historyForBuild, limit, char, userProfile || ({} as any), emojis);
-
-        await injectMemoryPalace(char, allMsgs);
-        let systemPrompt = ContextBuilder.buildCoreContext(char, userProfile);
-        const REQUIRED_EMOTIONS = ['normal', 'happy', 'angry', 'sad', 'shy'];
-        const dateEmotions = [...REQUIRED_EMOTIONS, ...(char.customDateSprites || [])];
-
-        // Explicitly tell AI about the scene
-        systemPrompt += `### [Visual Novel Mode: 视觉小说脚本模式]
-你正在与用户进行**面对面**的互动。这不是聊天，是一场真实的见面。
-
-### 核心规则：一行一念 (One Line per Beat)
-前端解析器基于**换行符**来分割气泡。
-1. **禁止混写**: 严禁在同一行里既写动作又写带引号的台词。
-2. **情绪标签**: **每一行都必须以** \`[emotion]\` **开头**，表示该行的表情立绘。情绪随内容变化——台词温柔就用 [happy]，动作紧张就用 [shy]，语气冲就用 [angry]。**不要整段只用一个情绪，要逐行根据语境切换。** 仅限使用以下情绪: ${dateEmotions.join(', ')}。不要使用任何不在此列表中的标签。
-3. **格式**: 台词用双引号 **"..."**，动作/叙述直接写（不加引号）。
-
-### ⭐ 动作与叙述行的写法
-你不是在列清单，你是在写一个正在发生的场景。每一行动作/叙述都应该让人感受到**此时此刻的空气**。
-
-**具体要求**：
-- 写出**感官**：光线怎么落的、空气什么味道、皮肤什么触感、周围什么声音
-- 写出**节奏**：动作之间有停顿、有犹豫、有呼吸，不要一口气做完三个动作
-- 写出**情绪的痕迹**：不要说"他很紧张"，而是写他的手指在桌面上画了一道看不见的线
-- 让每一行都有**画面**，像电影里的一个镜头
-
-❌ **不要这样写**（只用一个情绪 + 干巴巴的动作罗列）：
-[normal] 把手放下，看向你。
-走到你身边，坐下来。
-拿起杯子，喝了一口水。
-
-✅ **要这样写**（每行标注情绪 + 有呼吸感的叙述）：
-[normal] 指尖从发梢滑落，垂在身侧。视线转过来的时候并不急，像是刚好、又像是故意。
-[shy] "……你一直在看我吗？"
-[happy] 嘴角的弧度藏不住，像是被戳中了什么小心思。
-[normal] 脚步踩在木地板上的声音很轻。在你旁边坐下来，衣料带过一缕还没散尽的冷风。
-
-### 场景上下文
-1. **Location**: 你们现在**面对面**。
-2. **Context**: 参考历史记录。如果刚刚才看到开场白（Opening），请自然接话。
-${buildDateWritingStylePrompt(char.dateWritingStyle)}
-`;
-
-        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-            body: JSON.stringify({
-                model: apiConfig.model,
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    ...historyMsgs,
-                    { role: 'user', content: `${text}\n\n(System Note: 严格遵守 VN 格式。每一行都要以 [emotion] 开头，根据内容逐行切换情绪标签，不要整段只用同一个。叙述行写出场景的呼吸感，不要罗列动作。)` }
-                ],
-                temperature: apiConfig.temperature ?? 0.85,
-                stream: apiConfig.stream ?? false,
-            })
+        const { messages } = await DatePrompts.buildSessionPayload({
+            char,
+            userProfile,
+            allMsgs,
+            emojis,
+            userText: text,
+            variant: 'send',
         });
-
-        if (!response.ok) throw new Error('API Error');
-        const data = await safeResponseJson(response);
-        const content = data.choices[0].message.content;
+        const content = await callLLM(messages, apiConfig.temperature ?? 0.85);
 
         // 3. Save AI Response
         await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: content, metadata: { source: 'date' } });
@@ -437,50 +356,18 @@ ${buildDateWritingStylePrompt(char.dateWritingStyle)}
         
         if (!lastUserMsg || lastUserMsg.role !== 'user') throw new Error("Context lost");
 
-        // 3. Call API logic（与 handleSendMessage 同款：水位线 + 复用 ChatPrompts.buildMessageHistory）
-        const limit = char.contextLimit || 500;
-        const hwm = parseInt(localStorage.getItem(`mp_lastMsgId_${char.id}`) || '0', 10);
-        const palaceFiltered = hwm > 0 ? validMsgs.filter(m => m.id > hwm) : validMsgs;
-        const historyForBuild = palaceFiltered.slice(0, -1);
+        // 3. Call API logic（与 handleSendMessage 共用 buildSessionPayload，只差 variant）
         const emojis = await DB.getEmojis();
-        const { apiMessages: historyMsgs } = ChatPrompts.buildMessageHistory(historyForBuild, limit, char, userProfile || ({} as any), emojis);
-
-        await injectMemoryPalace(char, allMsgs);
-        let systemPrompt = ContextBuilder.buildCoreContext(char, userProfile);
-        const REQUIRED_EMOTIONS_R = ['normal', 'happy', 'angry', 'sad', 'shy'];
-        const dateEmotionsR = [...REQUIRED_EMOTIONS_R, ...(char.customDateSprites || [])];
-        systemPrompt += `### [Visual Novel Mode: 视觉小说脚本模式]
-你正在与用户进行**面对面**的互动。
-
-### 格式规则
-1. **禁止混写**: 严禁在同一行里既写动作又写带引号的台词。
-2. **情绪标签**: \`[emotion]\` (放在行首)。**仅限使用以下情绪**: ${dateEmotionsR.join(', ')}。不要使用不在列表中的标签。
-3. **格式**: 台词用双引号 **"..."**，动作/叙述直接写。
-
-### ⭐ 动作与叙述行的写法
-不要罗列动作。写出感官细节、停顿和呼吸感，让每一行都像电影镜头——有画面、有空气、有温度。
-用细微的肢体语言暗示情绪，不要直接说"开心""紧张"。
-`;
-
-        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-            body: JSON.stringify({
-                model: apiConfig.model,
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    ...historyMsgs,
-                    { role: 'user', content: `${lastUserMsg.content}\n\n(System Note: Reroll. 用不同的角度重写，叙述行保持场景感。)` }
-                ],
-                // Reroll 略调高温度求多样性，但绝不低于用户配置的基线。
-                temperature: Math.max(apiConfig.temperature ?? 0.85, 0.9),
-                stream: apiConfig.stream ?? false,
-            })
+        const { messages } = await DatePrompts.buildSessionPayload({
+            char,
+            userProfile,
+            allMsgs: validMsgs,
+            emojis,
+            userText: lastUserMsg.content,
+            variant: 'reroll',
         });
-
-        if (!response.ok) throw new Error('API Error');
-        const data = await safeResponseJson(response);
-        const content = data.choices[0].message.content;
+        // Reroll 略调高温度求多样性，但绝不低于用户配置的基线。
+        const content = await callLLM(messages, Math.max(apiConfig.temperature ?? 0.85, 0.9));
 
         await DB.saveMessage({ charId: char.id, role: 'assistant', type: 'text', content: content, metadata: { source: 'date' } });
 
@@ -570,6 +457,13 @@ ${buildDateWritingStylePrompt(char.dateWritingStyle)}
         setHasSavedOpening(false);
     };
 
+    // 从选择页直接进设置（不用先进见面再点菜单），改完立绘/观测等即时生效
+    const openSettings = (c: CharacterProfile) => {
+        setActiveCharacterId(c.id);
+        setPreviousMode('select');
+        setMode('settings');
+    };
+
     const openHistory = async (c: CharacterProfile) => {
         setActiveCharacterId(c.id);
         // includeProcessed=true：见面历史完全独立于聊天侧高水位，
@@ -624,30 +518,131 @@ ${buildDateWritingStylePrompt(char.dateWritingStyle)}
     // --- Render ---
 
     if (mode === 'select' || !char) {
+        // 6 个角色一页，横向翻页
+        const pages: CharacterProfile[][] = [];
+        for (let i = 0; i < characters.length; i += SELECT_PAGE_SIZE) pages.push(characters.slice(i, i + SELECT_PAGE_SIZE));
+        if (pages.length === 0) pages.push([]);
+        // 星点装饰（固定坐标，避免每帧抖动）
+        const stars = [
+            { top: '8%', left: '12%', s: 3, d: 0 }, { top: '14%', left: '82%', s: 2, d: 0.6 },
+            { top: '22%', left: '46%', s: 2, d: 1.2 }, { top: '30%', left: '8%', s: 2, d: 0.3 },
+            { top: '6%', left: '64%', s: 4, d: 0.9 }, { top: '40%', left: '90%', s: 2, d: 1.5 },
+            { top: '52%', left: '4%', s: 3, d: 0.2 }, { top: '60%', left: '72%', s: 2, d: 1.1 },
+            { top: '70%', left: '20%', s: 2, d: 0.7 }, { top: '78%', left: '88%', s: 3, d: 1.4 },
+            { top: '86%', left: '40%', s: 2, d: 0.5 }, { top: '12%', left: '34%', s: 2, d: 1.8 },
+            { top: '46%', left: '56%', s: 2, d: 0.4 }, { top: '64%', left: '48%', s: 3, d: 1.0 },
+        ];
         return (
-            <div className="h-full w-full bg-slate-50 flex flex-col font-light">
-                <div className="h-16 flex items-center justify-between px-4 border-b border-slate-200 bg-white sticky top-0 z-10">
-                    <button onClick={closeApp} className="p-2 -ml-2 rounded-full hover:bg-slate-100">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
-                    </button>
-                    <span className="font-bold text-slate-700">选择见面对象</span>
-                    <div className="w-8"></div>
-                </div>
-                <div className="p-4 grid grid-cols-2 gap-4 overflow-y-auto">
-                    {characters.map(c => (
-                        <div key={c.id} onClick={() => handleCharClick(c)} className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 active:scale-95 transition-transform flex flex-col items-center gap-3 relative group">
-                            <button 
-                                onClick={(e) => { e.stopPropagation(); openHistory(c); }}
-                                className="absolute top-2 right-2 p-1.5 text-slate-300 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors z-20 active:scale-90"
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" /></svg>
-                            </button>
-                            <img src={c.avatar} className="w-16 h-16 rounded-full object-cover" />
-                            <span className="font-bold text-slate-700">{c.name}</span>
-                            {c.savedDateState && <div className="absolute top-2 left-2 w-2 h-2 bg-green-500 rounded-full animate-pulse" title="有存档"></div>}
-                        </div>
+            <div className="h-full w-full relative overflow-hidden flex flex-col font-light"
+                 style={{ background: 'linear-gradient(170deg,#241d4a 0%,#352c66 38%,#473b7e 68%,#5b4d94 100%)' }}>
+                {/* 星空装饰层 */}
+                <div className="pointer-events-none absolute inset-0 overflow-hidden">
+                    <div className="absolute -top-24 -right-20 w-72 h-72 rounded-full" style={{ background: 'radial-gradient(circle, rgba(190,170,255,0.25), transparent 70%)' }} />
+                    <div className="absolute top-1/3 -left-16 w-56 h-56 rounded-full" style={{ background: 'radial-gradient(circle, rgba(244,180,255,0.14), transparent 70%)' }} />
+                    {stars.map((st, i) => (
+                        <span key={i} className="absolute rounded-full bg-white animate-pulse"
+                              style={{ top: st.top, left: st.left, width: st.s, height: st.s, opacity: 0.5, animationDelay: `${st.d}s`, boxShadow: '0 0 6px rgba(255,255,255,0.8)' }} />
                     ))}
+                    <Sparkle size={16} weight="fill" className="absolute top-[18%] left-[24%] text-violet-200/40" />
+                    <Sparkle size={12} weight="fill" className="absolute top-[55%] right-[16%] text-fuchsia-200/40" />
+                    <Sparkle size={14} weight="fill" className="absolute bottom-[10%] left-[14%] text-cyan-100/30" />
                 </div>
+
+                {/* 顶栏 + 标题 */}
+                <div className="relative z-10 shrink-0" style={{ paddingTop: 'var(--safe-top)' }}>
+                    <div className="flex items-center justify-between px-5 pt-3">
+                        <button onClick={closeApp} className="w-10 h-10 rounded-full bg-white/12 backdrop-blur-md border border-white/25 flex items-center justify-center text-white active:scale-90 transition-transform shadow-lg">
+                            <CaretLeft size={20} weight="bold" />
+                        </button>
+                        <div className="w-10" />
+                    </div>
+                    <div className="text-center mt-1 mb-3 px-6">
+                        <h1 className="text-[27px] font-bold text-white font-serif tracking-[0.12em] drop-shadow-[0_2px_14px_rgba(180,150,255,0.65)]">选择见面对象</h1>
+                        <div className="text-[9px] tracking-[0.5em] text-violet-200/60 mt-1.5">CHOOSE CHARACTER</div>
+                    </div>
+                </div>
+
+                {/* 分页卡片区 */}
+                {characters.length === 0 ? (
+                    <div className="relative z-10 flex-1 flex flex-col items-center justify-center text-violet-200/60 gap-3">
+                        <Sparkle size={40} weight="light" />
+                        <span className="text-xs tracking-wider">还没有可见面的角色</span>
+                    </div>
+                ) : (
+                    <div ref={pagerRef} onScroll={onPagerScroll}
+                         className="relative z-10 flex-1 min-h-0 flex overflow-x-auto snap-x snap-mandatory no-scrollbar"
+                         style={{ scrollSnapType: 'x mandatory' }}>
+                        {pages.map((page, pi) => (
+                            <div key={pi} className="w-full shrink-0 snap-start h-full overflow-y-auto no-scrollbar px-4">
+                                <div className="grid grid-cols-2 gap-3.5 pb-6">
+                                    {page.map(c => (
+                                        <div key={c.id} onClick={() => handleCharClick(c)}
+                                             className="relative rounded-[26px] p-3 pt-4 flex flex-col items-center active:scale-95 transition-transform"
+                                             style={{
+                                                 background: 'linear-gradient(160deg, rgba(255,255,255,0.17), rgba(196,176,255,0.10))',
+                                                 border: '1px solid rgba(255,255,255,0.28)',
+                                                 boxShadow: '0 10px 26px rgba(50,32,96,0.32), inset 0 1px 0 rgba(255,255,255,0.45)',
+                                                 backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
+                                             }}>
+                                            {/* 在线徽标 */}
+                                            <div className="absolute top-2.5 left-2.5 flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-400/20 border border-emerald-300/40 z-10">
+                                                <span className="relative flex h-1.5 w-1.5">
+                                                    <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-300 opacity-70 animate-ping" />
+                                                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400" />
+                                                </span>
+                                                <span className="text-[8px] font-bold text-emerald-50 tracking-wider">在线</span>
+                                            </div>
+                                            {/* 设置 / 记录（竖排） */}
+                                            <div className="absolute top-2 right-2 flex flex-col gap-1 z-20">
+                                                <button onClick={(e) => { e.stopPropagation(); openSettings(c); }} title="布置场景 / 设定立绘 / 观测"
+                                                        className="w-7 h-7 rounded-xl bg-white/85 text-violet-500 shadow-md flex items-center justify-center hover:bg-white active:scale-90 transition-all">
+                                                    <GearSix size={16} weight="fill" />
+                                                </button>
+                                                <button onClick={(e) => { e.stopPropagation(); openHistory(c); }} title="见面记录"
+                                                        className="w-7 h-7 rounded-xl bg-white/85 text-violet-500 shadow-md flex items-center justify-center hover:bg-white active:scale-90 transition-all">
+                                                    <BookOpen size={16} weight="fill" />
+                                                </button>
+                                            </div>
+                                            {/* 头像 + 光环 */}
+                                            <div className="relative mt-4 mb-2">
+                                                <div className="absolute -inset-1.5 rounded-full opacity-70" style={{ background: 'conic-gradient(from 120deg, #a78bfa, #f0abfc, #7dd3fc, #a78bfa)', filter: 'blur(6px)' }} />
+                                                <img src={c.avatar} className="relative w-[68px] h-[68px] rounded-full object-cover ring-2 ring-white/70 shadow-lg" />
+                                                {c.savedDateState && (
+                                                    <span title="有存档" className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-amber-400 border-2 border-white/90 flex items-center justify-center shadow">
+                                                        <Sparkle size={10} weight="fill" className="text-white" />
+                                                    </span>
+                                                )}
+                                            </div>
+                                            {/* 名字 + 花纹 */}
+                                            <div className="flex items-center gap-1.5 max-w-full">
+                                                <span className="text-violet-200/60 text-[10px]">✦</span>
+                                                <span className="font-bold text-white text-[15px] truncate drop-shadow-[0_1px_4px_rgba(80,50,140,0.5)]">{c.name}</span>
+                                                <span className="text-violet-200/60 text-[10px]">✦</span>
+                                            </div>
+                                            {/* 一句话简介 */}
+                                            {c.description && (
+                                                <div className="mt-1.5 px-2.5 py-1 rounded-full bg-white/12 border border-white/15 max-w-full">
+                                                    <span className="block text-[10px] text-violet-50/80 truncate">{c.description}</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {/* 页码点 */}
+                {pages.length > 1 && (
+                    <div className="relative z-10 shrink-0 flex justify-center items-center gap-2 py-3">
+                        {pages.map((_, pi) => (
+                            <button key={pi} onClick={() => goSelectPage(pi)} aria-label={`第 ${pi + 1} 页`}
+                                    className={`h-2 rounded-full transition-all ${pi === selectPage ? 'w-6 bg-white' : 'w-2 bg-white/40 hover:bg-white/60'}`} />
+                        ))}
+                    </div>
+                )}
+
                 <Modal isOpen={!!pendingSessionChar} title="发现进度" onClose={() => setPendingSessionChar(null)} footer={<div className="flex gap-3 w-full"><button onClick={handleStartNewSession} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">新的见面</button><button onClick={handleResumeSession} className="flex-1 py-3 bg-green-500 text-white rounded-2xl font-bold shadow-lg shadow-green-200">继续上次</button></div>}>
                     <div className="text-center text-slate-500 text-sm py-4">检测到 {pendingSessionChar?.name} 有未结束的见面。<br/><span className="text-xs text-slate-400 mt-2 block">(存档时间: {pendingSessionChar?.savedDateState?.timestamp ? new Date(pendingSessionChar.savedDateState.timestamp).toLocaleString() : 'Unknown'})</span></div>
                 </Modal>
@@ -658,10 +653,12 @@ ${buildDateWritingStylePrompt(char.dateWritingStyle)}
     if (mode === 'history') {
         return (
             <div className="h-full w-full bg-slate-50 flex flex-col font-light" onClick={() => historyMenuMsg && setHistoryMenuMsg(null)}>
-                <div className="h-16 flex items-center justify-between px-4 border-b border-slate-200 bg-white sticky top-0 z-10">
-                    <button onClick={handleBack} className="p-2 -ml-2 rounded-full hover:bg-slate-100"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg></button>
-                    <span className="font-bold text-slate-700">见面记录</span>
-                    <div className="w-8"></div>
+                <div className="border-b border-slate-200 bg-white sticky top-0 z-10" style={{ paddingTop: 'var(--safe-top)' }}>
+                    <div className="h-16 flex items-center justify-between px-4">
+                        <button onClick={handleBack} className="p-2 -ml-2 rounded-full hover:bg-slate-100"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg></button>
+                        <span className="font-bold text-slate-700">见面记录</span>
+                        <div className="w-8"></div>
+                    </div>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-6 pb-20">
 {historySessions.length === 0 ? <div className="flex flex-col items-center justify-center h-64 text-slate-400 gap-2"><BookOpen size={48} className="opacity-50" /><span className="text-xs">暂无见面记录</span></div> : historySessions.map((session, idx) => (
@@ -850,7 +847,7 @@ ${buildDateWritingStylePrompt(char.dateWritingStyle)}
                                 </p>
                                 {memoryPalaceResult.batches.some(b => !b.ok) && (
                                     <p className="text-[10px] text-red-500 mt-1">
-                                        {memoryPalaceResult.batches.filter(b => !b.ok).map(b => `batch ${b.index} 失败`).join(', ')}
+                                        {memoryPalaceResult.batches.filter(b => !b.ok).map(b => `第 ${b.index} 批失败`).join(', ')}
                                     </p>
                                 )}
                             </div>
@@ -866,6 +863,7 @@ ${buildDateWritingStylePrompt(char.dateWritingStyle)}
                                         windowsill: { label: '窗台', color: '#14b8a6' },
                                     };
                                     const meta = roomMeta[m.room] || { label: m.room, color: '#64748b' };
+                                    const roomLabel = getRoomLabel(m.room as any, userProfile?.name) || meta.label;
                                     return (
                                         <div
                                             key={i}
@@ -880,7 +878,7 @@ ${buildDateWritingStylePrompt(char.dateWritingStyle)}
                                                 <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold"
                                                     style={{ background: `${meta.color}18`, color: meta.color }}
                                                 >
-                                                    {meta.label}
+                                                    {roomLabel}
                                                 </span>
                                                 <span className="text-[10px] text-slate-400">{m.mood}</span>
                                                 <span className="text-[10px] font-bold ml-auto" style={{ color: '#f59e0b' }}>{'★'.repeat(Math.min(m.importance, 5))}</span>
