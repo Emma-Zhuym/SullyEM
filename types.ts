@@ -2190,6 +2190,15 @@ export interface CharacterProfile {
   scheduleFeatureEnabled?: boolean;
 
   /**
+   * 主家园：用户手动指定的 canonical 家园（WorldProfile.id）。
+   * 生活三层派生链（docs/life-layers-design.md）的上游事实源：日程生成读它对齐「住哪·和谁」。
+   * - 已设且该世界仍满足 real + injectToChat：直接采用。
+   * - 未设：角色恰好只在 1 个 real 世界时视为主家园；在多个 real 世界时视为含糊、不注入
+   *   （消歧靠用户在角色档案里手动指定——阶段 C 的选择器 UI）。
+   */
+  primaryHomeId?: string;
+
+  /**
    * HTML 模块模式（per-character）。
    * - htmlModeEnabled：开启后，给 LLM 注入"用 [html]...[/html] 包裹的富 HTML 卡片"提示词，
    *   AI 输出里的 [html] 块会被解析成单独的 html_card 消息（沙盒 iframe 渲染）。
