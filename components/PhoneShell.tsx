@@ -501,8 +501,6 @@ const PhoneShell: React.FC = () => {
     if (shouldShowWorkerUpdateReminder()) setShowWorkerUpdateReminder(true);
   }, [showDisclaimer, showImportRecoveryPrompt, showAuthorLetter, showUpdateNotification, showLike520Popup, isDataLoaded]);
 
-  // 520 特别活动弹窗（2026-05-20 当天，一次性）
-  const [showLike520Popup, setShowLike520Popup] = useState(false);
   useEffect(() => {
     if (showDisclaimer || showUpdateNotification) return;
     if (!isDataLoaded) return;

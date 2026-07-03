@@ -10,15 +10,6 @@ import type { EmbeddingConfig } from './types';
 // ─── 核心 API 调用 ────────────────────────────────────
 
 /**
- * 判断模型是否支持自定义 dimensions 参数。
- * 只有 Qwen3-Embedding 系列支持；bge 系列等固定维度模型不支持，
- * 发送 dimensions 会导致硅基流动返回 400 错误。
- */
-function modelSupportsDimensions(model: string): boolean {
-    return /qwen3?-?embedding/i.test(model);
-}
-
-/**
  * 单条文本向量化 — 返回 Float32Array 节省内存
  */
 export async function getEmbedding(text: string, config: EmbeddingConfig): Promise<Float32Array> {

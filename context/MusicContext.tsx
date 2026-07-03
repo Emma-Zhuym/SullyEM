@@ -145,9 +145,6 @@ export interface MusicPlaybackSnapshot {
 }
 let __musicPlaybackSnapshot: MusicPlaybackSnapshot | null = null;
 export const loadMusicPlaybackSnapshot = (): MusicPlaybackSnapshot | null => __musicPlaybackSnapshot;
-// Stub for upstream compatibility — SullyEM does not use PostProcessMusicHooks
-export const loadMusicHooks = (): null => null;
-
 /**
  * 模块级 musicHooks 出口 — 给 ChatParser.MUSIC_ACTION 用的三个钩子打包成一个对象, 由
  * MusicProvider mount 后持续写入最新闭包. 让 useChatAI (本地 fetch 路径) 和
