@@ -148,7 +148,7 @@ const ContactsList: React.FC = () => {
 
   return (
     <div className="flex flex-col h-full bg-[#f1f5f9] overflow-hidden relative font-sans">
-      <div className="h-24 bg-white/90 backdrop-blur-xl px-5 flex items-end pb-4 border-b border-slate-200/60 shrink-0 z-30 shadow-sm">
+      <div className="bg-white/90 backdrop-blur-xl px-5 flex items-end pb-4 border-b border-slate-200/60 shrink-0 z-30 shadow-sm" style={{ paddingTop: 'var(--chrome-top, var(--safe-top, 0px))', minHeight: '6rem' }}>
         <div className="flex items-center gap-3 w-full">
           <button type="button" onClick={handleClose} className="p-2 -ml-2 text-slate-500 hover:bg-slate-100 rounded-full" aria-label="返回">
             <CaretLeft className="w-5 h-5" weight="bold" />
