@@ -850,7 +850,7 @@ genreIcon: genreInfo?.icon || '',
             processing: '生成中…',
             downloading: '下载音频…',
             done: '完成',
-            cached: '已命中缓存',
+            cached: '用上次生成的版本',
         };
 
         try {
@@ -1027,7 +1027,7 @@ genreIcon: genreInfo?.icon || '',
         }
         const tags = promptDraft.trim();
         if (!tags) {
-            addToast('tags 不能为空', 'error');
+            addToast('风格描述不能为空。', 'error');
             return;
         }
         const updatedSong = { ...activeSong, aceStepCustomTags: tags };
@@ -1040,7 +1040,7 @@ genreIcon: genreInfo?.icon || '',
     const handleAiWritePrompt = async () => {
         if (!activeSong) return;
         if (!apiConfig.baseUrl || !apiConfig.apiKey) {
-            addToast('请先在「设置」里配置 LLM API', 'error');
+            addToast('请先在设置里配置 AI 模型。', 'error');
             return;
         }
         setIsAiWritingPrompt(true);
@@ -1263,7 +1263,8 @@ genreIcon: genreInfo?.icon || '',
                 <CrossStar size={8} color={MusicC.glow} delay={0.4} className="absolute bottom-20 right-7" solid={false} />
 
                 {/* Header */}
-                <div className="h-24 flex items-end pb-4 px-6 shrink-0 z-10 relative">
+                <div className="shrink-0 z-10 relative" style={{ paddingTop: 'var(--safe-top)' }}>
+                  <div className="flex items-center px-6 py-3">
                     <div className="flex justify-between items-center w-full">
                         <button onClick={closeApp} className="p-2 -ml-2 rounded-full hover:bg-white/60 active:scale-95 transition-transform" style={{ color: MusicC.primary }}>
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
@@ -1289,6 +1290,7 @@ genreIcon: genreInfo?.icon || '',
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
                         </button>
                     </div>
+                  </div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto px-5 pt-5 pb-8 space-y-7 no-scrollbar z-10">
@@ -1443,7 +1445,8 @@ genreIcon: genreInfo?.icon || '',
                 <CrossStar size={9} color={MusicC.lavender} delay={0.4} className="absolute bottom-56 left-8" solid={false} />
 
                 {/* Header — back + decorative title */}
-                <div className="h-16 flex items-center justify-between px-4 shrink-0 z-10 relative">
+                <div className="shrink-0 z-10 relative" style={{ paddingTop: 'var(--safe-top)' }}>
+                  <div className="h-16 flex items-center justify-between px-4">
                     <button onClick={() => setView('shelf')} className="p-2 -ml-2 rounded-full hover:bg-white/60 active:scale-95 transition-transform" style={{ color: MusicC.primary }}>
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                     </button>
@@ -1456,6 +1459,7 @@ genreIcon: genreInfo?.icon || '',
                         <div className="text-[8.5px] tracking-[0.4em] mt-0.5" style={{ color: MusicC.faint, fontFamily: 'Georgia, serif' }}>— NEW PROJECT —</div>
                     </div>
                     <div className="w-9" />
+                  </div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto px-5 pb-32 space-y-6 no-scrollbar relative z-10">
@@ -1670,7 +1674,8 @@ genreIcon: genreInfo?.icon || '',
                 <Sparkle size={8} color={MusicC.sakura}  delay={0.3} className="absolute bottom-32 right-12" />
 
                 {/* Header */}
-                <div className="h-16 flex items-center justify-between px-4 shrink-0 z-10 relative">
+                <div className="shrink-0 z-10 relative" style={{ paddingTop: 'var(--safe-top)' }}>
+                  <div className="h-16 flex items-center justify-between px-4">
                     <button onClick={() => setView('create')} className="p-2 -ml-2 rounded-full hover:bg-white/60 active:scale-95 transition-transform" style={{ color: MusicC.primary }}>
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                     </button>
@@ -1683,6 +1688,7 @@ genreIcon: genreInfo?.icon || '',
                         <div className="text-[8.5px] tracking-[0.4em] mt-0.5" style={{ color: MusicC.faint, fontFamily: 'Georgia, serif' }}>— PARTNER —</div>
                     </div>
                     <div className="w-9" />
+                  </div>
                 </div>
 
                 <p className="text-[11px] text-center pb-3 px-6 z-10 relative" style={{ color: MusicC.muted }}>选一个伙伴，陪你一起创作吧</p>
@@ -1857,11 +1863,11 @@ genreIcon: genreInfo?.icon || '',
         return (
             <div className="h-full w-full bg-[#F5F0E8] flex flex-col font-sans relative overflow-hidden">
                 {/* Cover / Title Page */}
-                <div className={`${style.className} ${style.textClass} relative shrink-0`} style={{ ...style.style, minHeight: '220px' }}>
-                    <button onClick={() => { setView('shelf'); setActiveSong(null); }} className="absolute top-4 left-4 p-2 rounded-full bg-black/10 hover:bg-black/20 transition-colors z-10">
+                <div className={`${style.className} ${style.textClass} relative shrink-0`} style={{ ...style.style, minHeight: 'calc(220px + var(--safe-top))', paddingTop: 'var(--safe-top)' }}>
+                    <button onClick={() => { setView('shelf'); setActiveSong(null); }} className="absolute left-4 p-2 rounded-full bg-black/10 hover:bg-black/20 transition-colors z-10" style={{ top: 'calc(var(--safe-top) + 1rem)' }}>
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                     </button>
-                    <button onClick={() => { setShowShareModal(true); }} className="absolute top-4 right-4 p-2 rounded-full bg-black/10 hover:bg-black/20 transition-colors z-10">
+                    <button onClick={() => { setShowShareModal(true); }} className="absolute right-4 p-2 rounded-full bg-black/10 hover:bg-black/20 transition-colors z-10" style={{ top: 'calc(var(--safe-top) + 1rem)' }}>
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z" /></svg>
                     </button>
                     {/* Album-style title layout */}
@@ -2431,7 +2437,7 @@ genreIcon: genreInfo?.icon || '',
                                 {provider === 'ace-step'
                                     ? '完整长歌（最长 4 分钟）— 自费走 Replicate，约 ¥0.1-0.3/首'
                                     : provider === 'minimax-paid'
-                                        ? '完整长歌（最长 4-6 分钟）— Token Plan，RPM 高'
+                                        ? '完整长歌（最长 4-6 分钟）— 出歌更快、不易排队'
                                         : '完整长歌（最长 4-6 分钟）— 完全免费 · 用你已填的 MiniMax Key'}
                             </p>
                         </div>
@@ -2528,7 +2534,7 @@ genreIcon: genreInfo?.icon || '',
                                 <div className="flex items-center gap-2 min-w-0 flex-1">
                                     <span className="font-bold italic shrink-0" style={{ fontFamily: 'Georgia, serif', color: MusicC.accent, fontSize: 15, letterSpacing: '0.05em' }}>III</span>
                                     <CrossStar size={7} color={MusicC.lavender} delay={0.8} />
-                                    <label className="text-[10px] font-bold uppercase tracking-[0.25em] truncate" style={{ color: MusicC.primary }}>最终 prompt（喂给{provider === 'ace-step' ? ' ACE-Step' : ' MiniMax'}）</label>
+                                    <label className="text-[10px] font-bold uppercase tracking-[0.25em] truncate" style={{ color: MusicC.primary }}>最终风格描述（发给 AI）</label>
                                 </div>
                                 <button
                                     onClick={handleResetCustomPrompt}
@@ -2597,7 +2603,7 @@ genreIcon: genreInfo?.icon || '',
                 <ConfirmDialog isOpen={!!confirmDialog} title={confirmDialog?.title || ''} message={confirmDialog?.message || ''} variant={confirmDialog?.variant} confirmText={confirmDialog?.confirmText} onConfirm={confirmDialog?.onConfirm || (() => {})} onCancel={() => setConfirmDialog(null)} />
 
                 {/* Header */}
-                <div className="border-b border-stone-200/80 shrink-0 z-20 bg-[#F5F0E8]">
+                <div className="border-b border-stone-200/80 shrink-0 z-20 bg-[#F5F0E8]" style={{ paddingTop: 'var(--safe-top)' }}>
                     <div className="h-12 flex items-center justify-between px-4">
                         <button onClick={handlePause} className="p-2 -ml-2 rounded-full hover:bg-stone-200/50 text-stone-500 active:scale-90 transition-transform">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>

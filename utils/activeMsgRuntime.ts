@@ -1,5 +1,6 @@
 import { ActiveMsg2InboxMessage, APIConfig, RealtimeConfig, UserProfile } from '../types';
 import { DB } from './db';
+import { ChatPrompts } from './chatPrompts';
 import { ActiveMsgStore } from './activeMsgStore';
 import {
   applyAssistantPostProcessing,
@@ -12,8 +13,41 @@ import { applyEmotionEvalRaw } from './emotionApply';
 import { processNewMessages } from './memoryPalace/pipeline';
 import { loadMusicHooks } from '../context/MusicContext';
 import type { XhsNote } from './realtimeContext';
+import { appendDevDebugInstantPushLog, appendDevDebugLog, isCaptureEnabled, makeDebugLogger } from './devDebug';
+
+// 同一个 category，两个 tag——保持 console 里现有的 [ActiveMsg] / [amsg] 标签，
+// 方便用户 / 文档里 grep 历史报错信息。两条 tag 都归 instant-push 一类。
+const log = makeDebugLogger('instant-push', 'ActiveMsg');
+const logAmsg = makeDebugLogger('instant-push', 'amsg');
 
 let initialized = false;
+const INSTANT_TRACE_LOG_KEY = 'instant_push_trace_log_v1';
+const INSTANT_TRACE_LOG_LIMIT = 200;
+
+// 三写：console.info + 无条件 localStorage ring + 用户勾控的 devDebug。
+// 参见 instantPushClient.instantTrace 的注释，两边设计一致。
+function activeMsgTrace(event: string, details: Record<string, unknown> = {}): void {
+  const entry = {
+    ts: new Date().toISOString(),
+    sessionId: typeof details.sessionId === 'string' ? details.sessionId : undefined,
+    event,
+    visibility: typeof document !== 'undefined' ? document.visibilityState : 'n/a',
+    online: typeof navigator !== 'undefined' ? navigator.onLine : undefined,
+    ...details,
+  };
+  try {
+    console.info('[InstantTrace]', entry);
+  } catch { /* ignore */ }
+  try {
+    const raw = localStorage.getItem(INSTANT_TRACE_LOG_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    const next = Array.isArray(list) ? [...list, entry].slice(-INSTANT_TRACE_LOG_LIMIT) : [entry];
+    localStorage.setItem(INSTANT_TRACE_LOG_KEY, JSON.stringify(next));
+  } catch { /* ignore */ }
+  // 也挂进 devDebug 的 instant-push 类目：勾了 IP 后，trace 跟 LLM 交换日志一起被
+  // 复制 / 下载导出。gate 由 isCaptureEnabled('instant-push') 自动管，未勾时零成本。
+  appendDevDebugLog('instant-push', { label: `trace:${event}`, data: entry });
+}
 
 // ─── push 路径模块级 XHS 共享状态 ─────────────────────────────────────────────
 //
@@ -101,7 +135,15 @@ const processInboxMessageWithPostProcessing = async (message: ActiveMsg2InboxMes
 
   const userProfile: UserProfile = (await DB.getUserProfile())
     ?? { name: 'User', avatar: '', bio: '' };
-  const emojis = await DB.getEmojis();
+  // 按角色可见性过滤表情包：后处理落库时靠 emojis.find(e => e.name === name) 反查 URL，
+  // 若传全量表情，名字冲突时会把 A 的 [[SEND_EMOJI: x]] 匹配到 B 名下的同名表情，导致
+  // A 发出绑定给 B 的表情包。本地聊天路径喂的是 aiVisibleEmojis（已过滤），主动消息路径
+  // 之前漏了这步，这里复用同一套过滤收口（与 activeMsgClient.buildCompletePrompt 对齐）。
+  const { emojis } = ChatPrompts.filterVisibleEmojis(
+    await DB.getEmojis(),
+    await DB.getEmojiCategories(),
+    message.charId,
+  );
   const contextMsgs = await DB.getRecentMessagesByCharId(message.charId, 200);
 
   const apiConfig = loadApiConfigFromLocalStorage();
@@ -221,7 +263,7 @@ const processInboxMessageWithPostProcessing = async (message: ActiveMsg2InboxMes
     // 把 worker hook 塞进 metadata.directives 的副作用结构化重放出来 (POKE/TRANSFER/ADD_EVENT/
     // schedule_message/MUSIC_ACTION/XHS_*). applyAssistantPostProcessing 会反向拼回 tag 喂给
     // chatParser + 内联 XHS handler.
-    // amsg-instant 0.8.0-next.4 起一个 user turn 可能产 N 条 push, directives 只应该
+    // amsg-instant 0.8+ 一个 user turn 可能产 N 条 push, directives 只应该
     // replay 一次. worker buildPushDecision 把 directives 挂在最后一条 push 上,
     // 这里加 isLastChunk 守卫双保险, 防未来 worker bug 在多条 push 都塞 directives.
     // 老 worker (无 messageIndex/totalMessages 字段) ?? 0 fallback, 0===0 也算 last.
@@ -260,6 +302,65 @@ function extractDirectives(message: ActiveMsg2InboxMessage): PostProcessDirectiv
   // 字段形状由 worker classifier 保证 (跟 PostProcessDirective union 一致); 这里只做轻量校验
   // 防 metadata 被改坏. 不识别的 type 不抛错, applyAssistantPostProcessing 内部 default 分支会 warn.
   return raw.filter((d) => d && typeof d === 'object' && typeof (d as any).type === 'string');
+}
+
+function getInstantSessionId(message: ActiveMsg2InboxMessage): string | undefined {
+  return (message as any).sessionId
+    || (message.metadata && (message.metadata as any).sessionId);
+}
+
+function getInstantMessageIndex(message: ActiveMsg2InboxMessage): number {
+  return Number((message as any).messageIndex ?? (message.metadata as any)?.messageIndex ?? 0);
+}
+
+function getInstantTotalMessages(message: ActiveMsg2InboxMessage): number {
+  return Number((message as any).totalMessages ?? (message.metadata as any)?.totalMessages ?? 0);
+}
+
+function toChatCompletionsUrl(baseUrl?: string): string {
+  const trimmed = (baseUrl || '').trim();
+  if (!trimmed) return 'instant-push';
+  if (/\/chat\/completions\/?$/i.test(trimmed)) return trimmed;
+  return `${trimmed.replace(/\/+$/, '')}/chat/completions`;
+}
+
+async function logInstantPushLlmExchange(message: ActiveMsg2InboxMessage): Promise<void> {
+  if (!isCaptureEnabled('instant-push')) return;
+
+  const sessionId = getInstantSessionId(message);
+  if (!sessionId) return;
+
+  try {
+    const session = await ActiveMsgStore.getOutboundSession(sessionId);
+    appendDevDebugInstantPushLog({
+      url: toChatCompletionsUrl(session?.apiCredentials?.baseUrl),
+      method: 'POST',
+      status: 200,
+      requestBody: session
+        ? {
+            transport: 'instant-push',
+            sessionId,
+            model: session.apiCredentials.model,
+            messages: session.messages,
+          }
+        : {
+            transport: 'instant-push',
+            sessionId,
+            requestUnavailable: 'outbound session not found',
+          },
+      response: {
+        transport: 'instant-push',
+        sessionId,
+        messageId: message.messageId,
+        messageIndex: getInstantMessageIndex(message),
+        totalMessages: getInstantTotalMessages(message),
+        raw_content: message.body,
+        metadata: message.metadata,
+      },
+    });
+  } catch (e) {
+    console.warn('[DevDebug] instant-push LLM log failed', sessionId, e);
+  }
 }
 
 /**
@@ -320,6 +421,7 @@ async function runPushTailPipeline(
 
 const flushInboxToChatImpl = async () => {
   const pendingMessages = await ActiveMsgStore.consumeInboxMessages();
+  activeMsgTrace('runtime-flush-start', { count: pendingMessages.length });
   // consumeInboxMessages 是 "先 ack 后处理" 语义 —— inbox 已经原子地清空。
   // 这里 per-message try/catch: 单条处理抛错 (quota / DB 故障 / postprocess 异常) 不连累
   // 后续条目。Phase 1 改成: 先尝试走 applyAssistantPostProcessing (与本地 fetch 路径
@@ -328,6 +430,13 @@ const flushInboxToChatImpl = async () => {
   // 保证 toast / 未读 / 通知 / sendInstantPush resolver 语义不变。
   for (const message of pendingMessages) {
     const messageTimestamp = message.sentAt || message.receivedAt || Date.now();
+    activeMsgTrace('runtime-inbox-message', {
+      sessionId: (message as any).sessionId || (message.metadata as any)?.sessionId,
+      messageId: message.messageId,
+      charId: message.charId,
+      messageType: message.messageType,
+      bodyChars: typeof message.body === 'string' ? message.body.length : undefined,
+    });
 
     // emotion_update: worker 跑完副 API 情绪评估后推回的 buff 结果. 不渲染成聊天消息, 直接落 buff +
     // 广播 innerState (useChatAI 监听 'emotion-innerstate-updated' → setEvolvedNarrative 喂下一轮).
@@ -356,6 +465,11 @@ const flushInboxToChatImpl = async () => {
       try {
         window.dispatchEvent(new CustomEvent('instant-emotion-done', { detail: { charId: message.charId } }));
       } catch { /* SSR-safe */ }
+      activeMsgTrace('runtime-emotion-done', {
+        sessionId: (message as any).sessionId || (message.metadata as any)?.sessionId,
+        messageId: message.messageId,
+        charId: message.charId,
+      });
       continue;
     }
 
@@ -376,10 +490,11 @@ const flushInboxToChatImpl = async () => {
 
     if (looksLikeAssistantText) {
       try {
+        await logInstantPushLlmExchange(message);
         await processInboxMessageWithPostProcessing(message);
         routed = true;
       } catch (postErr) {
-        console.warn('[ActiveMsg] post-processing failed, falling back to raw save', message.messageId, postErr);
+        log.warn('post-processing failed, falling back to raw save', { messageId: message.messageId, error: postErr });
         // 落库失败: 有可能 post-processing 中途已经写了部分 chunk 进 DB, 这里再 raw save 一遍
         // 会重复; 但中途失败时通常是初始化阶段就挂了 (char 找不到 / DB 故障), 部分写入概率低。
         // 为了不丢消息, 仍尝试 raw save; 若它也失败, 会进下面的 catch 把消息 requeue。
@@ -411,12 +526,12 @@ const flushInboxToChatImpl = async () => {
           },
         });
       } catch (e) {
-        console.warn('[ActiveMsg] saveMessage failed, requeue to inbox', message.messageId, e);
+        log.warn('saveMessage failed, requeue to inbox', { messageId: message.messageId, error: e });
         try {
           await ActiveMsgStore.saveInboxMessage(message);
         } catch (reputErr) {
           // re-put 也挂了 (大概率同一根因, 比如 quota / DB 关停), 没救了, 至少留个日志
-          console.error('[ActiveMsg] requeue failed, message lost', message.messageId, reputErr);
+          log.error('requeue failed, message lost', { messageId: message.messageId, error: reputErr });
         }
         // requeue 后跳过这条消息的 dispatchEvent —— UI 不该误以为收到了
         continue;
@@ -425,8 +540,11 @@ const flushInboxToChatImpl = async () => {
 
     // 不管走 post-processing 还是 raw fallback, 单条 inbox message 触发一次 'active-msg-received',
     // 保留原有 toast / 未读 / 通知 / sendInstantPush resolver 语义。body 用原文做预览即可。
+    // sessionId 必须带出来: instantPushClient 的 observed listener 用它做 receipt identity 匹配,
+    // 杜绝同 char 多轮并发 / 延迟到达的旧 push 被新一轮 send 误判为 delivered。
     window.dispatchEvent(new CustomEvent('active-msg-received', {
       detail: {
+        sessionId: (message as any).sessionId || (message.metadata as any)?.sessionId,
         charId: message.charId,
         charName: message.charName,
         body: message.previewBody || message.body,
@@ -434,6 +552,11 @@ const flushInboxToChatImpl = async () => {
         sentAt: messageTimestamp,
       },
     }));
+    activeMsgTrace('runtime-active-msg-received-dispatched', {
+      sessionId: (message as any).sessionId || (message.metadata as any)?.sessionId,
+      messageId: message.messageId,
+      charId: message.charId,
+    });
   }
 };
 
@@ -450,7 +573,7 @@ const flushInboxToChat = (): Promise<void> => {
     try {
       await flushInboxToChatImpl();
     } catch (e) {
-      console.warn('[ActiveMsg] flushInboxToChat failed', e);
+      log.warn('flushInboxToChat failed', { error: e });
     }
   });
   flushChain = next;
@@ -463,6 +586,41 @@ const runPendingToolCallsSafely = async () => {
     await runPendingToolCalls();
   } catch (e) {
     console.warn('[instant-push] runPendingToolCalls failed', e);
+  }
+};
+
+/**
+ * 思维链(心象)回填: SW 收到 reasoning push 写完 buffer 后会 fire 'active-msg-reasoning'.
+ *
+ * 正常情况 worker 先发 reasoning 再发 content, reasoning 先落 buffer, content flush 时
+ * claimReasoning 取到并挂上 thinkingChain. 但 reasoning / content 是两条独立 Web Push,
+ * 弱网/移动端到达或处理顺序可能反转: content 抢先 flush 时 claimReasoning 拿到 null, 首条
+ * 回复落库时没有 thinkingChain, 之后到的 reasoning 永远不再被 claim → 思维链丢失.
+ *
+ * 这里在 reasoning 到达后补一刀: 若该 session 的首条 assistant 回复已落库且还没挂 thinkingChain,
+ * 就 claim 出 reasoning 回填到那条消息的 metadata, 再 fire progress 让 Chat 重渲染.
+ * 若首条回复还没落库 (reasoning 先到的正常情形), 不 claim、留 buffer 给正常路径, 这里是 no-op.
+ */
+const backfillReasoningSafely = async (sessionId?: string, charId?: string): Promise<void> => {
+  if (!sessionId || !charId) return;
+  try {
+    const msgs = await DB.getRecentMessagesByCharId(charId, 200);
+    const sessionMsgs = msgs
+      .filter((m) => m.role === 'assistant' && (m.metadata as any)?.sessionId === sessionId)
+      .sort((a, b) => ((a as any).id ?? 0) - ((b as any).id ?? 0));
+    if (sessionMsgs.length === 0) return; // content 还没落库, 留给正常 claim 路径
+    const first = sessionMsgs[0] as any;
+    if (first.metadata?.thinkingChain) return; // 正常 claim 已挂上, 不重复
+    if (typeof first.id !== 'number') return;
+
+    const buffered = await ActiveMsgStore.claimReasoning(sessionId);
+    const reasoning = buffered?.reasoningContent;
+    if (!reasoning) return;
+
+    await DB.updateMessageMetadata(first.id, (prev: any) => ({ ...(prev || {}), thinkingChain: reasoning }));
+    window.dispatchEvent(new CustomEvent('active-msg-progress', { detail: { charId } }));
+  } catch (e) {
+    console.warn('[ActiveMsg] backfill reasoning failed', sessionId, e);
   }
 };
 
@@ -489,8 +647,23 @@ export const ActiveMsgRuntime = {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.addEventListener('message', (event) => {
         const type = event.data?.type;
+        if (type) {
+          activeMsgTrace('runtime-sw-message', {
+            type,
+            sessionId: event.data?.sessionId,
+            charId: event.data?.charId,
+          });
+        }
         if (type === 'active-msg-received') {
           void flushInboxToChat();
+          return;
+        }
+
+        if (type === 'active-msg-reasoning') {
+          // 先确保已到的 content 落库 (flush 链串行), 再尝试把思维链回填到首条回复上.
+          void flushInboxToChat().then(() =>
+            backfillReasoningSafely(event.data?.sessionId, event.data?.charId),
+          );
           return;
         }
 
@@ -499,7 +672,7 @@ export const ActiveMsgRuntime = {
           const payload = event.data?.payload;
 
           if (subEvent === 'rei-amsg-multipart-expired') {
-            console.warn('[amsg] multipart expired', payload);
+            logAmsg.warn('multipart expired', payload);
             window.dispatchEvent(new CustomEvent('active-msg-error', {
               detail: { message: '消息接收不完整，部分内容可能丢失' }
             }));

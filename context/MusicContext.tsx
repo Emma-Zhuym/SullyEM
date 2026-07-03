@@ -13,6 +13,8 @@ import React, {
 } from 'react';
 import { cachedCall as _cachedCall, invalidate as _invalidateCache, clearAll as _clearAllCache } from '../utils/musicCache';
 import { DB } from '../utils/db';
+import { getProxyWorkerUrl, DEFAULT_PROXY_WORKER, PROXY_WORKER_CHANGED_EVENT } from '../utils/proxyWorker';
+import type { PostProcessMusicHooks } from '../utils/applyAssistantPostProcessing';
 
 /* ───────────── 类型 ───────────── */
 export type MusicQuality = 'standard' | 'higher' | 'exhigh' | 'lossless' | 'hires';
@@ -81,31 +83,37 @@ const loadLocalAlbum = (): Song[] => {
 const saveLocalAlbum = (songs: Song[]) => {
   try { localStorage.setItem(LS_LOCAL_ALBUM_KEY, JSON.stringify(songs)); } catch {}
 };
-const DEFAULT_WORKER = 'https://sullymeow.ccwu.cc';
+// 音乐的默认 worker = 中心配置（设置 → 自定义网络代理）。用户没在播放器里单独
+// 设过地址时，跟着中心 worker 走；在播放器里手填过自定义地址的，那个地址覆盖生效。
+const musicDefaultWorker = (): string => getProxyWorkerUrl();
 
 export const MUSIC_DEFAULT_CFG: MusicCfg = {
-  workerUrl: DEFAULT_WORKER,
+  workerUrl: musicDefaultWorker(),
   cookie: '',
   quality: 'exhigh',
 };
 
 /* ───────────── 工具 ───────────── */
-// 旧 worker 域名 → 新自定义域名的迁移表。老用户 localStorage 里存的还是
-// sully-n.qegj567.workers.dev，国内访问超时；自定义域名走 CF 边缘到同一个
-// worker，行为一致。第一次读到自动改写并落盘，下次刷新就稳定了。
-const STALE_WORKER_HOSTS = [/sully-n\.qegj567\.workers\.dev/i];
+// worker 地址迁移：把"非自定义"的存量地址一律视为"没单独设过" → 跟随中心 worker。
+//   1. 旧的 sully-n.qegj567.workers.dev 默认（国内超时，早就该弃用）；
+//   2. 停在公共默认实例（= 中心配置的默认值）上的——中心没改时这是 no-op，
+//      中心换成自部署 worker 后，音乐自动跟着切过去。
+// 只有用户在播放器里手填的、跟默认不一样的地址才原样保留。读到需要改写时落盘一次。
+const normalizeHost = (u: string): string => u.trim().replace(/\/+$/, '').toLowerCase();
+const FOLLOW_CENTRAL_HOSTS = [/sully-n\.qegj567\.workers\.dev/i];
 const migrateWorkerUrl = (url: string | undefined): string => {
-  if (!url) return DEFAULT_WORKER;
-  for (const re of STALE_WORKER_HOSTS) {
-    if (re.test(url)) return DEFAULT_WORKER;
-  }
+  const central = musicDefaultWorker();
+  if (!url) return central;
+  const norm = normalizeHost(url);
+  if (norm === normalizeHost(DEFAULT_PROXY_WORKER)) return central;
+  if (FOLLOW_CENTRAL_HOSTS.some((re) => re.test(norm))) return central;
   return url;
 };
 
 const loadCfg = (): MusicCfg => {
   try {
     const raw = localStorage.getItem(LS_CFG_KEY);
-    if (!raw) return MUSIC_DEFAULT_CFG;
+    if (!raw) return { ...MUSIC_DEFAULT_CFG, workerUrl: musicDefaultWorker() };
     const parsed = JSON.parse(raw);
     const cfg = { ...MUSIC_DEFAULT_CFG, ...parsed };
     const migrated = migrateWorkerUrl(cfg.workerUrl);
@@ -114,7 +122,7 @@ const loadCfg = (): MusicCfg => {
       try { localStorage.setItem(LS_CFG_KEY, JSON.stringify(cfg)); } catch {}
     }
     return cfg;
-  } catch { return MUSIC_DEFAULT_CFG; }
+  } catch { return { ...MUSIC_DEFAULT_CFG, workerUrl: musicDefaultWorker() }; }
 };
 
 /**
@@ -139,6 +147,15 @@ let __musicPlaybackSnapshot: MusicPlaybackSnapshot | null = null;
 export const loadMusicPlaybackSnapshot = (): MusicPlaybackSnapshot | null => __musicPlaybackSnapshot;
 // Stub for upstream compatibility — SullyEM does not use PostProcessMusicHooks
 export const loadMusicHooks = (): null => null;
+
+/**
+ * 模块级 musicHooks 出口 — 给 ChatParser.MUSIC_ACTION 用的三个钩子打包成一个对象, 由
+ * MusicProvider mount 后持续写入最新闭包. 让 useChatAI (本地 fetch 路径) 和
+ * activeMsgRuntime (instant push 路径) 都从这里取, 避免逻辑双份维护 / push 路径漏注入.
+ * 行为细节见 chatParser.ts 的 MUSIC_ACTION 分支.
+ */
+let __musicHooks: PostProcessMusicHooks | null = null;
+export const loadMusicHooks = (): PostProcessMusicHooks | null => __musicHooks;
 
 const saveCfg = (cfg: MusicCfg) => {
   try { localStorage.setItem(LS_CFG_KEY, JSON.stringify(cfg)); } catch {}
@@ -349,6 +366,20 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return next;
     });
     saveCfg(next);
+  }, []);
+
+  // 中心配置（设置 → 自定义网络代理）变了 → 重读音乐 cfg，让"跟随中心"的地址实时切过去。
+  // 音乐 cfg 是挂载时快照进 state 的，不重读就只能等下次刷新页面；地址真的变了才清缓存重拉。
+  useEffect(() => {
+    const onProxyChanged = () => {
+      setCfgState(prev => {
+        const next = loadCfg();
+        if (next.workerUrl !== prev.workerUrl) _clearAllCache();
+        return next;
+      });
+    };
+    window.addEventListener(PROXY_WORKER_CHANGED_EVENT, onProxyChanged);
+    return () => window.removeEventListener(PROXY_WORKER_CHANGED_EVENT, onProxyChanged);
   }, []);
 
   const initialState = useMemo(loadState, []);
@@ -793,6 +824,99 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       cfg,
     };
   }, [current, playing, lyric, activeLyricIdx, listeningTogetherWith, cfg]);
+
+  // 把整组 musicHooks 写到模块级 slot — useChatAI 和 instant push activeMsgRuntime 都从这里取.
+  // current / addListeningPartner 变化时刷新闭包, 保证读到的是最新 React state.
+  // addSongToCharPlaylist 是纯 DB 操作, 与 React state 无关, 但一起打包让出口统一.
+  useEffect(() => {
+    __musicHooks = {
+      getListeningSnapshot: () => {
+        if (!current) return null;
+        return {
+          songId: current.id,
+          name: current.name,
+          artists: current.artists,
+          album: current.album,
+          albumPic: current.albumPic,
+          duration: current.duration,
+          fee: current.fee,
+        };
+      },
+      joinListeningTogether: (cid: string) => {
+        addListeningPartner(cid);
+      },
+      addSongToCharPlaylist: async (cid, song, target) => {
+        try {
+          const all = await DB.getAllCharacters();
+          const targetChar = all.find(c => c.id === cid);
+          if (!targetChar) return null;
+          const profile = targetChar.musicProfile;
+          if (!profile) return null;
+
+          const now = Date.now();
+          let playlists = profile.playlists.slice();
+          let chosenIdx = -1;
+          let created = false;
+
+          if (target?.kind === 'new') {
+            // 新建歌单 — 标题去重（已存在同名就当成 existing 处理）
+            const dup = playlists.findIndex(p =>
+              p.title.trim().toLowerCase() === target.title.trim().toLowerCase());
+            if (dup >= 0) {
+              chosenIdx = dup;
+            } else {
+              playlists.push({
+                id: `pl-${now}-${playlists.length}`,
+                title: target.title.trim(),
+                description: (target.description || '').trim(),
+                coverStyle: `gradient-0${(playlists.length % 6) + 1}`,
+                songs: [],
+                createdAt: now,
+                updatedAt: now,
+              });
+              chosenIdx = playlists.length - 1;
+              created = true;
+            }
+          } else if (target?.kind === 'existing') {
+            const t = target.title.trim().toLowerCase();
+            chosenIdx = playlists.findIndex(p => p.title.trim().toLowerCase() === t);
+            if (chosenIdx < 0) chosenIdx = playlists.findIndex(p =>
+              p.title.trim().toLowerCase().includes(t) || t.includes(p.title.trim().toLowerCase()));
+            if (chosenIdx < 0 && playlists.length > 0) chosenIdx = 0;
+          } else {
+            if (playlists.length > 0) chosenIdx = 0;
+          }
+
+          if (chosenIdx < 0) {
+            playlists.push({
+              id: `pl-${now}-0`,
+              title: '我喜欢的音乐',
+              description: '',
+              coverStyle: 'gradient-01',
+              songs: [],
+              createdAt: now,
+              updatedAt: now,
+            });
+            chosenIdx = 0;
+            created = true;
+          }
+
+          const pl = playlists[chosenIdx];
+          if (pl.songs.find(s => s.id === song.id)) {
+            return { playlistTitle: pl.title, created: false };
+          }
+          const updatedPl = { ...pl, songs: [...pl.songs, song], updatedAt: now };
+          playlists[chosenIdx] = updatedPl;
+
+          const updatedProfile = { ...profile, playlists, updatedAt: now };
+          await DB.saveCharacter({ ...targetChar, musicProfile: updatedProfile });
+          return { playlistTitle: pl.title, created };
+        } catch {
+          return null;
+        }
+      },
+    };
+  }, [current, addListeningPartner]);
 
   const value: MusicContextType = {
     cfg, setCfg,

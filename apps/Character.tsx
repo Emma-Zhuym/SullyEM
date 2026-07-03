@@ -14,11 +14,13 @@ import { formatMessageWithTime, formatMessageForPrompt } from '../utils/messageF
 import { DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import ImpressionPanel from '../components/character/ImpressionPanel';
 import MemoryArchivist from '../components/character/MemoryArchivist';
-import { safeResponseJson, extractContent } from '../utils/safeApi';
+import { safeFetchJson, extractContent } from '../utils/safeApi';
 import { fetchMiniMaxVoices, MiniMaxVoiceItem } from '../utils/minimaxVoice';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { normalizeUserImpression } from '../utils/impression';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
+import { COMMON_TIMEZONES } from '../utils/timezone';
+import { toMountedWorldbook } from '../utils/worldbook';
 
 const CharacterCard: React.FC<{
     char: CharacterProfile;
@@ -57,6 +59,7 @@ const CharacterCard: React.FC<{
 const Character: React.FC = () => {
   const { closeApp, openApp, characters, activeCharacterId, setActiveCharacterId, addCharacter, updateCharacter, deleteCharacter, apiConfig, addToast, userProfile, customThemes, addCustomTheme, worldbooks, addWorldbook } = useOS();
   const [view, setView] = useState<'list' | 'detail'>('list');
+  const [charPage, setCharPage] = useState(0); // 角色列表分页（每页 6 个）
   const [detailTab, setDetailTab] = useState<'identity' | 'memory' | 'impression'>('identity');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState<CharacterProfile | null>(null);
@@ -240,12 +243,7 @@ const Character: React.FC = () => {
       }
 
       // CACHE THE CONTENT, include category
-      const newBookEntry = { 
-          id: book.id, 
-          title: book.title, 
-          content: book.content,
-          category: book.category 
-      };
+      const newBookEntry = toMountedWorldbook(book);
       handleChange('mountedWorldbooks', [...currentBooks, newBookEntry]);
       setShowWorldbookModal(false);
       addToast(`已挂载: ${book.title}`, 'success');
@@ -263,12 +261,7 @@ const Character: React.FC = () => {
 
       for (const book of booksToMount) {
           if (!currentBooks.some(b => b.id === book.id)) {
-              newEntries.push({
-                  id: book.id,
-                  title: book.title,
-                  content: book.content,
-                  category: book.category
-              });
+              newEntries.push(toMountedWorldbook(book));
               addedCount++;
           }
       }
@@ -351,7 +344,7 @@ const Character: React.FC = () => {
       const refineUrl = `${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`;
       const t0 = performance.now();
       try {
-          const response = await fetch(refineUrl, {
+          const data = await safeFetchJson(refineUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
               body: JSON.stringify({
@@ -362,10 +355,8 @@ const Character: React.FC = () => {
                   ],
                   temperature: 0.3,
               })
-          });
+          }, 0);
           const dt = Math.round(performance.now() - t0);
-          if (!response.ok) throw new Error(`API Request failed (HTTP ${response.status} after ${dt}ms)`);
-          const data = await safeResponseJson(response);
           const summary = extractContent(data);
           if (!summary) {
               // 失败时留一条诊断 warn：Gemini 3.1 preview 在某些 prompt 下会静默拒答
@@ -435,14 +426,12 @@ const Character: React.FC = () => {
           prompt = prompt.replace(/\$\{userProfile\.name\}/g, userProfile.name);
           prompt = prompt.replace(/\$\{rawLog.*?\}/g, rawLog.substring(0, 200000));
 
-          const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+          const data = await safeFetchJson(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
               body: JSON.stringify({ model: apiConfig.model, messages: [{ role: 'user', content: prompt }], temperature: 0.5, max_tokens: 8000, stream: false }),
-          });
-          if (!response.ok) throw new Error(`API ${response.status}`);
-          const data = await safeResponseJson(response);
-          let summary = (data.choices?.[0]?.message?.content || '').trim().replace(/^["']|["']$/g, '');
+          }, 0);
+          let summary = extractContent(data).replace(/^["']|["']$/g, '');
           if (!summary) throw new Error('空响应');
 
           // upsert：同日期的 mood='archive' 替换；'palace' 自动归档不碰
@@ -500,10 +489,8 @@ const handleExportPreview = () => { if (!formData) return; const mems = formData
       
       try { 
           const prompt = `Task: Convert this text log into a JSON array. Format: [{ "date": "YYYY-MM-DD", "summary": "...", "mood": "..." }] Text: ${importText.substring(0, 8000)}`; 
-          const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` }, body: JSON.stringify({ model: apiConfig.model, messages: [{ role: "user", content: prompt }], temperature: 0.1 }) }); 
-          if (!response.ok) throw new Error(`HTTP Error: ${response.status}`); 
-          const data = await safeResponseJson(response); 
-          let content = data.choices?.[0]?.message?.content || ''; 
+          const data = await safeFetchJson(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` }, body: JSON.stringify({ model: apiConfig.model, messages: [{ role: "user", content: prompt }], temperature: 0.1 }) }, 0);
+          let content = extractContent(data);
           content = content.replace(/```json/g, '').replace(/```/g, '').trim(); 
           const firstBracket = content.indexOf('['); 
           const lastBracket = content.lastIndexOf(']'); 
@@ -578,19 +565,23 @@ const handleExportPreview = () => { if (!formData) return; const mems = formData
                 prompt = prompt.replace(/\$\{userProfile\.name\}/g, userProfile.name);
                 prompt = prompt.replace(/\$\{rawLog.*?\}/g, rawLog.substring(0, 200000));
 
-                const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-                    body: JSON.stringify({
-                        model: apiConfig.model,
-                        messages: [{ role: "user", content: prompt }],
-                        max_tokens: 8000, 
-                        temperature: 0.5
-                    })
-                });
+                let data: any = null;
+                try {
+                    data = await safeFetchJson(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+                        body: JSON.stringify({
+                            model: apiConfig.model,
+                            messages: [{ role: "user", content: prompt }],
+                            max_tokens: 8000,
+                            temperature: 0.5
+                        })
+                    }, 0);
+                } catch {
+                    // 单天失败软跳过，继续后面的日期（与原 if(response.ok) 的语义一致）
+                }
 
-                if (response.ok) {
-                    const data = await safeResponseJson(response);
+                if (data) {
                     let summary = extractContent(data);
                     summary = summary.replace(/^["']|["']$/g, '').trim();
 
@@ -760,21 +751,23 @@ ${isInitialGeneration ? `
 }
 注意：observed_changes 的每一项必须是纯字符串（string），例如 ["最近变得更开朗了", "开始主动分享日常"]。严禁使用对象格式如 {"period": "...", "description": "..."}。`;
 
-          const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+          const data = await safeFetchJson(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
               body: JSON.stringify({
                   model: apiConfig.model,
                   messages: [{ role: "user", content: prompt }],
-                  max_tokens: 8000, 
-                  temperature: 0.5
+                  max_tokens: 8000,
+                  temperature: 0.5,
+                  // 印象 prompt 体量大（含完整上下文 + 记忆 + 近期聊天），非流式下要等
+                  // 整段思考链 + JSON 全生成完才返回首字节，常超 60s 撞上中转站空闲超时被
+                  // 掐断（NetworkError）。开流式让连接持续有数据，绕开空闲超时；
+                  // safeResponseJson 会把 SSE 流拼回完整对象，下游 extractContent 无需改动。
+                  stream: true
               })
-          });
+          }, 0);
+          let content = extractContent(data);
 
-          if (!response.ok) throw new Error('API Request Failed');
-          const data = await safeResponseJson(response);
-          let content = data.choices[0].message.content;
-          
           content = content.replace(/```json/g, '').replace(/```/g, '').trim();
 const parsed = normalizeUserImpression(JSON.parse(content));
           if (!parsed) throw new Error('印象生成结果不完整');
@@ -919,6 +912,7 @@ const parsed = normalizeUserImpression(JSON.parse(content));
                   const category = wb.category && wb.category.trim() ? wb.category : fallbackCategory;
                   wb.category = category;
                   await addWorldbook({
+                      ...wb,
                       id: wb.id,
                       title: wb.title || '未命名设定',
                       content: wb.content || '',
@@ -940,7 +934,10 @@ const parsed = normalizeUserImpression(JSON.parse(content));
               } as CharacterProfile;
 
               await DB.saveCharacter(newChar);
-              addCharacter(); // Force refresh (naive)
+              // 不要调用 addCharacter()——它不是"刷新"，而是真的新建一个空白
+              // "New Character" 并写进 DB，reload 后就会多出一张空白卡。
+              // 导入的角色已经存进了 DB（上一行），reload 时 OSContext 会从
+              // DB 重新读全部角色，导入的角色自然会出现，无需手动刷新 state。
               setTimeout(() => window.location.reload(), 500);
 
               const wbToastSuffix = importedWbCount > 0 ? `，并同步 ${importedWbCount} 本世界书` : '';
@@ -961,7 +958,10 @@ const parsed = normalizeUserImpression(JSON.parse(content));
        {view === 'list' ? (
            <div className="flex flex-col h-full animate-fade-in">
                {/* INCREASED PADDING TOP HERE */}
-               <div className="px-6 pt-16 pb-4 shrink-0 flex items-center justify-between">
+               {/* safe-area: 原本固定 pt-16(4rem) 顶部留白，改成 max(4rem, 刘海高度)，
+                   既保住原来的呼吸感，又保证内容在更高刘海设备上不被挡。此栏无背景，
+                   透出页面 bg-slate-50/30，安全区条同色无缝 */}
+               <div className="px-6 pb-4 shrink-0 flex items-center justify-between" style={{ paddingTop: 'max(4rem, var(--safe-top))' }}>
                    <div><h1 className="text-2xl font-light text-slate-800 tracking-tight">神经链接</h1><p className="text-xs text-slate-400 mt-1">已建立 {characters.length} 个角色连接</p></div>
                    <div className="flex gap-2">
                         <button onClick={() => cardImportRef.current?.click()} className="p-2 rounded-full bg-white/40 hover:bg-white/80 transition-colors text-slate-600" title="导入角色卡">
@@ -975,26 +975,52 @@ const parsed = normalizeUserImpression(JSON.parse(content));
                    </div>
                </div>
                <div className="flex-1 overflow-y-auto px-5 pb-20 no-scrollbar flex flex-col gap-3">
-                   {characters.map(char => (
-                       <CharacterCard 
-                           key={char.id} 
-                           char={char} 
-                           onClick={() => { setEditingId(char.id); setView('detail'); }} 
-                           onDelete={(e) => { 
-                               e.stopPropagation(); 
-                               setDeleteConfirmTarget(char.id); 
-                           }} 
-                       />
-                   ))}
-                   <button onClick={addCharacter} className="w-full py-4 rounded-3xl border border-dashed border-slate-300 text-slate-400 text-sm hover:bg-white/30 transition-all flex items-center justify-center gap-2 shrink-0">
-                       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>新建链接
-                   </button>
+                   {(() => {
+                       const PAGE_SIZE = 6;
+                       const totalPages = Math.max(1, Math.ceil(characters.length / PAGE_SIZE));
+                       const page = Math.min(charPage, totalPages - 1);
+                       const pageChars = characters.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+                       return (
+                           <>
+                               {pageChars.map(char => (
+                                   <CharacterCard
+                                       key={char.id}
+                                       char={char}
+                                       onClick={() => { setEditingId(char.id); setView('detail'); }}
+                                       onDelete={(e) => {
+                                           e.stopPropagation();
+                                           setDeleteConfirmTarget(char.id);
+                                       }}
+                                   />
+                               ))}
+                               <button onClick={addCharacter} className="w-full py-4 rounded-3xl border border-dashed border-slate-300 text-slate-400 text-sm hover:bg-white/30 transition-all flex items-center justify-center gap-2 shrink-0">
+                                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>新建链接
+                               </button>
+                               {totalPages > 1 && (
+                                   <div className="flex items-center justify-center gap-3 pt-2 shrink-0">
+                                       <button onClick={() => setCharPage(Math.max(0, page - 1))} disabled={page === 0}
+                                           className="w-9 h-9 rounded-full bg-white/60 border border-white/50 shadow-sm flex items-center justify-center text-slate-500 disabled:opacity-30 active:scale-90 transition-all">
+                                           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
+                                       </button>
+                                       <span className="text-sm text-slate-500 font-medium tabular-nums min-w-[40px] text-center">{page + 1}/{totalPages}</span>
+                                       <button onClick={() => setCharPage(Math.min(totalPages - 1, page + 1))} disabled={page >= totalPages - 1}
+                                           className="w-9 h-9 rounded-full bg-white/60 border border-white/50 shadow-sm flex items-center justify-center text-slate-500 disabled:opacity-30 active:scale-90 transition-all">
+                                           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
+                                       </button>
+                                   </div>
+                               )}
+                           </>
+                       );
+                   })()}
                </div>
            </div>
        ) : formData && (
            <div className="flex flex-col h-full animate-fade-in bg-slate-50/50 relative">
-               {/* INCREASED HEIGHT HERE */}
-               <div className="h-32 bg-gradient-to-b from-white/90 to-transparent backdrop-blur-sm flex flex-col justify-end px-5 pb-2 shrink-0 z-40 sticky top-0">
+               {/* safe-area: OUTER 保留渐变背景 + 模糊 + sticky，刘海高度由 paddingTop 让位；
+                   INNER 不再用 h-32 沉底——那是老的「做高栏 + 内容沉底」状态栏预留写法，会和 safe-top 叠加出一大块空白。
+                   改为内容自然高度、直接贴在 safe-top 下方。 */}
+               <div className="bg-gradient-to-b from-white/90 to-transparent backdrop-blur-sm shrink-0 z-40 sticky top-0" style={{ paddingTop: 'var(--safe-top)' }}>
+                 <div className="flex flex-col px-5 pt-2 pb-2">
                    <div className="flex justify-between items-center mb-3">
                        <button onClick={handleBack} className="p-2 -ml-2 rounded-full hover:bg-white/60 flex items-center gap-1 text-slate-600"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg><span className="text-sm font-medium">列表</span></button>
 <button onClick={() => { setActiveCharacterId(formData.id); openApp(AppID.Chat); }} className="text-xs px-3 py-1.5 bg-primary text-white rounded-full font-bold shadow-sm shadow-primary/30 flex items-center gap-1 active:scale-95 transition-transform"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M3.105 2.288a.75.75 0 0 0-.826.95l1.414 4.926H16.5a.75.75 0 0 1 0 1.5H3.693l-1.414 4.926a.75.75 0 0 0 .826.95 28.897 28.897 0 0 0 15.293-7.155.75.75 0 0 0 0-1.114A28.897 28.897 0 0 0 3.105 2.288Z" /></svg>发消息</button>
@@ -1004,6 +1030,7 @@ const parsed = normalizeUserImpression(JSON.parse(content));
                        <button onClick={() => setDetailTab('memory')} className={`pb-2 transition-colors relative ${detailTab === 'memory' ? 'text-slate-800' : ''}`}>记忆 ({(formData.memories || []).length}){detailTab === 'memory' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-full"></div>}</button>
                        <button onClick={() => setDetailTab('impression')} className={`pb-2 transition-colors relative ${detailTab === 'impression' ? 'text-slate-800' : ''}`}>印象{detailTab === 'impression' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-primary rounded-full"></div>}</button>
                    </div>
+                 </div>
                </div>
                <div className="flex-1 overflow-y-auto p-5 no-scrollbar pb-10">
                    {detailTab === 'identity' && (
@@ -1057,17 +1084,85 @@ const parsed = normalizeUserImpression(JSON.parse(content));
                            
                            <div>
                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block">核心指令 (System Prompt)</label>
-                               <textarea value={formData.systemPrompt} onChange={(e) => handleChange('systemPrompt', e.target.value)} className="w-full h-40 bg-white rounded-3xl p-5 text-sm shadow-sm resize-none focus:ring-1 focus:ring-primary/20 transition-all" placeholder="设定..." />
+                               <textarea value={formData.systemPrompt} onChange={(e) => handleChange('systemPrompt', e.target.value)} className="w-full h-40 bg-white rounded-3xl p-5 text-sm shadow-sm resize-none focus:ring-1 focus:ring-primary/20 transition-all vr-reader-scroll" placeholder="设定..." />
                            </div>
 
                            <div>
                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block">世界观 / 设定补充 (Worldview & Lore)</label>
-                               <textarea 
-                                    value={formData.worldview || ''} 
-                                    onChange={(e) => handleChange('worldview', e.target.value)} 
-                                    className="w-full h-24 bg-white rounded-3xl p-5 text-sm shadow-sm resize-none focus:ring-1 focus:ring-primary/20 transition-all" 
-                                    placeholder="在这个世界里，魔法是存在的..." 
+                               <textarea
+                                    value={formData.worldview || ''}
+                                    onChange={(e) => handleChange('worldview', e.target.value)}
+                                    className="w-full h-24 bg-white rounded-3xl p-5 text-sm shadow-sm resize-none focus:ring-1 focus:ring-primary/20 transition-all vr-reader-scroll"
+                                    placeholder="在这个世界里，魔法是存在的..."
                                 />
+                           </div>
+
+                           {/* 时间感知 & 时区：三个独立开关，可任意组合（聊天时间感知 / 自定义时区 / 线下时间感知） */}
+                           <div className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100 space-y-4">
+                               <div>
+                                   <label className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest block">时间感知 & 时区</label>
+                                   <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">下面三个开关相互独立、可任意组合。改完即时生效（下一条回复起算）。</p>
+                               </div>
+
+                               {/* 1. 聊天 · 时间感知强化 */}
+                               <div className="border-t border-slate-100 pt-3">
+                                   <div className="flex items-center justify-between gap-3">
+                                       <div className="min-w-0">
+                                           <p className="text-xs font-bold text-slate-700">聊天 · 时间感知强化</p>
+                                           <p className="text-[10px] text-slate-400 mt-0.5 leading-relaxed">默认开。开启后角色会记得你们多久没聊、主动贴近真实时间；关掉后这种感觉会变弱。</p>
+                                       </div>
+                                       <button
+                                           onClick={() => handleChange('timeAwarenessEnabled', formData.timeAwarenessEnabled === false)}
+                                           className={`w-12 h-7 rounded-full transition-colors relative shrink-0 ${formData.timeAwarenessEnabled !== false ? 'bg-primary' : 'bg-slate-200'}`}
+                                       >
+                                           <div className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow-md transition-transform ${formData.timeAwarenessEnabled !== false ? 'translate-x-5' : 'translate-x-0.5'}`}></div>
+                                       </button>
+                                   </div>
+                               </div>
+
+                               {/* 2. 自定义时区（异国恋等） */}
+                               <div className="border-t border-slate-100 pt-3">
+                                   <div className="flex items-center justify-between gap-3">
+                                       <div className="min-w-0">
+                                           <p className="text-xs font-bold text-slate-700">自定义时区</p>
+                                           <p className="text-[10px] text-slate-400 mt-0.5 leading-relaxed">默认关（跟随本机）。开启后角色活在自己的时区里，按所选时区过日子，也知道和你有时差——适合异国恋、角色身处异国。</p>
+                                       </div>
+                                       <button
+                                           onClick={() => handleChange('customTimezoneEnabled', !formData.customTimezoneEnabled)}
+                                           className={`w-12 h-7 rounded-full transition-colors relative shrink-0 ${formData.customTimezoneEnabled ? 'bg-primary' : 'bg-slate-200'}`}
+                                       >
+                                           <div className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow-md transition-transform ${formData.customTimezoneEnabled ? 'translate-x-5' : 'translate-x-0.5'}`}></div>
+                                       </button>
+                                   </div>
+                                   {formData.customTimezoneEnabled && (
+                                       <select
+                                           value={formData.customTimezone || ''}
+                                           onChange={(e) => handleChange('customTimezone', e.target.value)}
+                                           className="mt-3 w-full bg-slate-50 rounded-2xl px-3 py-2.5 text-xs border border-slate-200 outline-none focus:ring-1 focus:ring-primary/30"
+                                       >
+                                           <option value="">请选择角色所在时区…</option>
+                                           {COMMON_TIMEZONES.map(tz => (
+                                               <option key={tz.id} value={tz.id}>{tz.label}</option>
+                                           ))}
+                                       </select>
+                                   )}
+                               </div>
+
+                               {/* 3. 线下时间感知（约会 / 见面 App） */}
+                               <div className="border-t border-slate-100 pt-3">
+                                   <div className="flex items-center justify-between gap-3">
+                                       <div className="min-w-0">
+                                           <p className="text-xs font-bold text-slate-700">线下时间感知（约会）</p>
+                                           <p className="text-[10px] text-slate-400 mt-0.5 leading-relaxed">默认开。见面时剧情会跟着现实时间走。关掉后剧情脱离现实时间线，更适合纯架空。</p>
+                                       </div>
+                                       <button
+                                           onClick={() => handleChange('dateTimeAwarenessEnabled', formData.dateTimeAwarenessEnabled === false ? undefined : false)}
+                                           className={`w-12 h-7 rounded-full transition-colors relative shrink-0 ${formData.dateTimeAwarenessEnabled !== false ? 'bg-primary' : 'bg-slate-200'}`}
+                                       >
+                                           <div className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow-md transition-transform ${formData.dateTimeAwarenessEnabled !== false ? 'translate-x-5' : 'translate-x-0.5'}`}></div>
+                                       </button>
+                                   </div>
+                               </div>
                            </div>
 
                            <div className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100 space-y-3">
@@ -1118,6 +1213,42 @@ const parsed = normalizeUserImpression(JSON.parse(content));
                                        className="w-full bg-slate-50 rounded-2xl px-3 py-2 text-xs border border-slate-200"
                                        placeholder="TTS 模型（默认 speech-2.8-hd）"
                                    />
+                               </div>
+
+                               {/* 鱼声 Fish Audio 音色：仅当全局语音服务商切到鱼声时生效（设置 → 其他 API） */}
+                               <div className="rounded-2xl border border-sky-200/60 bg-sky-50/40 p-2.5 space-y-1.5">
+                                   <div className="text-[10px] font-bold text-sky-600 uppercase tracking-widest">鱼声 Fish 音色</div>
+                                   <input
+                                       value={formData.voiceProfile?.fishReferenceId || ''}
+                                       onChange={(e) => handleChange('voiceProfile', {
+                                           ...(formData.voiceProfile || {}),
+                                           fishReferenceId: e.target.value,
+                                       })}
+                                       className="w-full bg-white rounded-2xl px-3 py-2 text-xs border border-slate-200"
+                                       placeholder="粘贴 reference_id 或整条 fish.audio 链接"
+                                   />
+                                   <p className="text-[10px] text-slate-400">从 fish.audio 选好音色后，把那一页的链接（含 ?modelId=…）或 32 位 id 直接贴进来都行，会自动识别。设置里语音选「鱼声 Fish」后该角色就用它合成；与上面的 MiniMax voice_id 各存各的。</p>
+                               </div>
+
+                               {/* 语速：MiniMax 与鱼声共用 voiceProfile.speed */}
+                               <div className="space-y-1 pt-1">
+                                   <div className="flex items-center justify-between">
+                                       <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">语速</label>
+                                       <span className="text-[11px] font-mono text-slate-500">{(formData.voiceProfile?.speed ?? 1).toFixed(2)}×</span>
+                                   </div>
+                                   <input
+                                       type="range"
+                                       min={0.5}
+                                       max={1.5}
+                                       step={0.05}
+                                       value={formData.voiceProfile?.speed ?? 1}
+                                       onChange={(e) => handleChange('voiceProfile', {
+                                           ...(formData.voiceProfile || {}),
+                                           speed: parseFloat(e.target.value),
+                                       })}
+                                       className="w-full accent-primary"
+                                   />
+                                   <p className="text-[10px] text-slate-400">越小越慢、越像娓娓道来。1.0 正常；觉得"赶"就拉到 0.85–0.95。MiniMax 与鱼声共用这个语速（鱼声没单独配时默认略慢 0.9）。</p>
                                </div>
 
                                {(voiceOptions.system.length + voiceOptions.voice_cloning.length + voiceOptions.voice_generation.length) > 0 && (

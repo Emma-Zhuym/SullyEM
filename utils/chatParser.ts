@@ -1,6 +1,7 @@
 
 import { DB } from './db';
 import { LocalNotifications } from '@capacitor/local-notifications';
+import { CharacterProfile, CharPlaylistSong } from '../types';
 import { sanitizeForBubble } from './sanitize';
 
 /** 解析 schedule_message 时间串（支持空格分隔日期时间、无 T 的 ISO） */
@@ -103,8 +104,40 @@ export const ChatParser = {
         // TRANSFER
         const transferMatch = content.match(/\[\[ACTION:TRANSFER:(\d+)\]\]/);
         if (transferMatch) {
-            await DB.saveMessage({ charId, role: 'assistant', type: 'transfer', content: '[转账]', metadata: { amount: transferMatch[1] } });
+            await DB.saveMessage({ charId, role: 'assistant', type: 'transfer', content: '[转账]', metadata: { amount: transferMatch[1], status: 'pending' } });
             content = content.replace(transferMatch[0], '').trim();
+        }
+
+        // TRANSFER_ACCEPT / TRANSFER_RETURN — char 收下 / 退回 user 最近一笔待处理的转账。
+        // 找最近一条 user 发出、还没被收/退、且不是回执卡本身的转账，标记状态并补一张回执小卡。
+        const resolveUserTransfer = async (action: 'accepted' | 'returned') => {
+            let amount: string | number | undefined;
+            let refId: number | undefined;
+            try {
+                const all = await DB.getMessagesByCharId(charId, true);
+                const pending = [...all].reverse().find(
+                    x => x.type === 'transfer' && x.role === 'user' && !x.metadata?.receipt
+                        && (!x.metadata?.status || x.metadata.status === 'pending'),
+                );
+                if (pending) {
+                    amount = pending.metadata?.amount;
+                    refId = pending.id;
+                    await DB.updateMessageMetadata(pending.id, (prev) => ({ ...(prev || {}), status: action, resolvedAt: Date.now() }));
+                }
+            } catch { /* 找不到原转账也照样落回执，至少 user 能看到反馈 */ }
+            await DB.saveMessage({
+                charId, role: 'assistant', type: 'transfer',
+                content: action === 'accepted' ? '[已收款]' : '[已退回]',
+                metadata: { receipt: action, amount, ref: refId },
+            });
+        };
+        if (content.includes('[[ACTION:TRANSFER_ACCEPT]]')) {
+            await resolveUserTransfer('accepted');
+            content = content.replace(/\[\[ACTION:TRANSFER_ACCEPT\]\]/g, '').trim();
+        }
+        if (content.includes('[[ACTION:TRANSFER_RETURN]]')) {
+            await resolveUserTransfer('returned');
+            content = content.replace(/\[\[ACTION:TRANSFER_RETURN\]\]/g, '').trim();
         }
 
         // MUSIC_ACTION — char 对 user 正在听的歌表态（只处理第一次出现，每条消息最多一次插卡）
@@ -263,6 +296,13 @@ export const ChatParser = {
         return content;
     },
 
+    /**
+     * Comprehensive sanitizer for AI output before saving to DB.
+     * Removes AI-specific artifacts that should never appear in chat bubbles.
+     * Safe to call multiple times (idempotent). Preserves %%BILINGUAL%% markers.
+     * Pass { keepCitations: true } to preserve [QUOTE:..]/[引用:..]/[回复 ".."] tags
+     * (used when downstream chunking needs to detect per-bubble citation targets).
+     */
     sanitize: (text: string, options?: { keepCitations?: boolean }): string => sanitizeForBubble(text, options),
 
     /**
@@ -279,6 +319,7 @@ export const ChatParser = {
             .replace(/(^|\s)`(\s|$)/gm, '$1$2')
             .replace(/\[\[[\s\S]*?\]\]/g, '')
             .replace(/\[(?:QU[OA]TE|引用)[：:][^\]]*\]/g, '')
+            .replace(/\[[^\[\]\n「」]{0,24}引用了[^\[\]\n「」]{0,24}「[^」\n]*?」[^\[\]\n]{0,24}\]\s*/g, '')
             .replace(/\[回复\s*[""\u201C][^""\u201D]*?[""\u201D](?:\.{0,3})\]\s*[：:]?\s*/g, '')
             .replace(/^#{1,6}\s+/gm, '')
             .replace(/^\s*[-*+]\s*$/gm, '')
@@ -324,7 +365,11 @@ export const ChatParser = {
     chunkText: (text: string): string[] => {
         // CJK character + punctuation ranges (Chinese text normally has no spaces between these)
         const CJK = '\\u4e00-\\u9fff\\u3400-\\u4dbf\\u3000-\\u303f\\uff00-\\uffef\\u2000-\\u206f\\u2e80-\\u2eff\\u3001-\\u3003\\u2018-\\u201f\\u300a-\\u300f\\uff01-\\uff0f\\uff1a-\\uff20';
-        const cjkSpaceRe = new RegExp(`(?<=[${CJK}])\\s+(?=[${CJK}])`);
+        // 在两个 CJK 之间的空格处断行. 不用后行断言 (?<=…): iOS Safari <16.4 的 JSC 不支持,
+        // 旧设备上 new RegExp 会直接抛 "invalid group specifier name". 改成「捕获左侧 CJK + 零宽
+        // 前瞻右侧」, 用 $1 补回左字符, 行为与原 (?<=[CJK])\s+(?=[CJK]) 字节一致 (见 lookbehindFree.test.ts).
+        const cjkSplitRe = new RegExp(`([${CJK}])\\s+(?=[${CJK}])`, 'g');
+        const SPLIT = String.fromCharCode(1);  // CJK 切点标记
 
         // 1. Split on line breaks (AI decides where to break)
         const lineChunks = text.split(/(?:\r\n|\r|\n|\u2028|\u2029)+/)
@@ -333,10 +378,15 @@ export const ChatParser = {
 
         // 2. For each chunk, also split on spaces between CJK chars/punctuation
         //    (中文里不该有空格, so "汉字 汉字" means the AI intended a bubble break)
+        //    括号内的空格要保护: 否则裸括号表情包 / 标签 (如 "[你 交给我吧]" 或
+        //    "[[SEND_EMOJI: a b]]") 会被这条规则劈成 "[你" + "交给我吧]" 掉格式.
+        //    做法: 先把 [...] / [[...]] 内空格换成占位符, split 后再换回.
+        const SENTINEL = String.fromCharCode(0);
         const result: string[] = [];
         for (const chunk of lineChunks) {
-            const sub = chunk.split(cjkSpaceRe)
-                .map(c => c.trim())
+            const guarded = chunk.replace(/\[{1,2}[^\[\]]*\]{1,2}/g, m => m.replace(/\s/g, SENTINEL));
+            const sub = guarded.replace(cjkSplitRe, `$1${SPLIT}`).split(SPLIT)
+                .map(c => c.split(SENTINEL).join(' ').trim())
                 .filter(c => c.length > 0);
             result.push(...sub);
         }

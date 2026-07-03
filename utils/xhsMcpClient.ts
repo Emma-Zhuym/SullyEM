@@ -25,6 +25,22 @@ const detectMode = (serverUrl: string): BackendMode => {
     return 'mcp'; // default: MCP (backwards compatible)
 };
 
+// Lite-Worker cookie: set from settings, sent as x-xhs-cookie on bridge calls.
+// Local Bridge/Skills servers ignore the header; the cloud Worker requires it.
+let liteCookie = '';
+
+// Resolve the XHS cookie for bridge requests: prefer the explicitly-set value,
+// otherwise read it straight from persisted realtime config. This keeps chat-
+// driven XHS calls authenticated without any call site having to push it in.
+const resolveLiteCookie = (): string => {
+    if (liteCookie) return liteCookie;
+    try {
+        const raw = localStorage.getItem('os_realtime_config');
+        if (raw) return JSON.parse(raw)?.xhsMcpConfig?.cookie || '';
+    } catch { /* ignore */ }
+    return '';
+};
+
 // ==================== Bridge Mode (REST) ====================
 
 const bridgePost = async (
@@ -35,10 +51,14 @@ const bridgePost = async (
     const baseUrl = serverUrl.replace(/\/+$/, '').replace(/\/api$/, '');
     const url = `${baseUrl}/api/${endpoint}`;
 
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const ck = resolveLiteCookie();
+    if (ck) headers['x-xhs-cookie'] = ck;
+
     try {
         const resp = await fetch(url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
             body: JSON.stringify(body),
         });
 
@@ -350,7 +370,13 @@ export const XhsMcpClient = {
         mcpDiscoveredTools = [];
     },
 
-    testConnection: async (serverUrl: string): Promise<{ connected: boolean; tools?: string[]; error?: string; nickname?: string; userId?: string; loggedIn?: boolean; xsecToken?: string }> => {
+    // Lite Worker auth: register the XHS cookie used for x-xhs-cookie header.
+    setCookie: (cookie?: string) => {
+        liteCookie = cookie || '';
+    },
+
+    testConnection: async (serverUrl: string, cookie?: string): Promise<{ connected: boolean; tools?: string[]; error?: string; nickname?: string; userId?: string; loggedIn?: boolean; xsecToken?: string }> => {
+        if (cookie !== undefined) liteCookie = cookie;
         const mode = detectMode(serverUrl);
 
         if (mode === 'bridge') {
@@ -637,9 +663,11 @@ export const extractNotesFromMcpData = (data: any): any[] => {
 
 export const normalizeNote = (n: any): { noteId: string; title: string; desc: string; author: string; authorId: string; likes: number; xsecToken?: string; coverUrl?: string; type?: string } => {
     const card = n.noteCard || n.notecard;
-    const coverObj = card?.cover || n.cover;
+    // 封面：cover 对象 / 字符串，或笔记图片列表首图（feed detail 返回 image_list）。
+    const coverObj = card?.cover || n.cover || n.image_list?.[0] || card?.image_list?.[0];
     const rawCoverUrl = typeof coverObj === 'string' ? coverObj
-        : coverObj?.urlDefault || coverObj?.url_default || coverObj?.url || coverObj?.urlPre || undefined;
+        : coverObj?.urlDefault || coverObj?.url_default || coverObj?.url || coverObj?.urlPre
+        || coverObj?.info_list?.[0]?.url || undefined;
     const coverUrl = rawCoverUrl?.replace(/^http:\/\//, 'https://');
     // 点赞数：支持 interactInfo.likedCount (profile notes) 和 interact_info.liked_count (search results)
     const likesRaw = n.likes || n.liked_count

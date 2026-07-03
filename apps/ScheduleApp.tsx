@@ -555,8 +555,9 @@ const ScheduleApp: React.FC = () => {
                     style={{ backgroundImage: 'radial-gradient(#fbcfe8 2px,transparent 2px)', backgroundSize: '20px 20px' }} />
             )}
 
-            {/* ── Header ── */}
-            <div className={`pt-12 pb-4 px-4 border-b ${theme.border} backdrop-blur-sm sticky top-0 z-20 flex items-center justify-between shrink-0 h-24 box-border relative transition-colors duration-300`}>
+            {/* ── Header ── (EM: 3 tabs incl. agenda; upstream: safe-top) */}
+            <div className={`border-b ${theme.border} backdrop-blur-sm sticky top-0 z-20 shrink-0 relative transition-colors duration-300`} style={{ paddingTop: 'var(--safe-top)' }}>
+                <div className="pt-12 pb-4 px-4 flex items-center justify-between h-24 box-border">
 
                 <button onClick={closeApp} className={`p-2 -ml-1 rounded-full active:scale-90 transition-transform ${currentThemeMode === 'minimal' ? 'bg-[#eef2f6] shadow-[4px_4px_8px_#d1d9e6,-4px_-4px_8px_#ffffff]' : 'hover:bg-black/5'}`}>
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className={`w-5 h-5 ${theme.accent}`}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
@@ -593,6 +594,7 @@ const ScheduleApp: React.FC = () => {
                     <button onClick={handleAddButton} className={`p-2 rounded-full active:scale-90 transition-transform ${theme.accent} ${currentThemeMode === 'minimal' ? 'shadow-[4px_4px_8px_#d1d9e6,-4px_-4px_8px_#ffffff]' : 'hover:bg-white/10'}`}>
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
                     </button>
+                </div>
                 </div>
 
                 {currentThemeMode === 'cyber' && <div className="absolute bottom-0 left-0 h-[1px] w-full bg-gradient-to-r from-transparent via-cyan-500/50 to-transparent" />}

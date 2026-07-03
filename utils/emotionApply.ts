@@ -1,6 +1,16 @@
 import { DB } from './db';
 import type { CharacterProfile, CharacterBuff } from '../types';
 
+// 角色「最后一次内心独白(InnerState)」的轻量缓存（localStorage）。
+// innerState 是瞬时产物，这里在情绪评估落地的共用点顺手缓存一份，供别处（如查手机首页）读取，
+// 不额外动 CharacterProfile / DB schema。
+export const lastInnerStateKey = (charId: string) => `sully_last_innerstate_${charId}`;
+export function getLastInnerState(charId: string): string {
+    try {
+        return (typeof localStorage !== 'undefined' && localStorage.getItem(lastInnerStateKey(charId))) || '';
+    } catch { return ''; }
+}
+
 // 情绪评估结果「解析 + 落 buff」的共用实现.
 //
 // 原本内联在 hooks/useChatAI.ts 的 evaluateEmotionBackground 里. 提取出来是为了让两条路径共用:
@@ -92,6 +102,10 @@ export async function applyEmotionEvalRaw(
         const innerStateOut = (typeof result.innerState === 'string' && result.innerState.trim())
             ? result.innerState.trim()
             : null;
+
+        if (innerStateOut) {
+            try { localStorage.setItem(lastInnerStateKey(charData.id), innerStateOut); } catch { /* ignore */ }
+        }
 
         if (!result.changed) {
             console.log('🎭 [Emotion] No change detected, skipping buff update');

@@ -11,6 +11,8 @@ interface ChatModalsProps {
     // Data Props
     transferAmt: string;
     setTransferAmt: (v: string) => void;
+    transferNote: string;
+    setTransferNote: (v: string) => void;
     emojiImportText: string;
     setEmojiImportText: (v: string) => void;
     settingsContextLimit: number;
@@ -26,6 +28,11 @@ interface ChatModalsProps {
     newCategoryName: string;
     setNewCategoryName: (v: string) => void;
     onAddCategory: () => void;
+
+    // Emoji rename Props
+    newEmojiName: string;
+    setNewEmojiName: (v: string) => void;
+    onRenameEmoji: () => void;
 
     // Archive Props
     archivePrompts: {id: string, name: string, content: string}[];
@@ -95,6 +102,8 @@ interface ChatModalsProps {
     // Voice generation from long-press
     onGenerateVoice?: () => void;
     voiceAvailable?: boolean; // true if char has voiceProfile configured
+    onDownloadVoice?: () => void;
+    voiceDownloadable?: boolean; // true if the selected message already has generated voice
     // Schedule
     scheduleData?: DailySchedule | null;
     isScheduleGenerating?: boolean;
@@ -103,6 +112,7 @@ interface ChatModalsProps {
     onScheduleReroll?: () => void;
     onScheduleCoverChange?: (dataUrl: string) => void;
     onScheduleStyleChange?: (style: 'lifestyle' | 'mindful') => void;
+    onPlayTheater?: (index: number) => void;
     // Schedule master toggle
     isScheduleFeatureEnabled?: boolean;
     onToggleScheduleFeature?: () => void;
@@ -120,12 +130,14 @@ interface ChatModalsProps {
 const ChatModals: React.FC<ChatModalsProps> = ({
     modalType, setModalType,
     transferAmt, setTransferAmt,
+    transferNote, setTransferNote,
     emojiImportText, setEmojiImportText,
     settingsContextLimit, setSettingsContextLimit,
     settingsHideSysLogs, setSettingsHideSysLogs,
     preserveContext, setPreserveContext,
     editContent, setEditContent,
     newCategoryName, setNewCategoryName, onAddCategory,
+    newEmojiName, setNewEmojiName, onRenameEmoji,
     archivePrompts, selectedPromptId, setSelectedPromptId,
     editingPrompt, setEditingPrompt, isSummarizing, archiveProgress,
     selectedMessage, selectedEmoji, selectedCategory, activeCharacter, messages,
@@ -140,9 +152,9 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     htmlModeEnabled, onToggleHtmlMode, htmlModeCustomPrompt, setHtmlModeCustomPrompt,
     photoStyle, onSetPhotoStyle,
     chatVoiceEnabled, onToggleChatVoice, chatVoiceLang, onSetChatVoiceLang,
-    onGenerateVoice, voiceAvailable,
+    onGenerateVoice, voiceAvailable, onDownloadVoice, voiceDownloadable,
     scheduleData, isScheduleGenerating, onScheduleEdit, onScheduleDelete, onScheduleReroll, onScheduleCoverChange,
-    onScheduleStyleChange,
+    onScheduleStyleChange, onPlayTheater,
     isScheduleFeatureEnabled, onToggleScheduleFeature,
     isMemoryPalaceEnabled, isVectorizing, onForceVectorize,
     apiPresets, onAddApiPreset, onSaveEmotion, onClearBuffs,
@@ -247,7 +259,10 @@ const ChatModals: React.FC<ChatModalsProps> = ({
             <Modal 
                 isOpen={modalType === 'transfer'} title="Credits 转账" onClose={() => setModalType('none')}
                 footer={<><button onClick={() => setModalType('none')} className="flex-1 py-3 bg-slate-100 rounded-2xl">取消</button><button onClick={onTransfer} className="flex-1 py-3 bg-orange-500 text-white rounded-2xl">确认</button></>}
-            ><input type="number" value={transferAmt} onChange={e => setTransferAmt(e.target.value)} className="w-full bg-slate-100 rounded-2xl px-5 py-4 text-lg font-bold" autoFocus /></Modal>
+            >
+                <input type="number" value={transferAmt} onChange={e => setTransferAmt(e.target.value)} placeholder="金额" className="w-full bg-slate-100 rounded-2xl px-5 py-4 text-lg font-bold" autoFocus />
+                <input type="text" value={transferNote} onChange={e => setTransferNote(e.target.value)} maxLength={30} placeholder="添加转账留言（选填）" className="w-full bg-slate-100 rounded-2xl px-5 py-3 text-sm mt-3" />
+            </Modal>
 
             {/* New Category Modal */}
             <Modal 
@@ -301,7 +316,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                              </div>
                          </div>
                          <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
-                             开启后，将不再显示 Date/App 产生的上下文提示文本（转账、戳一戳、图片发送提示除外）。
+                             开启后隐藏见面/小程序等自动产生的灰色提示（转账、戳一戳、发图提示除外）。
                          </p>
                      </div>
 
@@ -379,7 +394,6 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                          </div>
                          <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
                              开启后注入"用 [html]...[/html] 包裹的精美卡片"提示词，AI 会在合适场景输出邀请函 / 票据 / 通知等可视化模块。
-                             历史上下文里只保留剥离 HTML 后的文字摘要，不浪费 token。
                          </p>
                          {htmlModeEnabled && (
                              <div className="mt-3">
@@ -445,6 +459,8 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                          )}
                      </div>
 
+                     {/* 时间感知 / 自定义时区 / 线下时间感知 已统一迁移至「神经链接」角色设定页 */}
+
                      <div className="pt-2 border-t border-slate-100">
                          <button onClick={() => setModalType('history-manager')} className="w-full py-3 bg-slate-50 text-slate-600 font-bold rounded-2xl border border-slate-200 active:scale-95 transition-transform flex items-center justify-center gap-2">
                              管理上下文 / 隐藏历史
@@ -460,10 +476,10 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                  disabled={isVectorizing}
                                  className="w-full py-3 bg-emerald-50 text-emerald-600 font-bold rounded-2xl border border-emerald-200 active:scale-95 transition-transform flex items-center justify-center gap-2"
                              >
-                                 {isVectorizing ? '🏰 向量化处理中...' : '🏰 一键向量化所有聊天记录'}
+                                 {isVectorizing ? '🏰 存进记忆宫殿中...' : '🏰 一键把所有聊天存进记忆宫殿'}
                              </button>
                              <p className="text-[10px] text-slate-400 mt-2 text-center leading-relaxed">
-                                 将所有未处理的聊天记录交给记忆宫殿向量化，完成后可安全清空聊天。<br/>
+                                 将所有未处理的聊天记录交给记忆宫殿处理，完成后可安全清空聊天。<br/>
                                  <span className="text-slate-300">看不懂这是什么的话不需要操作此按钮。</span>
                              </p>
                          </div>
@@ -508,8 +524,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                         if (palaceOn && !autoOn) {
                             return (
                                 <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-900 leading-relaxed">
-                                    ⚠️ 记忆宫殿已开，但 <b>自动归档没开</b>——palace 只在后台做向量索引，
-                                    <b>不</b>会自动写到"本月日度总结"里。<br/>
+                                    ⚠️ 记忆宫殿已开，但<b>自动归档没开</b>——记忆宫殿只在后台默默建记忆，不会写进月度总结。<br/>
                                     想让它自动写 → 神经链接 → 角色 → 记忆宫殿开关下面的 <b>"📚 自动归档"</b>；
                                     或者继续用下方按钮手动按当前选中的 <b>「{activeName}」</b> 风格跑。
                                 </div>
@@ -581,7 +596,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                     {typeof activeCharacter.hideBeforeMessageId === 'number' && activeCharacter.hideBeforeMessageId > 0 && (
                         <div className="bg-violet-50 border border-violet-200 rounded-xl p-2.5 text-[11px] text-violet-800 leading-relaxed mb-2">
                             <b>💡 已经有隐藏起点了</b>：灰色消息是自动/手动归档时标记为"已总结"的，AI 现在看不到原文，但能看到它们的总结。<br/>
-                            <span className="text-violet-600">记忆宫殿向量记忆有自己的水位线（和这里无关），不用手动管。</span>
+                            <span className="text-violet-600">记忆宫殿的记忆是自动维护的，跟这里无关，不用手动管。</span>
                         </div>
                     )}
                     <div className="sticky top-0 bg-white/95 backdrop-blur-sm z-10 pb-1.5 -mx-1 px-1">
@@ -734,6 +749,12 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                             转换语音
                         </button>
                     )}
+                    {voiceDownloadable && onDownloadVoice && (
+                        <button onClick={() => { onDownloadVoice(); setModalType('none'); }} className="w-full py-3 bg-sky-50 text-sky-600 font-medium rounded-2xl active:bg-sky-100 transition-colors flex items-center justify-center gap-2">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+                            下载语音
+                        </button>
+                    )}
                     <button onClick={onDeleteMessage} className="w-full py-3 bg-red-50 text-red-500 font-medium rounded-2xl active:bg-red-100 transition-colors flex items-center justify-center gap-2">
                         删除消息
                     </button>
@@ -745,9 +766,65 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                 footer={<><button onClick={() => setModalType('none')} className="flex-1 py-3 bg-slate-100 rounded-2xl">取消</button><button onClick={onDeleteEmoji} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl">删除</button></>}
             >
                 <div className="flex flex-col items-center gap-4 py-2">
-                    {selectedEmoji && <img src={selectedEmoji.url} className="w-24 h-24 object-contain rounded-xl border" />}
-                    <p className="text-center text-sm text-slate-500">确定要删除这个表情包吗？</p>
+                    {Array.isArray(selectedEmoji) ? (
+                        <div className="flex flex-wrap justify-center gap-2 max-h-48 overflow-y-auto no-scrollbar w-full px-2">
+                            {selectedEmoji.map((e: any, idx: number) => (
+                                <img key={idx} src={e.url} className="w-16 h-16 object-contain rounded-xl border border-slate-200" />
+                            ))}
+                        </div>
+                    ) : (
+                        selectedEmoji && <img src={selectedEmoji.url} className="w-24 h-24 object-contain rounded-xl border" />
+                    )}
+                    <p className="text-center text-sm text-slate-500">
+                        {Array.isArray(selectedEmoji) ? `确定要删除这 ${selectedEmoji.length} 个表情包吗？` : "确定要删除这个表情包吗？"}
+                    </p>
                 </div>
+            </Modal>
+
+            {/* Emoji Options Modal (shown on long-press) */}
+            <Modal isOpen={modalType === 'emoji-options'} title="表情包操作" onClose={() => setModalType('none')}>
+                <div className="flex flex-col items-center gap-4 py-1">
+                    {selectedEmoji && !Array.isArray(selectedEmoji) && (
+                        <div className="flex flex-col items-center gap-2">
+                            <img src={selectedEmoji.url} className="w-20 h-20 object-contain rounded-xl border border-slate-200" />
+                            <span className="text-sm font-medium text-slate-600 max-w-[12rem] truncate">{selectedEmoji.name}</span>
+                        </div>
+                    )}
+                    <div className="w-full space-y-3">
+                        <button
+                            onClick={() => { if (selectedEmoji && !Array.isArray(selectedEmoji)) setNewEmojiName(selectedEmoji.name); setModalType('rename-emoji'); }}
+                            className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125" />
+                            </svg>
+                            修改名称
+                        </button>
+                        <button
+                            onClick={() => setModalType('delete-emoji')}
+                            className="w-full py-3 bg-red-50 text-red-500 font-medium rounded-2xl active:bg-red-100 transition-colors flex items-center justify-center gap-2"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                            </svg>
+                            删除
+                        </button>
+                    </div>
+                </div>
+            </Modal>
+
+            {/* Rename Emoji Modal */}
+            <Modal
+                isOpen={modalType === 'rename-emoji'} title="修改表情包名称" onClose={() => setModalType('none')}
+                footer={<><button onClick={() => setModalType('none')} className="flex-1 py-3 bg-slate-100 rounded-2xl">取消</button><button onClick={onRenameEmoji} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl">保存</button></>}
+            >
+                <input
+                    value={newEmojiName}
+                    onChange={e => setNewEmojiName(e.target.value)}
+                    placeholder="输入表情包名称..."
+                    className="w-full bg-slate-100 rounded-2xl px-5 py-4 text-base font-bold focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all text-slate-700"
+                    autoFocus
+                />
             </Modal>
 
             {/* Delete Category Modal */}
@@ -830,7 +907,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
 
             {/* Schedule Modal */}
             <Modal
-                isOpen={modalType === 'schedule'} title={`${activeCharacter?.name || '角色'}の日程`} onClose={() => setModalType('none')}
+                isOpen={modalType === 'schedule'} title={`${activeCharacter?.name || '角色'}の日程/情绪`} onClose={() => setModalType('none')}
             >
                 <div className="max-h-[70vh] overflow-y-auto -mx-2 px-2">
                     {/* 总开关：关闭时不调副 API、不生成日程、不注入情绪 buff */}
@@ -841,7 +918,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                     <p className="text-xs font-bold text-slate-700">日程与情绪 Buff</p>
                                     <p className="text-[10px] text-slate-500 leading-relaxed mt-0.5">
                                         {isScheduleFeatureEnabled
-                                            ? '已开启：会调用副 API 生成今日日程，并在对话中评估情绪 buff。'
+                                            ? '已开启：角色会有今日日程，并在聊天中带上当下情绪。'
                                             : '已关闭：不调副 API，不生成日程，不注入情绪 buff。'}
                                     </p>
                                 </div>
@@ -906,6 +983,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                 onDelete={onScheduleDelete}
                                 onReroll={onScheduleReroll}
                                 onCoverImageChange={onScheduleCoverChange}
+                                onPlayTheater={onPlayTheater}
                                 isGenerating={isScheduleGenerating}
                             />
                             <p className="text-[10px] text-slate-400 text-center mt-3 leading-relaxed">

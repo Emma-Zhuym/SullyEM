@@ -4,7 +4,8 @@ import { useOS, DEFAULT_WALLPAPER } from '../context/OSContext';
 import { OSTheme, DesktopDecoration, AppearancePreset, Toast } from '../types';
 import { INSTALLED_APPS, Icons } from '../constants';
 import { processImage } from '../utils/file';
-import { ChatAppearanceEditor } from '../components/appearance/ChatAppearanceEditor';
+import { DB } from '../utils/db';
+import { isStatusBarHidden } from '../utils/iosStandalone';
 import { Sparkle } from '@phosphor-icons/react';
 import { ChatAppearanceEditor as ModularChatAppearanceEditor } from '../components/appearance/ChatAppearanceEditor';
 import { Capacitor } from '@capacitor/core';
@@ -75,6 +76,298 @@ const LongPressArea: React.FC<{
 const TwemojiImg: React.FC<{ code: string; alt?: string; className?: string }> = ({ code, alt, className = 'w-4 h-4 inline-block' }) => (
   <img src={`https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/${code}.png`} alt={alt || ''} className={className} draggable={false} />
 );
+
+const CATEGORY_LABELS: Record<string, { code: string; label: string }> = {
+  'stars': { code: '2728', label: 'Stars' },
+  'hearts': { code: '1f496', label: 'Hearts' },
+  'flowers': { code: '1f338', label: 'Flowers' },
+  'ribbons': { code: '1f380', label: 'Ribbons' },
+  'animals': { code: '1f431', label: 'Animals' },
+  'shapes': { code: '1f52e', label: 'Shapes' },
+  'badges': { code: '1f3f7', label: 'Badges' },
+};
+
+// --- Chat Appearance Editor Component ---
+const AVATAR_SHAPES: { value: 'circle' | 'rounded' | 'square'; label: string; preview: string }[] = [
+    { value: 'circle', label: '圆形', preview: 'rounded-full' },
+    { value: 'rounded', label: '圆角', preview: 'rounded-xl' },
+    { value: 'square', label: '方形', preview: 'rounded-none' },
+];
+const AVATAR_SIZES: { value: 'small' | 'medium' | 'large'; label: string; size: string }[] = [
+    { value: 'small', label: '小', size: 'w-7 h-7' },
+    { value: 'medium', label: '中', size: 'w-9 h-9' },
+    { value: 'large', label: '大', size: 'w-12 h-12' },
+];
+const BUBBLE_STYLES: { value: 'modern' | 'flat' | 'outline' | 'shadow'; label: string; desc: string }[] = [
+    { value: 'modern', label: '现代', desc: '圆角气泡+微透明' },
+    { value: 'flat', label: '扁平', desc: '无阴影纯色气泡' },
+    { value: 'outline', label: '描边', desc: '边框线条风格' },
+    { value: 'shadow', label: '立体', desc: '深阴影立体效果' },
+];
+const MSG_SPACINGS: { value: 'compact' | 'default' | 'spacious'; label: string }[] = [
+    { value: 'compact', label: '紧凑' },
+    { value: 'default', label: '默认' },
+    { value: 'spacious', label: '宽松' },
+];
+const HEADER_STYLES: { value: 'default' | 'minimal' | 'gradient'; label: string; desc: string }[] = [
+    { value: 'default', label: '默认', desc: '标准头部' },
+    { value: 'minimal', label: '简约', desc: '仅显示名字' },
+    { value: 'gradient', label: '渐变', desc: '渐变色头部' },
+];
+const INPUT_STYLES: { value: 'default' | 'rounded' | 'flat'; label: string }[] = [
+    { value: 'default', label: '默认' },
+    { value: 'rounded', label: '圆角' },
+    { value: 'flat', label: '扁平' },
+];
+const TIMESTAMP_OPTIONS: { value: 'always' | 'hover' | 'never'; label: string }[] = [
+    { value: 'always', label: '始终显示' },
+    { value: 'hover', label: '悬停显示' },
+    { value: 'never', label: '不显示' },
+];
+
+// Chat Layout Presets (built-in combinations)
+const CHAT_LAYOUT_COMBOS: { name: string; desc: string; config: Partial<OSTheme> }[] = [
+    { name: '默认', desc: '标准聊天界面', config: { chatAvatarShape: 'circle', chatAvatarSize: 'medium', chatBubbleStyle: 'modern', chatMessageSpacing: 'default', chatHeaderStyle: 'default', chatInputStyle: 'default', chatShowTimestamp: 'hover' } },
+    { name: 'QQ风格', desc: '圆角头像+紧凑间距', config: { chatAvatarShape: 'rounded', chatAvatarSize: 'medium', chatBubbleStyle: 'shadow', chatMessageSpacing: 'compact', chatHeaderStyle: 'gradient', chatInputStyle: 'rounded', chatShowTimestamp: 'hover' } },
+    { name: '微信风格', desc: '方形头像+扁平气泡', config: { chatAvatarShape: 'square', chatAvatarSize: 'medium', chatBubbleStyle: 'flat', chatMessageSpacing: 'default', chatHeaderStyle: 'default', chatInputStyle: 'flat', chatShowTimestamp: 'hover' } },
+    { name: 'iMessage', desc: '大圆头像+宽松气泡', config: { chatAvatarShape: 'circle', chatAvatarSize: 'large', chatBubbleStyle: 'modern', chatMessageSpacing: 'spacious', chatHeaderStyle: 'minimal', chatInputStyle: 'rounded', chatShowTimestamp: 'always' } },
+    { name: '简约模式', desc: '小头像+最简界面', config: { chatAvatarShape: 'circle', chatAvatarSize: 'small', chatBubbleStyle: 'flat', chatMessageSpacing: 'compact', chatHeaderStyle: 'minimal', chatInputStyle: 'flat', chatShowTimestamp: 'never' } },
+];
+
+// --- 桌面整机风格（皮肤）---
+// 动森壁纸：NookPhone 同款奶油底（#F8F4E8），底部极淡草色透气。纯 CSS 渐变，让彩色图标平铺更跳。
+const ACNH_WALLPAPER = 'linear-gradient(180deg, #F8F4E8 0%, #F3EFDD 58%, #E6EECE 100%)';
+// 手游主题壁纸：近白底 + 极淡薰衣草/粉光晕（照搬原创参考图，整体偏白不发紫）。
+const MOBILEGAME_WALLPAPER = 'radial-gradient(95% 55% at 85% 0%, #fdeef7 0%, transparent 50%), radial-gradient(85% 55% at 6% 10%, #f6f2fc 0%, transparent 55%), linear-gradient(180deg, #fdfbff 0%, #f9f6fd 55%, #f4f0fa 100%)';
+
+const DESKTOP_SKINS: { id: string; name: string; desc: string; swatch: string; config: Partial<OSTheme> }[] = [
+  {
+    id: 'animalcrossing',
+    name: '动森风格',
+    desc: 'NookPhone 彩色图标 · 草地天空 · 暖色界面',
+    swatch: 'linear-gradient(135deg,#BCE7F5 0%,#BBE38F 55%,#7CBA4C 100%)',
+    config: {
+      skin: 'animalcrossing',
+      hue: 95, saturation: 48, lightness: 56,
+      contentColor: '#725d42',
+      wallpaper: ACNH_WALLPAPER,
+      chatAvatarShape: 'rounded', chatAvatarSize: 'medium',
+      chatBubbleStyle: 'modern', chatMessageSpacing: 'spacious',
+      chatHeaderStyle: 'default', chatInputStyle: 'rounded',
+      chatChromeStyle: 'soft', chatBackgroundStyle: 'paper',
+      chatShowTimestamp: 'hover',
+    },
+  },
+  {
+    id: 'mobilegame',
+    name: '手游风格',
+    desc: '梦幻粉紫二次元手游首页 · 星芒满屏 · 圆润可爱',
+    swatch: 'linear-gradient(135deg,#f7d9ec 0%,#d9d4f5 55%,#a8b8e8 100%)',
+    config: {
+      skin: 'mobilegame',
+      hue: 270, saturation: 45, lightness: 70,
+      contentColor: '#6b5b95',
+      wallpaper: MOBILEGAME_WALLPAPER,
+      chatAvatarShape: 'circle', chatAvatarSize: 'medium',
+      chatBubbleStyle: 'modern', chatMessageSpacing: 'default',
+      chatHeaderStyle: 'gradient', chatInputStyle: 'rounded',
+      chatChromeStyle: 'soft', chatBackgroundStyle: 'paper',
+      chatShowTimestamp: 'hover',
+    },
+  },
+  {
+    id: 'default',
+    name: '默认风格',
+    desc: '经典 SullyOS 玻璃拟物界面',
+    swatch: 'linear-gradient(135deg,#FFDEE9 0%,#B5FFFC 100%)',
+    config: {
+      skin: 'default',
+      hue: 245, saturation: 25, lightness: 65,
+      contentColor: '#ffffff',
+      wallpaper: DEFAULT_WALLPAPER,
+    },
+  },
+];
+
+// 动森叶子贴纸：切换动森皮肤时自动撒到桌面。用 acnh-leaf- 前缀标记，便于切回时单独清掉而不动用户自己的装饰。
+const ACNH_LEAF_PREFIX = 'acnh-leaf-';
+const acnhLeafSvg = (fill: string, vein: string) => `data:image/svg+xml,${encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">`
+  + `<path d="M50 8 C78 20 88 50 78 82 C74 92 60 96 50 92 C40 96 26 92 22 82 C12 50 22 20 50 8Z" fill="${fill}"/>`
+  + `<path d="M50 14 L50 88" stroke="${vein}" stroke-width="3" fill="none" opacity="0.5"/>`
+  + `<path d="M50 35 Q66 32 74 42" stroke="${vein}" stroke-width="2" fill="none" opacity="0.4"/>`
+  + `<path d="M50 52 Q34 49 26 59" stroke="${vein}" stroke-width="2" fill="none" opacity="0.4"/></svg>`
+)}`;
+const ACNH_LEAF_VARIANTS = [
+  acnhLeafSvg('#7CBA4C', '#4d7a2a'),
+  acnhLeafSvg('#9ED25F', '#5c8a30'),
+  acnhLeafSvg('#5FAE6E', '#356b3f'),
+];
+const ACNH_LEAF_LAYOUT: { x: number; y: number; scale: number; rotation: number; opacity: number; flip?: boolean }[] = [
+  { x: 12, y: 14, scale: 0.8, rotation: -20, opacity: 0.9 },
+  { x: 86, y: 17, scale: 0.7, rotation: 30, opacity: 0.85, flip: true },
+  { x: 17, y: 80, scale: 0.9, rotation: 15, opacity: 0.9 },
+  { x: 88, y: 78, scale: 0.72, rotation: -25, opacity: 0.85 },
+  { x: 50, y: 91, scale: 0.6, rotation: 8, opacity: 0.8 },
+  { x: 82, y: 48, scale: 0.55, rotation: -40, opacity: 0.7, flip: true },
+];
+const buildAcnhLeaves = (): DesktopDecoration[] => ACNH_LEAF_LAYOUT.map((p, i) => ({
+  id: `${ACNH_LEAF_PREFIX}${i}`,
+  type: 'preset',
+  content: ACNH_LEAF_VARIANTS[i % ACNH_LEAF_VARIANTS.length],
+  x: p.x, y: p.y, scale: p.scale, rotation: p.rotation, opacity: p.opacity,
+  zIndex: 5 + i, flip: p.flip,
+}));
+
+const ChatAppearanceEditor: React.FC<{ theme: OSTheme; updateTheme: (u: Partial<OSTheme>) => void }> = ({ theme, updateTheme }) => {
+    const avatarShape = theme.chatAvatarShape || 'circle';
+    const avatarSize = theme.chatAvatarSize || 'medium';
+    const bubbleStyle = theme.chatBubbleStyle || 'modern';
+    const msgSpacing = theme.chatMessageSpacing || 'default';
+    const headerStyle = theme.chatHeaderStyle || 'default';
+    const inputStyle = theme.chatInputStyle || 'default';
+    const showTimestamp = theme.chatShowTimestamp || 'hover';
+
+    const OptionButton: React.FC<{ active: boolean; label: string; desc?: string; onClick: () => void }> = ({ active, label, desc, onClick }) => (
+        <button onClick={onClick}
+            className={`px-3 py-2 text-[11px] font-bold rounded-xl border transition-all active:scale-95 ${active ? 'bg-primary/10 text-primary border-primary/30 ring-1 ring-primary/20' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}>
+            <div>{label}</div>
+            {desc && <div className="text-[9px] font-normal mt-0.5 opacity-70">{desc}</div>}
+        </button>
+    );
+
+    return (
+        <div className="space-y-5">
+            {/* Quick Combo Presets */}
+            <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+                <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">快速风格</h2>
+                <p className="text-[10px] text-slate-400 mb-3">一键切换聊天界面风格组合，包含头像、气泡、间距等全套配置。</p>
+                <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+                    {CHAT_LAYOUT_COMBOS.map(combo => (
+                        <button key={combo.name} onClick={() => updateTheme(combo.config)}
+                            className="shrink-0 px-4 py-2.5 bg-slate-50 rounded-xl border border-slate-200 hover:border-primary/40 active:scale-95 transition-all text-left">
+                            <div className="text-xs font-bold text-slate-700">{combo.name}</div>
+                            <div className="text-[9px] text-slate-400 mt-0.5">{combo.desc}</div>
+                        </button>
+                    ))}
+                </div>
+            </section>
+
+            {/* Live Preview */}
+            <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+                <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">预览</h2>
+                <div className="bg-slate-50 rounded-2xl border border-slate-100 overflow-hidden">
+                    {/* Fake header */}
+                    <div className={`px-4 py-3 flex items-center gap-3 border-b border-slate-100 ${headerStyle === 'gradient' ? 'bg-gradient-to-r from-primary/20 to-primary/5' : headerStyle === 'minimal' ? 'bg-white' : 'bg-slate-50'}`}>
+                        <div className={`${AVATAR_SIZES.find(s => s.value === avatarSize)?.size || 'w-9 h-9'} ${AVATAR_SHAPES.find(s => s.value === avatarShape)?.preview || 'rounded-full'} bg-primary/20 shrink-0`} />
+                        <div>
+                            <div className="text-xs font-bold text-slate-700">角色名</div>
+                            {headerStyle !== 'minimal' && <div className="text-[9px] text-slate-400">在线</div>}
+                        </div>
+                    </div>
+                    {/* Fake messages */}
+                    <div className={`p-3 space-y-${msgSpacing === 'compact' ? '1' : msgSpacing === 'spacious' ? '4' : '2'}`}>
+                        {/* AI message */}
+                        <div className="flex gap-2 items-end">
+                            <div className={`${AVATAR_SIZES.find(s => s.value === avatarSize)?.size || 'w-9 h-9'} ${AVATAR_SHAPES.find(s => s.value === avatarShape)?.preview || 'rounded-full'} bg-pink-200 shrink-0`} />
+                            <div className={`px-3 py-2 text-[11px] max-w-[65%] ${bubbleStyle === 'outline' ? 'bg-transparent border-2 border-slate-300 rounded-2xl rounded-bl-sm' : bubbleStyle === 'shadow' ? 'bg-white shadow-md rounded-2xl rounded-bl-sm' : bubbleStyle === 'flat' ? 'bg-slate-100 rounded-2xl rounded-bl-sm' : 'bg-white/90 backdrop-blur-sm rounded-2xl rounded-bl-sm shadow-sm'}`}>
+                                你好呀，今天过得怎么样？
+                                {showTimestamp === 'always' && <div className="text-[8px] text-slate-300 mt-1 text-right">14:32</div>}
+                            </div>
+                        </div>
+                        {/* User message */}
+                        <div className="flex gap-2 items-end justify-end">
+                            <div className={`px-3 py-2 text-[11px] text-white max-w-[65%] ${bubbleStyle === 'outline' ? 'bg-transparent border-2 border-primary text-primary rounded-2xl rounded-br-sm' : bubbleStyle === 'shadow' ? 'bg-primary shadow-md rounded-2xl rounded-br-sm' : bubbleStyle === 'flat' ? 'bg-primary rounded-2xl rounded-br-sm' : 'bg-primary/90 backdrop-blur-sm rounded-2xl rounded-br-sm shadow-sm'}`}
+                                style={bubbleStyle === 'outline' ? { color: `hsl(${theme.hue}, ${theme.saturation}%, ${theme.lightness}%)` } : undefined}>
+                                挺好的，今天天气不错！
+                                {showTimestamp === 'always' && <div className={`text-[8px] mt-1 text-right ${bubbleStyle === 'outline' ? 'opacity-50' : 'text-white/60'}`}>14:33</div>}
+                            </div>
+                            <div className={`${AVATAR_SIZES.find(s => s.value === avatarSize)?.size || 'w-9 h-9'} ${AVATAR_SHAPES.find(s => s.value === avatarShape)?.preview || 'rounded-full'} bg-primary/30 shrink-0`} />
+                        </div>
+                    </div>
+                    {/* Fake input */}
+                    <div className={`px-3 py-2 border-t border-slate-100 ${inputStyle === 'flat' ? 'bg-slate-50' : 'bg-white'}`}>
+                        <div className={`bg-slate-100 px-4 py-2 text-[10px] text-slate-400 ${inputStyle === 'rounded' ? 'rounded-full' : inputStyle === 'flat' ? 'rounded-none border-b border-slate-200 bg-transparent' : 'rounded-xl'}`}>输入消息...</div>
+                    </div>
+                </div>
+            </section>
+
+            {/* Avatar Shape */}
+            <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+                <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">头像形状</h2>
+                <div className="flex gap-2">
+                    {AVATAR_SHAPES.map(s => (
+                        <OptionButton key={s.value} active={avatarShape === s.value} label={s.label} onClick={() => updateTheme({ chatAvatarShape: s.value })} />
+                    ))}
+                </div>
+            </section>
+
+            {/* Avatar Size */}
+            <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+                <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">头像大小</h2>
+                <div className="flex gap-2">
+                    {AVATAR_SIZES.map(s => (
+                        <OptionButton key={s.value} active={avatarSize === s.value} label={s.label} onClick={() => updateTheme({ chatAvatarSize: s.value })} />
+                    ))}
+                </div>
+            </section>
+
+            {/* Bubble Style */}
+            <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+                <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">气泡风格</h2>
+                <div className="flex gap-2 flex-wrap">
+                    {BUBBLE_STYLES.map(s => (
+                        <OptionButton key={s.value} active={bubbleStyle === s.value} label={s.label} desc={s.desc} onClick={() => updateTheme({ chatBubbleStyle: s.value })} />
+                    ))}
+                </div>
+            </section>
+
+            {/* Message Spacing */}
+            <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+                <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">消息间距</h2>
+                <div className="flex gap-2">
+                    {MSG_SPACINGS.map(s => (
+                        <OptionButton key={s.value} active={msgSpacing === s.value} label={s.label} onClick={() => updateTheme({ chatMessageSpacing: s.value })} />
+                    ))}
+                </div>
+            </section>
+
+            {/* Header Style */}
+            <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+                <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">聊天头部</h2>
+                <div className="flex gap-2 flex-wrap">
+                    {HEADER_STYLES.map(s => (
+                        <OptionButton key={s.value} active={headerStyle === s.value} label={s.label} desc={s.desc} onClick={() => updateTheme({ chatHeaderStyle: s.value })} />
+                    ))}
+                </div>
+            </section>
+
+            {/* Input Style */}
+            <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+                <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">输入框样式</h2>
+                <div className="flex gap-2">
+                    {INPUT_STYLES.map(s => (
+                        <OptionButton key={s.value} active={inputStyle === s.value} label={s.label} onClick={() => updateTheme({ chatInputStyle: s.value })} />
+                    ))}
+                </div>
+            </section>
+
+            {/* Timestamp Display */}
+            <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+                <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-3">时间戳显示</h2>
+                <div className="flex gap-2">
+                    {TIMESTAMP_OPTIONS.map(s => (
+                        <OptionButton key={s.value} active={showTimestamp === s.value} label={s.label} onClick={() => updateTheme({ chatShowTimestamp: s.value })} />
+                    ))}
+                </div>
+            </section>
+
+            <div className="text-[10px] text-slate-400 text-center px-4 pb-4">
+                聊天界面设置全局生效。单个角色的气泡颜色、背景图等可在聊天内的「捏主题」中自定义。
+            </div>
+        </div>
+    );
+};
 
 // --- Preset Manager Component ---
 interface PresetManagerProps {
@@ -331,7 +624,17 @@ const PresetManager: React.FC<PresetManagerProps> = ({ presets, onSave, onApply,
 };
 
 const Appearance: React.FC = () => {
-  const { theme, updateTheme, closeApp, setCustomIcon, customIcons, addToast, appearancePresets, saveAppearancePreset, applyAppearancePreset, deleteAppearancePreset, renameAppearancePreset, exportAppearancePreset, importAppearancePreset, resetAppearance } = useOS();
+  const { theme, updateTheme, closeApp, setCustomIcon, customIcons, addToast, appearancePresets, saveAppearancePreset, applyAppearancePreset, deleteAppearancePreset, renameAppearancePreset, exportAppearancePreset, importAppearancePreset, resetAppearance, characters, updateCharacter } = useOS();
+  // 一键还原全部「聊天白框自定义 CSS」：清掉全局 + 每个角色自带的。
+  // 兼作救援：单角色的坏 CSS 把聊天界面整崩、进不去该角色设置时，从这里一键全清即可恢复。
+  const resetAllChromeCss = () => {
+    let n = 0;
+    if (theme.chatChromeCustomCss) { updateTheme({ chatChromeCustomCss: '' }); n++; }
+    (characters || []).forEach((c: any) => {
+      if (c?.chromeCustomCss) { updateCharacter(c.id, { chromeCustomCss: '' } as any); n++; }
+    });
+    addToast(n ? `已还原 ${n} 处聊天白框美化` : '没有需要还原的白框美化', n ? 'success' : 'info');
+  };
   const [activeTab, setActiveTab] = useState<'theme' | 'icons' | 'presets' | 'chat'>('theme');
   const wallpaperInputRef = useRef<HTMLInputElement>(null);
   const [wallpaperUrl, setWallpaperUrl] = useState('');
@@ -510,6 +813,50 @@ const Appearance: React.FC = () => {
       addToast('网络字体已应用', 'success');
   };
 
+  // 切换桌面整机风格：动森模式自动撒叶子贴纸（保留用户已有装饰），切回默认时只清掉 acnh 叶子。
+  // 壁纸处理：进入动森前备份用户原壁纸（data URI 存 IndexedDB，渐变/URL 存 localStorage），
+  // 切回默认时还原，避免覆盖用户自己设的桌面壁纸。
+  const ACNH_WP_BACKUP_KEY = 'acnh_wallpaper_backup';
+  const applyDesktopSkin = async (skin: { id: string; name: string; config: Partial<OSTheme> }) => {
+      const goingDefault = skin.id === 'default';
+      const currentlyThemed = (theme.skin || 'default') !== 'default';
+
+      let wallpaper: string;
+      if (!goingDefault) {
+          // 非默认皮肤（动森 / 手游 …）使用各自预设的壁纸
+          wallpaper = (skin.config.wallpaper as string) || DEFAULT_WALLPAPER;
+          // 仅从「默认 → 某皮肤」时备份一次用户原壁纸；皮肤之间互切不再覆盖备份，保住最初的用户壁纸
+          if (!currentlyThemed) {
+              const dbWp = await DB.getAsset('wallpaper'); // 用户若用 data URI 壁纸，真值在这
+              const cur = dbWp || theme.wallpaper || '';
+              if (cur && cur.startsWith('data:')) {
+                  await DB.saveAsset('wallpaper_user_backup', cur);
+                  localStorage.setItem(ACNH_WP_BACKUP_KEY, '__asset__');
+              } else {
+                  localStorage.setItem(ACNH_WP_BACKUP_KEY, cur);
+                  await DB.deleteAsset('wallpaper_user_backup');
+              }
+          }
+      } else {
+          // 切回默认：还原备份的用户壁纸
+          const marker = localStorage.getItem(ACNH_WP_BACKUP_KEY);
+          if (marker === '__asset__') {
+              wallpaper = (await DB.getAsset('wallpaper_user_backup')) || DEFAULT_WALLPAPER;
+          } else if (marker !== null) {
+              wallpaper = marker || DEFAULT_WALLPAPER; // 空字符串=用户原本就是默认
+          } else {
+              wallpaper = DEFAULT_WALLPAPER; // 没有备份记录（老用户首次切回）
+          }
+      }
+
+      const existing = (theme.desktopDecorations || []).filter(d => !d.id.startsWith(ACNH_LEAF_PREFIX));
+      const desktopDecorations = skin.id === 'animalcrossing' ? [...existing, ...buildAcnhLeaves()] : existing;
+      // skin.config 里写死的 wallpaper 不用，改用上面算出的（备份/还原后的）值
+      const { wallpaper: _ignored, ...restConfig } = skin.config;
+      updateTheme({ ...restConfig, wallpaper, desktopDecorations });
+      addToast(`已切换到「${skin.name}」`, 'success');
+  };
+
   const handleIconUpload = async (file: File) => {
       if (!selectedAppId) return;
       try {
@@ -523,14 +870,16 @@ const Appearance: React.FC = () => {
 
   return (
     <div className="h-full w-full bg-slate-50 flex flex-col font-light">
-      <div className="h-20 bg-white/70 backdrop-blur-md flex items-end pb-3 px-4 border-b border-white/40 shrink-0 z-10 sticky top-0">
-        <div className="flex items-center gap-2 w-full">
-            <button onClick={closeApp} className="p-2 -ml-2 rounded-full hover:bg-black/5 active:scale-90 transition-transform">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-slate-600">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
-                </svg>
-            </button>
-            <h1 className="text-xl font-medium text-slate-700 tracking-wide">外观定制</h1>
+      <div className="bg-white/70 backdrop-blur-md border-b border-white/40 shrink-0 z-10 sticky top-0" style={{ paddingTop: 'var(--safe-top)' }}>
+        <div className="flex items-center px-4 py-3">
+          <div className="flex items-center gap-2 w-full">
+              <button onClick={closeApp} className="p-2 -ml-2 rounded-full hover:bg-black/5 active:scale-90 transition-transform">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-slate-600">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
+                  </svg>
+              </button>
+              <h1 className="text-xl font-medium text-slate-700 tracking-wide">外观定制</h1>
+          </div>
         </div>
       </div>
 
@@ -544,6 +893,47 @@ const Appearance: React.FC = () => {
       <div className="flex-1 overflow-y-auto p-5 space-y-6 no-scrollbar">
         {activeTab === 'theme' ? (
             <>
+                <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+                    <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-1">桌面风格</h2>
+                    <p className="text-[10px] text-slate-400 mb-4">一键切换整机主题：壁纸、配色、图标外观、聊天界面全部联动改变。</p>
+                    <div className="grid grid-cols-2 gap-3">
+                        {DESKTOP_SKINS.map(skin => {
+                            const active = (theme.skin || 'default') === skin.id;
+                            return (
+                                <button
+                                    key={skin.id}
+                                    onClick={() => applyDesktopSkin(skin)}
+                                    className={`relative text-left rounded-2xl p-3 border-2 transition-all active:scale-[0.98] ${active ? 'border-primary ring-2 ring-primary/20' : 'border-slate-200 hover:border-slate-300'}`}
+                                >
+                                    <div className="h-16 w-full rounded-xl mb-2 shadow-inner" style={{ background: skin.swatch }} />
+                                    <div className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                                        {skin.name}
+                                        {active && <span className="text-[9px] font-bold text-primary">· 当前</span>}
+                                    </div>
+                                    <div className="text-[9px] text-slate-400 mt-0.5 leading-snug">{skin.desc}</div>
+                                </button>
+                            );
+                        })}
+                    </div>
+
+                    {/* 动森模式专属：聊天 App 是否联动 */}
+                    {(theme.skin || 'default') === 'animalcrossing' && (
+                        <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl bg-slate-50 border border-slate-100 px-4 py-3">
+                            <div className="min-w-0">
+                                <div className="text-xs font-bold text-slate-700">聊天界面跟随动森</div>
+                                <div className="text-[10px] text-slate-400 mt-0.5 leading-snug">关掉后，聊天 App 保持原来的样式</div>
+                            </div>
+                            <button
+                                onClick={() => updateTheme({ acnhChatSync: theme.acnhChatSync === false ? true : false })}
+                                className={`relative w-11 h-6 rounded-full shrink-0 transition-colors ${theme.acnhChatSync !== false ? 'bg-primary' : 'bg-slate-300'}`}
+                                aria-label="聊天界面跟随动森"
+                            >
+                                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${theme.acnhChatSync !== false ? 'translate-x-5' : ''}`} />
+                            </button>
+                        </div>
+                    )}
+                </section>
+
                 <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
                     <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Preset Themes</h2>
                     <div className="flex gap-3 mb-6 overflow-x-auto no-scrollbar pb-1">
@@ -669,13 +1059,30 @@ const Appearance: React.FC = () => {
                     <div className="flex items-center justify-between">
                         <div>
                             <div className="text-sm font-medium text-slate-700">隐藏顶部时间栏</div>
-                            <div className="text-[10px] text-slate-400 mt-0.5">隐藏屏幕顶部的时间、电量等信息</div>
+                            <div className="text-[10px] text-slate-400 mt-0.5">隐藏屏幕顶部的时间、电量（iOS 全屏默认隐藏，避免与系统重复）</div>
                         </div>
                         <button
-                            onClick={() => updateTheme({ hideStatusBar: !theme.hideStatusBar })}
-                            className={`w-12 h-7 rounded-full transition-colors relative ${theme.hideStatusBar ? 'bg-primary' : 'bg-slate-200'}`}
+                            onClick={() => updateTheme({ hideStatusBar: !isStatusBarHidden(theme.hideStatusBar) })}
+                            className={`w-12 h-7 rounded-full transition-colors relative ${isStatusBarHidden(theme.hideStatusBar) ? 'bg-primary' : 'bg-slate-200'}`}
                         >
-                            <div className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${theme.hideStatusBar ? 'translate-x-6' : 'translate-x-1'}`} />
+                            <div className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${isStatusBarHidden(theme.hideStatusBar) ? 'translate-x-6' : 'translate-x-1'}`} />
+                        </button>
+                    </div>
+                </section>
+
+                {/* Desktop Music Widget Style */}
+                <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+                    <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">桌面组件</h2>
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <div className="text-sm font-medium text-slate-700">音乐卡片浅色系</div>
+                            <div className="text-[10px] text-slate-400 mt-0.5">桌面第二页「正在播放」卡片改用浅色样式（默认深色玻璃）。仅默认皮肤生效。</div>
+                        </div>
+                        <button
+                            onClick={() => updateTheme({ nowPlayingWidgetLight: !theme.nowPlayingWidgetLight })}
+                            className={`w-12 h-7 rounded-full transition-colors relative shrink-0 ml-3 ${theme.nowPlayingWidgetLight ? 'bg-primary' : 'bg-slate-200'}`}
+                        >
+                            <div className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${theme.nowPlayingWidgetLight ? 'translate-x-6' : 'translate-x-1'}`} />
                         </button>
                     </div>
                 </section>
@@ -1096,7 +1503,7 @@ const Appearance: React.FC = () => {
                 currentTheme={theme}
             />
         ) : activeTab === 'chat' ? (
-            <ChatAppearanceEditor theme={theme} updateTheme={updateTheme} />
+            <ModularChatAppearanceEditor theme={theme} updateTheme={updateTheme} onResetAllChrome={resetAllChromeCss} />
         ) : null}
       </div>
     </div>
