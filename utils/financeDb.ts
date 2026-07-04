@@ -202,6 +202,42 @@ export const FinanceDB = {
   saveTAComment: (comment: { id: string; text: string; createdAt: number }) => put(STORE_TA_COMMENTS, comment),
   getAllTAComments: () => getAll<{ id: string; text: string; createdAt: number }>(STORE_TA_COMMENTS),
 
+  // 备份导出：一次性读出全部 store
+  exportAll: async () => {
+    const [accounts, categories, transactions, taComments, settings] = await Promise.all([
+      getAll<FinanceAccount>(STORE_ACCOUNTS),
+      getAll<FinanceCategory>(STORE_CATEGORIES),
+      getAll<FinanceTransaction>(STORE_TX),
+      getAll<{ id: string; text: string; createdAt: number }>(STORE_TA_COMMENTS),
+      getAll<{ key: string; value: unknown }>(STORE_SETTINGS),
+    ]);
+    return { accounts, categories, transactions, taComments, settings };
+  },
+
+  // 备份导入：清空后写入全部数据
+  importAll: async (data: {
+    accounts?: FinanceAccount[];
+    categories?: FinanceCategory[];
+    transactions?: FinanceTransaction[];
+    taComments?: { id: string; text: string; createdAt: number }[];
+    settings?: { key: string; value: unknown }[];
+  }) => {
+    const db = await openFinanceDB();
+    const storeNames = [STORE_ACCOUNTS, STORE_CATEGORIES, STORE_TX, STORE_TA_COMMENTS, STORE_SETTINGS]
+      .filter(s => db.objectStoreNames.contains(s));
+    const tx = db.transaction(storeNames, 'readwrite');
+    for (const name of storeNames) tx.objectStore(name).clear();
+    if (data.accounts) for (const a of data.accounts) tx.objectStore(STORE_ACCOUNTS).put(a);
+    if (data.categories) for (const c of data.categories) tx.objectStore(STORE_CATEGORIES).put(c);
+    if (data.transactions) for (const t of data.transactions) tx.objectStore(STORE_TX).put(t);
+    if (data.taComments) for (const c of data.taComments) tx.objectStore(STORE_TA_COMMENTS).put(c);
+    if (data.settings) for (const s of data.settings) tx.objectStore(STORE_SETTINGS).put(s);
+    return new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  },
+
   // 余额计算
   calcAccountBalance: async (account: FinanceAccount): Promise<number> => {
     const allTx = await getAll<FinanceTransaction>(STORE_TX);

@@ -704,11 +704,10 @@ const Chat: React.FC = () => {
         }
     }, [activeCharacterId, reloadMessages]);
 
-    // 进入/切换角色时触发「登场」过场。useLayoutEffect 在浏览器绘制前置真，
-    // 让过场层先盖住，避免一帧闪到新角色的空聊天界面。
-    useLayoutEffect(() => {
-        if (activeCharacterId) setShowEntry(true);
-    }, [activeCharacterId]);
+    // EM: 禁用角色登场过场动画
+    // useLayoutEffect(() => {
+    //     if (activeCharacterId) setShowEntry(true);
+    // }, [activeCharacterId]);
 
     useEffect(() => {
         let clearTimer: ReturnType<typeof setTimeout> | null = null;

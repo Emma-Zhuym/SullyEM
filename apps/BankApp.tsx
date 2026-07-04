@@ -119,7 +119,7 @@ const BankApp: React.FC = () => {
   return (
     <div className="h-full flex flex-col" style={{ background: 'linear-gradient(165deg, #f3f0ff 0%, #eef2ff 40%, #f0f4ff 100%)' }}>
       {/* 顶部导航栏 */}
-      <div className="shrink-0 relative flex items-center px-4 pt-12 pb-2">
+      <div className="shrink-0 relative flex items-center px-4 pb-2" style={{ paddingTop: 'calc(var(--safe-top, 0px) + 0.5rem)' }}>
         {/* 左侧返回 */}
         <button
           onClick={closeApp}
@@ -265,7 +265,7 @@ const AccountForm: React.FC<{
   return (
     <div className="absolute inset-0 z-50 flex flex-col" style={{ background: 'linear-gradient(165deg, #f3f0ff 0%, #eef2ff 40%, #f0f4ff 100%)' }}>
       {/* Header */}
-      <div className="shrink-0 flex items-center justify-between px-4 pt-12 pb-3">
+      <div className="shrink-0 flex items-center justify-between px-4 pb-3" style={{ paddingTop: 'calc(var(--safe-top, 0px) + 0.5rem)' }}>
         <button onClick={onClose} className="flex items-center text-blue-500 text-sm">
           <CaretLeft className="w-5 h-5" weight="bold" /> 返回
         </button>
@@ -473,7 +473,7 @@ const SettingsPage: React.FC<{
 
   return (
     <div className="absolute inset-0 z-50 flex flex-col" style={{ background: 'linear-gradient(165deg, #f3f0ff 0%, #eef2ff 40%, #f0f4ff 100%)' }}>
-      <div className="shrink-0 flex items-center justify-between px-4 pt-12 pb-3">
+      <div className="shrink-0 flex items-center justify-between px-4 pb-3" style={{ paddingTop: 'calc(var(--safe-top, 0px) + 0.5rem)' }}>
         <button onClick={onClose} className="flex items-center text-blue-500 text-sm">
           <CaretLeft className="w-5 h-5" weight="bold" /> 返回
         </button>
@@ -675,7 +675,7 @@ const CategoryEditForm: React.FC<{
 
   return (
     <div className="absolute inset-0 z-50 flex flex-col" style={{ background: 'linear-gradient(165deg, #f3f0ff 0%, #eef2ff 40%, #f0f4ff 100%)' }}>
-      <div className="shrink-0 flex items-center justify-between px-4 pt-12 pb-3">
+      <div className="shrink-0 flex items-center justify-between px-4 pb-3" style={{ paddingTop: 'calc(var(--safe-top, 0px) + 0.5rem)' }}>
         <button onClick={onClose} className="flex items-center text-blue-500 text-sm">
           <CaretLeft className="w-5 h-5" weight="bold" /> 返回
         </button>
@@ -819,7 +819,7 @@ const TransactionForm: React.FC<{
 
   return (
     <div className="absolute inset-0 z-50 flex flex-col" style={{ background: 'linear-gradient(165deg, #f3f0ff 0%, #eef2ff 40%, #f0f4ff 100%)' }}>
-      <div className="shrink-0 flex items-center justify-between px-4 pt-12 pb-3">
+      <div className="shrink-0 flex items-center justify-between px-4 pb-3" style={{ paddingTop: 'calc(var(--safe-top, 0px) + 0.5rem)' }}>
         <button onClick={onClose} className="flex items-center text-blue-500 text-sm">
           <CaretLeft className="w-5 h-5" weight="bold" /> 返回
         </button>

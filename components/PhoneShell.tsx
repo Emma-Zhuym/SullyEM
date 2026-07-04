@@ -569,11 +569,8 @@ const PhoneShell: React.FC = () => {
     });
   }, [theme.wallpaper]);
 
-  // 冷启动：先放「世界入场」cinematic（数据没就绪时它持续呼吸等待，绝不出现 spinner）。
-  // BootSequence 在「数据就绪 + 停留够时长」后推进退场，再交还控制权给下方的锁屏/桌面。
-  if (!bootDone) {
-    return <BootSequence dataReady={isDataLoaded} wallpaper={theme.wallpaper} onDone={() => setBootDone(true)} />;
-  }
+  // EM: 禁用冷启动 BootSequence 动画，直接等数据加载完成
+  if (!bootDone && isDataLoaded) setBootDone(true);
 
   // 兜底：理论上 bootDone 时数据已就绪；万一未就绪（极端慢）退化为最简静态深色屏，不闪 spinner。
   if (!isDataLoaded) {
@@ -755,8 +752,7 @@ const PhoneShell: React.FC = () => {
                     关键：只动 opacity、不做 scale/translate —— 否则会把整棵（常含大量头像图片的）
                     App 子树栅格化进 transform 图层，角色列表类 App 首帧会卡顿一下（停顿一秒）。
                     时长也压短，进重 App 时不至于多等。 */}
-                <div key={activeApp} className="w-full h-full" style={{ animation: 'appEnterFade 200ms ease-out both' }}>
-                  <style>{`@keyframes appEnterFade{from{opacity:0}to{opacity:1}}`}</style>
+                <div key={activeApp} className="w-full h-full">
                   {renderApp()}
                 </div>
               </Suspense>

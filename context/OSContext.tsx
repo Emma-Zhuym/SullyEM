@@ -2866,6 +2866,23 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
               // 梦境盲盒收藏册（账号级 localStorage，不挂在角色上，需单独随备份带走）
               dreamCollection: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('os_dream_collection'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
+
+              // EM 记账系统（独立 IndexedDB: SullyEM_Finance）
+              ...await (async () => {
+                  if (mode !== 'text_only' && mode !== 'full') return {};
+                  try {
+                      const { FinanceDB } = await import('../utils/financeDb');
+                      const fd = await FinanceDB.exportAll();
+                      if (!fd.accounts.length && !fd.transactions.length) return {};
+                      return {
+                          emFinanceAccounts: fd.accounts,
+                          emFinanceCategories: fd.categories,
+                          emFinanceTransactions: fd.transactions,
+                          emFinanceTAComments: fd.taComments.length ? fd.taComments : undefined,
+                          emFinanceSettings: fd.settings.length ? fd.settings : undefined,
+                      };
+                  } catch { return {}; }
+              })(),
           };
 
           const totalSteps = storesToProcess.length + 3;
@@ -3510,7 +3527,21 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   }
               }
           }
-          
+
+          // Restore EM 记账系统（独立 IndexedDB: SullyEM_Finance）
+          if (data.emFinanceAccounts || data.emFinanceTransactions) {
+              try {
+                  const { FinanceDB } = await import('../utils/financeDb');
+                  await FinanceDB.importAll({
+                      accounts: data.emFinanceAccounts,
+                      categories: data.emFinanceCategories,
+                      transactions: data.emFinanceTransactions,
+                      taComments: data.emFinanceTAComments,
+                      settings: data.emFinanceSettings,
+                  });
+              } catch (e) { console.warn('EM FinanceDB restore failed:', e); }
+          }
+
           if (data.socialAppData) {
               await restoreAssetsInPlace(data.socialAppData, '动态设置');
               if (data.socialAppData.charHandles) localStorage.setItem('spark_char_handles', JSON.stringify(data.socialAppData.charHandles));

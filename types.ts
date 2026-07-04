@@ -3186,6 +3186,13 @@ export interface FullBackupData {
     eventNotifFlags?: Record<string, string>;  // sullyos_* 事件通知标记
     hotNewsSnapshots?: HotNewsSnapshot[];
     dreamCollection?: Record<string, { firstAt: number; count: number }>;  // 梦境盲盒收藏册（os_dream_collection，账号级 localStorage）
+
+    // EM 记账系统（独立 IndexedDB: SullyEM_Finance）
+    emFinanceAccounts?: FinanceAccount[];
+    emFinanceCategories?: FinanceCategory[];
+    emFinanceTransactions?: FinanceTransaction[];
+    emFinanceTAComments?: { id: string; text: string; createdAt: number }[];
+    emFinanceSettings?: { key: string; value: unknown }[];
 }
 
 // --- CLOUD BACKUP TYPES ---
