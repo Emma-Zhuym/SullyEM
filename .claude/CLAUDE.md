@@ -155,6 +155,30 @@ if (m.type === 'interaction' && m.metadata?.kind === 'notion_diary_nudge') {
 ### 6. ~~Offline 系统~~ ✅ 已完成
 已实现为 Online/Busy/Offline 状态系统（见上方功能 #9）。
 
+### 7. 位置感知聊天（难度：低-中）
+上游已有 `utils/geo.ts`（getCurrentPositionSmart），瑞幸在用。
+- 聊天时读一次经纬度 → 调地图 API 反查地名 + 周边 POI → 注入 prompt
+- 角色可以根据位置推荐吃的、找厕所、指路等
+- 地图 API 用 Google Places（阿萌在美国），不用高德
+- 做成 `utils/locationService.ts` + `chatRequestPayload.ts` 注入
+
+### 8. 照片收藏 + 查手机小组件轮播（难度：低）
+- `GalleryImage` 加 `favorited` 字段，相册里标星收藏
+- 查手机主页照片组件只显示 `favorited === true` 的照片轮播
+- 角色也可在聊天中自动收藏用户发的照片
+
+### 9. 日记系统整理（难度：中）
+现有交换日记 + Notion 日记比较散。参考 Orphee_ 的设计：
+- 独立 `apps/DiaryApp.tsx`，统一入口，分 tab
+- 心情标签系统（多选、分主次）+ 封缄功能
+- 心情统计可视化（各情绪占比、时间线）
+
+### 10. 共读/书架 App（难度：中-高）
+参考 Orphee_ 和其他用户的共读功能：
+- 独立 `apps/BookApp.tsx`，支持 epub 上传（epub.js 解析）+ PDF
+- 选中文字高亮 + 写批注，角色可以回复批注
+- 书签、阅读进度追踪、书架管理
+
 ## 文件说明
 
 - `_em_backup/` — 合并前的 EM 旧版备份，供参考旧逻辑用

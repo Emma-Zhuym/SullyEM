@@ -732,28 +732,36 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                               <span className="text-xs font-bold">提示音</span>
                             </button>
 
-                            {/* EM: Intiface 硬件 — Chat 模式默认开启，没连设备时灰色 */}
+                            {/* EM: Intiface 硬件 — 连接/断开按钮 */}
                             {(() => {
-                              const on = localStorage.getItem('intiface-chat-enabled') !== 'false';
-                              const deviceReady = intifaceClient.connected && intifaceClient.devices.length > 0;
+                              const isConnected = intifaceClient.connected;
+                              const isConnecting = intifaceClient.status === 'connecting';
+                              const deviceReady = isConnected && intifaceClient.devices.length > 0;
                               return (
                                 <button
                                   onClick={() => {
-                                    const next = localStorage.getItem('intiface-chat-enabled') === 'false';
-                                    localStorage.setItem('intiface-chat-enabled', String(next));
+                                    if (isConnected) {
+                                      intifaceClient.disconnect();
+                                    } else if (!isConnecting) {
+                                      const url = localStorage.getItem('intiface-url') || 'ws://localhost:12345';
+                                      intifaceClient.connect(url);
+                                    }
                                     onPanelAction('close');
                                   }}
-                                  className={`flex flex-col items-center gap-2 tool-btn ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'} ${!deviceReady ? 'opacity-50' : ''}`}
+                                  disabled={isConnecting}
+                                  className={`flex flex-col items-center gap-2 tool-btn ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'} ${isConnecting ? 'opacity-50' : ''}`}
                                 >
                                   <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border relative ${
-                                    on && deviceReady
+                                    deviceReady
                                       ? (isDiscordStyle ? 'bg-violet-500/20 text-violet-300 border-violet-400/40' : 'bg-violet-100 text-violet-600 border-violet-200')
-                                      : (isDiscordStyle ? 'bg-slate-800 text-violet-300 border-violet-400/20' : 'bg-violet-50 text-violet-500 border-violet-100')
+                                      : isConnecting
+                                        ? (isDiscordStyle ? 'bg-amber-500/20 text-amber-300 border-amber-400/40' : 'bg-amber-50 text-amber-500 border-amber-100')
+                                        : (isDiscordStyle ? 'bg-slate-800 text-violet-300 border-violet-400/20' : 'bg-violet-50 text-violet-500 border-violet-100')
                                   }`}>
                                     <GameController className="w-6 h-6" weight="bold" />
-                                    {on && deviceReady && <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isDiscordStyle ? 'bg-violet-400 border-slate-900' : 'bg-violet-500 border-white'}`} />}
+                                    {deviceReady && <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isDiscordStyle ? 'bg-emerald-400 border-slate-900' : 'bg-emerald-500 border-white'}`} />}
                                   </div>
-                                  <span className="text-xs font-bold">{!deviceReady ? '未连接' : on ? '遥控已开' : '遥控'}</span>
+                                  <span className="text-xs font-bold">{deviceReady ? '断开' : isConnecting ? '连接中…' : '连接设备'}</span>
                                 </button>
                               );
                             })()}

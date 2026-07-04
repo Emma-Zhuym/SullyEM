@@ -1,7 +1,7 @@
 /**
  * IntifaceFloatingBall.tsx — Intiface 实时悬浮球 + 展开面板
  *
- * EM 独有。设备连接且 Chat 模式开启时自动出现在聊天右侧。
+ * EM 独有。设备连接时自动出现，可自由拖动。
  * - 小圆球：强度颜色（绿/琥珀/红），脉冲动效
  * - 展开面板：强度条 + 模式 + 手动滑块覆盖 + 停止按钮
  */
@@ -10,19 +10,29 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Stop, CaretRight } from '@phosphor-icons/react';
 import { intifaceClient } from '../../utils/intifaceClient';
 
-const PATTERN_LABELS: Record<string, string> = {
-  steady: '恒定',
-  pulse: '脉冲',
-  wave: '波浪',
-};
+const STORAGE_KEY = 'intiface-ball-pos';
+const DEFAULT_POS = { right: 12, bottom: 160 };
+
+function loadPos() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw) as { right: number; bottom: number };
+  } catch { /* ignore */ }
+  return DEFAULT_POS;
+}
 
 const IntifaceFloatingBall: React.FC = () => {
   const [intensity, setIntensity] = useState(0);
   const [expanded, setExpanded] = useState(false);
   const [overriding, setOverriding] = useState(false);
+  const [pos, setPos] = useState(loadPos);
   const sliderRef = useRef<HTMLInputElement>(null);
+  const dragRef = useRef<{
+    startX: number; startY: number;
+    startRight: number; startBottom: number;
+    moved: boolean;
+  } | null>(null);
 
-  // 轮询当前强度（100ms）
   useEffect(() => {
     const id = setInterval(() => {
       setIntensity(intifaceClient.currentIntensity);
@@ -30,13 +40,10 @@ const IntifaceFloatingBall: React.FC = () => {
     return () => clearInterval(id);
   }, []);
 
-  // 设备连接 + Chat 模式开启才显示
   const shouldShow =
     intifaceClient.connected &&
-    intifaceClient.devices.length > 0 &&
-    localStorage.getItem('intiface-chat-enabled') !== 'false';
+    intifaceClient.devices.length > 0;
 
-  // 不显示时自动收起
   useEffect(() => {
     if (!shouldShow) { setExpanded(false); setOverriding(false); }
   }, [shouldShow]);
@@ -52,35 +59,72 @@ const IntifaceFloatingBall: React.FC = () => {
     await intifaceClient.runPattern(v, 'steady');
   }, []);
 
+  // ── 拖动逻辑 ──
+  const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    dragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startRight: pos.right,
+      startBottom: pos.bottom,
+      moved: false,
+    };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  }, [pos]);
+
+  const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const dx = e.clientX - d.startX;
+    const dy = e.clientY - d.startY;
+    if (!d.moved && Math.abs(dx) < 5 && Math.abs(dy) < 5) return;
+    d.moved = true;
+    const maxR = window.innerWidth - 48;
+    const maxB = window.innerHeight - 48;
+    setPos({
+      right: Math.max(4, Math.min(maxR, d.startRight - dx)),
+      bottom: Math.max(4, Math.min(maxB, d.startBottom - dy)),
+    });
+  }, []);
+
+  const handlePointerUp = useCallback(() => {
+    const d = dragRef.current;
+    if (!d) return;
+    if (d.moved) {
+      setPos(p => {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(p));
+        return p;
+      });
+    } else {
+      setExpanded(prev => !prev);
+    }
+    dragRef.current = null;
+  }, []);
+
   if (!shouldShow) return null;
 
-  // 强度 → 颜色
   const color =
-    intensity === 0  ? { bg: 'bg-slate-400', ring: 'ring-slate-300', bar: 'bg-slate-400', text: 'text-slate-500' } :
-    intensity <= 35   ? { bg: 'bg-emerald-400', ring: 'ring-emerald-300', bar: 'bg-emerald-400', text: 'text-emerald-600' } :
-    intensity <= 70   ? { bg: 'bg-amber-400', ring: 'ring-amber-300', bar: 'bg-amber-400', text: 'text-amber-600' } :
-                        { bg: 'bg-red-400', ring: 'ring-red-300', bar: 'bg-red-400', text: 'text-red-600' };
+    intensity === 0  ? { bg: 'bg-slate-400', bar: 'bg-slate-400' } :
+    intensity <= 35   ? { bg: 'bg-emerald-400', bar: 'bg-emerald-400' } :
+    intensity <= 70   ? { bg: 'bg-amber-400', bar: 'bg-amber-400' } :
+                        { bg: 'bg-red-400', bar: 'bg-red-400' };
 
   return (
-    <div className="fixed right-3 bottom-28 z-50 flex flex-col items-end gap-2">
+    <div
+      className="fixed z-50 flex flex-col items-end gap-2"
+      style={{ right: pos.right, bottom: pos.bottom }}
+    >
       {/* 展开面板 */}
       {expanded && (
         <div
           className="bg-white/95 backdrop-blur-xl rounded-2xl shadow-lg border border-slate-200/60 p-4 w-56 animate-in fade-in slide-in-from-right-2 duration-200"
           onClick={e => e.stopPropagation()}
         >
-          {/* 标题行 */}
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <div className={`w-2.5 h-2.5 rounded-full ${color.bg}`} />
               <span className="text-xs font-bold text-slate-700">
                 {intensity === 0 ? '待机' : `${intensity}%`}
               </span>
-              {intensity > 0 && (
-                <span className="text-[10px] text-slate-400 font-medium">
-                  {PATTERN_LABELS['steady']}
-                </span>
-              )}
             </div>
             <button
               type="button"
@@ -91,7 +135,6 @@ const IntifaceFloatingBall: React.FC = () => {
             </button>
           </div>
 
-          {/* 强度条 */}
           <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden mb-3">
             <div
               className={`h-full rounded-full transition-all duration-150 ${color.bar}`}
@@ -99,7 +142,6 @@ const IntifaceFloatingBall: React.FC = () => {
             />
           </div>
 
-          {/* 手动覆盖滑块 */}
           <div className="mb-3">
             <label className="text-[10px] text-slate-400 font-medium mb-1 block">
               {overriding ? '手动覆盖中' : '拖动覆盖'}
@@ -118,7 +160,6 @@ const IntifaceFloatingBall: React.FC = () => {
             />
           </div>
 
-          {/* 停止按钮 */}
           <button
             type="button"
             onClick={handleStop}
@@ -136,14 +177,16 @@ const IntifaceFloatingBall: React.FC = () => {
         </div>
       )}
 
-      {/* 悬浮球 */}
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
-        className={`w-10 h-10 rounded-full shadow-lg border-2 border-white flex items-center justify-center transition-all active:scale-90 ${color.bg} ${
+      {/* 悬浮球 — 拖动 + 点击 */}
+      <div
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        className={`w-10 h-10 rounded-full shadow-lg border-2 border-white flex items-center justify-center transition-colors select-none touch-none ${color.bg} ${
           intensity > 0 ? 'animate-pulse' : ''
         }`}
         style={{
+          cursor: 'grab',
           boxShadow: intensity > 0
             ? `0 0 ${Math.max(8, intensity / 5)}px ${
                 intensity <= 35 ? '#4ade80' : intensity <= 70 ? '#fbbf24' : '#f87171'
@@ -151,10 +194,10 @@ const IntifaceFloatingBall: React.FC = () => {
             : '0 2px 8px rgba(0,0,0,0.15)',
         }}
       >
-        <span className="text-white text-[10px] font-black">
+        <span className="text-white text-[10px] font-black pointer-events-none">
           {intensity === 0 ? '●' : intensity}
         </span>
-      </button>
+      </div>
     </div>
   );
 };

@@ -386,6 +386,28 @@ class IntifaceClientSingleton {
 
 export const intifaceClient = new IntifaceClientSingleton();
 
+// iOS 息屏会冻结 WebSocket，解锁回来自动重连
+if (typeof document !== 'undefined') {
+  let lastUrl: string | null = null;
+
+  intifaceClient.onStatusChange((s) => {
+    if (s === 'connected') {
+      lastUrl = localStorage.getItem('intiface-url') || 'ws://localhost:12345';
+    } else if (s === 'disconnected') {
+      lastUrl = null;
+    }
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    if (intifaceClient.status !== 'disconnected') return;
+    const url = lastUrl ?? localStorage.getItem('intiface-url');
+    if (!url) return;
+    console.log('[Intiface] 页面回到前台，自动重连…');
+    intifaceClient.connect(url).catch(() => {});
+  });
+}
+
 // Vite HMR：模块被热替换时关掉旧连接，否则旧实例的 WebSocket 会一直
 // 占着 Intiface 的客户端坑位（Intiface 同时只接受一个客户端），
 // 新实例永远连不上

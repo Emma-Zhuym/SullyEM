@@ -868,13 +868,11 @@ export const useChatAI = ({
                 }
             }
 
-            // EM: Intiface 硬件集成 — Chat 模式
-            // 设备已连接 + 用户开启聊天模式时，注入 control_toy 工具
-            const intifaceChatEnabled =
+            // EM: Intiface 硬件集成 — 设备已连接时自动注入 control_toy 工具
+            const intifaceReady =
                 intifaceClient.connected &&
-                intifaceClient.devices.length > 0 &&
-                localStorage.getItem('intiface-chat-enabled') !== 'false';
-            if (intifaceChatEnabled) {
+                intifaceClient.devices.length > 0;
+            if (intifaceReady) {
                 const deviceName = intifaceClient.devices[0]?.name ?? '设备';
                 // 追加 Intiface 说明到 system prompt（messages[0] 是 system role）
                 if (Array.isArray(baseReqBody.messages) && baseReqBody.messages[0]?.role === 'system') {
