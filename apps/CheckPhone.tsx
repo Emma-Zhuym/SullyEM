@@ -3020,17 +3020,25 @@ ${olderText}
     // ============================================================
     //  HOME DESKTOP (mirrors the reference design)
     // ============================================================
+    // Claude 风格配色 & 字体
+    const CF = {
+        font: "'Shippori Mincho','Noto Serif SC',serif",
+        mono: "'Söhne Mono','SF Mono','Menlo',monospace",
+        text: '#2b2a26', sub: '#8a857a', accent: '#c9683e',
+        cardBg: 'rgba(255,251,245,0.75)', border: '#e8e0d0',
+    };
+
     const cpIconSize = 22;
     const cpApps: { id: string; icon: React.ReactNode; label: string; bg: string }[] = [
-        { id: 'contacts', icon: <UsersThree size={cpIconSize} weight="light" />, label: '联系人', bg: '#fce7f3' },
-        { id: 'social', icon: <ImagesSquare size={cpIconSize} weight="light" />, label: '朋友圈', bg: '#f3e8ff' },
-        { id: 'waimai', icon: <Hamburger size={cpIconSize} weight="light" />, label: '外卖', bg: '#fef3c7' },
-        { id: 'taobao', icon: <ShoppingBag size={cpIconSize} weight="light" />, label: '淘宝', bg: '#ffedd5' },
-        { id: 'chat', icon: <ChatCircleDots size={cpIconSize} weight="light" />, label: '短信', bg: '#dbeafe' },
-        { id: 'aiagent', icon: <Robot size={cpIconSize} weight="light" />, label: '智能体', bg: '#d1fae5' },
-        { id: 'persona', icon: <MaskHappy size={cpIconSize} weight="light" />, label: '人格', bg: '#ede9fe' },
-        ...(customApps.length > 0 ? [{ id: '__myapps__', icon: <DotsThree size={cpIconSize} weight="bold" />, label: '更多', bg: '#f5f5f4' }] : []),
-        { id: '__add__', icon: <Plus size={cpIconSize} weight="light" />, label: '添加', bg: '#e7e5e4' },
+        { id: 'contacts', icon: <UsersThree size={cpIconSize} weight="light" />, label: '联系人', bg: '#f5ebe0' },
+        { id: 'social', icon: <ImagesSquare size={cpIconSize} weight="light" />, label: '朋友圈', bg: '#ede4d8' },
+        { id: 'waimai', icon: <Hamburger size={cpIconSize} weight="light" />, label: '外卖', bg: '#f5ecd7' },
+        { id: 'taobao', icon: <ShoppingBag size={cpIconSize} weight="light" />, label: '淘宝', bg: '#f0e4d3' },
+        { id: 'chat', icon: <ChatCircleDots size={cpIconSize} weight="light" />, label: '短信', bg: '#e7decd' },
+        { id: 'aiagent', icon: <Robot size={cpIconSize} weight="light" />, label: '智能体', bg: '#e2ddd4' },
+        { id: 'persona', icon: <MaskHappy size={cpIconSize} weight="light" />, label: '人格', bg: '#ede6da' },
+        ...(customApps.length > 0 ? [{ id: '__myapps__', icon: <DotsThree size={cpIconSize} weight="bold" />, label: '更多', bg: '#e8e2d6' }] : []),
+        { id: '__add__', icon: <Plus size={cpIconSize} weight="light" />, label: '添加', bg: '#e8e2d6' },
     ];
 
     const renderAppIcon = (app: typeof cpApps[0]) => (
@@ -3041,51 +3049,49 @@ ${olderText}
                 else setActiveAppId(app.id);
             }}
             className="flex flex-col items-center gap-1 active:scale-90 transition-transform">
-            <div className="w-[50px] h-[50px] rounded-[13px] flex items-center justify-center text-stone-700"
-                style={{ background: app.bg }}>
+            <div className="w-[50px] h-[50px] rounded-[13px] flex items-center justify-center"
+                style={{ background: app.bg, color: CF.text }}>
                 {app.icon}
             </div>
-            <span className="text-[10px] text-stone-500 leading-tight text-center">{app.label}</span>
+            <span className="text-[10px] leading-tight text-center" style={{ color: CF.sub }}>{app.label}</span>
         </button>
     );
 
     const renderHomePage = () => (
         <div className="w-1/2 h-full overflow-y-auto no-scrollbar overscroll-none px-4 pt-2 pb-32">
             {/* ═══ Widget: Time + Character (4×2) ═══ */}
-            <div className="rounded-[20px] p-4 mb-3 bg-white/70 backdrop-blur-sm border border-stone-200/60 shadow-sm">
+            <div className="rounded-[20px] p-4 mb-3" style={{ background: CF.cardBg, border: `1px solid ${CF.border}` }}>
                 <div className="flex items-center justify-between">
                     <div className="min-w-0 flex-1">
-                        <div className="text-[36px] font-extralight text-stone-800 tabular-nums leading-none tracking-tight" style={{ fontFamily: "'SF Mono','Menlo',monospace" }}>{clockNow}</div>
-                        <div className="text-[11px] text-stone-400 mt-1 tracking-wide">{dateNow}</div>
+                        <div className="text-[36px] font-light tabular-nums leading-none tracking-tight" style={{ fontFamily: CF.font, color: CF.text }}>{clockNow}</div>
+                        <div className="text-[11px] mt-1 tracking-wide" style={{ color: CF.sub }}>{dateNow}</div>
                         {innerQuote ? (
                             <button onClick={() => setShowInner(true)} className="block mt-2 text-left">
-                                <p className="text-[10px] text-stone-500 italic leading-relaxed line-clamp-1" style={{ fontFamily: "'Shippori Mincho','Noto Serif SC',serif" }}>「{innerQuote}」</p>
+                                <p className="text-[10px] italic leading-relaxed line-clamp-1" style={{ fontFamily: CF.font, color: CF.sub }}>「{innerQuote}」</p>
                             </button>
                         ) : (
-                            <p className="text-[10px] text-stone-400 italic mt-2 leading-relaxed line-clamp-1" style={{ fontFamily: "'Shippori Mincho','Noto Serif SC',serif" }}>{fallbackQuote}</p>
+                            <p className="text-[10px] italic mt-2 leading-relaxed line-clamp-1" style={{ fontFamily: CF.font, color: CF.sub }}>{fallbackQuote}</p>
                         )}
                     </div>
                     <div className="shrink-0 ml-3 flex flex-col items-center gap-1">
-                        <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-stone-200/80 shadow-sm">
+                        <div className="w-12 h-12 rounded-full overflow-hidden shadow-sm" style={{ border: `2px solid ${CF.border}` }}>
                             {targetChar?.avatar
                                 ? <img src={targetChar.avatar} className="w-full h-full object-cover" alt="" />
-                                : <div className="w-full h-full bg-stone-200 flex items-center justify-center text-stone-400 text-lg">?</div>}
+                                : <div className="w-full h-full flex items-center justify-center text-lg" style={{ background: '#efe9dd', color: CF.sub }}>?</div>}
                         </div>
-                        <span className="text-[10px] font-medium text-stone-600 truncate max-w-[60px]">{charName}</span>
+                        <span className="text-[10px] font-medium truncate max-w-[60px]" style={{ color: CF.text }}>{charName}</span>
                     </div>
                 </div>
             </div>
 
             {/* ═══ Row: Photo widget (2×2) + first 4 app icons (2×2 grid) ═══ */}
             <div className="flex gap-3 mb-3">
-                {/* Photo widget — 2 icon columns wide, square */}
-                <div className="shrink-0 rounded-[16px] overflow-hidden border border-stone-200/60 shadow-sm"
-                    style={{ width: 'calc(50% - 6px)', aspectRatio: '1' }}>
+                <div className="shrink-0 rounded-[16px] overflow-hidden shadow-sm"
+                    style={{ width: 'calc(50% - 6px)', aspectRatio: '1', border: `1px solid ${CF.border}` }}>
                     {galleryPhotos.length > 0
                         ? <img src={galleryPhotos[0].url} className="w-full h-full object-cover" alt="" loading="lazy" />
-                        : <div className="w-full h-full bg-stone-100 flex items-center justify-center"><ImagesSquare size={28} className="text-stone-300" /></div>}
+                        : <div className="w-full h-full flex items-center justify-center" style={{ background: '#efe9dd' }}><ImagesSquare size={28} style={{ color: CF.sub }} /></div>}
                 </div>
-                {/* First 4 app icons in 2×2 grid */}
                 <div className="flex-1 grid grid-cols-2 gap-y-2 gap-x-1 content-center">
                     {cpApps.slice(0, 4).map(renderAppIcon)}
                 </div>
@@ -3097,46 +3103,46 @@ ${olderText}
             </div>
 
             {/* ═══ Widget: Today's Activity ═══ */}
-            <div className="rounded-[20px] p-4 bg-white/70 backdrop-blur-sm border border-stone-200/60 shadow-sm mb-4">
+            <div className="rounded-[20px] p-4 mb-4" style={{ background: CF.cardBg, border: `1px solid ${CF.border}` }}>
                 <div className="flex items-center justify-between mb-3">
-                    <span className="text-[11px] font-semibold tracking-wide text-stone-700 uppercase" style={{ fontFamily: "'SF Mono','Menlo',monospace" }}>Today's Activity</span>
-                    <div className="flex items-center gap-1.5 text-[10px] text-stone-400">
+                    <span className="text-[11px] font-semibold tracking-wide uppercase" style={{ fontFamily: CF.mono, color: CF.text }}>Today's Activity</span>
+                    <div className="flex items-center gap-1.5 text-[10px]" style={{ color: CF.sub }}>
                         <span className="tabular-nums">{stH}h {stM}m</span>
-                        <span className="text-stone-300">screen time</span>
+                        <span style={{ opacity: 0.6 }}>screen time</span>
                     </div>
                 </div>
                 <div className="flex gap-3">
                     <div className="flex-1 min-w-0 space-y-2">
-                        {activity.length === 0 && <div className="text-[11px] text-stone-400">尚无活动记录</div>}
+                        {activity.length === 0 && <div className="text-[11px]" style={{ color: CF.sub }}>尚无活动记录</div>}
                         {activity.map((a, i) => (
                             <div key={i} className="flex items-center gap-2.5">
-                                <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: i === activity.length - 1 ? '#8b5cf6' : '#d6d3d1' }} />
-                                <span className="text-[10px] text-stone-400 tabular-nums w-[52px] shrink-0" style={{ fontFamily: "'SF Mono','Menlo',monospace" }}>{fmtClock(a.t)}</span>
-                                <span className="text-[12px] text-stone-700 truncate">{a.label}</span>
+                                <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: i === activity.length - 1 ? CF.accent : '#d6cfc2' }} />
+                                <span className="text-[10px] tabular-nums w-[52px] shrink-0" style={{ fontFamily: CF.mono, color: CF.sub }}>{fmtClock(a.t)}</span>
+                                <span className="text-[12px] truncate" style={{ color: CF.text }}>{a.label}</span>
                             </div>
                         ))}
                     </div>
                     <div className="relative w-16 h-16 shrink-0 flex items-center justify-center">
                         <svg viewBox="0 0 100 100" className="w-16 h-16 -rotate-90">
-                            <circle cx="50" cy="50" r="42" stroke="#e7e5e4" strokeWidth="4" fill="none" />
-                            <circle cx="50" cy="50" r="42" stroke="url(#stRingLight)" strokeWidth="4" fill="none" strokeLinecap="round"
+                            <circle cx="50" cy="50" r="42" stroke="#e8e0d0" strokeWidth="4" fill="none" />
+                            <circle cx="50" cy="50" r="42" stroke="url(#stRingClaude)" strokeWidth="4" fill="none" strokeLinecap="round"
                                 strokeDasharray={RING_C} strokeDashoffset={RING_C * (1 - ringP)} />
                             <defs>
-                                <linearGradient id="stRingLight" x1="0" y1="0" x2="1" y2="1">
-                                    <stop offset="0%" stopColor="#8b5cf6" />
-                                    <stop offset="100%" stopColor="#ec4899" />
+                                <linearGradient id="stRingClaude" x1="0" y1="0" x2="1" y2="1">
+                                    <stop offset="0%" stopColor="#c9683e" />
+                                    <stop offset="100%" stopColor="#d4956b" />
                                 </linearGradient>
                             </defs>
                         </svg>
                         <div className="absolute inset-0 flex flex-col items-center justify-center">
-                            <span className="text-[13px] font-medium text-stone-700 tabular-nums">{stH}:{String(stM).padStart(2,'0')}</span>
+                            <span className="text-[13px] font-medium tabular-nums" style={{ color: CF.text }}>{stH}:{String(stM).padStart(2,'0')}</span>
                         </div>
                     </div>
                 </div>
             </div>
 
             {/* Last seen */}
-            <div className="flex items-center justify-center gap-1.5 text-white/35">
+            <div className="flex items-center justify-center gap-1.5" style={{ color: CF.sub, opacity: 0.5 }}>
                 <LockSimple size={12} weight="fill" />
                 <span className="text-[11px] tracking-wide">{lastSeenText}</span>
             </div>
@@ -3144,43 +3150,36 @@ ${olderText}
     );
 
     const renderAppsPage = () => (
-        <div className="w-1/2 h-full overflow-y-auto no-scrollbar overscroll-none px-6 pt-4 pb-32">
-            <div className="flex items-center justify-between mb-6">
-                <button onClick={() => setPage(0)} className="flex items-center gap-1 text-white/50 text-[12px]">
+        <div className="w-1/2 h-full overflow-y-auto no-scrollbar overscroll-none px-5 pt-4 pb-32">
+            <div className="flex items-center justify-between mb-5">
+                <button onClick={() => setPage(0)} className="flex items-center gap-1 text-[12px]" style={{ color: CF.sub }}>
                     <CaretLeft size={14} weight="bold" /> Home
                 </button>
-                <span className="text-[11px] tracking-[0.3em] uppercase text-white/45">Installed Apps</span>
+                <span className="text-[11px] tracking-[0.2em] uppercase" style={{ color: CF.sub }}>My Apps</span>
                 <div className="w-12" />
             </div>
-            <div className="grid grid-cols-2 gap-3.5">
-                {customApps.map(app => {
-                    const accent = app.color || '#8b9cff';
-                    const count = records.filter(r => r.type === app.id).length;
-                    return (
-                        <div key={app.id} className="relative group">
-                            <button onClick={() => setActiveAppId(app.id)}
-                                className="w-full rounded-[24px] p-4 text-left overflow-hidden border border-white/[0.07] bg-white/[0.035] backdrop-blur-xl active:scale-[0.98] transition min-h-[130px] flex flex-col justify-between">
-                                <div className="absolute -top-8 -right-8 w-28 h-28 rounded-full blur-2xl opacity-50 pointer-events-none"
-                                    style={{ background: `radial-gradient(circle, ${accent}, transparent 70%)` }} />
-                                <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl border border-white/[0.08] relative z-10"
-                                    style={{ background: `linear-gradient(135deg, ${accent}33, ${accent}0a)`, boxShadow: `inset 0 0 16px ${accent}22` }}>
-                                    {app.icon}
-                                </div>
-                                <div className="relative z-10">
-                                    <div className="text-[14px] font-semibold text-white truncate">{app.name}</div>
-                                    <div className="text-[10.5px] text-white/40 mt-0.5">{count} 条记录</div>
-                                    <div className="h-[3px] w-8 rounded-full mt-2" style={{ background: `linear-gradient(90deg, ${accent}, transparent)` }} />
-                                </div>
-                            </button>
-                            <button onClick={() => handleDeleteApp(app.id)}
-                                className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-rose-500 text-white rounded-full flex items-center justify-center text-[12px] leading-none opacity-0 group-hover:opacity-100 transition z-20 shadow-md">×</button>
-                        </div>
-                    );
-                })}
+            <div className="grid grid-cols-4 gap-y-5 gap-x-2 justify-items-center">
+                {customApps.map(app => (
+                    <div key={app.id} className="relative group">
+                        <button onClick={() => setActiveAppId(app.id)}
+                            className="flex flex-col items-center gap-1 active:scale-90 transition-transform">
+                            <div className="w-[50px] h-[50px] rounded-[13px] flex items-center justify-center text-xl"
+                                style={{ background: app.color ? `${app.color}20` : '#f0ebe3', color: CF.text }}>
+                                {app.icon}
+                            </div>
+                            <span className="text-[10px] leading-tight text-center truncate w-[58px]" style={{ color: CF.sub }}>{app.name}</span>
+                        </button>
+                        <button onClick={() => handleDeleteApp(app.id)}
+                            className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white rounded-full flex items-center justify-center text-[10px] leading-none opacity-0 group-hover:opacity-100 transition z-20 shadow-md">×</button>
+                    </div>
+                ))}
                 <button onClick={() => setShowCreateModal(true)}
-                    className="rounded-[24px] p-4 border border-dashed border-white/15 bg-white/[0.02] flex flex-col items-center justify-center gap-2 active:scale-[0.98] transition min-h-[130px]">
-                    <Plus size={24} weight="light" className="text-white/60" />
-                    <span className="text-[11px] tracking-[0.2em] uppercase text-white/50">Add App</span>
+                    className="flex flex-col items-center gap-1 active:scale-90 transition-transform">
+                    <div className="w-[50px] h-[50px] rounded-[13px] flex items-center justify-center"
+                        style={{ background: '#eae5dc', color: CF.sub }}>
+                        <Plus size={22} weight="light" />
+                    </div>
+                    <span className="text-[10px] leading-tight text-center" style={{ color: CF.sub }}>添加</span>
                 </button>
             </div>
         </div>
@@ -3207,7 +3206,7 @@ ${olderText}
         };
 
         return (
-            <div className="absolute inset-0 flex flex-col z-0 overflow-hidden" style={{ background: '#f5f2ed' }}>
+            <div className="absolute inset-0 flex flex-col z-0 overflow-hidden" style={{ background: '#f4f1ea' }}>
                 {/* Warm paper background */}
                 {hasBg && (
                     <div className="absolute inset-0 opacity-10 pointer-events-none"
@@ -3231,34 +3230,35 @@ ${olderText}
                         {Array.from({ length: totalPages }).map((_, i) => (
                             <button key={i} onClick={() => setPage(i)}
                                 className="rounded-full transition-all"
-                                style={{ width: page === i ? 18 : 6, height: 6, background: page === i ? '#78716c' : 'rgba(120,113,108,0.3)' }} />
+                                style={{ width: page === i ? 18 : 6, height: 6, background: page === i ? CF.accent : '#d6cfc2' }} />
                         ))}
                     </div>
                 )}
 
                 {/* Floating glass nav — light theme */}
                 <nav className="absolute bottom-4 left-1/2 -translate-x-1/2 w-[90%] z-40">
-                    <div className="bg-white/80 backdrop-blur-2xl rounded-[26px] border border-stone-200 shadow-[0_4px_24px_rgba(0,0,0,0.08)] flex justify-around items-center px-3 py-2.5">
-                        <button onClick={() => setActiveAppId('call')} className="flex items-center justify-center text-stone-500 p-2.5 hover:text-stone-800 rounded-2xl transition active:scale-90">
+                    <div className="backdrop-blur-2xl rounded-[26px] shadow-[0_4px_24px_rgba(0,0,0,0.06)] flex justify-around items-center px-3 py-2.5"
+                        style={{ background: 'rgba(255,251,245,0.85)', border: `1px solid ${CF.border}` }}>
+                        <button onClick={() => setActiveAppId('call')} className="flex items-center justify-center p-2.5 rounded-2xl transition active:scale-90" style={{ color: CF.sub }}>
                             <Phone size={22} weight="light" />
                         </button>
-                        <button onClick={() => setActiveAppId('contacts')} aria-label="联系人" className="flex items-center justify-center text-stone-500 p-2.5 hover:text-stone-800 rounded-2xl transition active:scale-90">
+                        <button onClick={() => setActiveAppId('contacts')} aria-label="联系人" className="flex items-center justify-center p-2.5 rounded-2xl transition active:scale-90" style={{ color: CF.sub }}>
                             <UsersThree size={22} weight="light" />
                         </button>
                         <button onClick={handleExitPhone} aria-label="断开连接"
                             className="relative flex items-center justify-center w-14 h-14 rounded-full active:scale-90 transition -my-1"
-                            style={{ background: 'linear-gradient(135deg, #a78bfa, #7c3aed)', boxShadow: '0 4px 16px rgba(124,58,237,0.35)' }}>
+                            style={{ background: `linear-gradient(135deg, #d4956b, ${CF.accent})`, boxShadow: `0 4px 16px rgba(201,104,62,0.3)` }}>
                             <SignOut size={22} weight="bold" className="text-white" />
                         </button>
-                        <button onClick={() => setActiveAppId('social')} className="flex items-center justify-center text-stone-500 p-2.5 hover:text-stone-800 rounded-2xl transition active:scale-90">
+                        <button onClick={() => setActiveAppId('social')} className="flex items-center justify-center p-2.5 rounded-2xl transition active:scale-90" style={{ color: CF.sub }}>
                             <Compass size={22} weight="light" />
                         </button>
                         <button onClick={toggleSendToChat} aria-label="同步到私聊"
                             className="relative flex items-center justify-center p-2.5 rounded-2xl transition active:scale-90"
-                            style={{ color: sendToChat ? '#7c3aed' : '#a8a29e' }}>
+                            style={{ color: sendToChat ? CF.accent : CF.sub }}>
                             <GearSix size={22} weight={sendToChat ? 'fill' : 'light'} />
                             <span className="absolute bottom-1 right-1.5 w-1.5 h-1.5 rounded-full"
-                                style={{ background: sendToChat ? '#7c3aed' : '#d6d3d1', boxShadow: sendToChat ? '0 0 6px rgba(124,58,237,0.5)' : 'none' }} />
+                                style={{ background: sendToChat ? CF.accent : '#d6cfc2', boxShadow: sendToChat ? `0 0 6px rgba(201,104,62,0.4)` : 'none' }} />
                         </button>
                     </div>
                 </nav>
@@ -3271,13 +3271,13 @@ ${olderText}
     // ============================================================
     if (view === 'select') {
         return (
-            <div className="absolute inset-0 flex flex-col overflow-hidden" style={{ background: '#f5f2ed' }}>
+            <div className="absolute inset-0 flex flex-col overflow-hidden" style={{ background: '#f4f1ea' }}>
                 <StatusStrip />
                 <div className="h-14 flex items-center justify-between px-4 shrink-0">
-                    <button onClick={closeApp} className="w-9 h-9 -ml-1 rounded-full flex items-center justify-center text-stone-600 bg-stone-200/60 active:scale-90 transition">
+                    <button onClick={closeApp} className="w-9 h-9 -ml-1 rounded-full flex items-center justify-center active:scale-90 transition" style={{ color: CF.text, background: '#e8e2d6' }}>
                         <CaretLeft size={18} weight="bold" />
                     </button>
-                    <span className="font-medium tracking-wide text-[14px] text-stone-700">选择设备</span>
+                    <span className="font-medium tracking-wide text-[14px]" style={{ color: CF.text, fontFamily: CF.font }}>选择设备</span>
                     <div className="w-9" />
                 </div>
                 {(() => {
@@ -3290,12 +3290,13 @@ ${olderText}
                             <div className="flex-1 min-h-0 px-5 grid grid-cols-2 grid-rows-3 gap-3 content-center pb-4 pt-2">
                                 {pageChars.map(c => (
                                     <div key={c.id} onClick={() => handleSelectChar(c)}
-                                        className="min-h-0 rounded-2xl border border-stone-200 bg-white/80 p-4 flex flex-col items-center justify-center gap-2.5 cursor-pointer active:scale-95 transition shadow-sm">
-                                        <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-stone-200 shrink-0">
+                                        className="min-h-0 rounded-2xl p-4 flex flex-col items-center justify-center gap-2.5 cursor-pointer active:scale-95 transition shadow-sm"
+                                        style={{ background: CF.cardBg, border: `1px solid ${CF.border}` }}>
+                                        <div className="w-16 h-16 rounded-full overflow-hidden shrink-0" style={{ border: `2px solid ${CF.border}` }}>
                                             <img src={c.avatar} className="w-full h-full rounded-full object-cover" />
                                         </div>
                                         <div className="text-center">
-                                            <div className="font-medium text-stone-700 text-[13px]">{c.name}</div>
+                                            <div className="font-medium text-[13px]" style={{ color: CF.text, fontFamily: CF.font }}>{c.name}</div>
                                         </div>
                                     </div>
                                 ))}
@@ -3303,17 +3304,20 @@ ${olderText}
                             {pageCount > 1 && (
                                 <div className="shrink-0 flex items-center justify-center gap-4 pb-6 pt-3">
                                     <button onClick={() => setSelectPage(Math.max(0, cur - 1))} disabled={cur === 0}
-                                        className="w-9 h-9 rounded-full flex items-center justify-center text-stone-600 bg-stone-200/60 active:scale-90 transition disabled:opacity-30">
+                                        className="w-9 h-9 rounded-full flex items-center justify-center active:scale-90 transition disabled:opacity-30"
+                                        style={{ color: CF.text, background: '#e8e2d6' }}>
                                         <CaretLeft size={16} weight="bold" />
                                     </button>
                                     <div className="flex items-center gap-2">
                                         {Array.from({ length: pageCount }, (_, pi) => (
                                             <button key={pi} onClick={() => setSelectPage(pi)} aria-label={`第 ${pi + 1} 页`}
-                                                className={`h-2 rounded-full transition-all active:scale-90 ${pi === cur ? 'w-5 bg-violet-500' : 'w-2 bg-stone-300'}`} />
+                                                className="h-2 rounded-full transition-all active:scale-90"
+                                                style={{ width: pi === cur ? 20 : 8, background: pi === cur ? CF.accent : '#d6cfc2' }} />
                                         ))}
                                     </div>
                                     <button onClick={() => setSelectPage(Math.min(pageCount - 1, cur + 1))} disabled={cur === pageCount - 1}
-                                        className="w-9 h-9 rounded-full flex items-center justify-center text-stone-600 bg-stone-200/60 active:scale-90 transition disabled:opacity-30">
+                                        className="w-9 h-9 rounded-full flex items-center justify-center active:scale-90 transition disabled:opacity-30"
+                                        style={{ color: CF.text, background: '#e8e2d6' }}>
                                         <CaretLeft size={16} weight="bold" className="rotate-180" />
                                     </button>
                                 </div>
@@ -3330,7 +3334,7 @@ ${olderText}
     // ============================================================
     const customActive = customApps.find(a => a.id === activeAppId);
     return (
-        <div className="absolute inset-0 overflow-hidden font-sans overscroll-none" style={{ background: '#f5f2ed' }}>
+        <div className="absolute inset-0 overflow-hidden font-sans overscroll-none" style={{ background: '#f4f1ea' }}>
             {activeAppId === 'home' ? renderDesktop() : (
                 <>
                     {activeAppId === 'chat' && renderChatList()}
