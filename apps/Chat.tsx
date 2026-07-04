@@ -2345,11 +2345,17 @@ const Chat: React.FC = () => {
     // hideBeforeMessageId 不在视觉层过滤：用户依旧能往上翻到旧消息，只是 LLM 拉不到。
     // 真正想从聊天记录里抹掉，应该走"删除"。
     // windowed 模式：定位到旧消息时只渲染目标周围 51 条，避免 DOM 卡爆。
+
+    // EM: 隐藏跨 App 动态卡片（彼方/查手机/剧场/家园/闪光/新闻等），保持聊天纯粹
+    const ACTIVITY_CARD_TYPES = new Set(['vr_card', 'phone_card', 'sim_card', 'theater_card', 'world_card', 'social_card', 'news_card', 'trpg_card']);
+    const hideActivityCards = localStorage.getItem('chat_hide_activity_cards') !== 'false';
+
     const displayMessages = useMemo(() => {
         const base = messages
             .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
             .filter(m => !m.metadata?.proactiveHint)
-            .filter(m => { if (char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card') return false; return true; });
+            .filter(m => { if (char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card') return false; return true; })
+            .filter(m => { if (hideActivityCards && ACTIVITY_CARD_TYPES.has(m.type)) return false; return true; });
         if (windowedFocusMsgId !== null) {
             const idx = base.findIndex(m => m.id === windowedFocusMsgId);
             if (idx >= 0) {
@@ -2359,7 +2365,7 @@ const Chat: React.FC = () => {
             }
         }
         return base.slice(-visibleCount);
-    }, [messages, char?.id, char?.hideSystemLogs, visibleCount, windowedFocusMsgId]);
+    }, [messages, char?.id, char?.hideSystemLogs, hideActivityCards, visibleCount, windowedFocusMsgId]);
 
     const collapsedCount = Math.max(0, totalMsgCount - displayMessages.length);
 
