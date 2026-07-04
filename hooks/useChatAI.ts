@@ -873,7 +873,7 @@ export const useChatAI = ({
             const intifaceChatEnabled =
                 intifaceClient.connected &&
                 intifaceClient.devices.length > 0 &&
-                localStorage.getItem('intiface-chat-enabled') === 'true';
+                localStorage.getItem('intiface-chat-enabled') !== 'false';
             if (intifaceChatEnabled) {
                 const deviceName = intifaceClient.devices[0]?.name ?? '设备';
                 // 追加 Intiface 说明到 system prompt（messages[0] 是 system role）

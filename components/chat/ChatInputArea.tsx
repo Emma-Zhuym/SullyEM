@@ -732,14 +732,14 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                               <span className="text-xs font-bold">提示音</span>
                             </button>
 
-                            {/* EM: Intiface 硬件 — 设置里开过 chat 模式就显示，没连设备时灰色 */}
-                            {localStorage.getItem('intiface-chat-enabled') !== null && (() => {
-                              const on = localStorage.getItem('intiface-chat-enabled') === 'true';
+                            {/* EM: Intiface 硬件 — Chat 模式默认开启，没连设备时灰色 */}
+                            {(() => {
+                              const on = localStorage.getItem('intiface-chat-enabled') !== 'false';
                               const deviceReady = intifaceClient.connected && intifaceClient.devices.length > 0;
                               return (
                                 <button
                                   onClick={() => {
-                                    const next = localStorage.getItem('intiface-chat-enabled') !== 'true';
+                                    const next = localStorage.getItem('intiface-chat-enabled') === 'false';
                                     localStorage.setItem('intiface-chat-enabled', String(next));
                                     onPanelAction('close');
                                   }}

@@ -34,7 +34,7 @@ const IntifaceFloatingBall: React.FC = () => {
   const shouldShow =
     intifaceClient.connected &&
     intifaceClient.devices.length > 0 &&
-    localStorage.getItem('intiface-chat-enabled') === 'true';
+    localStorage.getItem('intiface-chat-enabled') !== 'false';
 
   // 不显示时自动收起
   useEffect(() => {

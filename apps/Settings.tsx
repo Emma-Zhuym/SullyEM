@@ -112,9 +112,7 @@ const Settings: React.FC = () => {
   const [intifaceUrl, setIntifaceUrl] = useState(
     () => localStorage.getItem('intiface-url') || 'ws://localhost:12345'
   );
-  const [intifaceChatEnabled, setIntifaceChatEnabled] = useState(
-    () => localStorage.getItem('intiface-chat-enabled') === 'true'
-  );
+  const [intifaceTestIntensity, setIntifaceTestIntensity] = useState(0);
   // 高级设置（流式/温度）默认折叠 — 大多数用户不需要碰
   const [showApiAdvanced, setShowApiAdvanced] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
@@ -2070,7 +2068,7 @@ const Settings: React.FC = () => {
                 </span>
             </div>
             <p className="text-[10px] text-slate-400 mb-4 leading-relaxed">
-                通过 Intiface Central 连接蓝牙设备。Chat 模式角色可主动控制；见面模式由叙事自动驱动。
+                通过 Intiface Central 连接蓝牙设备。连接后角色在聊天中可主动控制；见面模式由叙事自动驱动。
             </p>
 
             {/* 连接地址 */}
@@ -2132,38 +2130,31 @@ const Settings: React.FC = () => {
                 </div>
             )}
 
-            {/* 测试按钮 */}
+            {/* 测试滑条 */}
             {intiface.status === 'connected' && intiface.devices.length > 0 && (
-                <button
-                    type="button"
-                    onPointerDown={() => intiface.vibrate(60)}
-                    onPointerUp={() => intiface.stop()}
-                    onPointerLeave={() => intiface.stop()}
-                    className="w-full py-2 rounded-2xl text-xs font-bold text-violet-600 bg-violet-50 border border-violet-100 active:scale-95 transition-all mb-3"
-                >
-                    按住测试（松开停止）
-                </button>
-            )}
-
-            {/* Chat 模式开关 */}
-            <label className="flex items-center gap-3 cursor-pointer">
-                <div className="flex-1">
-                    <div className="text-xs font-bold text-slate-700">Chat 模式</div>
-                    <div className="text-[10px] text-slate-400">角色在聊天中可主动控制设备</div>
-                </div>
-                <div className="relative">
+                <div className="mb-1">
+                    <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-xs text-slate-500 font-medium">测试震动</label>
+                        <span className="text-xs font-bold text-violet-600 tabular-nums">{intifaceTestIntensity}%</span>
+                    </div>
                     <input
-                        type="checkbox"
-                        className="sr-only peer"
-                        checked={intifaceChatEnabled}
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={intifaceTestIntensity}
                         onChange={e => {
-                            setIntifaceChatEnabled(e.target.checked);
-                            localStorage.setItem('intiface-chat-enabled', String(e.target.checked));
+                            const v = Number(e.target.value);
+                            setIntifaceTestIntensity(v);
+                            intiface.vibrate(v);
                         }}
+                        onPointerUp={() => {
+                            setIntifaceTestIntensity(0);
+                            intiface.stop();
+                        }}
+                        className="w-full h-2 rounded-full appearance-none bg-violet-100 accent-violet-500 cursor-pointer"
                     />
-                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-violet-500"></div>
                 </div>
-            </label>
+            )}
         </section>
 
         {/* 自定义网络代理 — 刻意低调的高级入口。默认折叠，不主动指引基本发现不了。

@@ -127,8 +127,17 @@ class IntifaceClientSingleton {
           break;
 
         case 'DeviceAdded':
-          this.handleDeviceAdded(data);
+          this.addDevice(data);
           break;
+
+        case 'DeviceList': {
+          // RequestDeviceList 的响应：包含 Intiface 里已经连好的设备
+          const list = (data.Devices as Array<Record<string, unknown>> | undefined) ?? [];
+          for (const d of list) this.addDevice(d);
+          this.pending.get(id)?.resolve(data);
+          this.pending.delete(id);
+          break;
+        }
 
         case 'DeviceRemoved':
           this._devices = this._devices.filter(d => d.index !== (data.DeviceIndex as number));
@@ -142,31 +151,26 @@ class IntifaceClientSingleton {
     }
   }
 
-  /** 解析 DeviceAdded 消息里的设备信息 */
-  private handleDeviceAdded(data: Record<string, unknown>) {
+  /** 解析设备信息（DeviceAdded 消息和 DeviceList 里的条目格式相同） */
+  private addDevice(data: Record<string, unknown>) {
     const index = data.DeviceIndex as number;
     const name = data.DeviceName as string;
     const displayName = data.DeviceDisplayName as string | undefined;
 
-    // 从 DeviceMessages 里提取 ScalarCmd 支持的执行器
+    // 协议 v3：DeviceMessages.ScalarCmd 是执行器数组
+    // [{ StepCount: 1000, ActuatorType: "Vibrate", FeatureDescriptor: "" }, ...]
     const actuators: IntifaceDevice['actuators'] = [];
     const messages = data.DeviceMessages as Record<string, unknown> | undefined;
 
-    if (messages?.ScalarCmd) {
-      const scalarCmd = messages.ScalarCmd as Record<string, unknown>;
-      const featureCount = scalarCmd.FeatureCount as number | undefined;
-      const stepCount = scalarCmd.StepCount as number[] | undefined;
-      const actuatorType = (scalarCmd as Record<string, unknown>).ActuatorType as string[] | undefined;
-
-      if (featureCount && stepCount && actuatorType) {
-        for (let i = 0; i < featureCount; i++) {
-          actuators.push({
-            index: i,
-            type: actuatorType[i] ?? 'Vibrate',
-            stepCount: stepCount[i] ?? 20,
-          });
-        }
-      }
+    const scalarCmd = messages?.ScalarCmd;
+    if (Array.isArray(scalarCmd)) {
+      (scalarCmd as Array<Record<string, unknown>>).forEach((attr, i) => {
+        actuators.push({
+          index: i,
+          type: (attr.ActuatorType as string) ?? 'Vibrate',
+          stepCount: (attr.StepCount as number) ?? 20,
+        });
+      });
     }
 
     console.log('[Intiface] Device added:', { index, name, displayName, actuators });
@@ -183,20 +187,28 @@ class IntifaceClientSingleton {
     if (this._status === 'connecting' || this._status === 'connected') return;
     this.setStatus('connecting');
 
-    try {
-      // 建 WebSocket
-      const ws = new WebSocket(url);
-      this.ws = ws;
+    // 关掉上一条可能还挂着的连接，避免它的事件之后串进来
+    if (this.ws) {
+      try { this.ws.onclose = null; this.ws.onerror = null; this.ws.close(); } catch { /* ignore */ }
+    }
 
+    const ws = new WebSocket(url);
+    this.ws = ws;
+    // 只有 this.ws === ws 时才允许这条连接的事件改动单例状态，
+    // 防止旧连接的迟到事件（onclose/onerror）覆盖新连接已经成功的状态
+    const isCurrent = () => this.ws === ws;
+
+    try {
+      let timeoutId: ReturnType<typeof setTimeout>;
       await new Promise<void>((resolve, reject) => {
-        ws.onopen = () => resolve();
-        ws.onerror = () => reject(new Error(`WebSocket connection failed to ${url}`));
-        // 5 秒超时
-        setTimeout(() => reject(new Error(`WebSocket connection timeout to ${url}`)), 5000);
+        ws.onopen = () => { clearTimeout(timeoutId); resolve(); };
+        ws.onerror = () => { clearTimeout(timeoutId); reject(new Error(`WebSocket connection failed to ${url}`)); };
+        timeoutId = setTimeout(() => reject(new Error(`WebSocket connection timeout to ${url}`)), 5000);
       });
 
-      ws.onmessage = (e) => this.handleMessage(e.data);
+      ws.onmessage = (e) => { if (isCurrent()) this.handleMessage(e.data); };
       ws.onclose = () => {
+        if (!isCurrent()) return;
         this.cleanup();
         this.setStatus('disconnected');
         this.emitDevices();
@@ -216,6 +228,8 @@ class IntifaceClientSingleton {
       // 开始扫描新设备
       try { await this.sendMsg('StartScanning', {}); } catch { /* 已在扫描 */ }
 
+      if (!isCurrent()) return; // 连接过程中已经被更新的连接顶替
+
       // 如果服务器要求 ping，定时发送
       const maxPingTime = info.MaxPingTime as number;
       if (maxPingTime > 0) {
@@ -226,6 +240,7 @@ class IntifaceClientSingleton {
 
       this.setStatus('connected');
     } catch (e) {
+      if (!isCurrent()) return; // 旧连接的失败，不能覆盖当前状态
       this.cleanup();
       this.setStatus('error', e instanceof Error ? e.message : String(e));
     }
@@ -370,3 +385,12 @@ class IntifaceClientSingleton {
 // ── 全局单例 ───────────────────────────────────────────────────────────────────
 
 export const intifaceClient = new IntifaceClientSingleton();
+
+// Vite HMR：模块被热替换时关掉旧连接，否则旧实例的 WebSocket 会一直
+// 占着 Intiface 的客户端坑位（Intiface 同时只接受一个客户端），
+// 新实例永远连不上
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    intifaceClient.disconnect().catch(() => {});
+  });
+}
