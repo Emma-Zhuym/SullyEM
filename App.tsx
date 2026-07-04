@@ -8,11 +8,16 @@ import VRBroadcast from './components/VRBroadcast';
 import WorldBroadcast from './components/WorldBroadcast';
 import { isIOSStandaloneWebApp } from './utils/iosStandalone';
 import { installDevDebugLifecycleCapture } from './utils/devDebug';
+import { startMotionListening } from './utils/deviceMotion';
 
 const App: React.FC = () => {
   React.useEffect(() => {
     // 常驻监听前后台 / 焦点 / 网络事件；抓不抓由 devDebug 的 lifecycle 类勾选决定
     installDevDebugLifecycleCapture();
+    // 运动感知：恢复上次的开启状态
+    if (typeof localStorage !== 'undefined' && localStorage.getItem('sullyem_motion_enabled') === '1') {
+      startMotionListening();
+    }
   }, []);
 
   const useAbsoluteShell = typeof window !== 'undefined' && isIOSStandaloneWebApp();

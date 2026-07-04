@@ -8,6 +8,7 @@ import { DB } from './db';
 import type { NotionDiaryExtraProperty, NotionExtraDatabase } from '../types';
 import { getProxyWorkerUrl } from './proxyWorker';
 import { nowInTimeZone } from './timezone';
+import { getMotionContextLine } from './deviceMotion';
 
 export interface WeatherData {
     temp: number;
@@ -549,7 +550,13 @@ export const RealtimeContextManager = {
             }
         }
 
-        // 4. 新闻热点（背景认知）
+        // 4. 设备运动状态
+        const motionLine = getMotionContextLine();
+        if (motionLine) {
+            parts.push(motionLine);
+        }
+
+        // 5. 新闻热点（背景认知）
         //    完整快照存 IndexedDB 给「热点」App；这里每轮随机抽 5 条打散注入，控 token + 保持新鲜感。
         if (config.newsEnabled) {
             const news = await RealtimeContextManager.fetchNews(config);

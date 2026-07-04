@@ -16,7 +16,8 @@ import { getProxyWorkerUrl, setProxyWorkerUrl, DEFAULT_PROXY_WORKER } from '../u
 import { VOICE_ACTING_GUIDE } from '../utils/minimaxTts';
 import { FISH_VOICE_ACTING_GUIDE } from '../utils/fishAudioTts';
 import { DATE_VOICE_GUIDE } from '../utils/datePrompts';
-import { Sun, Newspaper, NotePencil, Notebook, Book, ForkKnife, Coffee } from '@phosphor-icons/react';
+import { Sun, Newspaper, NotePencil, Notebook, Book, ForkKnife, Coffee, PersonSimpleRun } from '@phosphor-icons/react';
+import { requestMotionPermission, startMotionListening, stopMotionListening, isMotionListening } from '../utils/deviceMotion';
 import { loadPushConfig, savePushConfig, registerScheduleOnWorker, startHeartbeat, stopHeartbeat, isPushConfigAvailable, ensureSubscribed, sendTestPush, getPushDiagnostics, resetSubscription, deepResetSubscription, type PushDiagnostics } from '../utils/proactivePushConfig';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { InstantPushSettingsModal } from '../components/settings/InstantPushSettingsModal';
@@ -187,6 +188,10 @@ const Settings: React.FC = () => {
   const [rtFeishuBaseId, setRtFeishuBaseId] = useState(realtimeConfig.feishuBaseId);
   const [rtFeishuTableId, setRtFeishuTableId] = useState(realtimeConfig.feishuTableId);
   const [rtXhsEnabled, setRtXhsEnabled] = useState(realtimeConfig.xhsEnabled);
+  const [rtMotionEnabled, setRtMotionEnabled] = useState(() => {
+    if (typeof localStorage !== 'undefined') return localStorage.getItem('sullyem_motion_enabled') === '1';
+    return false;
+  });
   // lite 模式走中心配置的主代理 worker（/api 是 worker/index.js 里的 XHSLite 桥）。
   // 用户改了「自定义网络代理」，lite 模式自动跟着切到新 worker。
   const XHS_LITE_URL = `${getProxyWorkerUrl()}/api`;
@@ -1734,7 +1739,7 @@ const Settings: React.FC = () => {
                 让AI角色感知真实世界：天气、新闻热点、当前时间。角色可以根据天气关心你、聊聊最近的热点话题。
             </p>
 
-            <div className="grid grid-cols-5 gap-2 text-center">
+            <div className="grid grid-cols-6 gap-2 text-center">
                 <div className={`py-3 rounded-xl text-xs font-bold ${rtWeatherEnabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-50 text-slate-400'}`}>
                     <div className="text-lg mb-1">{rtWeatherEnabled ? <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/2600.png" className="w-5 h-5 inline" alt="" /> : <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f32b.png" className="w-5 h-5 inline" alt="" />}</div>
                     天气
@@ -1755,6 +1760,30 @@ const Settings: React.FC = () => {
                     <div className="text-lg mb-1">{rtXhsEnabled ? <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4d5.png" className="w-5 h-5 inline" alt="" /> : <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4cb.png" className="w-5 h-5 inline" alt="" />}</div>
                     小红书
                 </div>
+                <button
+                    onClick={async () => {
+                        if (rtMotionEnabled) {
+                            stopMotionListening();
+                            localStorage.setItem('sullyem_motion_enabled', '0');
+                            setRtMotionEnabled(false);
+                            addToast('运动感知已关闭', 'success');
+                        } else {
+                            const granted = await requestMotionPermission();
+                            if (!granted) {
+                                addToast('运动传感器权限被拒绝', 'error');
+                                return;
+                            }
+                            startMotionListening();
+                            localStorage.setItem('sullyem_motion_enabled', '1');
+                            setRtMotionEnabled(true);
+                            addToast('运动感知已开启', 'success');
+                        }
+                    }}
+                    className={`py-3 rounded-xl text-xs font-bold ${rtMotionEnabled ? 'bg-purple-50 text-purple-600' : 'bg-slate-50 text-slate-400'}`}
+                >
+                    <div className="text-lg mb-1"><PersonSimpleRun size={20} className="inline" /></div>
+                    运动
+                </button>
             </div>
         </section>
 
@@ -3049,6 +3078,53 @@ const Settings: React.FC = () => {
                               2. 粘贴到上面的输入框（仅存本地，<b>不会上传服务器</b>）<br/>
                               3. 下单类操作涉及真实支付，角色会先复述清单等你确认再下单<br/>
                               4. 上游需经 Worker 代理 (/mcp/luckin)，请确保已部署最新 worker
+                          </p>
+                      </div>
+                  )}
+              </div>
+
+              {/* 运动感知 */}
+              <div className="bg-purple-50/50 p-4 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                          <PersonSimpleRun size={20} weight="fill" className="text-purple-600" />
+                          <span className="text-sm font-bold text-purple-700">运动感知</span>
+                          <span className="text-[9px] bg-purple-100 text-purple-500 px-1.5 py-0.5 rounded-full">加速度计</span>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                          <input type="checkbox" checked={rtMotionEnabled} onChange={async e => {
+                              if (e.target.checked) {
+                                  const granted = await requestMotionPermission();
+                                  if (!granted) { addToast('运动传感器权限被拒绝', 'error'); return; }
+                                  startMotionListening();
+                                  localStorage.setItem('sullyem_motion_enabled', '1');
+                                  setRtMotionEnabled(true);
+                                  addToast('运动感知已开启', 'success');
+                              } else {
+                                  stopMotionListening();
+                                  localStorage.setItem('sullyem_motion_enabled', '0');
+                                  setRtMotionEnabled(false);
+                                  addToast('运动感知已关闭', 'success');
+                              }
+                          }} className="sr-only peer" />
+                          <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-500"></div>
+                      </label>
+                  </div>
+                  <p className="text-[10px] text-purple-500/70 leading-relaxed">
+                      通过手机加速度计检测你是静止、走路、跑步还是在甩手机。开启后角色聊天时能感知你的运动状态。
+                  </p>
+                  {rtMotionEnabled && (
+                      <div className="space-y-2">
+                          <div className="bg-white/60 rounded-xl p-3 space-y-1.5">
+                              <p className="text-[10px] text-slate-500 leading-relaxed">
+                                  <b>静止</b> — 加速度 &lt; 0.8 · 可能坐着或躺着<br/>
+                                  <b>走路</b> — 加速度 0.8 ~ 3.5<br/>
+                                  <b>跑步</b> — 加速度 3.5 ~ 8<br/>
+                                  <b>剧烈晃动</b> — 加速度 &gt; 8 · 手机在被甩
+                              </p>
+                          </div>
+                          <p className="text-[10px] text-purple-500/60 leading-relaxed">
+                              iOS PWA 首次开启需要授权运动传感器权限。数据仅在本地处理，不会上传。
                           </p>
                       </div>
                   )}
