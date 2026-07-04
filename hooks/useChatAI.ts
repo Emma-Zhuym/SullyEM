@@ -893,7 +893,7 @@ export const useChatAI = ({
             // 瑞幸聊天点单 / 麦当劳 / 瑞幸小程序 这些"客户端工具循环"模式必须走本地 fetch:
             // instant push 会把请求交给 worker 并在这里提前 return, 工具循环(callLuckinTool 等)根本跑不到,
             // 表现就是"选了城市也没用 / 角色不下单"。这些模式下跳过 instant push, 用本地 fetch 跑工具循环。
-            if (isInstantConfigReady() && !payload.flags.luckinChatActive && !payload.flags.mcdActive && !payload.flags.luckinActive && !intifaceChatEnabled) {
+            if (isInstantConfigReady() && !payload.flags.luckinChatActive && !payload.flags.mcdActive && !payload.flags.luckinActive && !intifaceReady) {
                 const instantResult = await sendInstantPushAndAwaitReply({
                     contactName: char.name,
                     messages: fullMessages as InstantPushPayload['messages'],
@@ -1223,7 +1223,7 @@ export const useChatAI = ({
 
             // EM: Intiface control_toy 工具调用处理
             // 与 MCD/瑞幸互斥——那些模式的工具循环已处理过 tool_calls
-            if (intifaceChatEnabled && !mcdMiniOpen && data.choices?.[0]?.message?.tool_calls?.length) {
+            if (intifaceReady && !mcdMiniOpen && data.choices?.[0]?.message?.tool_calls?.length) {
                 const toolCalls: any[] = data.choices[0].message.tool_calls;
                 const intifaceTcs = toolCalls.filter((tc: any) => tc.function?.name === 'control_toy');
                 if (intifaceTcs.length > 0) {
