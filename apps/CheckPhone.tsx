@@ -3020,67 +3020,80 @@ ${olderText}
     // ============================================================
     //  HOME DESKTOP (mirrors the reference design)
     // ============================================================
+    const cpIconSize = 22;
+    const cpApps: { id: string; icon: React.ReactNode; label: string; bg: string }[] = [
+        { id: 'contacts', icon: <UsersThree size={cpIconSize} weight="light" />, label: '联系人', bg: '#fce7f3' },
+        { id: 'social', icon: <ImagesSquare size={cpIconSize} weight="light" />, label: '朋友圈', bg: '#f3e8ff' },
+        { id: 'waimai', icon: <Hamburger size={cpIconSize} weight="light" />, label: '外卖', bg: '#fef3c7' },
+        { id: 'taobao', icon: <ShoppingBag size={cpIconSize} weight="light" />, label: '淘宝', bg: '#ffedd5' },
+        { id: 'chat', icon: <ChatCircleDots size={cpIconSize} weight="light" />, label: '短信', bg: '#dbeafe' },
+        { id: 'aiagent', icon: <Robot size={cpIconSize} weight="light" />, label: '智能体', bg: '#d1fae5' },
+        { id: 'persona', icon: <MaskHappy size={cpIconSize} weight="light" />, label: '人格', bg: '#ede9fe' },
+        ...(customApps.length > 0 ? [{ id: '__myapps__', icon: <DotsThree size={cpIconSize} weight="bold" />, label: '更多', bg: '#f5f5f4' }] : []),
+        { id: '__add__', icon: <Plus size={cpIconSize} weight="light" />, label: '添加', bg: '#e7e5e4' },
+    ];
+
+    const renderAppIcon = (app: typeof cpApps[0]) => (
+        <button key={app.id}
+            onClick={() => {
+                if (app.id === '__add__') setShowCreateModal(true);
+                else if (app.id === '__myapps__') setPage(1);
+                else setActiveAppId(app.id);
+            }}
+            className="flex flex-col items-center gap-1 active:scale-90 transition-transform">
+            <div className="w-[50px] h-[50px] rounded-[13px] flex items-center justify-center text-stone-700"
+                style={{ background: app.bg }}>
+                {app.icon}
+            </div>
+            <span className="text-[10px] text-stone-500 leading-tight text-center">{app.label}</span>
+        </button>
+    );
+
     const renderHomePage = () => (
         <div className="w-1/2 h-full overflow-y-auto no-scrollbar overscroll-none px-4 pt-2 pb-32">
-            {/* ═══ Widget: Time + Character (2×4 style) ═══ */}
+            {/* ═══ Widget: Time + Character (4×2) ═══ */}
             <div className="rounded-[20px] p-4 mb-3 bg-white/70 backdrop-blur-sm border border-stone-200/60 shadow-sm">
                 <div className="flex items-center justify-between">
                     <div className="min-w-0 flex-1">
-                        <div className="text-[38px] font-extralight text-stone-800 tabular-nums leading-none tracking-tight" style={{ fontFamily: "'SF Mono','Menlo',monospace" }}>{clockNow}</div>
-                        <div className="text-[12px] text-stone-400 mt-1.5 tracking-wide">{dateNow}</div>
+                        <div className="text-[36px] font-extralight text-stone-800 tabular-nums leading-none tracking-tight" style={{ fontFamily: "'SF Mono','Menlo',monospace" }}>{clockNow}</div>
+                        <div className="text-[11px] text-stone-400 mt-1 tracking-wide">{dateNow}</div>
                         {innerQuote ? (
-                            <button onClick={() => setShowInner(true)} className="block mt-2.5 text-left group">
-                                <p className="text-[11px] text-stone-500 italic leading-relaxed line-clamp-1" style={{ fontFamily: "'Shippori Mincho','Noto Serif SC',serif" }}>「{innerQuote}」</p>
+                            <button onClick={() => setShowInner(true)} className="block mt-2 text-left">
+                                <p className="text-[10px] text-stone-500 italic leading-relaxed line-clamp-1" style={{ fontFamily: "'Shippori Mincho','Noto Serif SC',serif" }}>「{innerQuote}」</p>
                             </button>
                         ) : (
-                            <p className="text-[11px] text-stone-400 italic mt-2.5 leading-relaxed line-clamp-1" style={{ fontFamily: "'Shippori Mincho','Noto Serif SC',serif" }}>{fallbackQuote}</p>
+                            <p className="text-[10px] text-stone-400 italic mt-2 leading-relaxed line-clamp-1" style={{ fontFamily: "'Shippori Mincho','Noto Serif SC',serif" }}>{fallbackQuote}</p>
                         )}
                     </div>
-                    <div className="shrink-0 ml-3 flex flex-col items-center gap-1.5">
-                        <div className="w-14 h-14 rounded-full overflow-hidden border-2 border-stone-200 shadow-sm">
+                    <div className="shrink-0 ml-3 flex flex-col items-center gap-1">
+                        <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-stone-200/80 shadow-sm">
                             {targetChar?.avatar
                                 ? <img src={targetChar.avatar} className="w-full h-full object-cover" alt="" />
                                 : <div className="w-full h-full bg-stone-200 flex items-center justify-center text-stone-400 text-lg">?</div>}
                         </div>
-                        <span className="text-[11px] font-medium text-stone-600 truncate max-w-[70px]">{charName}</span>
+                        <span className="text-[10px] font-medium text-stone-600 truncate max-w-[60px]">{charName}</span>
                     </div>
                 </div>
             </div>
 
-            {/* ═══ Widget: Photo (2×2 size, single featured photo) ═══ */}
-            {galleryPhotos.length > 0 && (
-                <div className="rounded-[20px] overflow-hidden mb-3 border border-stone-200/60 shadow-sm aspect-square">
-                    <img src={galleryPhotos[0].url} className="w-full h-full object-cover" alt="" loading="lazy" />
+            {/* ═══ Row: Photo widget (2×2) + first 4 app icons (2×2 grid) ═══ */}
+            <div className="flex gap-3 mb-3">
+                {/* Photo widget — 2 icon columns wide, square */}
+                <div className="shrink-0 rounded-[16px] overflow-hidden border border-stone-200/60 shadow-sm"
+                    style={{ width: 'calc(50% - 6px)', aspectRatio: '1' }}>
+                    {galleryPhotos.length > 0
+                        ? <img src={galleryPhotos[0].url} className="w-full h-full object-cover" alt="" loading="lazy" />
+                        : <div className="w-full h-full bg-stone-100 flex items-center justify-center"><ImagesSquare size={28} className="text-stone-300" /></div>}
                 </div>
-            )}
+                {/* First 4 app icons in 2×2 grid */}
+                <div className="flex-1 grid grid-cols-2 gap-y-2 gap-x-1 content-center">
+                    {cpApps.slice(0, 4).map(renderAppIcon)}
+                </div>
+            </div>
 
-            {/* ═══ App Grid (compact icons like real phone) ═══ */}
-            <div className="grid grid-cols-4 gap-y-4 gap-x-2 mb-4 py-3">
-                {[
-                    { id: 'contacts', icon: <UsersThree size={24} weight="fill" />, label: '联系人', color: '#ec4899' },
-                    { id: 'social', icon: <ImagesSquare size={24} weight="fill" />, label: '朋友圈', color: '#a855f7' },
-                    { id: 'waimai', icon: <Hamburger size={24} weight="fill" />, label: '外卖', color: '#f59e0b' },
-                    { id: 'taobao', icon: <ShoppingBag size={24} weight="fill" />, label: '淘宝', color: '#f97316' },
-                    { id: 'chat', icon: <ChatCircleDots size={24} weight="fill" />, label: '短信', color: '#3b82f6' },
-                    { id: 'aiagent', icon: <Robot size={24} weight="fill" />, label: '智能体', color: '#10b981' },
-                    { id: 'persona', icon: <MaskHappy size={24} weight="fill" />, label: '人格', color: '#8b5cf6' },
-                    ...(customApps.length > 0 ? [{ id: '__myapps__', icon: <DotsThree size={24} weight="bold" />, label: `更多`, color: '#6b7280' }] : []),
-                    { id: '__add__', icon: <Plus size={22} weight="light" />, label: '添加', color: '#9ca3af' },
-                ].map(app => (
-                    <button key={app.id}
-                        onClick={() => {
-                            if (app.id === '__add__') setShowCreateModal(true);
-                            else if (app.id === '__myapps__') setPage(1);
-                            else setActiveAppId(app.id);
-                        }}
-                        className="flex flex-col items-center gap-1.5 active:scale-90 transition-transform">
-                        <div className="w-[52px] h-[52px] rounded-[14px] flex items-center justify-center text-white shadow-sm"
-                            style={{ background: app.id === '__add__' ? '#e7e5e4' : app.color, color: app.id === '__add__' ? '#78716c' : 'white' }}>
-                            {app.icon}
-                        </div>
-                        <span className="text-[10px] text-stone-600 leading-tight text-center">{app.label}</span>
-                    </button>
-                ))}
+            {/* ═══ Remaining app icons (4-column grid) ═══ */}
+            <div className="grid grid-cols-4 gap-y-3 gap-x-1 mb-4 py-1">
+                {cpApps.slice(4).map(renderAppIcon)}
             </div>
 
             {/* ═══ Widget: Today's Activity ═══ */}
