@@ -4,6 +4,7 @@ import {
     ArrowLeft, Plus, Trash, BookOpen, Planet, Clock, Play, CaretRight, X,
     UploadSimple, PencilSimple, FlipHorizontal, CaretLeft, Sparkle,
     CircleNotch, TextAa, Palette, Pause, MusicNotes, Queue, Question, Check, Gear,
+    PaperPlaneTilt, ArrowBendUpLeft,
 } from '@phosphor-icons/react';
 import TheaterPanel from './theater/TheaterPanel';
 import { CreatorIframe, type ChibiResult } from '../components/Like520Event';
@@ -11,8 +12,9 @@ import { useMusic, type Song } from '../context/MusicContext';
 import { DB } from '../utils/db';
 import { VRScheduler } from '../utils/vrWorld/scheduler';
 import { VR_ROOMS, getRoom, VR_DEFAULT_INTERVAL_MIN } from '../utils/vrWorld/constants';
-import { buildNovelAsync, groupAnnotationsBySeg, getBookmark } from '../utils/vrWorld/novel';
+import { buildNovelAsync, buildAnnotation, groupAnnotationsBySeg, getBookmark } from '../utils/vrWorld/novel';
 import { decodeBytes } from '../utils/vrWorld/decodeText';
+import { parseEpub } from '../utils/vrWorld/epubParser';
 import { stripLeakedAttrs } from '../utils/vrWorld/prompts';
 import { PostOffice, MAX_LETTER_CHARS, exportIdentity, importIdentity, getAdminToken, setAdminToken, type RemoteReply, type RemoteLetterStat, type RemoteAdminLetter } from '../utils/vrWorld/postOffice';
 import { getVRApi, setVRApi, getVRApiLog, clearVRApiLog, type VRApiCall } from '../utils/vrWorld/vrApi';
@@ -384,7 +386,7 @@ const VRWorldApp: React.FC = () => {
                     characters={characters} userName={userName} onUserBoardPost={onUserBoardPost} addToast={addToast} />
             )}
             {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
-            {readerNovel && <ReaderModal novel={readerNovel} characters={characters} onClose={() => setReaderNovel(null)} />}
+            {readerNovel && <ReaderModal novel={readerNovel} characters={characters} userName={userName} onClose={() => setReaderNovel(null)} />}
             {readerJump && <ReaderModal novel={readerJump.novel} characters={characters} initialSeg={readerJump.seg} peek onClose={() => setReaderJump(null)} />}
             {showUpload && (
                 <UploadModal onClose={() => setShowUpload(false)}
@@ -804,7 +806,7 @@ const HelpModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                 </Block>
 
                 <Block title="房间都能干嘛">
-                    <div><b className="text-indigo-100">图书馆</b>：角色读你上传的小说、<b>自己写批注</b>。你能翻看 ta 的批注（动态里点批注还能跳回原文），不过<b className="text-amber-200">暂时还不能自己写批注</b>。</div>
+                    <div><b className="text-indigo-100">图书馆</b>：角色读你上传的小说、<b>自己写批注</b>。你也可以在段落下方点「留个标记」写批注，角色下次读到时会看到并回应。</div>
                     <div><b className="text-indigo-100">听歌房</b>：从角色自己的歌单点歌、锐评正在放的曲子。</div>
                     <div><b className="text-indigo-100">留言簿</b>：公共版聊墙，角色发帖、接话茬。你也能在底部<b className="text-sky-200">以自己身份留言</b>，会广播给所有接入的角色。</div>
                     <div><b className="text-indigo-100">娱乐室</b>：纯放飞，角色在这儿瞎玩造谣找乐子。</div>
@@ -1841,7 +1843,7 @@ const LibraryView: React.FC<{
     <div className="space-y-3">
         <button onClick={onAdd} className="w-full rounded-xl py-2.5 text-[13px] font-bold flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform shadow-[0_4px_14px_rgba(120,100,255,0.4)]"
             style={{ background: 'linear-gradient(120deg, rgba(150,168,255,.92), rgba(188,168,255,.85) 55%, rgba(150,212,204,.9))' }}>
-            <Plus size={16} weight="bold" /> 上传小说（支持 .txt）
+            <Plus size={16} weight="bold" /> 上传小说（.txt / .epub）
         </button>
         {novels.length === 0 ? (
             <p className="text-[11px] text-indigo-300/50 py-6 text-center">书库空空如也。上传的小说是所有角色共享的读物，每个角色各自留批注、各自记书签。</p>
@@ -1901,20 +1903,51 @@ const writeUserBm = (id: string, idx: number) => {
 const SegBlock: React.FC<{
     seg: { idx: number; text: string }; anns: VRNovelAnnotation[];
     theme: ReaderTheme; fontSize: number; nameOf: (id: string) => string | undefined; highlight?: boolean;
-}> = ({ seg, anns, theme, fontSize, nameOf, highlight }) => (
+    onAnnotate?: (segIdx: number, targetAnn?: VRNovelAnnotation) => void; peek?: boolean;
+}> = ({ seg, anns, theme, fontSize, nameOf, highlight, onAnnotate, peek }) => (
     <div data-seg={seg.idx} className="mb-5 rounded-lg transition-colors" style={highlight ? { background: `${theme.accent}1f`, boxShadow: `0 0 0 2px ${theme.accent}66`, padding: '8px 10px', margin: '0 -10px 20px' } : undefined}>
         <p className="whitespace-pre-wrap" style={{ color: theme.text, fontSize, lineHeight: 1.9, textIndent: '2em' }}>{seg.text}</p>
-        {anns.map(a => (
-            <div key={a.id} className="mt-2 ml-2 rounded-lg px-3 py-2" style={{ background: theme.annBg, borderLeft: `3px solid ${theme.accent}` }}>
-                <span className="font-bold" style={{ color: theme.accent, fontSize: fontSize - 3 }}>{nameOf(a.authorId) || a.authorName}</span>
-                {a.targetAnnotationId && <span style={{ color: theme.sub, fontSize: fontSize - 3 }}> 回应</span>}
-                <span style={{ color: theme.text, fontSize: fontSize - 3 }}>：{stripLeakedAttrs(a.content)}</span>
-            </div>
-        ))}
+        {/* 段尾批注入口 */}
+        {!peek && onAnnotate && (
+            <button onClick={() => onAnnotate(seg.idx)}
+                className="mt-1 flex items-center gap-1 opacity-30 hover:opacity-70 active:opacity-100 transition-opacity"
+                style={{ color: theme.sub, fontSize: fontSize - 3 }}>
+                <PencilSimple size={12} weight="bold" /> 留个标记
+            </button>
+        )}
+        {anns.map(a => {
+            const isUser = a.authorId === 'user';
+            const targetAnn = a.targetAnnotationId ? anns.find(x => x.id === a.targetAnnotationId) : undefined;
+            return (
+                <div key={a.id} className={`mt-2 rounded-lg px-3 py-2 ${isUser ? 'ml-6' : 'ml-2'}`}
+                    style={{
+                        background: isUser ? `${theme.accent}12` : theme.annBg,
+                        borderLeft: isUser ? undefined : `3px solid ${theme.accent}`,
+                        borderRight: isUser ? `3px solid ${theme.accent}88` : undefined,
+                    }}>
+                    {targetAnn && (
+                        <div className="mb-1.5 rounded px-2 py-1 text-[11px] leading-snug" style={{ background: `${theme.accent}0d`, borderLeft: `2px solid ${theme.accent}44`, color: theme.sub }}>
+                            {(nameOf(targetAnn.authorId) || targetAnn.authorName)}：{stripLeakedAttrs(targetAnn.content).slice(0, 60)}{targetAnn.content.length > 60 ? '…' : ''}
+                        </div>
+                    )}
+                    <span className="font-bold" style={{ color: isUser ? `${theme.accent}cc` : theme.accent, fontSize: fontSize - 3 }}>{nameOf(a.authorId) || a.authorName}</span>
+                    {a.targetAnnotationId && !targetAnn && <span style={{ color: theme.sub, fontSize: fontSize - 3 }}> 回应</span>}
+                    <span style={{ color: theme.text, fontSize: fontSize - 3 }}>：{stripLeakedAttrs(a.content)}</span>
+                    {/* 回应按钮 */}
+                    {!peek && onAnnotate && !isUser && (
+                        <button onClick={() => onAnnotate(seg.idx, a)}
+                            className="ml-2 inline-flex items-center gap-0.5 opacity-30 hover:opacity-70 active:opacity-100 transition-opacity"
+                            style={{ color: theme.sub, fontSize: fontSize - 4 }}>
+                            <ArrowBendUpLeft size={10} weight="bold" /> 回应
+                        </button>
+                    )}
+                </div>
+            );
+        })}
     </div>
 );
 
-const ReaderModal: React.FC<{ novel: VRWorldNovel; characters: CharacterProfile[]; onClose: () => void; initialSeg?: number; peek?: boolean; }> = ({ novel, characters, onClose, initialSeg, peek }) => {
+const ReaderModal: React.FC<{ novel: VRWorldNovel; characters: CharacterProfile[]; onClose: () => void; initialSeg?: number; peek?: boolean; userName?: string; }> = ({ novel, characters, onClose, initialSeg, peek, userName = '我' }) => {
     const PAGE_SIZE = 8;
     const total = novel.segments.length;
     // peek（查看某条批注）时落在 initialSeg，且全程不写用户书签
@@ -1935,6 +1968,33 @@ const ReaderModal: React.FC<{ novel: VRWorldNovel; characters: CharacterProfile[
     const [winStart, setWinStart] = useState(() => initialBm);
     const [winEnd, setWinEnd] = useState(() => Math.min(total, initialBm + 30));
     const [topSeg, setTopSeg] = useState(initialBm);
+
+    // 用户批注输入状态
+    const [annInput, setAnnInput] = useState<{ segIdx: number; targetAnn?: VRNovelAnnotation } | null>(null);
+    const [annText, setAnnText] = useState('');
+    const annInputRef = useRef<HTMLTextAreaElement>(null);
+
+    const handleAnnotate = useCallback((segIdx: number, targetAnn?: VRNovelAnnotation) => {
+        setAnnInput({ segIdx, targetAnn });
+        setAnnText('');
+        setTimeout(() => annInputRef.current?.focus(), 100);
+    }, []);
+
+    const submitAnnotation = useCallback(async () => {
+        if (!annInput || !annText.trim()) return;
+        const ann = buildAnnotation({
+            novelId: novel.id,
+            segIdx: annInput.segIdx,
+            authorId: 'user',
+            authorName: userName,
+            content: annText.trim(),
+            targetAnnotationId: annInput.targetAnn?.id,
+        });
+        await DB.saveVRAnnotation(ann);
+        setAnnotations(prev => [...prev, ann]);
+        setAnnInput(null);
+        setAnnText('');
+    }, [annInput, annText, novel.id, userName]);
 
     const scrollRef = useRef<HTMLDivElement>(null);
     const prevHeightRef = useRef<number | null>(null);
@@ -2069,7 +2129,7 @@ const ReaderModal: React.FC<{ novel: VRWorldNovel; characters: CharacterProfile[
                             ))}
                         </div>
                     </div>
-                    <div className="text-[10px] leading-snug pt-0.5" style={{ color: theme.sub }}>书里的批注都是角色自己留的；你可以翻看，暂时还不能亲自写批注。</div>
+                    <div className="text-[10px] leading-snug pt-0.5" style={{ color: theme.sub }}>点段落下方的「留个标记」写批注，角色下次读到时会看到。</div>
                 </div>
             )}
 
@@ -2080,9 +2140,46 @@ const ReaderModal: React.FC<{ novel: VRWorldNovel; characters: CharacterProfile[
                     <div className="text-center text-[10px] mb-3" style={{ color: theme.sub }}>—— 上滑加载更早内容 ——</div>
                 )}
                 {renderSegs.map(seg => (
-                    <SegBlock key={seg.idx} seg={seg} anns={annBySeg.get(seg.idx) || []} theme={theme} fontSize={fontSize} nameOf={nameOf} highlight={peek && seg.idx === initialSeg} />
+                    <SegBlock key={seg.idx} seg={seg} anns={annBySeg.get(seg.idx) || []} theme={theme} fontSize={fontSize} nameOf={nameOf} highlight={peek && seg.idx === initialSeg} onAnnotate={handleAnnotate} peek={peek} />
                 ))}
             </div>
+
+            {/* 批注输入框 */}
+            {annInput && (
+                <div className="shrink-0 px-4 py-3 space-y-2" style={{ background: theme.paper, borderTop: `1px solid ${theme.accent}22` }}>
+                    {annInput.targetAnn && (
+                        <div className="rounded px-2.5 py-1.5 text-[11px] leading-snug flex items-start gap-1.5" style={{ background: `${theme.accent}0d`, borderLeft: `2px solid ${theme.accent}44`, color: theme.sub }}>
+                            <span className="flex-1">
+                                <span className="font-bold" style={{ color: theme.accent }}>{nameOf(annInput.targetAnn.authorId) || annInput.targetAnn.authorName}</span>
+                                ：{stripLeakedAttrs(annInput.targetAnn.content).slice(0, 80)}{annInput.targetAnn.content.length > 80 ? '…' : ''}
+                            </span>
+                            <button onClick={() => setAnnInput(prev => prev ? { ...prev, targetAnn: undefined } : null)} className="shrink-0 p-0.5" style={{ color: theme.sub }}><X size={12} /></button>
+                        </div>
+                    )}
+                    {!annInput.targetAnn && (
+                        <div className="rounded px-2.5 py-1.5 text-[11px] leading-snug" style={{ background: `${theme.accent}0d`, borderLeft: `2px solid ${theme.accent}44`, color: theme.sub }}>
+                            第 {annInput.segIdx + 1} 段：{novel.segments[annInput.segIdx]?.text.slice(0, 60)}…
+                        </div>
+                    )}
+                    <div className="flex items-end gap-2">
+                        <textarea ref={annInputRef} value={annText} onChange={e => setAnnText(e.target.value)}
+                            placeholder="写点什么…" rows={1}
+                            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitAnnotation(); } }}
+                            className="flex-1 rounded-lg px-3 py-2 text-[13px] outline-none resize-none"
+                            style={{ background: `${theme.accent}0a`, color: theme.text, border: `1px solid ${theme.accent}33`, fontFamily: 'inherit' }} />
+                        <button onClick={submitAnnotation} disabled={!annText.trim()}
+                            className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center disabled:opacity-30 transition-opacity"
+                            style={{ background: theme.accent, color: theme.paper }}>
+                            <PaperPlaneTilt size={14} weight="fill" />
+                        </button>
+                        <button onClick={() => { setAnnInput(null); setAnnText(''); }}
+                            className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center"
+                            style={{ background: `${theme.accent}15`, color: theme.sub }}>
+                            <X size={14} weight="bold" />
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {/* 底栏 */}
             {mode === 'page' ? (
@@ -2135,16 +2232,39 @@ const UploadModal: React.FC<{
         });
     };
 
+    const [isEpub, setIsEpub] = useState(false);
+
     const onFile = async (f: File | undefined) => {
         if (!f) return;
         setReading(true);
         try {
             const buf = await f.arrayBuffer();
-            fileBufRef.current = buf;
-            setChosenEncoding('auto');
-            applyDecode(f.name, buf, 'auto');
-            setPasteText(''); // 文件优先，清掉粘贴框
-            if (!title.trim()) setTitle(f.name.replace(/\.(txt|text)$/i, ''));
+            const nameL = f.name.toLowerCase();
+            const isPK = new Uint8Array(buf.slice(0, 4)).join(',') === '80,75,3,4';
+            const looksEpub = nameL.endsWith('.epub') || nameL.endsWith('.epub.zip') || (isPK && nameL.includes('.epub'));
+            if (looksEpub) {
+                const epub = await parseEpub(buf);
+                const content = epub.text;
+                fileContentRef.current = content;
+                fileBufRef.current = null;
+                setIsEpub(true);
+                setChosenEncoding('auto');
+                setFileInfo({
+                    name: f.name,
+                    chars: content.length,
+                    preview: content.slice(0, 300).replace(/\s+/g, ' ').trim(),
+                    encoding: 'epub',
+                });
+                if (!title.trim()) setTitle(epub.title || f.name.replace(/\.epub(\.zip)?$/i, ''));
+                if (!author.trim() && epub.author) setAuthor(epub.author);
+            } else {
+                fileBufRef.current = buf;
+                setIsEpub(false);
+                setChosenEncoding('auto');
+                applyDecode(f.name, buf, 'auto');
+                if (!title.trim()) setTitle(f.name.replace(/\.(txt|text)$/i, ''));
+            }
+            setPasteText('');
         } catch (e) {
             console.error('[VRWorld] decode file failed', e);
             onError('文件读取失败');
@@ -2165,6 +2285,7 @@ const UploadModal: React.FC<{
         fileContentRef.current = '';
         fileBufRef.current = null;
         setChosenEncoding('auto');
+        setIsEpub(false);
         setFileInfo(null);
         if (fileRef.current) fileRef.current.value = '';
     };
@@ -2201,7 +2322,7 @@ const UploadModal: React.FC<{
                     {!busy && <button onClick={onClose} className="ml-auto p-1 text-indigo-300/60"><X size={18} /></button>}
                 </div>
 
-                <input ref={fileRef} type="file" accept=".txt,text/plain" className="hidden" onChange={e => onFile(e.target.files?.[0])} />
+                <input ref={fileRef} type="file" accept=".txt,.epub,.zip,text/plain,application/epub+zip,application/zip" className="hidden" onChange={e => onFile(e.target.files?.[0])} />
                 {reading ? (
                     <div className="w-full rounded-xl border border-indigo-300/30 py-5 mb-3 flex items-center justify-center gap-2 text-indigo-100/90">
                         <CircleNotch size={18} weight="bold" className="animate-spin" /> 读取并识别编码中…
@@ -2216,7 +2337,7 @@ const UploadModal: React.FC<{
                         </div>
                         <div className="text-[10px] text-indigo-300/60 mt-1">{fileInfo.chars.toLocaleString()} 字 · 预计 ~{Math.ceil(fileInfo.chars / 400).toLocaleString()} 段</div>
                         <p className="text-[10.5px] text-indigo-200/50 mt-1.5 leading-snug line-clamp-2">{fileInfo.preview}…</p>
-                        {!busy && (
+                        {!busy && !isEpub && (
                             <div className="flex items-center gap-1.5 mt-2">
                                 <span className="text-[9.5px] text-indigo-300/55 shrink-0">乱码？换编码</span>
                                 <select value={chosenEncoding} onChange={e => redecode(e.target.value)}
@@ -2234,7 +2355,7 @@ const UploadModal: React.FC<{
                 ) : (
                     <button onClick={() => fileRef.current?.click()}
                         className="w-full rounded-xl border border-dashed border-indigo-300/40 py-3 mb-3 text-[12.5px] text-indigo-100/90 flex items-center justify-center gap-2 active:bg-white/5">
-                        <UploadSimple size={16} weight="bold" /> 选择 .txt 文件（大文件也 OK）
+                        <UploadSimple size={16} weight="bold" /> 选择文件（.txt / .epub）
                     </button>
                 )}
 

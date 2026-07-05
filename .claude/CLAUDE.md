@@ -133,12 +133,8 @@ if (m.type === 'interaction' && m.metadata?.kind === 'notion_diary_nudge') {
 - 可以先做简单版：location 文字 → 预设坐标点
 - 点击角色位置可以发起聊天
 
-### 3. Intiface 外接硬件集成（难度：中）
-通过 Intiface Central + WebSocket 连接蓝牙设备。
-- Intiface 提供本地 WebSocket API（`ws://localhost:12345`）
-- 角色情绪/反应 → 映射为震动强度和模式
-- 做成独立 `utils/intifaceClient.ts` + `hooks/useIntiface.ts`
-- UI 入口放聊天工具栏或设置
+### 3. ~~Intiface 外接硬件集成~~ ✅ 已完成
+已通过 wss:// Tailscale 隧道连接 Intiface Central，Chat 模式 control_toy 工具已默认开启。
 
 ### 4. 记账系统增强（难度：低）
 上游已有基础记账。在此基础上加：
@@ -173,11 +169,11 @@ if (m.type === 'interaction' && m.metadata?.kind === 'notion_diary_nudge') {
 - 心情标签系统（多选、分主次）+ 封缄功能
 - 心情统计可视化（各情绪占比、时间线）
 
-### 10. 共读/书架 App（难度：中-高）
-参考 Orphee_ 和其他用户的共读功能：
-- 独立 `apps/BookApp.tsx`，支持 epub 上传（epub.js 解析）+ PDF
-- 选中文字高亮 + 写批注，角色可以回复批注
-- 书签、阅读进度追踪、书架管理
+### 10. 共读/书架增强（难度：中）
+彼方图书馆已支持 epub 上传 + 用户批注 Phase 1。待做：
+- Phase 2：角色回头回应用户写在已读段落的批注（回信支路）
+- 选中文字高亮
+- PDF 支持
 
 ## 文件说明
 
