@@ -162,13 +162,18 @@ const BankApp: React.FC = () => {
               {showAnalyticsMenu && (
                 <>
                   <div className="fixed inset-0 z-20" onClick={() => setShowAnalyticsMenu(false)} />
-                  <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 z-30 flex flex-col min-w-[100px] py-1" style={{ background: F.surfaceRaised, borderRadius: R.medium, boxShadow: S.floating, border: `1px solid ${F.borderSoft}` }}>
+                  <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 z-30 flex flex-col min-w-[100px] p-2 gap-1" style={{ background: F.surfaceRaised, borderRadius: R.bigCard, boxShadow: S.floating, border: `1px solid ${F.borderSoft}` }}>
                     {([['expense', '支出'], ['income', '收入'], ['all', '收支']] as const).map(([val, label]) => (
                       <button
                         key={val}
                         onClick={() => { setAnalyticsFilter(val); setShowAnalyticsMenu(false); }}
-                        className="px-4 py-2 text-sm text-left transition-colors"
-                        style={{ color: analyticsFilter === val ? HUE.indigo.ink : F.textPrimary, fontWeight: analyticsFilter === val ? 600 : 400, background: analyticsFilter === val ? HUE.indigo.tint : 'transparent' }}
+                        className="px-4 py-2 text-sm font-medium active:scale-95 transition-all"
+                        style={{
+                          borderRadius: R.medium,
+                          background: analyticsFilter === val ? HUE.indigo.main : 'transparent',
+                          color: analyticsFilter === val ? '#fff' : F.textSecondary,
+                          boxShadow: analyticsFilter === val ? S.raisedSoft : 'none',
+                        }}
                       >
                         {label}
                       </button>
