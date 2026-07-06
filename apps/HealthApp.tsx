@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
-import { CaretLeft, CaretRight, Plus, X, Drop, PencilSimple, Trash, ArrowClockwise, Camera, Gear, TrendUp, Barbell, MoonStars, ForkKnife, Bandaids } from '@phosphor-icons/react';
+import { CaretLeft, CaretRight, Plus, X, Drop, PencilSimple, Trash, ArrowClockwise, Camera, Gear, Barbell, MoonStars, ForkKnife, Bandaids, CalendarBlank, ChartLineUp } from '@phosphor-icons/react';
 import {
   HealthEvent, WorkoutHealthEvent, PeriodHealthEvent, SymptomHealthEvent,
   SleepHealthEvent, DietHealthEvent, WeightHealthEvent,
@@ -8,13 +8,17 @@ import {
   saveHealthEvent, deleteHealthEvent, getAllHealthEvents, buildEventMap,
 } from '../utils/healthDb';
 import { calcCycleStatus } from '../utils/cycleCalc';
+import { F, S, R, HUE, STATUS, MOTION } from '../utils/clayTokens';
 import { HealthProfile, FitnessGoal, getHealthProfile, saveHealthProfile, calcBMR, calcTDEE, recommendCalories, calcDeficit } from '../utils/healthProfile';
 import { safeFetchJson, extractJson, extractContent } from '../utils/safeApi';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const FLOW_DOT: Record<PeriodFlow, string> = {
-  heavy: 'bg-red-500', medium: 'bg-red-400', light: 'bg-rose-300', spotting: 'bg-pink-300',
+const FLOW_DOT: Record<PeriodFlow, React.CSSProperties> = {
+  heavy:    { background: HUE.red.main },
+  medium:   { background: HUE.rose.main },
+  light:    { background: HUE.rose.soft },
+  spotting: { background: HUE.rose.tint, border: `1px solid ${HUE.rose.soft}` },
 };
 const FLOW_LABEL: Record<PeriodFlow, string> = {
   heavy: '量多', medium: '量中', light: '量少', spotting: '点滴',
@@ -42,17 +46,17 @@ type TopTab = 'calendar' | 'today';
 // ── Category color system ──────────────────────────────────────────────────────
 
 const CAT_COLORS = {
-  workout: { bg: '#C6EDD8', fg: '#0D5C30', active: '#4CD964', border: '#C6EDD8', shadow: '#1A9455' },
-  sleep:   { bg: '#C5D9F5', fg: '#0D3472', active: '#5AC8FA', border: '#C5D9F5', shadow: '#1A4FA8' },
-  diet:    { bg: '#FAE5B0', fg: '#6B3D08', active: '#FFD60A', border: '#FAE5B0', shadow: '#D4860F' },
-  period:  { bg: '#F9CEDE', fg: '#6B0E2E', active: '#FF6FA8', border: '#F9CEDE', shadow: '#C2185B' },
-  symptom: { bg: '#E0D0F5', fg: '#3D1278', active: '#BF5AF2', border: '#E0D0F5', shadow: '#6B2FB5' },
+  workout: { bg: HUE.green.tint, fg: HUE.green.ink,   active: HUE.green.main,  border: HUE.green.tint,  shadow: HUE.green.ink },
+  sleep:   { bg: HUE.blue.tint,  fg: HUE.blue.ink,    active: HUE.blue.main,   border: HUE.blue.tint,   shadow: HUE.blue.ink },
+  diet:    { bg: HUE.amber.tint, fg: HUE.amber.ink,   active: HUE.amber.main,  border: HUE.amber.tint,  shadow: HUE.amber.ink },
+  period:  { bg: HUE.rose.tint,  fg: HUE.rose.ink,    active: HUE.rose.main,   border: HUE.rose.tint,   shadow: HUE.rose.ink },
+  symptom: { bg: HUE.purple.tint,fg: HUE.purple.ink,  active: HUE.purple.main, border: HUE.purple.tint, shadow: HUE.purple.ink },
 } as const;
 
 const MACRO_COLORS = {
-  protein: '#0D9488',
-  carbs:   '#D4860F',
-  fat:     '#E07C5A',
+  protein: HUE.teal.ink,
+  carbs:   HUE.amber.ink,
+  fat:     HUE.orange.main,
 } as const;
 
 const TAB_ORDER: { id: RecordMode; label: string }[] = [
@@ -215,6 +219,7 @@ const HealthApp: React.FC = () => {
   const [viewMonth, setViewMonth] = useState(today.getMonth() + 1);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [todayViewOffset, setTodayViewOffset] = useState(0);
+  const [showDatePicker, setShowDatePicker] = useState(false);
 
   // ── Data ──
   const [allEvents, setAllEvents] = useState<HealthEvent[]>([]);
@@ -298,6 +303,11 @@ const HealthApp: React.FC = () => {
   const viewDay = new Date(today);
   viewDay.setDate(viewDay.getDate() + todayViewOffset);
   const viewDayStr = toDateStr(viewDay.getFullYear(), viewDay.getMonth() + 1, viewDay.getDate());
+  const pickerYear = viewDay.getFullYear();
+  const pickerMonth = viewDay.getMonth() + 1;
+  const pickerFirstDow = new Date(pickerYear, pickerMonth - 1, 1).getDay();
+  const pickerDaysInMonth = new Date(pickerYear, pickerMonth, 0).getDate();
+  const pickerCells = Array.from({ length: pickerFirstDow }, () => 0).concat(Array.from({ length: pickerDaysInMonth }, (_, i) => i + 1));
 
   // ── Today's events (uses viewed date) ──
   const todayEvents = useMemo(() => eventMap[viewDayStr] || [], [eventMap, viewDayStr]);
@@ -653,29 +663,16 @@ const HealthApp: React.FC = () => {
     setRecordMode(mode);
   };
 
-  // ── Clay Design Tokens ──────────────────────────────────────────────────────
-  // Shadows: clay style — hard offset + soft secondary, single direction
-  const SH = {
-    btn:   '3px 5px 0 rgba(0,0,0,0.10), 3px 5px 6px rgba(0,0,0,0.06)',
-    card:  '3px 5px 0 rgba(0,0,0,0.08), 4px 6px 10px rgba(0,0,0,0.06)',
-    ring:  'inset 4px 4px 12px rgba(0,0,0,0.10), inset -4px -4px 10px rgba(255,255,255,0.70)',
-    pill:  '2px 3px 0 rgba(0,0,0,0.08), 2px 3px 6px rgba(0,0,0,0.05)',
-    tab:   '2px 3px 0 rgba(0,0,0,0.08), 3px 4px 8px rgba(0,0,0,0.05)',
-    input: 'inset 2px 2px 6px rgba(0,0,0,0.06), inset -1px -1px 4px rgba(255,255,255,0.50)',
-  };
-  // Backward compat aliases (used in ~40 places)
-  const shadowL = SH.btn;
-  const shadowS = SH.pill;
-  const insetShadow = SH.input;
+  // ── Clay Design Tokens (from shared design system) ──────────────────────────
   const clay = {
-    bg: '#F5F5F7',
-    card:       { background: '#fff', borderRadius: '20px', boxShadow: SH.card },
-    cardGreen:  { background: CAT_COLORS.workout.bg, borderRadius: '20px', boxShadow: SH.card, borderLeft: `4px solid ${CAT_COLORS.workout.shadow}` },
-    cardRose:   { background: CAT_COLORS.period.bg,  borderRadius: '20px', boxShadow: SH.card, borderLeft: `4px solid ${CAT_COLORS.period.shadow}` },
-    cardViolet: { background: CAT_COLORS.symptom.bg, borderRadius: '20px', boxShadow: SH.card, borderLeft: `4px solid ${CAT_COLORS.symptom.shadow}` },
-    cardIndigo: { background: CAT_COLORS.sleep.bg,   borderRadius: '20px', boxShadow: SH.card, borderLeft: `4px solid ${CAT_COLORS.sleep.shadow}` },
-    cardAmber:  { background: CAT_COLORS.diet.bg,    borderRadius: '20px', boxShadow: SH.card, borderLeft: `4px solid ${CAT_COLORS.diet.shadow}` },
-    btnPrimary: { background: '#3A3A4A', borderRadius: '50px', boxShadow: SH.btn },
+    bg: F.appBg,
+    card:       { background: F.surface, borderRadius: R.bigCard, boxShadow: S.raisedSoft, border: `1px solid ${F.borderSoft}` },
+    cardGreen:  { background: HUE.green.tint,  borderRadius: R.bigCard, boxShadow: S.raisedSoft, border: `1px solid ${F.borderSoft}`, borderLeft: `4px solid ${HUE.green.main}` },
+    cardRose:   { background: HUE.rose.tint,   borderRadius: R.bigCard, boxShadow: S.raisedSoft, border: `1px solid ${F.borderSoft}`, borderLeft: `4px solid ${HUE.rose.main}` },
+    cardViolet: { background: HUE.purple.tint,  borderRadius: R.bigCard, boxShadow: S.raisedSoft, border: `1px solid ${F.borderSoft}`, borderLeft: `4px solid ${HUE.purple.main}` },
+    cardIndigo: { background: HUE.blue.tint,   borderRadius: R.bigCard, boxShadow: S.raisedSoft, border: `1px solid ${F.borderSoft}`, borderLeft: `4px solid ${HUE.blue.main}` },
+    cardAmber:  { background: HUE.amber.tint,  borderRadius: R.bigCard, boxShadow: S.raisedSoft, border: `1px solid ${F.borderSoft}`, borderLeft: `4px solid ${HUE.amber.main}` },
+    btnPrimary: { background: F.textPrimary, color: F.surfaceRaised, borderRadius: 999, boxShadow: S.raisedSoft, height: 32 },
     press:      'active:translate-y-[3px] transition-transform duration-150',
     pressSmall: 'active:translate-y-[2px] transition-transform duration-150',
   } as const;
@@ -709,70 +706,128 @@ const HealthApp: React.FC = () => {
       {/* ── Header ── */}
       <div className="shrink-0 pt-12 pb-3 px-5 flex items-center justify-between sticky top-0 z-20" style={{ background: clay.bg }}>
         <button onClick={closeApp}
-          className={`w-9 h-9 flex items-center justify-center ${clay.pressSmall}`}
-          style={{ background: '#fff', borderRadius: '50px', boxShadow: SH.pill }}>
-          <CaretLeft size={18} weight="bold" className="text-slate-500" />
+          className={`w-11 h-11 flex items-center justify-center ${clay.pressSmall}`}
+          style={{ background: F.surfaceRaised, borderRadius: R.pill, border: `1px solid ${F.borderSoft}`, boxShadow: S.raisedSoft }}>
+          <CaretLeft size={18} weight="bold" className="text-[#6E665F]" />
         </button>
 
         {topTab === 'calendar' && (
-          <div className="flex items-center gap-2 px-4 py-1.5"
-            style={{ background: '#fff', borderRadius: '50px', boxShadow: SH.pill, width: 192 }}>
-            <button onClick={prevMonth} className={clay.pressSmall}>
-              <CaretLeft size={14} weight="bold" className="text-slate-400" />
-            </button>
-            <span className="text-sm font-bold text-slate-700 flex-1 text-center">
-              {viewYear} · {MONTH_NAMES[viewMonth - 1]}
-            </span>
-            <button onClick={nextMonth} className={clay.pressSmall}>
-              <CaretRight size={14} weight="bold" className="text-slate-400" />
-            </button>
+          <div className="relative">
+            <div className="flex items-center gap-2 px-4 py-1.5"
+              style={{ background: F.surfaceRaised, borderRadius: R.pill, boxShadow: S.raisedSoft, width: 192 }}>
+              <button onClick={prevMonth} className={clay.pressSmall}>
+                <CaretLeft size={14} weight="bold" className="text-[#9E9891]" />
+              </button>
+              <button onClick={() => setShowDatePicker(v => !v)}
+                className="text-sm font-bold flex-1 text-center active:opacity-60 transition-opacity"
+                style={{ color: F.textPrimary }}>
+                {viewYear} · {MONTH_NAMES[viewMonth - 1]}
+              </button>
+              <button onClick={nextMonth} className={clay.pressSmall}>
+                <CaretRight size={14} weight="bold" className="text-[#9E9891]" />
+              </button>
+            </div>
+            {showDatePicker && (<>
+              <div className="fixed inset-0 z-40" onClick={() => setShowDatePicker(false)} />
+              <div className="absolute top-12 left-1/2 -translate-x-1/2 z-50 p-3 w-56"
+                style={{ background: F.surfaceRaised, borderRadius: R.bigCard, boxShadow: S.floating, border: `1px solid ${F.borderSoft}` }}>
+                <div className="flex items-center justify-between mb-2">
+                  <button onClick={() => setViewYear(y => y - 1)} className="px-2 py-1 active:opacity-60"><CaretLeft size={12} weight="bold" style={{ color: F.textTertiary }} /></button>
+                  <span className="text-xs font-bold" style={{ color: F.textPrimary }}>{viewYear}</span>
+                  <button onClick={() => setViewYear(y => y + 1)} className="px-2 py-1 active:opacity-60"><CaretRight size={12} weight="bold" style={{ color: F.textTertiary }} /></button>
+                </div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {MONTH_NAMES.map((mn, i) => (
+                    <button key={i} onClick={() => { setViewMonth(i + 1); setShowDatePicker(false); }}
+                      className="py-1.5 text-xs font-medium rounded-lg active:scale-95 transition-all"
+                      style={{
+                        background: viewMonth === i + 1 ? F.accent : 'transparent',
+                        color: viewMonth === i + 1 ? '#fff' : F.textSecondary,
+                        boxShadow: viewMonth === i + 1 ? S.raisedSoft : 'none',
+                      }}>{mn.replace('月', '')}</button>
+                  ))}
+                </div>
+                <button onClick={() => { setViewYear(today.getFullYear()); setViewMonth(today.getMonth() + 1); setShowDatePicker(false); }}
+                  className="w-full mt-2 py-1.5 text-[10px] font-medium rounded-lg active:scale-95"
+                  style={{ background: F.surfaceSunken, color: F.textSecondary }}>回到今天</button>
+              </div>
+            </>)}
           </div>
         )}
 
         {topTab === 'today' && (
-          <div className="flex items-center gap-2 px-4 py-1.5"
-            style={{ background: '#fff', borderRadius: '50px', boxShadow: SH.pill, width: 192 }}>
-            <button onClick={() => setTodayViewOffset(o => o - 1)} className={clay.pressSmall}>
-              <CaretLeft size={14} weight="bold" className="text-slate-400" />
-            </button>
-            <span className="text-sm font-bold text-slate-700 flex-1 text-center whitespace-nowrap">
-              {viewDay.getMonth() + 1}月{viewDay.getDate()}日 · 周{WEEKDAYS[viewDay.getDay()]}
-            </span>
-            <button onClick={() => setTodayViewOffset(o => o + 1)} className={clay.pressSmall}>
-              <CaretRight size={14} weight="bold" className="text-slate-400" />
-            </button>
+          <div className="relative">
+            <div className="flex items-center gap-2 px-4 py-1.5"
+              style={{ background: F.surfaceRaised, borderRadius: R.pill, boxShadow: S.raisedSoft, width: 192 }}>
+              <button onClick={() => setTodayViewOffset(o => o - 1)} className={clay.pressSmall}>
+                <CaretLeft size={14} weight="bold" className="text-[#9E9891]" />
+              </button>
+              <button onClick={() => setShowDatePicker(v => !v)}
+                className="text-sm font-bold flex-1 text-center whitespace-nowrap active:opacity-60 transition-opacity"
+                style={{ color: F.textPrimary }}>
+                {viewDay.getMonth() + 1}月{viewDay.getDate()}日 · 周{WEEKDAYS[viewDay.getDay()]}
+              </button>
+              <button onClick={() => setTodayViewOffset(o => o + 1)} className={clay.pressSmall}>
+                <CaretRight size={14} weight="bold" className="text-[#9E9891]" />
+              </button>
+            </div>
+            {showDatePicker && (<>
+              <div className="fixed inset-0 z-40" onClick={() => setShowDatePicker(false)} />
+              <div className="absolute top-12 left-1/2 -translate-x-1/2 z-50 p-3 w-64"
+                style={{ background: F.surfaceRaised, borderRadius: R.bigCard, boxShadow: S.floating, border: `1px solid ${F.borderSoft}` }}>
+                <div className="flex items-center justify-between mb-2">
+                  <button onClick={() => setTodayViewOffset(() => { const prev = new Date(viewDay); prev.setMonth(prev.getMonth() - 1); return Math.round((prev.getTime() - today.getTime()) / 86400000); })}
+                    className="px-2 py-1 active:opacity-60"><CaretLeft size={12} weight="bold" style={{ color: F.textTertiary }} /></button>
+                  <span className="text-xs font-bold" style={{ color: F.textPrimary }}>{pickerYear} · {MONTH_NAMES[pickerMonth - 1]}</span>
+                  <button onClick={() => setTodayViewOffset(() => { const nxt = new Date(viewDay); nxt.setMonth(nxt.getMonth() + 1); return Math.round((nxt.getTime() - today.getTime()) / 86400000); })}
+                    className="px-2 py-1 active:opacity-60"><CaretRight size={12} weight="bold" style={{ color: F.textTertiary }} /></button>
+                </div>
+                <div className="grid grid-cols-7 gap-0.5 text-center">
+                  {WEEKDAYS.map(d => <div key={d} className="text-[9px] font-medium py-0.5" style={{ color: F.textTertiary }}>{d}</div>)}
+                  {pickerCells.map((day, i) => day === 0 ? <div key={`e${i}`} /> : (
+                    <button key={i} onClick={() => {
+                      const target = new Date(pickerYear, pickerMonth - 1, day);
+                      setTodayViewOffset(Math.round((target.getTime() - today.getTime()) / 86400000));
+                      setShowDatePicker(false);
+                    }}
+                      className="py-1 text-xs rounded-lg active:scale-95 transition-all"
+                      style={{
+                        fontWeight: toDateStr(pickerYear, pickerMonth, day) === todayStr ? 700 : 400,
+                        background: day === viewDay.getDate() && pickerMonth === viewDay.getMonth() + 1 ? F.accent : 'transparent',
+                        color: day === viewDay.getDate() && pickerMonth === viewDay.getMonth() + 1 ? '#fff' : toDateStr(pickerYear, pickerMonth, day) === todayStr ? F.accent : F.textPrimary,
+                      }}>{day}</button>
+                  ))}
+                </div>
+                <button onClick={() => { setTodayViewOffset(0); setShowDatePicker(false); }}
+                  className="w-full mt-2 py-1.5 text-[10px] font-medium rounded-lg active:scale-95"
+                  style={{ background: F.surfaceSunken, color: F.textSecondary }}>回到今天</button>
+              </div>
+            </>)}
           </div>
         )}
 
-        <div className="flex items-center gap-1.5">
-          <button onClick={() => setShowWeightTrend(v => !v)}
-            className={`w-9 h-9 flex items-center justify-center ${clay.pressSmall}`}
-            style={{ background: showWeightTrend ? CAT_COLORS.sleep.bg : '#fff', borderRadius: '50px', boxShadow: SH.pill }}>
-            <TrendUp size={16} weight="bold" className={showWeightTrend ? 'text-indigo-500' : 'text-slate-400'} />
-          </button>
-          <button onClick={openProfileSetup}
-            className={`w-9 h-9 flex items-center justify-center ${clay.pressSmall}`}
-            style={{ background: '#fff', borderRadius: '50px', boxShadow: SH.pill }}>
-            <Gear size={16} weight="bold" className="text-slate-400" />
-          </button>
-        </div>
+        <button onClick={openProfileSetup}
+          className={`w-11 h-11 flex items-center justify-center ${clay.pressSmall}`}
+          style={{ background: F.surfaceRaised, borderRadius: R.pill, border: `1px solid ${F.borderSoft}`, boxShadow: S.raisedSoft }}>
+          <Gear size={16} weight="bold" style={{ color: F.textTertiary }} />
+        </button>
       </div>
 
       {/* ── Top tab bar (月历 / 今日) ── */}
       <div className="shrink-0 mx-5 mb-2 flex p-1"
-        style={{ background: '#EBEBEB', borderRadius: '28px' }}>
+        style={{ background: F.surfaceSunken, borderRadius: R.panel, boxShadow: S.sunken }}>
         {([
           { id: 'calendar' as TopTab, label: '月历' },
           { id: 'today'    as TopTab, label: '今日' },
         ]).map(tab => (
-          <button key={tab.id} onClick={() => setTopTab(tab.id)}
+          <button key={tab.id} onClick={() => { setTopTab(tab.id); setShowDatePicker(false); }}
             className={`flex-1 py-2 text-[13px] ${clay.pressSmall}`}
             style={{
-              borderRadius: '24px',
-              background: topTab === tab.id ? '#fff' : 'transparent',
-              color: topTab === tab.id ? '#1d1d1f' : 'rgba(0,0,0,0.35)',
+              borderRadius: R.large,
+              background: topTab === tab.id ? F.surfaceRaised : 'transparent',
+              color: topTab === tab.id ? F.textPrimary : F.textTertiary,
               fontWeight: topTab === tab.id ? 600 : 400,
-              boxShadow: topTab === tab.id ? SH.tab : 'none',
+              boxShadow: topTab === tab.id ? S.raisedSoft : 'none',
             }}>
             {tab.label}
           </button>
@@ -787,23 +842,23 @@ const HealthApp: React.FC = () => {
           {/* Cycle Status */}
           <div className="shrink-0 mx-5 mt-1 px-4 py-3.5 flex items-center justify-between"
             style={{
-              background: cycleStatus.lastPeriodStart ? CAT_COLORS.period.bg : '#EBEBEB',
-              borderRadius: '20px',
-              boxShadow: cycleStatus.lastPeriodStart ? SH.card : SH.input,
+              background: cycleStatus.lastPeriodStart ? CAT_COLORS.period.bg : '#ECE8E1',
+              borderRadius: R.bigCard,
+              boxShadow: cycleStatus.lastPeriodStart ? S.raisedSoft : S.sunken,
             }}>
             <div className="flex items-center gap-1.5">
-              <Drop size={13} weight="fill" style={{ color: cycleStatus.lastPeriodStart ? CAT_COLORS.period.shadow : '#aaa' }} />
+              <Drop size={13} weight="fill" style={{ color: cycleStatus.lastPeriodStart ? CAT_COLORS.period.shadow : F.textTertiary }} />
               {cycleStatus.lastPeriodStart ? (
                 <span className="text-[13px]" style={{ color: CAT_COLORS.period.fg }}>
                   周期第 <span className="font-bold" style={{ color: CAT_COLORS.period.shadow }}>{cycleStatus.cycleDay}</span> 天
-                  {cycleStatus.uncertain && <span className="text-xs text-slate-400 ml-1">（预测不确定）</span>}
+                  {cycleStatus.uncertain && <span className="text-xs text-[#9E9891] ml-1">（预测不确定）</span>}
                 </span>
               ) : (
-                <span className="text-sm text-slate-400">暂无经期数据</span>
+                <span className="text-sm text-[#9E9891]">暂无经期数据</span>
               )}
             </div>
             {cycleStatus.lastPeriodStart && (
-              <span className="text-xs text-slate-400">预计下次 {cycleStatus.nextRangeStr}</span>
+              <span className="text-xs text-[#9E9891]">预计下次 {cycleStatus.nextRangeStr}</span>
             )}
           </div>
 
@@ -812,11 +867,11 @@ const HealthApp: React.FC = () => {
             {/* Range legends (pill = calendar background fill) */}
             <span className="text-[12px]" style={{
               background: CAT_COLORS.period.bg, color: CAT_COLORS.period.fg, fontWeight: 500,
-              borderRadius: '9999px', padding: '4px 10px', boxShadow: SH.pill,
+              borderRadius: R.pill, padding: '4px 10px', boxShadow: S.raisedSoft,
             }}>经期</span>
             <span className="text-[12px]" style={{
               background: CAT_COLORS.sleep.bg, color: CAT_COLORS.sleep.fg, fontWeight: 500,
-              borderRadius: '9999px', padding: '4px 10px', boxShadow: SH.pill,
+              borderRadius: R.pill, padding: '4px 10px', boxShadow: S.raisedSoft,
               border: `1.5px dashed ${CAT_COLORS.sleep.shadow}`,
             }}>排卵窗</span>
             {/* Dot legends (dot = calendar event dot) */}
@@ -826,13 +881,13 @@ const HealthApp: React.FC = () => {
             <span className="flex items-center gap-1.5 text-[12px]" style={{ color: CAT_COLORS.symptom.fg, fontWeight: 500 }}>
               <span style={{ width: 8, height: 8, borderRadius: '50%', background: CAT_COLORS.symptom.shadow, flexShrink: 0 }} />症状
             </span>
-            {isLoading && <div className="ml-auto"><ArrowClockwise size={12} className="text-slate-300 animate-spin" /></div>}
+            {isLoading && <div className="ml-auto"><ArrowClockwise size={12} className="text-[#9E9891] animate-spin" /></div>}
           </div>
 
           {/* Calendar */}
           <div className="shrink-0 px-5 mt-3">
             <div className="grid grid-cols-7 mb-1">
-              {WEEKDAYS.map(d => <div key={d} className="text-center text-xs font-semibold text-slate-400 py-1">{d}</div>)}
+              {WEEKDAYS.map(d => <div key={d} className="text-center text-xs font-semibold text-[#9E9891] py-1">{d}</div>)}
             </div>
             <div className="grid grid-cols-7 gap-1">
               {calendarDays.map((day, idx) => {
@@ -849,22 +904,20 @@ const HealthApp: React.FC = () => {
                   <button key={dateStr} onClick={() => setSelectedDate(isSel ? null : dateStr)}
                     className={`flex flex-col items-center justify-center h-11 ${clay.pressSmall}`}
                     style={{
-                      borderRadius: '12px',
-                      background: isSel ? '#CCCCD2'
-                        : periodEv ? 'rgba(249,206,222,0.5)'
-                        : isOvul ? 'rgba(197,217,245,0.5)'
-                        : isToday ? '#E4E4E7'
+                      borderRadius: R.medium,
+                      background: isSel ? F.borderStrong
+                        : periodEv ? HUE.rose.tint
+                        : isOvul ? HUE.blue.tint
                         : 'transparent',
                       boxShadow: isSel
-                        ? 'inset 2px 2px 6px rgba(0,0,0,0.15), inset -1px -1px 4px rgba(255,255,255,0.50)'
-                        : isToday
-                        ? 'inset 2px 2px 6px rgba(0,0,0,0.10), inset -1px -1px 4px rgba(255,255,255,0.50)'
+                        ? S.sunken
                         : 'none',
+                      border: isToday && !isSel ? `2px solid ${HUE.amber.ink}` : 'none',
                     }}>
                     <span style={{
                       fontSize: '16px', lineHeight: 1, marginBottom: 2,
                       fontWeight: (isSel || isToday) ? 700 : 400,
-                      color: (isSel || isToday) ? '#3A3A4A' : '#1d1d1f',
+                      color: (isSel || isToday) ? F.textPrimary : F.textPrimary,
                     }}>{day}</span>
                     <div className="flex gap-0.5 items-center h-2">
                       {/* 经期不画点：整格已是粉色背景 */}
@@ -877,50 +930,53 @@ const HealthApp: React.FC = () => {
             </div>
           </div>
 
-          <div className="shrink-0 mx-5 mt-3 h-px" style={{ background: '#EDECEA' }} />
+          <div className="shrink-0 mx-5 mt-3 h-px" style={{ background: F.divider }} />
 
           {/* Detail Section */}
           <div className="flex-1 overflow-y-auto px-5 py-4">
             {!selectedDate ? (
-              <div className="flex flex-col items-center mt-8 gap-2">
-                <div className="w-12 h-12 flex items-center justify-center" style={{ ...clay.card, borderRadius: '12px' }}>
-                  <CaretRight size={20} className="text-slate-300" />
-                </div>
-                <p className="text-slate-400 text-sm">点击日期查看详情</p>
+              <div className="flex items-center justify-center gap-2 mt-8"
+                style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken, padding: '20px 24px' }}>
+                <CalendarBlank size={18} weight="regular" style={{ color: F.textTertiary, flexShrink: 0 }} />
+                <span style={{ fontSize: '13px', color: F.textTertiary }}>点击日期查看详情</span>
               </div>
             ) : (
               <>
                 <div className="flex items-center justify-between mb-3">
-                  <span className="text-xs font-bold text-slate-400 tracking-wider">
+                  <span className="text-xs font-bold text-[#9E9891] tracking-wider">
                     {viewMonth}月{parseInt(selectedDate.split('-')[2])}日
                   </span>
                   <button onClick={() => openRecord('workout')}
-                    className={`flex items-center gap-1 text-white text-[11px] font-bold px-2.5 py-1.5 ${clay.pressSmall}`}
+                    className={`flex items-center gap-1.5 text-[12px] font-bold px-4 ${clay.pressSmall}`}
                     style={clay.btnPrimary}>
-                    <Plus size={11} weight="bold" /> 记录
+                    <Plus size={13} weight="bold" /> 记录
                   </button>
                 </div>
 
                 {selectedEvents.length === 0 ? (
-                  <p className="text-slate-400 text-sm text-center mt-4">暂无记录</p>
+                  <div className="flex items-center justify-center gap-2 mt-4"
+                    style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken, padding: '20px 24px' }}>
+                    <Plus size={18} weight="regular" style={{ color: F.textTertiary, flexShrink: 0 }} />
+                    <span style={{ fontSize: '13px', color: F.textTertiary }}>暂无记录</span>
+                  </div>
                 ) : (
                   <>
 
                 {selWorkout && (
                   <div className="mb-3" style={{ ...clay.cardGreen, padding: '14px 16px' }}>
                     <div className="flex items-center gap-3">
-                      <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.workout.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}><Barbell size={18} weight="fill" /></div>
+                      <div style={{ width: 36, height: 36, borderRadius: R.small, background: CAT_COLORS.workout.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: F.surfaceRaised, fontSize: '13px', fontWeight: 700, flexShrink: 0 }}><Barbell size={18} weight="fill" /></div>
                       <div className="flex-1 min-w-0">
                         <span style={{ fontSize: '15px', fontWeight: 600, color: CAT_COLORS.workout.fg }}>训练</span>
                         <span className="ml-2" style={{ fontSize: '13px', fontWeight: 400, color: `${CAT_COLORS.workout.fg}99` }}>{selWorkout.duration}min{selWorkout.calories ? ` · ${selWorkout.calories}kcal` : ''}</span>
                       </div>
                       <div className="ml-auto flex gap-1 shrink-0">
                         <button onClick={() => startEditWorkout(selWorkout)} className={`p-2 ${clay.pressSmall}`}
-                          style={{ borderRadius: '50px', background: CAT_COLORS.workout.bg, boxShadow: SH.pill }}>
+                          style={{ borderRadius: R.pill, background: CAT_COLORS.workout.bg, boxShadow: S.raisedSoft }}>
                           <PencilSimple size={14} style={{ color: CAT_COLORS.workout.shadow }} />
                         </button>
                         <button onClick={() => handleDelete(selWorkout.id, '训练记录')} className={`p-2 ${clay.pressSmall}`}
-                          style={{ borderRadius: '50px', background: CAT_COLORS.period.bg, boxShadow: SH.pill }}>
+                          style={{ borderRadius: R.pill, background: CAT_COLORS.period.bg, boxShadow: S.raisedSoft }}>
                           <Trash size={14} style={{ color: CAT_COLORS.period.shadow }} />
                         </button>
                       </div>
@@ -934,7 +990,7 @@ const HealthApp: React.FC = () => {
                 {selSleep && (
                   <div className="mb-3" style={{ ...clay.cardIndigo, padding: '14px 16px' }}>
                     <div className="flex items-center gap-3">
-                      <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.sleep.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}><MoonStars size={18} weight="fill" /></div>
+                      <div style={{ width: 36, height: 36, borderRadius: R.small, background: CAT_COLORS.sleep.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: F.surfaceRaised, fontSize: '13px', fontWeight: 700, flexShrink: 0 }}><MoonStars size={18} weight="fill" /></div>
                       <div className="flex-1 min-w-0">
                         <span style={{ fontSize: '15px', fontWeight: 600, color: CAT_COLORS.sleep.fg }}>睡眠</span>
                         <span className="ml-2" style={{ fontSize: '13px', fontWeight: 400, color: `${CAT_COLORS.sleep.fg}99` }}>
@@ -943,11 +999,11 @@ const HealthApp: React.FC = () => {
                       </div>
                       <div className="ml-auto flex gap-1 shrink-0">
                         <button onClick={() => startEditSleep(selSleep)} className={`p-2 ${clay.pressSmall}`}
-                          style={{ borderRadius: '50px', background: CAT_COLORS.sleep.bg, boxShadow: SH.pill }}>
+                          style={{ borderRadius: R.pill, background: CAT_COLORS.sleep.bg, boxShadow: S.raisedSoft }}>
                           <PencilSimple size={14} style={{ color: CAT_COLORS.sleep.shadow }} />
                         </button>
                         <button onClick={() => handleDelete(selSleep.id, '睡眠记录')} className={`p-2 ${clay.pressSmall}`}
-                          style={{ borderRadius: '50px', background: CAT_COLORS.period.bg, boxShadow: SH.pill }}>
+                          style={{ borderRadius: R.pill, background: CAT_COLORS.period.bg, boxShadow: S.raisedSoft }}>
                           <Trash size={14} style={{ color: CAT_COLORS.period.shadow }} />
                         </button>
                       </div>
@@ -958,18 +1014,18 @@ const HealthApp: React.FC = () => {
                 {selDiet.length > 0 && selDiet.map(d => (
                   <div key={d.id} className="mb-3" style={{ ...clay.cardAmber, padding: '14px 16px' }}>
                     <div className="flex items-center gap-3">
-                      <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.diet.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}><ForkKnife size={18} weight="fill" /></div>
+                      <div style={{ width: 36, height: 36, borderRadius: R.small, background: CAT_COLORS.diet.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: F.surfaceRaised, fontSize: '13px', fontWeight: 700, flexShrink: 0 }}><ForkKnife size={18} weight="fill" /></div>
                       <div className="flex-1 min-w-0">
                         <span style={{ fontSize: '15px', fontWeight: 600, color: CAT_COLORS.diet.fg }}>{d.note || '饮食'}</span>
                         <span className="ml-2" style={{ fontSize: '13px', fontWeight: 400, color: `${CAT_COLORS.diet.fg}99` }}>{d.calories}kcal{d.protein ? ` · 蛋白${d.protein}g` : ''}</span>
                       </div>
                       <div className="ml-auto flex gap-1 shrink-0">
                         <button onClick={() => startEditDiet(d)} className={`p-2 ${clay.pressSmall}`}
-                          style={{ borderRadius: '50px', background: CAT_COLORS.diet.bg, boxShadow: SH.pill }}>
+                          style={{ borderRadius: R.pill, background: CAT_COLORS.diet.bg, boxShadow: S.raisedSoft }}>
                           <PencilSimple size={14} style={{ color: CAT_COLORS.diet.shadow }} />
                         </button>
                         <button onClick={() => handleDelete(d.id, '饮食记录')} className={`p-2 ${clay.pressSmall}`}
-                          style={{ borderRadius: '50px', background: CAT_COLORS.period.bg, boxShadow: SH.pill }}>
+                          style={{ borderRadius: R.pill, background: CAT_COLORS.period.bg, boxShadow: S.raisedSoft }}>
                           <Trash size={14} style={{ color: CAT_COLORS.period.shadow }} />
                         </button>
                       </div>
@@ -980,7 +1036,7 @@ const HealthApp: React.FC = () => {
                 {selPeriod && (
                   <div className="mb-3" style={{ ...clay.cardRose, padding: '14px 16px' }}>
                     <div className="flex items-center gap-3">
-                      <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.period.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <div style={{ width: 36, height: 36, borderRadius: R.small, background: CAT_COLORS.period.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                         <Drop size={16} weight="fill" color="#fff" />
                       </div>
                       <div className="flex-1 min-w-0">
@@ -989,11 +1045,11 @@ const HealthApp: React.FC = () => {
                       </div>
                       <div className="ml-auto flex gap-1 shrink-0">
                         <button onClick={() => startEditPeriod(selPeriod)} className={`p-2 ${clay.pressSmall}`}
-                          style={{ borderRadius: '50px', background: CAT_COLORS.period.bg, boxShadow: SH.pill }}>
+                          style={{ borderRadius: R.pill, background: CAT_COLORS.period.bg, boxShadow: S.raisedSoft }}>
                           <PencilSimple size={14} style={{ color: CAT_COLORS.period.shadow }} />
                         </button>
                         <button onClick={() => handleDelete(selPeriod.id, '经期记录')} className={`p-2 ${clay.pressSmall}`}
-                          style={{ borderRadius: '50px', background: CAT_COLORS.period.bg, boxShadow: SH.pill }}>
+                          style={{ borderRadius: R.pill, background: CAT_COLORS.period.bg, boxShadow: S.raisedSoft }}>
                           <Trash size={14} style={{ color: CAT_COLORS.period.shadow }} />
                         </button>
                       </div>
@@ -1004,18 +1060,18 @@ const HealthApp: React.FC = () => {
                 {selSymptom && (
                   <div style={{ ...clay.cardViolet, padding: '14px 16px' }}>
                     <div className="flex items-center gap-3">
-                      <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.symptom.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}><Bandaids size={18} weight="fill" /></div>
+                      <div style={{ width: 36, height: 36, borderRadius: R.small, background: CAT_COLORS.symptom.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: F.surfaceRaised, fontSize: '13px', fontWeight: 700, flexShrink: 0 }}><Bandaids size={18} weight="fill" /></div>
                       <div className="flex-1 min-w-0">
                         <span style={{ fontSize: '15px', fontWeight: 600, color: CAT_COLORS.symptom.fg }}>症状</span>
                         <span className="ml-2" style={{ fontSize: '13px', fontWeight: 400, color: `${CAT_COLORS.symptom.fg}99` }}>{selSymptom.symptoms.join('、')}</span>
                       </div>
                       <div className="ml-auto flex gap-1 shrink-0">
                         <button onClick={() => startEditSymptom(selSymptom)} className={`p-2 ${clay.pressSmall}`}
-                          style={{ borderRadius: '50px', background: CAT_COLORS.symptom.bg, boxShadow: SH.pill }}>
+                          style={{ borderRadius: R.pill, background: CAT_COLORS.symptom.bg, boxShadow: S.raisedSoft }}>
                           <PencilSimple size={14} style={{ color: CAT_COLORS.symptom.shadow }} />
                         </button>
                         <button onClick={() => handleDelete(selSymptom.id, '症状记录')} className={`p-2 ${clay.pressSmall}`}
-                          style={{ borderRadius: '50px', background: CAT_COLORS.period.bg, boxShadow: SH.pill }}>
+                          style={{ borderRadius: R.pill, background: CAT_COLORS.period.bg, boxShadow: S.raisedSoft }}>
                           <Trash size={14} style={{ color: CAT_COLORS.period.shadow }} />
                         </button>
                       </div>
@@ -1039,111 +1095,86 @@ const HealthApp: React.FC = () => {
 
           {/* Big nested clay donut ring */}
           <div className="relative mx-auto" style={{ width: 248, height: 248 }}>
-            {/* Outer raised rim — the "floating" feel comes from here */}
+            {/* Outer raised rim */}
             <div className="absolute inset-0 rounded-full" style={{
-              background: 'linear-gradient(145deg, #f0f0f3, #d8d8dc)',
-              boxShadow: '8px 8px 20px rgba(0,0,0,0.12), -6px -6px 16px rgba(255,255,255,0.9)',
+              background: F.surface,
+              boxShadow: S.raisedMedium,
             }} />
             {/* Track groove — recessed channel where arcs sit */}
             <div className="absolute rounded-full" style={{
               top: 10, left: 10, right: 10, bottom: 10,
-              background: '#DCDCE0',
-              boxShadow: 'inset 3px 3px 8px rgba(0,0,0,0.18), inset -2px -2px 6px rgba(255,255,255,0.7)',
+              background: F.surfaceSunken,
+              boxShadow: S.sunken,
             }} />
             {/* Inner raised circle (donut hole) */}
             <div className="absolute rounded-full" style={{
               top: 46, left: 46, width: 156, height: 156,
-              background: 'linear-gradient(145deg, #fafafa, #eeeef0)',
-              boxShadow: '4px 4px 10px rgba(0,0,0,0.10), -3px -3px 8px rgba(255,255,255,0.9), inset 1px 1px 3px rgba(255,255,255,0.8)',
+              background: F.surfaceRaised,
+              boxShadow: S.raisedMedium,
             }} />
             {/* SVG data arcs */}
             <svg viewBox="0 0 248 248" width="248" height="248" className="absolute inset-0">
-              {/* Sleep ring (outer, r=107): track → arc shadow → arc → overflow */}
-              <circle cx="124" cy="124" r="107" fill="none" stroke="#D8D8DD" strokeWidth="20" />
-              <circle cx="126" cy="127" r="107" fill="none"
-                stroke="rgba(0,0,0,0.12)" strokeWidth="16" strokeLinecap="round"
-                {...ringArc(107, todaySleep ? todaySleep.duration / sleepTarget : 0)}
-                transform="rotate(-90 126 127)" />
+              <defs>
+                <filter id="arcShadow" x="-20%" y="-20%" width="140%" height="140%">
+                  <feDropShadow dx="1" dy="2" stdDeviation="3" floodColor="rgba(70,66,58,0.18)" />
+                </filter>
+              </defs>
+              {/* Sleep ring (outer, r=107): track → arc → overflow */}
+              <circle cx="124" cy="124" r="107" fill="none" stroke={F.surfaceSunken} strokeWidth="20" />
               <circle cx="124" cy="124" r="107" fill="none"
-                stroke={CAT_COLORS.sleep.shadow} strokeWidth="16" strokeLinecap="round"
+                stroke={CAT_COLORS.sleep.active} strokeWidth="16" strokeLinecap="round"
+                filter="url(#arcShadow)"
                 {...ringArc(107, todaySleep ? todaySleep.duration / sleepTarget : 0)}
                 transform="rotate(-90 124 124)" />
-              {todaySleep && todaySleep.duration / sleepTarget > 1 && (<>
-                <circle cx="126" cy="127" r="107" fill="none"
-                  stroke="rgba(0,0,0,0.10)" strokeWidth="16" strokeLinecap="round"
-                  {...ringArc(107, todaySleep.duration / sleepTarget - 1)}
-                  transform="rotate(-90 126 127)" />
-                {overflowArc(107, todaySleep.duration / sleepTarget - 1, CAT_COLORS.sleep.shadow, CAT_COLORS.sleep.active)}
-              </>)}
+              {todaySleep && todaySleep.duration / sleepTarget > 1 &&
+                overflowArc(107, todaySleep.duration / sleepTarget - 1, CAT_COLORS.sleep.active, CAT_COLORS.sleep.shadow)
+              }
               {/* Workout ring (mid, r=88) */}
-              <circle cx="124" cy="124" r="88" fill="none" stroke="#D8D8DD" strokeWidth="20" />
-              <circle cx="126" cy="127" r="88" fill="none"
-                stroke="rgba(0,0,0,0.12)" strokeWidth="16" strokeLinecap="round"
-                {...ringArc(88, todayWorkout?.calories ? todayWorkout.calories / workoutTarget : 0)}
-                transform="rotate(-90 126 127)" />
+              <circle cx="124" cy="124" r="88" fill="none" stroke={F.surfaceSunken} strokeWidth="20" />
               <circle cx="124" cy="124" r="88" fill="none"
-                stroke={CAT_COLORS.workout.shadow} strokeWidth="16" strokeLinecap="round"
+                stroke={CAT_COLORS.workout.active} strokeWidth="16" strokeLinecap="round"
+                filter="url(#arcShadow)"
                 {...ringArc(88, todayWorkout?.calories ? todayWorkout.calories / workoutTarget : 0)}
                 transform="rotate(-90 124 124)" />
-              {todayWorkout?.calories && todayWorkout.calories / workoutTarget > 1 && (<>
-                <circle cx="126" cy="127" r="88" fill="none"
-                  stroke="rgba(0,0,0,0.10)" strokeWidth="16" strokeLinecap="round"
-                  {...ringArc(88, todayWorkout.calories / workoutTarget - 1)}
-                  transform="rotate(-90 126 127)" />
-                {overflowArc(88, todayWorkout.calories / workoutTarget - 1, CAT_COLORS.workout.shadow, CAT_COLORS.workout.active)}
-              </>)}
+              {todayWorkout?.calories && todayWorkout.calories / workoutTarget > 1 &&
+                overflowArc(88, todayWorkout.calories / workoutTarget - 1, CAT_COLORS.workout.active, CAT_COLORS.workout.shadow)
+              }
               {/* Diet ring (inner, r=69) — split by macronutrient when available */}
-              <circle cx="124" cy="124" r="69" fill="none" stroke="#D8D8DD" strokeWidth="20" />
+              <circle cx="124" cy="124" r="69" fill="none" stroke={F.surfaceSunken} strokeWidth="20" />
               {dietHasMacros ? (
                 <>
-                  {dietProteinKcal > 0 && (<>
-                    <circle cx="126" cy="127" r="69" fill="none"
-                      stroke="rgba(0,0,0,0.12)" strokeWidth="16" strokeLinecap="round"
-                      {...ringArc(69, dietProteinKcal / calTarget)}
-                      transform="rotate(-90 126 127)" />
+                  {dietProteinKcal > 0 && (
                     <circle cx="124" cy="124" r="69" fill="none"
                       stroke={MACRO_COLORS.protein} strokeWidth="16" strokeLinecap="round"
+                      filter="url(#arcShadow)"
                       {...ringArc(69, dietProteinKcal / calTarget)}
                       transform="rotate(-90 124 124)" />
-                  </>)}
-                  {dietCarbsKcal > 0 && (<>
-                    <circle cx="126" cy="127" r="69" fill="none"
-                      stroke="rgba(0,0,0,0.12)" strokeWidth="16" strokeLinecap="round"
-                      {...ringArc(69, dietCarbsKcal / calTarget)}
-                      transform={`rotate(${-90 + (dietProteinKcal / calTarget) * 360} 126 127)`} />
+                  )}
+                  {dietCarbsKcal > 0 && (
                     <circle cx="124" cy="124" r="69" fill="none"
                       stroke={MACRO_COLORS.carbs} strokeWidth="16" strokeLinecap="round"
+                      filter="url(#arcShadow)"
                       {...ringArc(69, dietCarbsKcal / calTarget)}
                       transform={`rotate(${-90 + (dietProteinKcal / calTarget) * 360} 124 124)`} />
-                  </>)}
-                  {dietFatKcal > 0 && (<>
-                    <circle cx="126" cy="127" r="69" fill="none"
-                      stroke="rgba(0,0,0,0.12)" strokeWidth="16" strokeLinecap="round"
-                      {...ringArc(69, dietFatKcal / calTarget)}
-                      transform={`rotate(${-90 + ((dietProteinKcal + dietCarbsKcal) / calTarget) * 360} 126 127)`} />
+                  )}
+                  {dietFatKcal > 0 && (
                     <circle cx="124" cy="124" r="69" fill="none"
                       stroke={MACRO_COLORS.fat} strokeWidth="16" strokeLinecap="round"
+                      filter="url(#arcShadow)"
                       {...ringArc(69, dietFatKcal / calTarget)}
                       transform={`rotate(${-90 + ((dietProteinKcal + dietCarbsKcal) / calTarget) * 360} 124 124)`} />
-                  </>)}
+                  )}
                 </>
               ) : todayDietTotal > 0 ? (
                 <>
-                  <circle cx="126" cy="127" r="69" fill="none"
-                    stroke="rgba(0,0,0,0.12)" strokeWidth="16" strokeLinecap="round"
-                    {...ringArc(69, todayDietTotal / calTarget)}
-                    transform="rotate(-90 126 127)" />
                   <circle cx="124" cy="124" r="69" fill="none"
-                    stroke={CAT_COLORS.diet.shadow} strokeWidth="16" strokeLinecap="round"
+                    stroke={CAT_COLORS.diet.active} strokeWidth="16" strokeLinecap="round"
+                    filter="url(#arcShadow)"
                     {...ringArc(69, todayDietTotal / calTarget)}
                     transform="rotate(-90 124 124)" />
-                  {todayDietTotal / calTarget > 1 && (<>
-                    <circle cx="126" cy="127" r="69" fill="none"
-                      stroke="rgba(0,0,0,0.10)" strokeWidth="16" strokeLinecap="round"
-                      {...ringArc(69, todayDietTotal / calTarget - 1)}
-                      transform="rotate(-90 126 127)" />
-                    {overflowArc(69, todayDietTotal / calTarget - 1, CAT_COLORS.diet.shadow, CAT_COLORS.diet.active)}
-                  </>)}
+                  {todayDietTotal / calTarget > 1 &&
+                    overflowArc(69, todayDietTotal / calTarget - 1, CAT_COLORS.diet.active, CAT_COLORS.diet.shadow)
+                  }
                 </>
               ) : null}
             </svg>
@@ -1151,17 +1182,17 @@ const HealthApp: React.FC = () => {
             <div className="absolute inset-0 flex flex-col items-center justify-center z-10">
               {deficit != null ? (
                 <>
-                  <span style={{ fontSize: '11px', color: '#6B6760' }}>热量缺口</span>
+                  <span style={{ fontSize: '11px', color: F.textSecondary }}>热量缺口</span>
                   <span style={{ fontSize: '28px', fontWeight: 700, color: deficit >= 0 ? CAT_COLORS.workout.shadow : CAT_COLORS.diet.shadow }}>
                     {deficit >= 0 ? `+${deficit}` : deficit}
                   </span>
-                  <span style={{ fontSize: '11px', color: '#6B6760' }}>kcal</span>
+                  <span style={{ fontSize: '11px', color: F.textSecondary }}>kcal</span>
                 </>
               ) : (
                 <>
-                  <span style={{ fontSize: '11px', color: '#6B6760' }}>摄入</span>
-                  <span style={{ fontSize: '28px', fontWeight: 700, color: '#1d1d1f' }}>{todayDietTotal || '—'}</span>
-                  <span style={{ fontSize: '11px', color: '#6B6760' }}>{todayDietTotal ? 'kcal' : ''}</span>
+                  <span style={{ fontSize: '11px', color: F.textSecondary }}>摄入</span>
+                  <span style={{ fontSize: '28px', fontWeight: 700, color: F.textPrimary }}>{todayDietTotal || '—'}</span>
+                  <span style={{ fontSize: '11px', color: F.textSecondary }}>{todayDietTotal ? 'kcal' : ''}</span>
                 </>
               )}
             </div>
@@ -1169,18 +1200,21 @@ const HealthApp: React.FC = () => {
 
           {/* Ring legend pills */}
           <div className="flex justify-center gap-2 mt-3 mb-4">
-            <span style={{ fontSize: '12px', fontWeight: 500, color: CAT_COLORS.sleep.fg, background: CAT_COLORS.sleep.bg, borderRadius: '9999px', padding: '5px 12px', boxShadow: SH.pill }}>
+            <span className="flex items-center gap-1.5" style={{ fontSize: '12px', fontWeight: 500, color: CAT_COLORS.sleep.fg, background: CAT_COLORS.sleep.bg, borderRadius: R.pill, padding: '5px 12px', boxShadow: S.raisedSoft }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: CAT_COLORS.sleep.active, flexShrink: 0 }} />
               睡 <b>{todaySleep ? fmtDuration(todaySleep.duration) : '—'}</b>
             </span>
-            <span style={{ fontSize: '12px', fontWeight: 500, color: CAT_COLORS.workout.fg, background: CAT_COLORS.workout.bg, borderRadius: '9999px', padding: '5px 12px', boxShadow: SH.pill }}>
+            <span className="flex items-center gap-1.5" style={{ fontSize: '12px', fontWeight: 500, color: CAT_COLORS.workout.fg, background: CAT_COLORS.workout.bg, borderRadius: R.pill, padding: '5px 12px', boxShadow: S.raisedSoft }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: CAT_COLORS.workout.active, flexShrink: 0 }} />
               练 <b>{todayWorkout ? `${todayWorkout.calories ?? 0}k` : '—'}</b>
             </span>
-            <span style={{ fontSize: '12px', fontWeight: 500, color: CAT_COLORS.diet.fg, background: CAT_COLORS.diet.bg, borderRadius: '9999px', padding: '5px 12px', boxShadow: SH.pill }}>
+            <span className="flex items-center gap-1.5" style={{ fontSize: '12px', fontWeight: 500, color: CAT_COLORS.diet.fg, background: CAT_COLORS.diet.bg, borderRadius: R.pill, padding: '5px 12px', boxShadow: S.raisedSoft }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: CAT_COLORS.diet.active, flexShrink: 0 }} />
               食 <b>{todayDietTotal ? `${todayDietTotal}k` : '—'}</b>
             </span>
           </div>
           {dietHasMacros && (
-            <div className="flex justify-center gap-4 -mt-2 mb-3 text-[10px] text-slate-400">
+            <div className="flex justify-center gap-4 -mt-2 mb-3 text-[10px] text-[#9E9891]">
               <span className="flex items-center gap-1">
                 <span style={{ width: 6, height: 6, borderRadius: '50%', background: MACRO_COLORS.protein }} />蛋白
               </span>
@@ -1195,27 +1229,40 @@ const HealthApp: React.FC = () => {
 
           {/* Weight row */}
           <div className="mb-3">
-            <div className="flex items-center gap-2 px-3 py-2"
-              style={{ background: '#fff', borderRadius: '20px', boxShadow: SH.card }}>
-              <span className="text-xs font-bold text-slate-500">体重</span>
+            <button
+              onClick={() => setShowWeightTrend(v => !v)}
+              className={`flex items-center gap-2 px-3 py-2 w-full ${clay.pressSmall}`}
+              style={{ background: F.surfaceRaised, borderRadius: R.bigCard, boxShadow: S.raisedSoft, border: 'none', cursor: 'pointer' }}>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: F.textSecondary }}>体重</span>
               <input type="number" step="0.1"
                 defaultValue={todayWeight?.value ?? profile?.weightKg ?? ''}
                 placeholder="kg"
-                className="w-14 text-sm font-bold text-slate-700 text-right focus:outline-none bg-transparent"
+                onClick={e => e.stopPropagation()}
+                className="w-14 text-sm font-bold text-right focus:outline-none bg-transparent"
+                style={{ color: F.textPrimary }}
                 onBlur={e => {
                   const v = parseFloat(e.target.value);
                   if (v > 0 && v !== todayWeight?.value) handleSaveWeight(v);
                 }} />
-              <span className="text-[10px] text-slate-400">kg</span>
-            </div>
+              <span style={{ fontSize: '10px', color: F.textTertiary }}>kg</span>
+              <div className="flex-1" />
+              <ChartLineUp size={14} weight="bold" style={{ color: showWeightTrend ? HUE.blue.main : F.textTertiary }} />
+              <CaretRight size={14} weight="bold" style={{ color: F.textTertiary }} />
+            </button>
           </div>
 
           {/* BMR info line */}
           {bmr > 0 && (
-            <div className="flex items-center gap-3 mb-3 text-[11px] text-slate-400">
-              <span>目标 <b className="text-slate-600">{calTarget}</b></span>
-              <span>运动 <b className="text-emerald-600">+{exerciseCal}</b></span>
-              <span>摄入 <b className="text-amber-600">-{todayDietTotal}</b></span>
+            <div className="flex items-center gap-2 mb-3">
+              <span style={{ background: F.surfaceWarm, borderRadius: R.pill, padding: '4px 10px', fontSize: '11px', color: F.textTertiary, boxShadow: S.raisedSoft }}>
+                目标 <b style={{ color: F.textSecondary }}>{calTarget}</b>
+              </span>
+              <span style={{ background: HUE.green.tint, borderRadius: R.pill, padding: '4px 10px', fontSize: '11px', color: CAT_COLORS.workout.fg, boxShadow: S.raisedSoft }}>
+                运动 <b style={{ color: HUE.green.ink }}>+{exerciseCal}</b>
+              </span>
+              <span style={{ background: HUE.amber.tint, borderRadius: R.pill, padding: '4px 10px', fontSize: '11px', color: CAT_COLORS.diet.fg, boxShadow: S.raisedSoft }}>
+                摄入 <b style={{ color: HUE.amber.ink }}>-{todayDietTotal}</b>
+              </span>
             </div>
           )}
 
@@ -1234,8 +1281,8 @@ const HealthApp: React.FC = () => {
             return (
               <div className="mb-3 p-3" style={{ ...clay.card }}>
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-bold text-slate-500">体重趋势</span>
-                  <span className="text-[10px] text-slate-400">
+                  <span className="text-xs font-bold text-[#6E665F]">体重趋势</span>
+                  <span className="text-[10px] text-[#9E9891]">
                     {weightHistory[0].date.slice(5)} → {weightHistory[weightHistory.length - 1].date.slice(5)}
                   </span>
                 </div>
@@ -1247,47 +1294,49 @@ const HealthApp: React.FC = () => {
                     return <circle key={i} cx={x} cy={y} r="3" fill="#6366f1" />;
                   })}
                 </svg>
-                <div className="flex justify-between text-[10px] text-slate-400 mt-1">
+                <div className="flex justify-between text-[10px] text-[#9E9891] mt-1">
                   <span>{vals[0]}kg</span>
-                  <span>最新 <b className="text-slate-600">{vals[vals.length - 1]}kg</b></span>
+                  <span>最新 <b className="text-[#6E665F]">{vals[vals.length - 1]}kg</b></span>
                 </div>
               </div>
             );
           })()}
 
           {showWeightTrend && weightHistory.length <= 1 && (
-            <div className="mb-3 p-3 text-center text-xs text-slate-400" style={clay.card}>
-              记录 2 天以上体重后显示趋势
+            <div className="mb-3 flex items-center justify-center gap-2"
+              style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken, padding: '20px 24px' }}>
+              <ChartLineUp size={18} weight="regular" style={{ color: F.textTertiary, flexShrink: 0 }} />
+              <span style={{ fontSize: '12px', color: F.textTertiary }}>记录 2 天以上体重后显示趋势</span>
             </div>
           )}
 
           {/* Today records */}
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-slate-400 tracking-wider">
+            <span className="text-xs font-bold text-[#9E9891] tracking-wider">
               {todayViewOffset === 0 ? '今日记录' : `${viewDay.getMonth() + 1}月${viewDay.getDate()}日记录`}
             </span>
             <button onClick={() => openRecord('workout')}
-              className={`flex items-center gap-1 text-white text-[11px] font-bold px-2.5 py-1.5 ${clay.pressSmall}`}
+              className={`flex items-center gap-1.5 text-[12px] font-bold px-4 ${clay.pressSmall}`}
               style={clay.btnPrimary}>
-              <Plus size={11} weight="bold" /> 记录
+              <Plus size={13} weight="bold" /> 记录
             </button>
           </div>
 
           {todayWorkout && (
             <div className="mb-3" style={{ ...clay.cardGreen, padding: '14px 16px' }}>
               <div className="flex items-center gap-3">
-                <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.workout.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}><Barbell size={18} weight="fill" /></div>
+                <div style={{ width: 36, height: 36, borderRadius: R.small, background: CAT_COLORS.workout.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: F.surfaceRaised, fontSize: '13px', fontWeight: 700, flexShrink: 0 }}><Barbell size={18} weight="fill" /></div>
                 <div className="flex-1 min-w-0">
                   <span style={{ fontSize: '14px', fontWeight: 600, color: CAT_COLORS.workout.fg }}>训练</span>
                   <span className="ml-1" style={{ fontSize: '13px', fontWeight: 400, color: `${CAT_COLORS.workout.fg}99` }}>{todayWorkout.duration}min · {todayWorkout.calories ?? '—'}kcal</span>
                 </div>
                 <div className="flex gap-1 shrink-0">
                   <button onClick={() => startEditWorkout(todayWorkout)} className={`p-1.5 ${clay.pressSmall}`}
-                    style={{ borderRadius: '50px', background: CAT_COLORS.workout.bg, boxShadow: SH.pill }}>
+                    style={{ borderRadius: R.pill, background: CAT_COLORS.workout.bg, boxShadow: S.raisedSoft }}>
                     <PencilSimple size={12} style={{ color: CAT_COLORS.workout.shadow }} />
                   </button>
                   <button onClick={() => handleDelete(todayWorkout.id, '训练记录')} className={`p-1.5 ${clay.pressSmall}`}
-                    style={{ borderRadius: '50px', background: CAT_COLORS.period.bg, boxShadow: SH.pill }}>
+                    style={{ borderRadius: R.pill, background: CAT_COLORS.period.bg, boxShadow: S.raisedSoft }}>
                     <Trash size={12} style={{ color: CAT_COLORS.period.shadow }} />
                   </button>
                 </div>
@@ -1298,18 +1347,18 @@ const HealthApp: React.FC = () => {
           {todaySleep && (
             <div className="mb-3" style={{ ...clay.cardIndigo, padding: '14px 16px' }}>
               <div className="flex items-center gap-3">
-                <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.sleep.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}><MoonStars size={18} weight="fill" /></div>
+                <div style={{ width: 36, height: 36, borderRadius: R.small, background: CAT_COLORS.sleep.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: F.surfaceRaised, fontSize: '13px', fontWeight: 700, flexShrink: 0 }}><MoonStars size={18} weight="fill" /></div>
                 <div className="flex-1 min-w-0">
                   <span style={{ fontSize: '14px', fontWeight: 600, color: CAT_COLORS.sleep.fg }}>睡眠</span>
                   <span className="ml-1" style={{ fontSize: '13px', fontWeight: 400, color: `${CAT_COLORS.sleep.fg}99` }}>{todaySleep.bedtime} → {todaySleep.wakeTime} · {fmtDuration(todaySleep.duration)} · {QUALITY_LABEL[todaySleep.quality]}</span>
                 </div>
                 <div className="flex gap-1 shrink-0">
                   <button onClick={() => startEditSleep(todaySleep)} className={`p-1.5 ${clay.pressSmall}`}
-                    style={{ borderRadius: '50px', background: CAT_COLORS.sleep.bg, boxShadow: SH.pill }}>
+                    style={{ borderRadius: R.pill, background: CAT_COLORS.sleep.bg, boxShadow: S.raisedSoft }}>
                     <PencilSimple size={12} style={{ color: CAT_COLORS.sleep.shadow }} />
                   </button>
                   <button onClick={() => handleDelete(todaySleep.id, '睡眠记录')} className={`p-1.5 ${clay.pressSmall}`}
-                    style={{ borderRadius: '50px', background: CAT_COLORS.period.bg, boxShadow: SH.pill }}>
+                    style={{ borderRadius: R.pill, background: CAT_COLORS.period.bg, boxShadow: S.raisedSoft }}>
                     <Trash size={12} style={{ color: CAT_COLORS.period.shadow }} />
                   </button>
                 </div>
@@ -1320,18 +1369,18 @@ const HealthApp: React.FC = () => {
           {todayDiets.map(d => (
             <div key={d.id} className="mb-3" style={{ ...clay.cardAmber, padding: '14px 16px' }}>
               <div className="flex items-center gap-3">
-                <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.diet.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}><ForkKnife size={18} weight="fill" /></div>
+                <div style={{ width: 36, height: 36, borderRadius: R.small, background: CAT_COLORS.diet.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: F.surfaceRaised, fontSize: '13px', fontWeight: 700, flexShrink: 0 }}><ForkKnife size={18} weight="fill" /></div>
                 <div className="flex-1 min-w-0">
                   <span style={{ fontSize: '14px', fontWeight: 600, color: CAT_COLORS.diet.fg }}>{d.note || '饮食'}</span>
                   <span className="ml-1" style={{ fontSize: '13px', fontWeight: 400, color: `${CAT_COLORS.diet.fg}99` }}>{d.calories}kcal{d.protein ? ` · 蛋白${d.protein}g` : ''}</span>
                 </div>
                 <div className="flex gap-1 shrink-0">
                   <button onClick={() => startEditDiet(d)} className={`p-1.5 ${clay.pressSmall}`}
-                    style={{ borderRadius: '50px', background: CAT_COLORS.diet.bg, boxShadow: SH.pill }}>
+                    style={{ borderRadius: R.pill, background: CAT_COLORS.diet.bg, boxShadow: S.raisedSoft }}>
                     <PencilSimple size={12} style={{ color: CAT_COLORS.diet.shadow }} />
                   </button>
                   <button onClick={() => handleDelete(d.id, '饮食记录')} className={`p-1.5 ${clay.pressSmall}`}
-                    style={{ borderRadius: '50px', background: CAT_COLORS.period.bg, boxShadow: SH.pill }}>
+                    style={{ borderRadius: R.pill, background: CAT_COLORS.period.bg, boxShadow: S.raisedSoft }}>
                     <Trash size={12} style={{ color: CAT_COLORS.period.shadow }} />
                   </button>
                 </div>
@@ -1342,7 +1391,7 @@ const HealthApp: React.FC = () => {
           {todayPeriod && (
             <div className="mb-3" style={{ ...clay.cardRose, padding: '14px 16px' }}>
               <div className="flex items-center gap-3">
-                <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.period.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <div style={{ width: 36, height: 36, borderRadius: R.small, background: CAT_COLORS.period.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   <Drop size={16} weight="fill" color="#fff" />
                 </div>
                 <div className="flex-1 min-w-0">
@@ -1351,11 +1400,11 @@ const HealthApp: React.FC = () => {
                 </div>
                 <div className="flex gap-1 shrink-0">
                   <button onClick={() => startEditPeriod(todayPeriod)} className={`p-1.5 ${clay.pressSmall}`}
-                    style={{ borderRadius: '50px', background: CAT_COLORS.period.bg, boxShadow: SH.pill }}>
+                    style={{ borderRadius: R.pill, background: CAT_COLORS.period.bg, boxShadow: S.raisedSoft }}>
                     <PencilSimple size={12} style={{ color: CAT_COLORS.period.shadow }} />
                   </button>
                   <button onClick={() => handleDelete(todayPeriod.id, '经期记录')} className={`p-1.5 ${clay.pressSmall}`}
-                    style={{ borderRadius: '50px', background: CAT_COLORS.period.bg, boxShadow: SH.pill }}>
+                    style={{ borderRadius: R.pill, background: CAT_COLORS.period.bg, boxShadow: S.raisedSoft }}>
                     <Trash size={12} style={{ color: CAT_COLORS.period.shadow }} />
                   </button>
                 </div>
@@ -1366,18 +1415,18 @@ const HealthApp: React.FC = () => {
           {todaySymptom && (
             <div className="mb-3" style={{ ...clay.cardViolet, padding: '14px 16px' }}>
               <div className="flex items-center gap-3">
-                <div style={{ width: 36, height: 36, borderRadius: '10px', background: CAT_COLORS.symptom.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '13px', fontWeight: 700, flexShrink: 0 }}><Bandaids size={18} weight="fill" /></div>
+                <div style={{ width: 36, height: 36, borderRadius: R.small, background: CAT_COLORS.symptom.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', color: F.surfaceRaised, fontSize: '13px', fontWeight: 700, flexShrink: 0 }}><Bandaids size={18} weight="fill" /></div>
                 <div className="flex-1 min-w-0">
                   <span style={{ fontSize: '14px', fontWeight: 600, color: CAT_COLORS.symptom.fg }}>症状</span>
                   <span className="ml-1" style={{ fontSize: '13px', fontWeight: 400, color: `${CAT_COLORS.symptom.fg}99` }}>{todaySymptom.symptoms.join('、')}</span>
                 </div>
                 <div className="flex gap-1 shrink-0">
                   <button onClick={() => startEditSymptom(todaySymptom)} className={`p-1.5 ${clay.pressSmall}`}
-                    style={{ borderRadius: '50px', background: CAT_COLORS.symptom.bg, boxShadow: SH.pill }}>
+                    style={{ borderRadius: R.pill, background: CAT_COLORS.symptom.bg, boxShadow: S.raisedSoft }}>
                     <PencilSimple size={12} style={{ color: CAT_COLORS.symptom.shadow }} />
                   </button>
                   <button onClick={() => handleDelete(todaySymptom.id, '症状记录')} className={`p-1.5 ${clay.pressSmall}`}
-                    style={{ borderRadius: '50px', background: CAT_COLORS.period.bg, boxShadow: SH.pill }}>
+                    style={{ borderRadius: R.pill, background: CAT_COLORS.period.bg, boxShadow: S.raisedSoft }}>
                     <Trash size={12} style={{ color: CAT_COLORS.period.shadow }} />
                   </button>
                 </div>
@@ -1386,9 +1435,13 @@ const HealthApp: React.FC = () => {
           )}
 
           {todayEvents.length === 0 && (
-            <p className="text-center text-slate-400 text-sm mt-6">
-              {todayViewOffset === 0 ? '今日暂无记录' : '当日暂无记录'}
-            </p>
+            <div className="flex items-center justify-center gap-2 mt-4"
+              style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken, padding: '20px 24px' }}>
+              <Plus size={18} weight="regular" style={{ color: F.textTertiary, flexShrink: 0 }} />
+              <span style={{ fontSize: '13px', color: F.textTertiary }}>
+                {todayViewOffset === 0 ? '今日暂无记录' : '当日暂无记录'}
+              </span>
+            </div>
           )}
         </div>
       )}
@@ -1431,23 +1484,23 @@ const HealthApp: React.FC = () => {
                   const { maxH } = modalDragRef.current;
                   setModalHeight(h => (h - MODAL_BASE_H < (maxH - MODAL_BASE_H) / 2 ? MODAL_BASE_H : maxH));
                 }}>
-                <div className="w-10 h-1 rounded-full bg-slate-300" />
+                <div className="w-10 h-1 rounded-full bg-[#D8CFC4]" />
               </div>
             ) : (
               <div className="shrink-0 h-3" />
             )}
 
             <div className="flex items-center justify-between mb-4 shrink-0">
-              <span className="text-base font-bold text-slate-700">{editingId ? '编辑记录' : '新记录'}</span>
+              <span className="text-base font-bold text-[#2E2A28]">{editingId ? '编辑记录' : '新记录'}</span>
               <button onClick={closeRecord} className={`w-7 h-7 flex items-center justify-center ${clay.pressSmall}`}
-                style={{ background: '#fff', borderRadius: '50px', boxShadow: SH.pill }}>
-                <X size={14} className="text-slate-400" />
+                style={{ background: F.surfaceRaised, borderRadius: R.pill, boxShadow: S.raisedSoft }}>
+                <X size={14} className="text-[#9E9891]" />
               </button>
             </div>
 
             {/* 5-tab selector — category colored */}
             <div className="flex gap-1 mb-4 p-1 shrink-0"
-              style={{ background: '#EBEBEB', borderRadius: '28px' }}>
+              style={{ background: F.surfaceSunken, borderRadius: '28px' }}>
               {TAB_ORDER.map(tab => {
                 const c = CAT_COLORS[tab.id];
                 const isActive = recordMode === tab.id;
@@ -1456,11 +1509,11 @@ const HealthApp: React.FC = () => {
                     onClick={() => openRecord(tab.id)}
                     className={`flex-1 py-2 text-xs transition-all duration-150`}
                     style={{
-                      borderRadius: '50px',
+                      borderRadius: R.pill,
                       background: isActive ? c.active : 'transparent',
-                      color: isActive ? '#fff' : 'rgba(0,0,0,0.35)',
+                      color: isActive ? '#fff' : F.textTertiary,
                       fontWeight: isActive ? 600 : 400,
-                      boxShadow: isActive ? SH.btn : 'none',
+                      boxShadow: isActive ? S.raisedMedium : 'none',
                     }}>
                     {tab.label}
                   </button>
@@ -1474,7 +1527,7 @@ const HealthApp: React.FC = () => {
               {/* ── Workout ── */}
               {recordMode === 'workout' && (
                 <div className="flex flex-col h-full">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">运动项目</span>
+                  <span className="text-xs font-bold text-[#9E9891] uppercase tracking-wider">运动项目</span>
                   <div className="flex flex-wrap gap-1.5 mt-1.5">
                     {WORKOUT_ACTIVITIES.map(act => {
                       const on = workoutActivities.includes(act);
@@ -1483,11 +1536,11 @@ const HealthApp: React.FC = () => {
                           onClick={() => setWorkoutActivities(prev => on ? prev.filter(x => x !== act) : [...prev, act])}
                           className={`px-3 py-1.5 text-xs transition-all duration-150 ${clay.pressSmall}`}
                           style={{
-                            borderRadius: '50px',
-                            background: on ? CAT_COLORS.workout.active : '#fff',
-                            color: on ? '#fff' : 'rgba(0,0,0,0.45)',
+                            borderRadius: R.pill,
+                            background: on ? CAT_COLORS.workout.active : F.surfaceRaised,
+                            color: on ? '#fff' : F.textTertiary,
                             fontWeight: on ? 600 : 400,
-                            boxShadow: on ? SH.btn : SH.pill,
+                            boxShadow: on ? S.raisedMedium : S.raisedSoft,
                           }}>
                           {act}
                         </button>
@@ -1497,7 +1550,7 @@ const HealthApp: React.FC = () => {
 
                   {workoutActivities.includes('力量') && (
                     <>
-                      <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mt-3">训练部位</span>
+                      <span className="text-xs font-bold text-[#9E9891] uppercase tracking-wider mt-3">训练部位</span>
                       <div className="flex flex-wrap gap-1.5 mt-1.5">
                         {WORKOUT_PARTS.map(part => {
                           const on = workoutParts.includes(part);
@@ -1506,11 +1559,11 @@ const HealthApp: React.FC = () => {
                               onClick={() => setWorkoutParts(prev => on ? prev.filter(x => x !== part) : [...prev, part])}
                               className={`px-3 py-1.5 text-xs transition-all duration-150 ${clay.pressSmall}`}
                               style={{
-                                borderRadius: '50px',
-                                background: on ? CAT_COLORS.workout.bg : '#fff',
-                                color: on ? CAT_COLORS.workout.fg : 'rgba(0,0,0,0.45)',
+                                borderRadius: R.pill,
+                                background: on ? CAT_COLORS.workout.bg : F.surfaceRaised,
+                                color: on ? CAT_COLORS.workout.fg : F.textTertiary,
                                 fontWeight: on ? 600 : 400,
-                                boxShadow: SH.pill,
+                                boxShadow: S.raisedSoft,
                               }}>
                               {part}
                             </button>
@@ -1522,30 +1575,30 @@ const HealthApp: React.FC = () => {
 
                   <div className="flex gap-3 mt-3">
                     <div className="flex-1">
-                      <span className="text-xs font-bold text-slate-400">消耗热量</span>
+                      <span className="text-xs font-bold text-[#9E9891]">消耗热量</span>
                       <input type="number" value={workoutCalories} onChange={e => setWorkoutCalories(e.target.value ? Number(e.target.value) : '')}
                         placeholder="kcal"
-                        className="mt-1 w-full px-4 py-2.5 text-sm text-slate-700 focus:outline-none"
-                        style={{ background: '#F5F5F7', borderRadius: '20px', boxShadow: SH.input }} />
+                        className="mt-1 w-full px-4 py-2.5 text-sm text-[#2E2A28] focus:outline-none"
+                        style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
                     </div>
                     <div className="flex-1">
-                      <span className="text-xs font-bold text-slate-400">时长（分钟）</span>
+                      <span className="text-xs font-bold text-[#9E9891]">时长（分钟）</span>
                       <input type="number" value={workoutDuration} onChange={e => setWorkoutDuration(e.target.value ? Number(e.target.value) : '')}
                         placeholder="60"
-                        className="mt-1 w-full px-4 py-2.5 text-sm text-slate-700 focus:outline-none"
-                        style={{ background: '#F5F5F7', borderRadius: '20px', boxShadow: SH.input }} />
+                        className="mt-1 w-full px-4 py-2.5 text-sm text-[#2E2A28] focus:outline-none"
+                        style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
                     </div>
                   </div>
 
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mt-3">备注（可选）</span>
+                  <span className="text-xs font-bold text-[#9E9891] uppercase tracking-wider mt-3">备注（可选）</span>
                   <textarea value={recordText} onChange={e => setRecordText(e.target.value)}
                     placeholder="杠铃划船三组、深蹲三组..."
-                    className="mt-1.5 w-full px-4 py-3 text-sm text-slate-700 placeholder:text-slate-400 resize-none focus:outline-none leading-relaxed"
-                    style={{ background: '#f8f7f5', borderRadius: '10px', boxShadow: insetShadow, border: '1px solid rgba(0,0,0,0.03)', minHeight: '60px' }} />
+                    className="mt-1.5 w-full px-4 py-3 text-sm text-[#2E2A28] placeholder:text-[#9E9891] resize-none focus:outline-none leading-relaxed"
+                    style={{ background: F.surfaceSunken, borderRadius: R.input, boxShadow: S.sunken, border: `1px solid ${F.borderSoft}`, minHeight: '60px' }} />
 
                   <button onClick={handleSubmitWorkout} disabled={(workoutActivities.length === 0 && !recordText.trim() && !workoutCalories) || isSubmitting}
                     className={`w-full shrink-0 text-white font-bold py-3.5 mt-auto disabled:opacity-40 ${clay.press}`}
-                    style={{ background: CAT_COLORS.workout.active, borderRadius: '50px', boxShadow: SH.btn }}>
+                    style={{ background: CAT_COLORS.workout.active, borderRadius: R.pill, boxShadow: S.raisedMedium }}>
                     保存
                   </button>
                 </div>
@@ -1554,52 +1607,52 @@ const HealthApp: React.FC = () => {
               {/* ── Sleep ── */}
               {recordMode === 'sleep' && (
                 <div className="flex flex-col h-full">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">入睡 / 起床时间</span>
+                  <span className="text-xs font-bold text-[#9E9891] uppercase tracking-wider">入睡 / 起床时间</span>
                   <div className="flex gap-3 mt-2 items-end">
                     <div className="flex-1">
-                      <label className="text-[10px] text-slate-400">入睡</label>
+                      <label className="text-[10px] text-[#9E9891]">入睡</label>
                       <input type="time" value={sleepBedtime} onChange={e => setSleepBedtime(e.target.value)}
-                        className="w-full px-3 py-2.5 text-center text-base font-bold text-slate-700 focus:outline-none"
-                        style={{ background: '#F5F5F7', borderRadius: '20px', boxShadow: SH.input }} />
+                        className="w-full px-3 py-2.5 text-center text-base font-bold text-[#2E2A28] focus:outline-none"
+                        style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
                     </div>
-                    <span className="text-slate-400 pb-3">→</span>
+                    <span className="text-[#9E9891] pb-3">→</span>
                     <div className="flex-1">
-                      <label className="text-[10px] text-slate-400">起床</label>
+                      <label className="text-[10px] text-[#9E9891]">起床</label>
                       <input type="time" value={sleepWakeTime} onChange={e => setSleepWakeTime(e.target.value)}
-                        className="w-full px-3 py-2.5 text-center text-base font-bold text-slate-700 focus:outline-none"
-                        style={{ background: '#F5F5F7', borderRadius: '20px', boxShadow: SH.input }} />
+                        className="w-full px-3 py-2.5 text-center text-base font-bold text-[#2E2A28] focus:outline-none"
+                        style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
                     </div>
                   </div>
                   <div className="text-center py-3">
-                    <span className="text-2xl font-bold text-slate-800">{fmtDuration(calcSleepMinutes(sleepBedtime, sleepWakeTime))}</span>
-                    <p className="text-[10px] text-slate-400 mt-1">睡眠时长</p>
+                    <span className="text-2xl font-bold text-[#2E2A28]">{fmtDuration(calcSleepMinutes(sleepBedtime, sleepWakeTime))}</span>
+                    <p className="text-[10px] text-[#9E9891] mt-1">睡眠时长</p>
                   </div>
 
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mt-2">睡眠质量</span>
+                  <span className="text-xs font-bold text-[#9E9891] uppercase tracking-wider mt-2">睡眠质量</span>
                   <div className="flex gap-2 mt-1.5">
                     {(['good','ok','poor'] as SleepQuality[]).map(q => (
                       <button key={q} onClick={() => setSleepQuality(q)}
                         className={`flex-1 py-2 text-xs font-bold ${clay.pressSmall}`}
                         style={{
-                          borderRadius: '50px',
-                          background: sleepQuality === q ? CAT_COLORS.sleep.active : '#fff',
-                          color: sleepQuality === q ? '#fff' : '#6B6760',
+                          borderRadius: R.pill,
+                          background: sleepQuality === q ? CAT_COLORS.sleep.active : F.surfaceRaised,
+                          color: sleepQuality === q ? '#fff' : F.textSecondary,
                           fontWeight: sleepQuality === q ? 600 : 400,
-                          boxShadow: sleepQuality === q ? SH.btn : SH.pill,
+                          boxShadow: sleepQuality === q ? S.raisedMedium : S.raisedSoft,
                         }}>
                         {QUALITY_LABEL[q]}
                       </button>
                     ))}
                   </div>
 
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mt-4">备注（可选）</span>
+                  <span className="text-xs font-bold text-[#9E9891] uppercase tracking-wider mt-4">备注（可选）</span>
                   <input value={sleepNote} onChange={e => setSleepNote(e.target.value)} placeholder="做梦、失眠..."
-                    className="mt-1.5 w-full px-4 py-2.5 text-sm text-slate-700 focus:outline-none"
-                    style={{ background: '#F5F5F7', borderRadius: '20px', boxShadow: SH.input }} />
+                    className="mt-1.5 w-full px-4 py-2.5 text-sm text-[#2E2A28] focus:outline-none"
+                    style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
 
                   <button onClick={handleSubmitSleep} disabled={isSubmitting}
                     className={`w-full text-white font-bold py-3.5 mt-auto disabled:opacity-50 ${clay.press}`}
-                    style={{ background: CAT_COLORS.sleep.active, borderRadius: '50px', boxShadow: SH.btn }}>
+                    style={{ background: CAT_COLORS.sleep.active, borderRadius: R.pill, boxShadow: S.raisedMedium }}>
                     保存
                   </button>
                 </div>
@@ -1608,40 +1661,40 @@ const HealthApp: React.FC = () => {
               {/* ── Diet ── */}
               {recordMode === 'diet' && (
                 <div className="flex flex-col h-full">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">描述今天吃了什么</span>
+                  <span className="text-xs font-bold text-[#9E9891] uppercase tracking-wider">描述今天吃了什么</span>
                   <textarea value={dietText}
                     onChange={e => {
                       setDietText(e.target.value); setDietParsed(false);
                       if (!editingId) saveDietDraft(periodDate, e.target.value); // 实时存草稿，关弹窗不丢
                     }}
                     placeholder="随手记：包子两个、麻辣烫...（晚上一起估算）"
-                    className="mt-1.5 w-full px-4 py-3 text-sm text-slate-700 placeholder:text-slate-400 resize-none focus:outline-none leading-relaxed"
-                    style={{ background: '#f8f7f5', borderRadius: '10px', boxShadow: insetShadow, border: '1px solid rgba(0,0,0,0.03)', minHeight: '80px' }} />
+                    className="mt-1.5 w-full px-4 py-3 text-sm text-[#2E2A28] placeholder:text-[#9E9891] resize-none focus:outline-none leading-relaxed"
+                    style={{ background: F.surfaceSunken, borderRadius: R.input, boxShadow: S.sunken, border: `1px solid ${F.borderSoft}`, minHeight: '80px' }} />
 
                   <div className="flex gap-2 mt-2">
                     <button onClick={handleDietEstimate} disabled={!dietText.trim() || isSubmitting}
                       className={`flex-1 text-white font-bold py-2.5 text-sm disabled:opacity-50 ${clay.press}`}
-                      style={{ background: CAT_COLORS.diet.active, borderRadius: '50px', boxShadow: SH.btn }}>
+                      style={{ background: CAT_COLORS.diet.active, borderRadius: R.pill, boxShadow: S.raisedMedium }}>
                       {isSubmitting ? '估算中…' : 'AI 估算'}
                     </button>
                     <div className="relative">
                       <button onClick={() => setShowCameraMenu(!showCameraMenu)}
                         className={`w-11 h-[42px] flex items-center justify-center ${clay.pressSmall}`}
-                        style={{ background: CAT_COLORS.diet.bg, borderRadius: '50px', boxShadow: SH.pill }}>
+                        style={{ background: CAT_COLORS.diet.bg, borderRadius: R.pill, boxShadow: S.raisedSoft }}>
                         <Camera size={18} weight="bold" className="text-amber-700" />
                       </button>
                       {showCameraMenu && (
                         <div className="absolute bottom-full right-0 mb-2 py-1 w-32 z-10"
-                          style={{ background: '#fff', borderRadius: '20px', boxShadow: SH.card }}>
-                          <label className="flex items-center gap-2 px-3 py-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer">
+                          style={{ background: F.surfaceRaised, borderRadius: R.bigCard, boxShadow: S.raisedSoft }}>
+                          <label className="flex items-center gap-2 px-3 py-2.5 text-xs font-medium text-[#2E2A28] hover:bg-[#ECE8E1] cursor-pointer">
                             拍照
                             <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handleImageInput} />
                           </label>
-                          <label className="flex items-center gap-2 px-3 py-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer">
+                          <label className="flex items-center gap-2 px-3 py-2.5 text-xs font-medium text-[#2E2A28] hover:bg-[#ECE8E1] cursor-pointer">
                             从相册选择
                             <input type="file" accept="image/*" className="hidden" onChange={handleImageInput} />
                           </label>
-                          <label className="flex items-center gap-2 px-3 py-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer">
+                          <label className="flex items-center gap-2 px-3 py-2.5 text-xs font-medium text-[#2E2A28] hover:bg-[#ECE8E1] cursor-pointer">
                             上传文件
                             <input type="file" className="hidden" onChange={handleImageInput} />
                           </label>
@@ -1668,25 +1721,25 @@ const HealthApp: React.FC = () => {
                         { label: '脂肪',   val: dietFat,      set: setDietFat,      unit: 'g', color: '#e11d48' },
                       ] as const).map(f => (
                         <div key={f.label} className="flex items-baseline gap-1">
-                          <span className="text-[10px] text-slate-400 w-10">{f.label}</span>
+                          <span className="text-[10px] text-[#9E9891] w-10">{f.label}</span>
                           <input type="number" value={f.val} onChange={e => f.set(e.target.value ? Number(e.target.value) : '')}
                             placeholder="—"
                             className="w-14 text-sm font-bold text-right focus:outline-none"
                             style={{ background: 'transparent', color: f.color, border: 'none' }} />
-                          <span className="text-[10px] text-slate-400">{f.unit}</span>
+                          <span className="text-[10px] text-[#9E9891]">{f.unit}</span>
                         </div>
                       ))}
                     </div>
                   </div>
 
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mt-4">标签（可选）</span>
+                  <span className="text-xs font-bold text-[#9E9891] uppercase tracking-wider mt-4">标签（可选）</span>
                   <input value={dietNote} onChange={e => setDietNote(e.target.value)} placeholder="早餐、午餐、晚餐..."
-                    className="mt-1.5 w-full px-4 py-2.5 text-sm text-slate-700 focus:outline-none"
-                    style={{ background: '#F5F5F7', borderRadius: '20px', boxShadow: SH.input }} />
+                    className="mt-1.5 w-full px-4 py-2.5 text-sm text-[#2E2A28] focus:outline-none"
+                    style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
 
                   <button onClick={handleSubmitDiet} disabled={!dietCalories || isSubmitting}
                     className={`w-full text-white font-bold py-3.5 mt-auto disabled:opacity-40 ${clay.press}`}
-                    style={{ background: CAT_COLORS.diet.active, borderRadius: '50px', boxShadow: SH.btn }}>
+                    style={{ background: CAT_COLORS.diet.active, borderRadius: R.pill, boxShadow: S.raisedMedium }}>
                     保存
                   </button>
                 </div>
@@ -1695,23 +1748,23 @@ const HealthApp: React.FC = () => {
               {/* ── Period ── */}
               {recordMode === 'period' && (
                 <div className="flex flex-col h-full">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">经期量</span>
+                  <span className="text-xs font-bold text-[#9E9891] uppercase tracking-wider">经期量</span>
                   <div className="flex gap-2 mt-1.5">
                     {(['spotting','light','medium','heavy'] as PeriodFlow[]).map(f => (
                       <button key={f} onClick={() => setPeriodFlow(f)}
                         className={`flex-1 py-2 text-xs font-bold ${clay.pressSmall}`}
                         style={{
-                          borderRadius: '50px',
-                          background: periodFlow === f ? CAT_COLORS.period.active : '#fff',
-                          color: periodFlow === f ? '#fff' : '#6B6760',
+                          borderRadius: R.pill,
+                          background: periodFlow === f ? CAT_COLORS.period.active : F.surfaceRaised,
+                          color: periodFlow === f ? '#fff' : F.textSecondary,
                           fontWeight: periodFlow === f ? 600 : 400,
-                          boxShadow: periodFlow === f ? SH.btn : SH.pill,
+                          boxShadow: periodFlow === f ? S.raisedMedium : S.raisedSoft,
                         }}>
                         {FLOW_LABEL[f]}
                       </button>
                     ))}
                   </div>
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mt-4">伴随症状（可选）</span>
+                  <span className="text-xs font-bold text-[#9E9891] uppercase tracking-wider mt-4">伴随症状（可选）</span>
                   <div className="flex flex-wrap gap-2 mt-1.5">
                     {PMS_SYMPTOMS.map(sym => {
                       const on = pmsSymptoms.includes(sym);
@@ -1720,11 +1773,11 @@ const HealthApp: React.FC = () => {
                           onClick={() => setPmsSymptoms(prev => on ? prev.filter(x => x !== sym) : [...prev, sym])}
                           className={`px-3 py-1.5 text-xs font-semibold ${clay.pressSmall}`}
                           style={{
-                            borderRadius: '50px',
-                            background: on ? CAT_COLORS.period.active : '#fff',
-                            color: on ? '#fff' : '#6B6760',
+                            borderRadius: R.pill,
+                            background: on ? CAT_COLORS.period.active : F.surfaceRaised,
+                            color: on ? '#fff' : F.textSecondary,
                             fontWeight: on ? 600 : 400,
-                            boxShadow: on ? SH.btn : SH.pill,
+                            boxShadow: on ? S.raisedMedium : S.raisedSoft,
                           }}>
                           {sym}
                         </button>
@@ -1733,7 +1786,7 @@ const HealthApp: React.FC = () => {
                   </div>
                   <button onClick={handleSubmitPeriod} disabled={(!periodFlow && pmsSymptoms.length === 0) || isSubmitting}
                     className={`w-full text-white font-bold py-3.5 mt-auto disabled:opacity-40 ${clay.press}`}
-                    style={{ background: CAT_COLORS.period.active, borderRadius: '50px', boxShadow: SH.btn }}>
+                    style={{ background: CAT_COLORS.period.active, borderRadius: R.pill, boxShadow: S.raisedMedium }}>
                     保存
                   </button>
                 </div>
@@ -1742,26 +1795,26 @@ const HealthApp: React.FC = () => {
               {/* ── Symptom（身体不适） ── */}
               {recordMode === 'symptom' && (
                 <div className="flex flex-col h-full">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">身体不适（可多选）</span>
+                  <span className="text-xs font-bold text-[#9E9891] uppercase tracking-wider">身体不适（可多选）</span>
                   <div className="flex flex-wrap gap-2 mt-1.5">
                     {GENERAL_SYMPTOMS.map(sym => (
                       <button key={sym} onClick={() => toggleSymptom(sym)}
                         className={`px-3 py-1.5 text-xs font-semibold ${clay.pressSmall}`}
                         style={{
-                          borderRadius: '50px',
-                          background: periodSymptoms.includes(sym) ? CAT_COLORS.symptom.active : '#fff',
-                          color: periodSymptoms.includes(sym) ? '#fff' : '#6B6760',
+                          borderRadius: R.pill,
+                          background: periodSymptoms.includes(sym) ? CAT_COLORS.symptom.active : F.surfaceRaised,
+                          color: periodSymptoms.includes(sym) ? '#fff' : F.textSecondary,
                           fontWeight: periodSymptoms.includes(sym) ? 600 : 400,
-                          boxShadow: periodSymptoms.includes(sym) ? SH.btn : SH.pill,
+                          boxShadow: periodSymptoms.includes(sym) ? S.raisedMedium : S.raisedSoft,
                         }}>
                         {sym}
                       </button>
                     ))}
                   </div>
-                  <p className="text-[10px] text-slate-400 mt-2">经期相关症状（痛经等）在经期 tab 里记录</p>
+                  <p className="text-[10px] text-[#9E9891] mt-2">经期相关症状（痛经等）在经期 tab 里记录</p>
                   <button onClick={handleSubmitSymptom} disabled={(periodSymptoms.length === 0 && !editingId) || isSubmitting}
                     className={`w-full text-white font-bold py-3.5 mt-auto disabled:opacity-40 ${clay.press}`}
-                    style={{ background: CAT_COLORS.symptom.active, borderRadius: '50px', boxShadow: SH.btn }}>
+                    style={{ background: CAT_COLORS.symptom.active, borderRadius: R.pill, boxShadow: S.raisedMedium }}>
                     保存
                   </button>
                 </div>
@@ -1778,44 +1831,44 @@ const HealthApp: React.FC = () => {
         <div className="absolute inset-0 bg-black/15 backdrop-blur-sm z-50 flex items-center justify-center"
           onClick={(e) => { if (e.target === e.currentTarget && profile) setShowProfileSetup(false); }}>
           <div className="w-[85%] max-w-xs p-5 flex flex-col gap-3 max-h-[80vh] overflow-y-auto"
-            style={{ background: clay.bg, borderRadius: '28px', boxShadow: SH.card }}>
+            style={{ background: clay.bg, borderRadius: '28px', boxShadow: S.raisedSoft }}>
 
-            <span className="text-base font-bold text-slate-700">健康档案</span>
-            <p className="text-[11px] text-slate-400 -mt-1">用于计算基础代谢率(BMR)，数据仅存本地</p>
+            <span className="text-base font-bold text-[#2E2A28]">健康档案</span>
+            <p className="text-[11px] text-[#9E9891] -mt-1">用于计算基础代谢率(BMR)，数据仅存本地</p>
 
             <div className="flex gap-3">
               <div className="flex-1">
-                <span className="text-[10px] text-slate-400">身高(cm)</span>
+                <span className="text-[10px] text-[#9E9891]">身高(cm)</span>
                 <input type="number" value={pfHeight} onChange={e => setPfHeight(e.target.value ? Number(e.target.value) : '')}
-                  placeholder="165" className="mt-1 w-full px-3 py-2 text-sm font-bold text-slate-700 focus:outline-none"
-                  style={{ background: '#F5F5F7', borderRadius: '20px', boxShadow: SH.input }} />
+                  placeholder="165" className="mt-1 w-full px-3 py-2 text-sm font-bold text-[#2E2A28] focus:outline-none"
+                  style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
               </div>
               <div className="flex-1">
-                <span className="text-[10px] text-slate-400">体重(kg)</span>
+                <span className="text-[10px] text-[#9E9891]">体重(kg)</span>
                 <input type="number" step="0.1" value={pfWeight} onChange={e => setPfWeight(e.target.value ? Number(e.target.value) : '')}
-                  placeholder="55" className="mt-1 w-full px-3 py-2 text-sm font-bold text-slate-700 focus:outline-none"
-                  style={{ background: '#F5F5F7', borderRadius: '20px', boxShadow: SH.input }} />
+                  placeholder="55" className="mt-1 w-full px-3 py-2 text-sm font-bold text-[#2E2A28] focus:outline-none"
+                  style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
               </div>
             </div>
 
             <div className="flex gap-3">
               <div className="flex-1">
-                <span className="text-[10px] text-slate-400">年龄</span>
+                <span className="text-[10px] text-[#9E9891]">年龄</span>
                 <input type="number" value={pfAge} onChange={e => setPfAge(e.target.value ? Number(e.target.value) : '')}
-                  placeholder="24" className="mt-1 w-full px-3 py-2 text-sm font-bold text-slate-700 focus:outline-none"
-                  style={{ background: '#F5F5F7', borderRadius: '20px', boxShadow: SH.input }} />
+                  placeholder="24" className="mt-1 w-full px-3 py-2 text-sm font-bold text-[#2E2A28] focus:outline-none"
+                  style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
               </div>
               <div className="flex-1">
-                <span className="text-[10px] text-slate-400">性别</span>
+                <span className="text-[10px] text-[#9E9891]">性别</span>
                 <div className="flex gap-1.5 mt-1">
                   {(['F', 'M'] as const).map(s => (
                     <button key={s} onClick={() => setPfSex(s)}
                       className={`flex-1 py-2 text-xs font-bold ${clay.pressSmall}`}
                       style={{
-                        borderRadius: '50px',
-                        background: pfSex === s ? CAT_COLORS.sleep.shadow : '#fff',
-                        color: pfSex === s ? '#fff' : '#6B6760',
-                        boxShadow: pfSex === s ? SH.btn : SH.pill,
+                        borderRadius: R.pill,
+                        background: pfSex === s ? HUE.blue.main : F.surfaceRaised,
+                        color: pfSex === s ? '#fff' : F.textSecondary,
+                        boxShadow: pfSex === s ? S.raisedMedium : S.raisedSoft,
                       }}>
                       {s === 'F' ? '女' : '男'}
                     </button>
@@ -1825,16 +1878,16 @@ const HealthApp: React.FC = () => {
             </div>
 
             <div>
-              <span className="text-[10px] text-slate-400">体脂率 %（可选，有的话 BMR 更准）</span>
+              <span className="text-[10px] text-[#9E9891]">体脂率 %（可选，有的话 BMR 更准）</span>
               <input type="number" step="0.1" value={pfBf} onChange={e => setPfBf(e.target.value ? Number(e.target.value) : '')}
-                placeholder="如 22.5" className="mt-1 w-full px-3 py-2 text-sm font-bold text-slate-700 focus:outline-none"
-                style={{ background: '#F5F5F7', borderRadius: '20px', boxShadow: SH.input }} />
+                placeholder="如 22.5" className="mt-1 w-full px-3 py-2 text-sm font-bold text-[#2E2A28] focus:outline-none"
+                style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
             </div>
 
-            <div className="h-px" style={{ background: '#EDECEA' }} />
+            <div className="h-px" style={{ background: F.divider }} />
 
             <div>
-              <span className="text-[10px] text-slate-400">目标</span>
+              <span className="text-[10px] text-[#9E9891]">目标</span>
               <div className="flex gap-1.5 mt-1">
                 {([
                   { id: 'maintain' as FitnessGoal, label: '维持' },
@@ -1850,10 +1903,10 @@ const HealthApp: React.FC = () => {
                   }}
                     className={`flex-1 py-2 text-xs font-bold ${clay.pressSmall}`}
                     style={{
-                      borderRadius: '50px',
-                      background: pfGoal === g.id ? CAT_COLORS.workout.shadow : '#fff',
-                      color: pfGoal === g.id ? '#fff' : '#6B6760',
-                      boxShadow: pfGoal === g.id ? SH.btn : SH.pill,
+                      borderRadius: R.pill,
+                      background: pfGoal === g.id ? HUE.green.main : F.surfaceRaised,
+                      color: pfGoal === g.id ? '#fff' : F.textSecondary,
+                      boxShadow: pfGoal === g.id ? S.raisedMedium : S.raisedSoft,
                     }}>
                     {g.label}
                   </button>
@@ -1863,42 +1916,42 @@ const HealthApp: React.FC = () => {
 
             <div className="flex gap-3">
               <div className="flex-1">
-                <span className="text-[10px] text-slate-400">每日摄入目标(kcal)</span>
+                <span className="text-[10px] text-[#9E9891]">每日摄入目标(kcal)</span>
                 <input type="number" value={pfCalTarget} onChange={e => setPfCalTarget(e.target.value ? Number(e.target.value) : '')}
                   placeholder={pfHeight && pfWeight && pfAge ? String(recommendCalories(calcBMR({ heightCm: Number(pfHeight), weightKg: Number(pfWeight), age: Number(pfAge), sex: pfSex, bodyFatPct: pfBf ? Number(pfBf) : undefined }), pfGoal)) : '1800'}
-                  className="mt-1 w-full px-3 py-2 text-sm font-bold text-slate-700 focus:outline-none"
-                  style={{ background: '#F5F5F7', borderRadius: '20px', boxShadow: SH.input }} />
+                  className="mt-1 w-full px-3 py-2 text-sm font-bold text-[#2E2A28] focus:outline-none"
+                  style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
               </div>
             </div>
 
             <div className="flex gap-3">
               <div className="flex-1">
-                <span className="text-[10px] text-slate-400">训练目标(kcal)</span>
+                <span className="text-[10px] text-[#9E9891]">训练目标(kcal)</span>
                 <input type="number" value={pfWorkoutTarget} onChange={e => setPfWorkoutTarget(e.target.value ? Number(e.target.value) : '')}
                   placeholder="500"
-                  className="mt-1 w-full px-3 py-2 text-sm font-bold text-slate-700 focus:outline-none"
-                  style={{ background: '#F5F5F7', borderRadius: '20px', boxShadow: SH.input }} />
+                  className="mt-1 w-full px-3 py-2 text-sm font-bold text-[#2E2A28] focus:outline-none"
+                  style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
               </div>
               <div className="flex-1">
-                <span className="text-[10px] text-slate-400">睡眠目标(小时)</span>
+                <span className="text-[10px] text-[#9E9891]">睡眠目标(小时)</span>
                 <input type="number" step="0.5" value={pfSleepTarget} onChange={e => setPfSleepTarget(e.target.value ? Number(e.target.value) : '')}
                   placeholder="8"
-                  className="mt-1 w-full px-3 py-2 text-sm font-bold text-slate-700 focus:outline-none"
-                  style={{ background: '#F5F5F7', borderRadius: '20px', boxShadow: SH.input }} />
+                  className="mt-1 w-full px-3 py-2 text-sm font-bold text-[#2E2A28] focus:outline-none"
+                  style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
               </div>
             </div>
 
             <button onClick={handleSaveProfile} disabled={!pfHeight || !pfWeight || !pfAge}
               className={`w-full text-white font-bold py-3 mt-1 disabled:opacity-40 ${clay.press}`}
-              style={{ background: CAT_COLORS.sleep.shadow, borderRadius: '50px', boxShadow: SH.btn }}>
+              style={{ background: F.accent, borderRadius: R.pill, boxShadow: S.raisedMedium }}>
               保存
             </button>
 
-            <div className="h-px mt-2" style={{ background: '#EDECEA' }} />
+            <div className="h-px mt-2" style={{ background: F.divider }} />
 
             <button onClick={() => { addToast('导入功能开发中', 'info'); }}
-              className={`w-full text-slate-500 font-medium py-2.5 text-xs ${clay.pressSmall}`}
-              style={{ background: '#fff', borderRadius: '50px', boxShadow: SH.pill }}>
+              className={`w-full text-[#6E665F] font-medium py-2.5 text-xs ${clay.pressSmall}`}
+              style={{ background: F.surfaceRaised, borderRadius: R.pill, boxShadow: S.raisedSoft }}>
               导入 Apple Health 数据
             </button>
           </div>
