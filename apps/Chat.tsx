@@ -79,7 +79,7 @@ const Chat: React.FC = () => {
     const WINDOW_RADIUS = 25;
     const [input, setInput] = useState('');
     const [showPanel, setShowPanel] = useState<'none' | 'actions' | 'emojis' | 'chars'>('none');
-    const [voiceMode, setVoiceMode] = useState(false);
+    const [voiceMode, setVoiceMode] = useState(false); // [EM: voice-mode-state] 不能在这里读char（TDZ），恢复逻辑在下面useEffect
     
     // Emoji State
     const [emojis, setEmojis] = useState<Emoji[]>([]);
@@ -111,7 +111,7 @@ const Chat: React.FC = () => {
     const [isTheaterGenerating, setIsTheaterGenerating] = useState(false);
     const [isScheduleGenerating, setIsScheduleGenerating] = useState(false);
     // EM: 角色在线状态（由日程驱动）
-    const charStatusInfo = useCharStatus(scheduleData);
+    const charStatusInfo = useCharStatus(scheduleData); // [EM: char-status-hook]
     const prevCharStatusRef = useRef<string>('online');
     const hasOfflinePendingRef = useRef(false);
 
@@ -179,11 +179,12 @@ const Chat: React.FC = () => {
     }, [currentThemeId, customThemes]);
     const draftKey = `chat_draft_${activeCharacterId}`;
 
-    // Restore voiceMode per character from localStorage
+    // [EM-START: voice-mode-restore] Restore voiceMode per character from localStorage
     useEffect(() => {
         if (!char) return;
         setVoiceMode(localStorage.getItem(`voiceMode_${char.id}`) === 'true');
     }, [char?.id]);
+    // [EM-END: voice-mode-restore]
 
     // Filter categories and emojis by active character's visibility (used for both AI prompt and UI)
     const visibleCategories = useMemo(() => categories.filter(cat => {
@@ -229,7 +230,7 @@ const Chat: React.FC = () => {
         charAvailability: charStatusInfo.status,
     });
 
-    // EM: offline → online 时自动触发角色回复（补回 offline 期间的未回复消息）
+    // [EM-START: offline-auto-reply] offline → online 时自动触发角色回复（补回 offline 期间的未回复消息）
     useEffect(() => {
         const prev = prevCharStatusRef.current;
         prevCharStatusRef.current = charStatusInfo.status;
@@ -240,8 +241,9 @@ const Chat: React.FC = () => {
             triggerAI(messages);
         }
     }, [charStatusInfo.status]);
+    // [EM-END: offline-auto-reply]
 
-    // --- Emma: Notion Diary Quick Action ---
+    // [EM-START: notion-diary-quick]
     const handleNotionDiaryQuick = useCallback(async () => {
         if (!char) return;
         if (isTyping) { addToast('请等当前回复结束后再试', 'info'); return; }
@@ -266,6 +268,7 @@ const Chat: React.FC = () => {
             addToast('已提醒写 Notion 日记', 'info');
         } catch (e: any) { addToast(e?.message || '操作失败', 'error'); }
     }, [char, isTyping, realtimeConfig, addToast, triggerAI]);
+    // [EM-END: notion-diary-quick]
 
     // --- Voice TTS for chat messages ---
     interface VoiceData { url: string; originalText: string; spokenText?: string; lang?: string; }
@@ -1078,7 +1081,7 @@ const Chat: React.FC = () => {
         await reloadMessages(visibleCountRef.current);
         setShowPanel('none');
 
-        // EM: 角色 offline 时发消息 → 插入系统提示，不触发 AI，标记待回复
+        // [EM-START: offline-send-gate] 角色 offline 时发消息 → 插入系统提示，不触发 AI，标记待回复
         if (charStatusInfo.status === 'offline' && type === 'text') {
             hasOfflinePendingRef.current = true;
             const hint = charStatusInfo.activity
@@ -1095,6 +1098,7 @@ const Chat: React.FC = () => {
             }]);
             return;
         }
+        // [EM-END: offline-send-gate]
 
         // Instant Push 模式：发完文本自动触发 AI（响应在 worker 端跑、后台 push 回写聊天页）。
         // 本地模式仍维持手动触发以保留现有 UX。triggerAI 内部会从 DB 拉完整历史，
@@ -1237,7 +1241,7 @@ const Chat: React.FC = () => {
                 setShowThinkingChainModal(true);
                 break;
             }
-            case 'notion-diary-quick': void handleNotionDiaryQuick(); break;
+            case 'notion-diary-quick': void handleNotionDiaryQuick(); break; // [EM: notion-diary-quick-case]
         }
     };
 
@@ -2411,6 +2415,7 @@ const Chat: React.FC = () => {
 
     // Memoize ChatInputArea callbacks
     const handleSendCallback = useCallback(() => handleSendText(), [char, input, replyTarget, charStatusInfo.status]);
+    // [EM-START: voice-send-callbacks]
     const handleVoiceSend = useCallback((text: string, durationMs: number) => {
         handleSendText(text, 'text', { voice: true, durationMs });
     }, [char, replyTarget]);
@@ -2421,6 +2426,7 @@ const Chat: React.FC = () => {
             return next;
         });
     }, [char]);
+    // [EM-END: voice-send-callbacks]
     const handleCharSelectCallback = useCallback((id: string) => { setActiveCharacterId(id); setShowPanel('none'); }, []);
     // 兜底：正常情况下 OSContext 启动时一定会保底一个角色，char 不该为空。
     // 但若 init 期间某个 store 读取失败（数据其实还在 IndexedDB 里），characters 可能暂时为空，

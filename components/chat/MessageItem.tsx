@@ -917,7 +917,7 @@ avatarShape = 'circle',
 
     const styleConfig = isUser ? activeTheme.user : activeTheme.ai;
     const [showVoiceText, setShowVoiceText] = useState(false);
-    const [showSttText, setShowSttText] = useState(false);
+    const [showSttText, setShowSttText] = useState(false); // [EM: stt-text-state]
     const [replyOffset, setReplyOffset] = useState(0);
     const [isReplyGestureActive, setIsReplyGestureActive] = useState(false);
     const [isReplyReady, setIsReplyReady] = useState(false);
@@ -2758,7 +2758,7 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
     // even when no audio was synthesized (e.g. character has no MiniMax voice configured),
     // so fake voice messages stay readable just like real ones.
     const voiceTagText = hasVoiceTag ? cleanVoiceText(m.content.match(/<[语語]音[^>]*>([\s\S]*?)<\/[语語]音>/)?.[1]?.trim() || '') : '';
-    const hasVoiceContent = voiceData?.url || voiceLoading || hasVoiceTag || (!isUser && !!voiceMode);
+    const hasVoiceContent = voiceData?.url || voiceLoading || hasVoiceTag || (!isUser && !!voiceMode); // [EM: voice-mode-triggers-voice-bar] 声音模式复用上游语音条路径
     // Don't render empty bubbles (e.g. messages that were just "---"), unless voice data exists or pending
     if (!displayContent && !hasVoiceContent) return null;
 
@@ -2784,7 +2784,7 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
         );
     })() : null;
 
-    // STT 语音气泡：仅用户主动以语音条格式发送的消息
+    // [EM-START: user-voice-bubble] 用户主动以语音条格式发送的消息（metadata.voice）
     const isVoiceBubble = m.type === 'text' && isUser && m.metadata?.voice === true;
 
     if (isVoiceBubble) {
@@ -2861,6 +2861,7 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
             </>
         );
     }
+    // [EM-END: user-voice-bubble]
 
     return commonLayout(
         <>
@@ -2898,7 +2899,7 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
 
             {/* Layer 3: Reply/Quote — moved outside bubble, rendered above as quoteBlock */}
 
-            {/* Layer 4: Text Content — hidden in voiceMode (text accessible via 转文字 toggle on voice bar) */}
+            {/* [EM: voice-mode-hide-text] Layer 4: Text Content — hidden in voiceMode (text accessible via 转文字 toggle on voice bar) */}
             {displayContent && !(voiceMode && !isUser) && (
             <div className="relative z-10 text-[15px] leading-relaxed whitespace-pre-wrap break-all select-text" style={{ color: styleConfig.textColor }}>
                 {renderContent(displayContent)}

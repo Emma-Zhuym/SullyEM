@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# EM 个人补丁自检 —— merge 上游后跑一次，确认所有 EM 功能的关键锚点还在。
+# 用法: bash scripts/check-em-patches.sh
+# 全绿 = EM 功能没丢；有红 = 对照 .claude/CLAUDE.md 的功能清单把丢的补回来。
+
+cd "$(dirname "$0")/.." || exit 1
+
+FAIL=0
+PASS=0
+
+check() {
+    local desc="$1" file="$2" pattern="$3"
+    if [ ! -f "$file" ]; then
+        echo "❌ $desc — 文件不存在: $file"
+        FAIL=$((FAIL+1))
+        return
+    fi
+    if grep -qF "$pattern" "$file"; then
+        PASS=$((PASS+1))
+    else
+        echo "❌ $desc"
+        echo "     文件: $file"
+        echo "     缺失: $pattern"
+        FAIL=$((FAIL+1))
+    fi
+}
+
+echo "── EM 独立文件 ──"
+check "通讯录组件" components/chat/ContactsList.tsx "ContactsList"
+check "提示词附加包" utils/emPromptAddons.ts "emNotionDiarySection"
+check "Notion 扩展库配置" utils/notionExtraConfig.ts "NotionExtraDatabase"
+check "角色状态核心逻辑" utils/charStatus.ts "availability"
+check "角色状态 hook" hooks/useCharStatus.ts "useCharStatus"
+check "记账 DB" utils/financeDb.ts "FinanceDB"
+
+echo "── OSContext ──"
+check "messageSubView 类型" context/OSContext.tsx "[EM-START: message-sub-view]"
+check "messageSubView/appOrder state" context/OSContext.tsx "[EM-START: app-order-and-sub-view-state]"
+check "openApp 小组件直达" context/OSContext.tsx "[EM-START: open-app-message-widget]"
+check "记账备份导出" context/OSContext.tsx "[EM-START: finance-backup-export]"
+check "记账备份恢复" context/OSContext.tsx "[EM-START: finance-backup-restore]"
+
+echo "── PhoneShell / ChatHeaderShell ──"
+check "Chat 页 subView 切换（丢了会白屏）" components/PhoneShell.tsx "messageSubView === 'contacts'"
+check "通讯录返回按钮 prop" components/chat/ChatHeaderShell.tsx "onOpenContacts"
+check "Token 面板 prop" components/chat/ChatHeaderShell.tsx "contextComposition"
+
+echo "── Chat.tsx ──"
+check "声音模式 state" apps/Chat.tsx "[EM: voice-mode-state]"
+check "声音模式恢复" apps/Chat.tsx "[EM-START: voice-mode-restore]"
+check "offline 自动补回复" apps/Chat.tsx "[EM-START: offline-auto-reply]"
+check "offline 发送拦截" apps/Chat.tsx "[EM-START: offline-send-gate]"
+check "写 Notion 快捷操作" apps/Chat.tsx "[EM-START: notion-diary-quick]"
+check "语音条发送回调" apps/Chat.tsx "[EM-START: voice-send-callbacks]"
+
+echo "── ChatInputArea / MessageItem ──"
+check "语音相关 props" components/chat/ChatInputArea.tsx "[EM-START: voice-props]"
+check "语音条发送按钮" components/chat/ChatInputArea.tsx "[EM-START: voice-send-button]"
+check "声音模式开关" components/chat/ChatInputArea.tsx "[EM-START: voice-mode-toggle]"
+check "写 Notion 按钮" components/chat/ChatInputArea.tsx "[EM-START: notion-diary-button]"
+check "用户语音气泡" components/chat/MessageItem.tsx "[EM-START: user-voice-bubble]"
+check "声音模式触发语音条" components/chat/MessageItem.tsx "[EM: voice-mode-triggers-voice-bar]"
+
+echo "── 提示词 / 请求管线 ──"
+check "提示词附加包 import" utils/chatPrompts.ts "emPromptAddons"
+check "发照片教学调用点" utils/chatPrompts.ts "emSendPhotoAddon()"
+check "引用教学调用点" utils/chatPrompts.ts "emQuoteSection()"
+check "Notion 日记调用点" utils/chatPrompts.ts "emNotionDiarySection(userProfile.name)"
+check "日记 nudge 处理（须在 interaction 之前）" utils/chatPrompts.ts "[EM-START: notion-diary-nudge]"
+check "contextBreakdown 返回" utils/chatRequestPayload.ts "[EM-START: context-breakdown-return]"
+check "Token 面板 set（不能写死0）" hooks/useChatAI.ts "[EM-START: context-composition-set]"
+check "日记第四参数 (pendingDiary)" utils/pendingDiary.ts "notionDiaryExtraProperties"
+check "日记第四参数 (postProcessing)" utils/applyAssistantPostProcessing.ts "notionDiaryExtraProperties"
+check "schedule 时间解析" utils/chatParser.ts "[EM-START: parse-schedule-due-at]"
+
+echo ""
+if [ $FAIL -gt 0 ]; then
+    echo "🔴 $FAIL 项缺失（$PASS 项通过）——EM 功能被 merge 冲掉了，对照 .claude/CLAUDE.md 补回来"
+    exit 1
+else
+    echo "🟢 全部 $PASS 项通过，EM 功能完好"
+fi

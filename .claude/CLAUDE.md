@@ -4,7 +4,7 @@ Emma（阿萌）的 SullyOS 个人 fork。基于上游 [SullyOS](https://github.
 
 ## 上游合并策略
 
-SullyOS 会持续更新，需要定期合并上游改动。
+SullyOS 会持续更新，需要定期合并上游改动。**建议两周一合，别攒**（上游一周能出几十个提交，攒久了很痛）。
 
 - **上游大改的文件** → 用 SullyOS 版本作为基础，把 EM 个人功能加回去
 - **上游小改的文件** → 保留 EM 版本，把上游改进 cherry-pick 进来
@@ -12,12 +12,34 @@ SullyOS 会持续更新，需要定期合并上游改动。
 
 合并前先 `_em_backup/` 备份 EM 版本以便参考旧逻辑。
 
+### 哨兵注释约定（2026-07 起）
+
+所有留在上游文件里的 EM 改动都用统一标记包裹：
+
+- 多行块：`// [EM-START: 功能名]` ... `// [EM-END: 功能名]`（JSX 里用 `{/* [EM-START: xxx] */}`）
+- 单行改动：行尾 `// [EM: 功能名]`
+
+merge 时 `grep -rn "EM-START\|\[EM:" --include="*.ts" --include="*.tsx"` 就能找到全部个人补丁。
+
+### merge 后必跑自检
+
+```bash
+bash scripts/check-em-patches.sh   # 36 项锚点检查，红了就是功能被冲掉
+pnpm vitest run                    # 单元测试
+```
+
+### 提示词个人化 → utils/emPromptAddons.ts
+
+EM 的大段提示词（发照片教学、引用教学、Notion日记/飞书/笔记/小红书压缩版）**全部在
+`utils/emPromptAddons.ts`**，`chatPrompts.ts` 里只有 import + 一行函数调用。
+改措辞直接改 emPromptAddons.ts；merge 冲突时保住 chatPrompts.ts 里的调用行即可。
+
 ## EM 个人功能清单
 
 以下功能是 EM 独有的，上游没有，合并时必须保留：
 
 ### 1. 通讯录 (ContactsList / messageSubView)
-- `components/ContactsList.tsx` — 独立文件，不冲突
+- `components/chat/ContactsList.tsx` — 独立文件，不冲突
 - `context/OSContext.tsx` 里的 `messageSubView` state (`'contacts' | 'chat'`)
 - `components/PhoneShell.tsx` 里 `case AppID.Chat` 根据 `messageSubView` 切换显示
 - `components/chat/ChatHeaderShell.tsx` 里的 `onOpenContacts` prop + 小房子按钮
@@ -180,6 +202,17 @@ if (m.type === 'interaction' && m.metadata?.kind === 'notion_diary_nudge') {
 - `_em_backup/` — 合并前的 EM 旧版备份，供参考旧逻辑用
 - `.claude/launch.json` — Vite dev/preview server 配置
 - 部署：Vercel（绑 GitHub main 分支自动部署）+ GitHub Pages
+
+## UI 设计系统 — Emma Soft Clay UI
+
+**所有 UI 改动必须遵循 [`design-system/DESIGN_SYSTEM.md`](../design-system/DESIGN_SYSTEM.md) 的规则。**
+
+- 颜色、圆角、阴影、间距、字体、动画的值只从 `design-system/tokens.json` / `tokens.css` 取，不许自己编 hex 值
+- 基底色是 V2 cooler-neutral（`#F7F6F2`），不是纯白也不是暖黄
+- 核心质感：**凹凸并存** — 凹陷区（输入框、segmented、进度条）+ 凸起区（按钮、卡片、sheet）
+- 色彩比例硬性规定：暖中性底 ~75%、模块 Tint ~18%、高饱和 Main ~7%
+- 每屏最多 1 主色 + 1 辅色 + 1 状态色
+- 参考 HTML 样例：`design-system/Emma Soft Clay UI v2.dc.html`
 
 ## 技术栈
 

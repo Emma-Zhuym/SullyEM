@@ -824,7 +824,7 @@ export async function applyAssistantPostProcessing(
                     realtimeConfig.notionApiKey,
                     realtimeConfig.notionDatabaseId,
                     { title, content, mood: mood || undefined, characterName: (char.name || '').trim() || undefined },
-                    (realtimeConfig as any).notionDiaryExtraProperties
+                    (realtimeConfig as any).notionDiaryExtraProperties // [EM: notion-diary-extra-props] 第四参数不传日记不会自动选角色标签
                 );
 
                 if (result.success) {

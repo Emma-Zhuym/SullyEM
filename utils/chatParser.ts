@@ -4,6 +4,7 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 import { CharacterProfile, CharPlaylistSong } from '../types';
 import { sanitizeForBubble } from './sanitize';
 
+// [EM-START: parse-schedule-due-at]
 /** 解析 schedule_message 时间串（支持空格分隔日期时间、无 T 的 ISO） */
 function parseScheduleDueAt(timeStr: string): number | null {
     const raw = timeStr.trim().replace(/\//g, '-');
@@ -18,6 +19,7 @@ function parseScheduleDueAt(timeStr: string): number | null {
     }
     return null;
 }
+// [EM-END: parse-schedule-due-at]
 
 /**
  * 从模型回复中提取并保存定时消息（支持 [schedule_message 与 [[schedule_message，fixed 两侧可多空格）

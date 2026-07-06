@@ -211,8 +211,10 @@ const defaultMemoryPalaceConfig: MemoryPalaceGlobalConfig = {
   rerank: { enabled: false, baseUrl: '', apiKey: '', model: 'BAAI/bge-reranker-v2-m3', topN: 5 },
 };
 
+// [EM-START: message-sub-view]
 /** Dock Message：通讯录列表 vs 私聊会话；持久化到 localStorage */
 export type MessageSubView = 'contacts' | 'chat';
+// [EM-END: message-sub-view]
 
 interface OSContextType {
   activeApp: AppID;
@@ -354,6 +356,7 @@ interface OSContextType {
   resumeCall: () => void;
   clearSuspendedCall: () => void;
 
+  // [EM-START: context-type-additions]
   /** Message App：通讯录 / 私聊子视图 */
   messageSubView: MessageSubView;
   setMessageSubView: (v: MessageSubView) => void;
@@ -361,6 +364,7 @@ interface OSContextType {
   // App Icon Order
   appOrder: string[];
   setAppOrder: (order: string[]) => void;
+  // [EM-END: context-type-additions]
 }
 
 export const DEFAULT_WALLPAPER = 'linear-gradient(135deg, #FFDEE9 0%, #B5FFFC 100%)';
@@ -665,6 +669,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [unreadMessages, setUnreadMessages] = useState<Record<string, number>>({});
   const [proactiveComposingChars, setProactiveComposingChars] = useState<Record<string, true>>({});
 
+  // [EM-START: app-order-and-sub-view-state]
   // App Icon Order
   const [appOrder, setAppOrderState] = useState<string[]>(() => {
     try {
@@ -705,6 +710,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       localStorage.setItem(MESSAGE_SUB_VIEW_KEY, v);
     } catch { /* ignore */ }
   }, []);
+  // [EM-END: app-order-and-sub-view-state]
 
   // LOGS
   const [systemLogs, setSystemLogs] = useState<SystemLog[]>([]);
@@ -1136,6 +1142,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
         finalChars = finalChars.map(c => normalizeCharacterDefaults(normalizeCharacterImpression(c)));
 
+        // [EM-START: avatar-asset-resolve]
         // 解析 asset:uuid 头像 → data URL，_avatarAssetId 记住原始引用供存库时还原
         finalChars = await Promise.all(finalChars.map(async (c) => {
             if (c.avatar?.startsWith(AVATAR_ASSET_PREFIX)) {
@@ -1144,6 +1151,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
             }
             return c;
         }));
+        // [EM-END: avatar-asset-resolve]
 
         if (finalChars.length > 0) {
           setCharacters(finalChars);
@@ -2867,7 +2875,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               // 梦境盲盒收藏册（账号级 localStorage，不挂在角色上，需单独随备份带走）
               dreamCollection: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('os_dream_collection'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
 
-              // EM 记账系统（独立 IndexedDB: SullyEM_Finance）
+              // [EM-START: finance-backup-export] EM 记账系统（独立 IndexedDB: SullyEM_Finance）
               ...await (async () => {
                   if (mode !== 'text_only' && mode !== 'full') return {};
                   try {
@@ -2883,6 +2891,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       };
                   } catch { return {}; }
               })(),
+              // [EM-END: finance-backup-export]
           };
 
           const totalSteps = storesToProcess.length + 3;
@@ -3528,7 +3537,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               }
           }
 
-          // Restore EM 记账系统（独立 IndexedDB: SullyEM_Finance）
+          // [EM-START: finance-backup-restore] EM 记账系统（独立 IndexedDB: SullyEM_Finance）
           if (data.emFinanceAccounts || data.emFinanceTransactions) {
               try {
                   const { FinanceDB } = await import('../utils/financeDb');
@@ -3541,6 +3550,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   });
               } catch (e) { console.warn('EM FinanceDB restore failed:', e); }
           }
+          // [EM-END: finance-backup-restore]
 
           if (data.socialAppData) {
               await restoreAssetsInPlace(data.socialAppData, '动态设置');
@@ -3629,6 +3639,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       importSystem(fileOrJson, { source: 'csy' });
 
   const resetSystem = async () => { try { await DB.deleteDB(); localStorage.clear(); window.location.reload(); } catch (e) { console.error(e); addToast('重置失败，请手动清除浏览器数据', 'error'); } };
+  // [EM-START: open-app-message-widget] 上游是 openApp = (appId) => setActiveApp(appId)，EM 加了小组件直达私聊
   const openApp = useCallback((appId: AppID, options?: { messageWidgetCharId?: string }) => {
     if (appId === AppID.Chat) {
       if (options?.messageWidgetCharId) {
@@ -3642,6 +3653,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     }
     setActiveApp(appId);
   }, [setMessageSubView, setActiveCharacterId]);
+  // [EM-END: open-app-message-widget]
   const closeApp = () => setActiveApp(AppID.Launcher);
   const unlock = () => setIsLocked(false);
 

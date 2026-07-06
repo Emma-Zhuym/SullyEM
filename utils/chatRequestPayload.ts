@@ -98,12 +98,13 @@ export interface BuildChatPayloadResult {
         thinkingActive: boolean;
         promptBuildSkipped: boolean;
     };
-    /** EM: Token 面板用的上下文字符数分解 */
+    // [EM-START: context-breakdown-type] Token 面板用的上下文字符数分解
     contextBreakdown?: {
         coreContextChars: number;
         systemCharsBeforeBilingual: number;
         bilingualAddonChars: number;
     };
+    // [EM-END: context-breakdown-type]
 }
 
 /**
@@ -220,7 +221,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         musicCfg = derived.musicCfg ?? musicCfg;
     }
 
-    // ── 2.5 核心人设字符数（给 Token 面板用） ────────────────
+    // [EM: core-context-chars] 核心人设字符数（给 Token 面板用）
     const coreContextChars = ContextBuilder.buildCoreContext(char, userProfile).length;
 
     // ── 3. buildSystemPrompt 核心 ─────────────────────────
@@ -354,10 +355,12 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         cleanedApiMessages: messagesWithWorldbookDepth,
         fullMessages,
         flags: { bilingualActive, mcdActive, luckinActive, luckinChatActive, htmlActive, thinkingActive, promptBuildSkipped: false },
+        // [EM-START: context-breakdown-return] merge 后确认这段还在，Token 面板靠它
         contextBreakdown: {
             coreContextChars,
             systemCharsBeforeBilingual,
             bilingualAddonChars: systemPrompt.length - systemCharsBeforeBilingual,
         },
+        // [EM-END: context-breakdown-return]
     };
 }

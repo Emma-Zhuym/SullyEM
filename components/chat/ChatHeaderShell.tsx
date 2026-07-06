@@ -26,10 +26,10 @@ interface ChatHeaderShellProps {
     memoryPalaceStatusText?: string;
     lastTokenUsage: number | null;
     tokenBreakdown?: TokenBreakdown | null;
-    /** 上次请求前字符级构成（点 token 数字展开查看） */
+    // [EM: token-panel-prop] 上次请求前字符级构成（点 token 数字展开查看）
     contextComposition?: ContextComposition | null;
     onClose: () => void;
-    /** 返回通讯录；与左侧箭头绑定。小房子仍用 onClose 回桌面 */
+    // [EM: open-contacts-prop] 返回通讯录；与左侧箭头绑定。小房子仍用 onClose 回桌面
     onOpenContacts?: () => void;
     onTriggerAI: () => void;
     onShowCharsPanel: () => void;

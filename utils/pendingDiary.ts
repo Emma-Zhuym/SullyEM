@@ -88,7 +88,7 @@ export async function drainPendingDiaries(
                     realtimeConfig.notionApiKey,
                     realtimeConfig.notionDatabaseId,
                     { title: entry.title, content: entry.content, mood: entry.mood || undefined, characterName: entry.charName },
-                    (realtimeConfig as any).notionDiaryExtraProperties,
+                    (realtimeConfig as any).notionDiaryExtraProperties, // [EM: notion-diary-extra-props] 第四参数不传日记不会自动选角色标签
                 );
                 if (r.success) {
                     await DB.saveMessage({ charId: entry.charId, role: 'system', type: 'text', content: `📔 ${entry.charName}写了一篇日记「${entry.title}」` } as any);

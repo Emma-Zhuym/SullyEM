@@ -93,6 +93,7 @@ const SpecialMomentsApp = lazyApp(() => import('./ValentineEvent').then(m => ({ 
 // EM: 独有 App
 const MapApp = lazyApp(() => import('../apps/MapApp'));
 const HealthApp = lazyApp(() => import('../apps/HealthApp'));
+const ShoppingApp = lazyApp(() => import('../apps/ShoppingApp'));
 const ContactsList = lazyApp(() => import('../components/chat/ContactsList'));
 
 // 预取优先级：高频/常驻 App 先预热，其余随后；逐个在空闲时触发，避免与交互抢主线程/带宽。
@@ -127,7 +128,7 @@ const APP_BY_ID: Partial<Record<AppID, PreloadableLazy>> = {
   [AppID.Handbook]: HandbookApp, [AppID.QQBridge]: QQBridge, [AppID.HotNews]: HotNewsApp,
   [AppID.VRWorld]: VRWorldApp, [AppID.CharCreatorDev]: CharCreatorDevApp, [AppID.SpecialMoments]: SpecialMomentsApp,
   [AppID.WorldHome]: WorldHomeApp,
-  [AppID.Map]: MapApp, [AppID.Health]: HealthApp, // EM
+  [AppID.Map]: MapApp, [AppID.Health]: HealthApp, [AppID.Shopping]: ShoppingApp, // EM
 };
 // 注入负载预热器：AppIcon 的 pointerdown → preloadApp(id) → 这里 warmLazy，连 React.lazy 负载一起解析。
 setAppPayloadWarmer((id: AppID) => { const c = APP_BY_ID[id]; if (c) warmLazy(c); });
@@ -664,7 +665,7 @@ const PhoneShell: React.FC = () => {
     switch (activeApp) {
       case AppID.Settings: return <Settings />;
       case AppID.Character: return <Character />;
-      case AppID.Chat: return messageSubView === 'contacts' ? <ContactsList /> : <Chat />;
+      case AppID.Chat: return messageSubView === 'contacts' ? <ContactsList /> : <Chat />; // [EM: message-sub-view-switch] useOS()解构必须含messageSubView，否则白屏
       case AppID.GroupChat: return <GroupChat />; 
       case AppID.ThemeMaker: return <ThemeMaker />;
       case AppID.Appearance: return <Appearance />;
@@ -697,6 +698,7 @@ const PhoneShell: React.FC = () => {
       case AppID.QQBridge: return <QQBridge />;
       case AppID.HotNews: return <HotNewsApp />;
       case AppID.Health: return <HealthApp />;
+      case AppID.Shopping: return <ShoppingApp />;
       case AppID.SpecialMoments: return <SpecialMomentsApp />;
       case AppID.VRWorld: return <VRWorldApp />;
       case AppID.WorldHome: return <WorldHomeApp />;

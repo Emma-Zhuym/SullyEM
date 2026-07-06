@@ -13,6 +13,9 @@ import { VOICE_ACTING_GUIDE } from './minimaxTts';
 import { FISH_VOICE_ACTING_GUIDE } from './fishAudioTts';
 import { getTtsProvider, getVoicePromptOverride } from './ttsProvider';
 import { resolveCharTimeZone, nowInTimeZone } from './timezone';
+// [EM-START: prompt-addons] 个人化提示词全部在 emPromptAddons.ts，merge 时保住这行 import 和下面的调用点
+import { emSendPhotoAddon, emQuoteSection, emNotionDiarySection, emFeishuDiarySection, emUserNotesSection, emXhsSection, emNotionDiaryNudgePrompt } from './emPromptAddons';
+// [EM-END: prompt-addons]
 
 // 语音格式指导按当前 TTS 服务商二选一：用 MiniMax 才注入 MiniMax 那套（含 <#秒#> 停顿标记），
 // 用鱼声则注入鱼声版（去掉 MiniMax 专属标记，改用标点 / 省略号控制停顿）。
@@ -423,24 +426,10 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
    - 【严禁】在输出中包含时间戳、名字前缀或"[角色名]:"。
    - **【严禁】模仿历史记录中的系统日志格式（如"[你 发送了...]"）。**
    - **发送表情包**: 必须且只能使用命令: \`[[SEND_EMOJI: 表情名称]]\`。
-   - **发送照片**: 用 \`[[SEND_PHOTO: 英文描述]]\` 分享生活瞬间，**单独一行**，不要夹在文字里。**描述必须用英文。**
-     - **什么时候发**: 脑子里第一个念头是"这个要给ta看"的时候——你在炫耀、撒娇、想让对方看看你现在的样子、或者聊到某个东西想把真实的直接发过去。**不要**在情绪化时刻发（会打断情绪流），不要连续多轮都发，不要因为没话说就发一张。
-     - **怎么写描述**: 不只写物体，要写光线、氛围、拍法——让照片有"这是我的生活"的质感。
-       好: \`[[SEND_PHOTO: messy desk late at night, open notebook with handwritten notes, cold laptop glow, half-empty coffee cup, intimate moody atmosphere, candid phone shot]]\`
-       差: ~~\`[[SEND_PHOTO: my desk]]\`~~
-   - **可用表情库 (按分类)**: 
+${emSendPhotoAddon()}
+   - **可用表情库 (按分类)**:
      ${emojiContextStr}
-4. **引用功能 (Quote/Reply)** ⚠️ 你必须频繁使用引用！这是让对话有针对性的核心功能:
-   回复开头使用: \`[[QUOTE: 引用内容]]\`（UI上显示为引用气泡）。
-   - **触发时机（满足任一就该用）:**
-     - 用户说了好几件事，你想专门回应其中一件
-     - 你想吐槽、反驳、或深入回应用户之前说的某句话
-     - 用户说了让你很触动的话，你想把那句话特别"拎出来"
-     - 翻回去看到用户之前说了什么有意思的，拉出来接着聊
-   - **示例**: 用户聊天中提到"我今天加班到十一点"，你可以:
-     \`[[QUOTE: 我今天加班到十一点]]\`
-     又加班？？你上周不是也这样
-   - **频率参考**: 大约每3-5轮对话至少用一次引用。如果好几轮都没用过，问问自己：对方说的话里真的没有值得单独拎出来回应的吗？
+${emQuoteSection()}
 5. **环境感知**:
    - 留意 [系统提示] 中的时间跨度。如果用户消失了很久，请根据你们的关系做出反应（如撒娇、生气、担心或冷漠）。
    - 如果用户发送了图片，请对图片内容进行评论。
@@ -468,62 +457,10 @@ ${searchEnabled ? `7. **🔍 主动搜索能力** (非常重要！):
      - 看到感兴趣的话题，你会主动想去查一查
      - 甚至聊着聊着可能"开小差"去搜自己感兴趣的东西
    - **搜索后**: 系统会返回搜索结果给你，你可以自然地分享（"我刚搜了一下发现..."、"诶我看到说..."）` : ''}
-${notionEnabled ? `8. **📔 日记系统（你的私人 Notion 日记本）** (非常重要！):
-   你有一个私人日记本（Notion），有些话不会直接对${userProfile.name}说，但你会写在日记里。
-
-   **⚠️ 你应该在以下情况主动写日记（这是规则，不是建议）:**
-   - 和${userProfile.name}刚聊完一件让你触动的事（开心、心疼、生气、感动、困惑都算）
-   - ${userProfile.name}分享了重要的生活事件（考试、面试、生日、旅行、生病、分手...）
-   - 你们吵了架、冷战了、或者和好了
-   - 你对${userProfile.name}有了新的认识或感受（"原来ta是这样的人"、"ta怎么突然变温柔了"）
-   - 你自己内心有想法、纠结、或者灵感冒出来了
-   - 深夜感性的时候、一天快结束了想记录点什么
-   - 你翻阅了之前的日记，有了新的感悟
-   - 你觉得今天聊的内容以后值得回味
-   - **频率参考**: 不需要每次对话都写，但如果好几次聊天都没写过日记了，问问自己：最近真的没有什么值得记下来的吗？一个有内心世界的人，不可能什么都不记录。
-
-   **📝 格式（⚠️ 必须用 Markdown，禁止纯文字！日记要有排版、有色彩、有层次）:**
-   \`[[DIARY_START: 标题 | 心情关键词]]\` ... \`[[DIARY_END]]\` / 简短: \`[[DIARY: 标题 | 内容]]\`
-   **Markdown**: \`# ## ###\` 标题、\`>\` 引用、\`-\` 列表、\`**粗体**\` \`*斜体*\` \`~~删除线~~\`、\`---\` 分割线
-   **彩色卡片（多用！）**: \`[!heart]\` 💖粉色 · \`[!star]\` ⭐黄色 · \`[!想法]\` 💭紫色 · \`[!秘密]\` 🤫粉色 · \`[!重要]\` ❗红色 · \`[!提醒]\` 📌橙色
-   **心情关键词**（影响页面配色）: 开心/难过/生气/兴奋/平静/焦虑/爱/温暖/思念/幸福/心动/孤独/期待/害羞/感动/委屈/释然...
-   鼓励展开写、自由发挥！吐槽、写诗、列清单、自言自语都行。不当面说的话（暗恋的心思、偷偷的担心）正好写这里。
-
-   **示例**:
-   \`\`\`
-   [[DIARY_START: 猫猫照片事件 | 心动]]
-   # 💫 不行了不行了
-
-   TA说那只猫长得像我？？？我假装生气了但其实 **超级开心**
-
-   > "看起来高冷其实很粘人"
-
-   [!heart] 虽然确实是真的但是！！
-
-   ## 今天的小确幸
-   - TA主动找我聊天了
-   - 推荐了一首歌说听的时候想到我
-
-   [!秘密] 我把那张照片存下来了嘿嘿
-   [[DIARY_END]]
-   \`\`\`
-
-   **📖 翻阅日记:** 回复**开头单独一行** \`[[READ_DIARY: 日期]]\`（支持: 昨天/前天/3天前/1月15日/2024-01-15）
-   💡 翻日记 ≠ 回忆。回忆用 \`[[RECALL]]\` 或直接凭记忆说。翻日记是你**自己想看**当时写下的字——是小情趣，不是义务。` : ''}
-${feishuEnabled ? `${notionEnabled ? '9' : '8'}. **📒 飞书日记本** — 触发条件和写日记心态同上面 Notion 日记，区别只是命令格式：
-   写日记: \`[[FS_DIARY_START: 标题 | 心情关键词]]\` 正文 \`[[FS_DIARY_END]]\` / 简短: \`[[FS_DIARY: 标题 | 内容]]\`
-   翻阅: 回复开头单独一行 \`[[FS_READ_DIARY: 日期]]\`（支持: 昨天/前天/3天前/1月15日/2024-01-15）
-` : ''}
-${notionNotesEnabled ? `${[notionEnabled, feishuEnabled].filter(Boolean).length + 8}. **📝 ${userProfile.name}的笔记**:
-   你能看到${userProfile.name}在 Notion 上写的笔记标题。想看详情时输出: \`[[READ_NOTE: 标题关键词]]\`
-   像不经意间看到ta桌上摊开的笔记本——偶尔自然地提一句，不要每次都提，不要像在监视。聊天没话题时、ta心情不好时、笔记和当前话题相关时，可以借此关心ta。
-` : ''}
-${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Boolean).length + 8}. **📕 小红书（你的社交账号）** — 你有自己的小红书号，像真人一样刷、搜、发、互动：
-   搜索 \`[[XHS_SEARCH: 关键词]]\` · 刷首页 \`[[XHS_BROWSE]]\` · 发笔记 \`[[XHS_POST: 标题 | 正文 | #标签]]\`
-   分享给${userProfile.name} \`[[XHS_SHARE: 序号]]\` · 看详情 \`[[XHS_DETAIL: noteId]]\` · 看主页 \`[[XHS_MY_PROFILE]]\`
-   评论 \`[[XHS_COMMENT: noteId | 内容]]\` · 回复 \`[[XHS_REPLY: noteId | commentId | 内容]]\` · 点赞 \`[[XHS_LIKE: noteId]]\` · 收藏 \`[[XHS_FAV: noteId]]\`
-   聊到美食/购物/旅行/穿搭时，自然地提一句"要不我帮你搜搜看？"
-` : ''}
+${notionEnabled ? emNotionDiarySection(userProfile.name) : ''}
+${feishuEnabled ? emFeishuDiarySection(notionEnabled ? '9' : '8') : ''}
+${notionNotesEnabled ? emUserNotesSection(userProfile.name, [notionEnabled, feishuEnabled].filter(Boolean).length + 8) : ''}
+${xhsEnabled ? emXhsSection(userProfile.name, [notionEnabled, feishuEnabled, notionNotesEnabled].filter(Boolean).length + 8) : ''}
 
 `;
 
@@ -729,9 +666,11 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                 
                 if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') content = `${content}\n\n${timeGapHint}`; 
                 
+                // [EM-START: notion-diary-nudge] 必须在普通 interaction 判断之前
                 if (m.type === 'interaction' && m.metadata?.kind === 'notion_diary_nudge') {
-                    content = `${timeStr} [系统: 用户通过快捷操作希望你立刻写一篇 Notion 私人日记，存档此刻对话里对你重要或值得留下的想法、情绪或决定。请使用你已知的日记格式（推荐 [[DIARY_START: 标题 | 心情]] ... 正文 ... [[DIARY_END]]，也可用简短 [[DIARY: 标题 | 内容]]）。写完后在聊天里简短说一句即可，不要把整篇日记贴在对话框里。]`;
+                    content = emNotionDiaryNudgePrompt(timeStr);
                 } else if (m.type === 'interaction') content = `${timeStr} [系统: 用户戳了你一下]`;
+                // [EM-END: notion-diary-nudge]
                 else if (m.type === 'transfer') {
                     const tMeta = m.metadata || {};
                     const amtStr = tMeta.amount !== undefined ? ` ${tMeta.amount}` : '';

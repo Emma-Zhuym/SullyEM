@@ -37,7 +37,7 @@ import { ActiveMsgStore } from '../utils/activeMsgStore';
 import { applyEmotionEvalRaw } from '../utils/emotionApply';
 import { isEmotionEvalSkipped } from '../utils/devDebug';
 
-// EM: Token 面板用的上下文组成分解
+// [EM-START: context-composition-type] Token 面板用的上下文组成分解
 export interface ContextComposition {
     coreContextChars: number;
     /** buildSystemPrompt 在核心人设之外注入的部分：实时信息、群聊摘要、日记/笔记标题、纪念日、聊天规范与全量表情名、小红书/搜索等长规则、语音说明等 */
@@ -50,6 +50,7 @@ export interface ContextComposition {
     historyImageTurns: number;
     contextLimit: number;
 }
+// [EM-END: context-composition-type]
 
 // ─── 情绪评估（副API，fire & forget）───
 
@@ -423,7 +424,7 @@ export const useChatAI = ({
     const [lastDigestResult, setLastDigestResult] = useState<DigestResult | null>(null);
     const [lastTokenUsage, setLastTokenUsage] = useState<number | null>(null);
     const [tokenBreakdown, setTokenBreakdown] = useState<{ prompt: number; completion: number; total: number; msgCount: number; pass: string } | null>(null);
-    const [contextComposition, setContextComposition] = useState<ContextComposition | null>(null);
+    const [contextComposition, setContextComposition] = useState<ContextComposition | null>(null); // [EM: context-composition-state]
     const [lastSystemPrompt, setLastSystemPrompt] = useState<string>('');
 
     // 意识流：由副 API 的情绪评估同轮产出（innerState 字段）
@@ -736,7 +737,7 @@ export const useChatAI = ({
             const historyTotalChars = cleanedApiMessages.reduce((sum: number, m: any) => sum + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length), 0);
             console.log(`📊 [Context Debug] system_prompt_chars=${systemPromptLength} | history_msgs=${historyMsgCount} | history_chars=${historyTotalChars} | total_msgs_in_array=${fullMessages.length} | contextLimit=${limit}`);
 
-            // EM: Token 面板上下文分解
+            // [EM-START: context-composition-set] Token 面板上下文分解——值必须来自 payload.contextBreakdown，不能写死 0
             const bd = payload.contextBreakdown;
             setContextComposition({
                 coreContextChars: bd?.coreContextChars ?? 0,
@@ -748,6 +749,7 @@ export const useChatAI = ({
                 historyImageTurns: cleanedApiMessages.reduce((n: number, m: any) => n + (Array.isArray(m.content) && m.content.some((p: any) => p?.type === 'image_url') ? 1 : 0), 0),
                 contextLimit: limit,
             });
+            // [EM-END: context-composition-set]
 
             // Save for dev debug viewer
             setLastSystemPrompt(systemPrompt);

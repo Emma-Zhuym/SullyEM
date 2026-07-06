@@ -55,10 +55,12 @@ interface ChatInputAreaProps {
     /** 动森彩蛋模式：输入栏换成木质草绿圆角。 */
     acnh?: boolean;
     /** STT 语音发送回调：文字内容 + 录音时长 */
+    // [EM-START: voice-props]
     onVoiceSend?: (text: string, durationMs: number) => void;
     /** 声音模式：角色回复也显示为语音气泡 */
     voiceMode?: boolean;
     onToggleVoiceMode?: () => void;
+    // [EM-END: voice-props]
 }
 
 const ChatInputArea: React.FC<ChatInputAreaProps> = ({
@@ -437,7 +439,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             <Smiley className="w-6 h-6" weight="regular" />
                         </button>
                     </div>
-                    {/* 语音条发送按钮 — 有 onVoiceSend 时才显示，有文字时才可点 */}
+                    {/* [EM-START: voice-send-button] 语音条发送按钮 — 有 onVoiceSend 时才显示，有文字时才可点 */}
                     {onVoiceSend && (
                         <button
                             type="button"
@@ -458,6 +460,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             <Microphone className="w-5 h-5" weight={input.trim() ? 'fill' : 'regular'} />
                         </button>
                     )}
+                    {/* [EM-END: voice-send-button] */}
 
                     <button
                         onClick={onSend}
@@ -673,6 +676,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             </button>
 
                             {/* 声音模式：角色回复也显示为语音气泡 */}
+                            {/* [EM-START: voice-mode-toggle] */}
                             {onToggleVoiceMode && (
                                 <button onClick={onToggleVoiceMode} className={`flex flex-col items-center gap-2 tool-btn relative ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                     <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border relative ${
@@ -691,13 +695,15 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
 
                           {/* Page 1: 外部服务 */}
                           <div className={`p-6 grid grid-cols-4 grid-rows-2 gap-8 ${actionsPage === 1 ? '' : 'hidden'}`}>
-                            {/* EM: 写 Notion 日记 */}
+                            {/* [EM-END: voice-mode-toggle] */}
+                            {/* [EM-START: notion-diary-button] 写 Notion 日记 */}
                             <button onClick={() => onPanelAction('notion-diary-quick')} className={`flex flex-col items-center gap-2 tool-btn ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isDiscordStyle ? 'bg-slate-800 text-amber-300 border-amber-400/20' : 'bg-amber-50 text-amber-500 border-amber-100'}`}>
                                     <NotePencil className="w-6 h-6" weight="bold" />
                                 </div>
                                 <span className="text-xs font-bold">写 Notion</span>
                             </button>
+                            {/* [EM-END: notion-diary-button] */}
 
                             <button
                               onClick={() => {
