@@ -5,16 +5,17 @@
  * 三个 store：accounts / categories / transactions
  */
 
-import { FinanceAccount, FinanceCategory, FinanceTransaction, FinanceTxType } from '../types';
+import { FinanceAccount, FinanceCategory, FinanceTransaction, FinanceTxType, RecurringRule } from '../types';
 
 const DB_NAME = 'SullyEM_Finance';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 const STORE_ACCOUNTS = 'accounts';
 const STORE_CATEGORIES = 'categories';
 const STORE_TX = 'transactions';
 const STORE_TA_COMMENTS = 'ta_comments';
 const STORE_SETTINGS = 'settings';
+const STORE_RECURRING = 'recurring_rules';
 
 // ── 默认预设分类 ──
 
@@ -81,6 +82,10 @@ function openFinanceDB(): Promise<IDBDatabase> {
       // v3: 设置
       if (!db.objectStoreNames.contains(STORE_SETTINGS)) {
         db.createObjectStore(STORE_SETTINGS, { keyPath: 'key' });
+      }
+      // v4: 周期性交易规则
+      if (!db.objectStoreNames.contains(STORE_RECURRING)) {
+        db.createObjectStore(STORE_RECURRING, { keyPath: 'id' });
       }
     };
   });
@@ -254,4 +259,88 @@ export const FinanceDB = {
     }
     return balance;
   },
+
+  // 周期性交易规则
+  getRecurringRules: () => getAll<RecurringRule>(STORE_RECURRING),
+  saveRecurringRule: (r: RecurringRule) => put(STORE_RECURRING, r),
+  deleteRecurringRule: (id: string) => del(STORE_RECURRING, id),
+
+  /** 检查并自动补录到期的周期性交易，返回补录数量 */
+  processRecurringRules: async (): Promise<number> => {
+    const rules = await getAll<RecurringRule>(STORE_RECURRING);
+    const today = new Date().toISOString().split('T')[0];
+    let count = 0;
+
+    for (const rule of rules) {
+      if (!rule.enabled) continue;
+      let nextDate = rule.nextDate;
+
+      // 补录所有到期日期（可能错过多个周期）
+      while (nextDate <= today) {
+        const tx: FinanceTransaction = {
+          id: `recurring_${rule.id}_${nextDate}`,
+          type: rule.type,
+          amount: rule.amount,
+          currency: rule.currency,
+          accountId: rule.accountId,
+          categoryId: rule.categoryId,
+          note: `${rule.note}（自动记录）`,
+          timestamp: new Date(nextDate + 'T12:00:00').getTime(),
+          dateStr: nextDate,
+        };
+        // Only insert if not already exists
+        const existing = await getById<FinanceTransaction>(STORE_TX, tx.id);
+        if (!existing) {
+          await put(STORE_TX, tx);
+          count++;
+        }
+        nextDate = advanceDate(nextDate, rule.frequency);
+      }
+
+      // Update rule's nextDate
+      if (nextDate !== rule.nextDate) {
+        await put(STORE_RECURRING, { ...rule, nextDate });
+      }
+    }
+    return count;
+  },
+
+  // CSV 导出
+  exportCSV: async (): Promise<string> => {
+    const [txs, accs, cats] = await Promise.all([
+      getAll<FinanceTransaction>(STORE_TX),
+      getAll<FinanceAccount>(STORE_ACCOUNTS),
+      getAll<FinanceCategory>(STORE_CATEGORIES),
+    ]);
+    const accMap = Object.fromEntries(accs.map(a => [a.id, a.name]));
+    const catMap = Object.fromEntries(cats.map(c => [c.id, c.name]));
+
+    const header = '日期,类型,金额,币种,账户,分类,备注';
+    const typeLabels: Record<string, string> = { expense: '支出', income: '收入', refund: '退款', transfer: '转账' };
+    const rows = txs
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .map(t => [
+        t.dateStr,
+        typeLabels[t.type] || t.type,
+        t.amount.toFixed(2),
+        t.currency,
+        accMap[t.accountId] || '',
+        catMap[t.categoryId] || '',
+        `"${(t.note || '').replace(/"/g, '""')}"`,
+      ].join(','));
+
+    return [header, ...rows].join('\n');
+  },
 };
+
+function advanceDate(dateStr: string, freq: RecurringRule['frequency']): string {
+  const d = new Date(dateStr + 'T12:00:00');
+  switch (freq) {
+    case 'daily':    d.setDate(d.getDate() + 1); break;
+    case 'weekly':   d.setDate(d.getDate() + 7); break;
+    case 'biweekly': d.setDate(d.getDate() + 14); break;
+    case 'monthly':  d.setMonth(d.getMonth() + 1); break;
+    case 'yearly':   d.setFullYear(d.getFullYear() + 1); break;
+  }
+  return d.toISOString().split('T')[0];
+}
