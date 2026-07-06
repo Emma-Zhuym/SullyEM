@@ -9,6 +9,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { CaretLeft, CaretRight, Plus, Minus, House, Package, CheckCircle, ShoppingCart, Clock, PencilSimple, Trash } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { ShoppingDB, type ShopProduct, type CartItem, type ShopOrder } from '../utils/shoppingDb';
+import { DB } from '../utils/db';
 import { F, S, R, HUE, STATUS } from '../utils/clayTokens';
 
 type Screen = 'home' | 'net' | 'food' | 'cart' | 'checkout' | 'orders' | 'detail' | 'add';
@@ -957,7 +958,15 @@ const ShoppingApp: React.FC = () => {
         {screen === 'detail' && currentOrder?.status === 'active' && (
           <button onClick={async () => {
             const o = currentOrder!;
+            const items = o.lines.map(l => {
+              const p = products.find(x => x.id === l.id);
+              return p ? p.name : '';
+            }).filter(Boolean).join('、');
+            const typeLabel = o.type === 'food' ? '外卖' : '快递';
             await ShoppingDB.saveOrder({ ...o, status: 'done', awaitingReply: true });
+            if (o.receiverCharId) {
+              await DB.saveMessage({ charId: o.receiverCharId, role: 'user', type: 'interaction', content: `[用户给你买的${typeLabel}（${items}）已送达]` });
+            }
             await refresh();
             flash('已确认收货 ✓');
           }} className="w-full flex items-center justify-center gap-2 active:translate-y-[1px] transition-transform"
