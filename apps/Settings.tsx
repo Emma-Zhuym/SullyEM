@@ -130,6 +130,7 @@ const Settings: React.FC = () => {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showPresetModal, setShowPresetModal] = useState(false);
   const [showApiCallLog, setShowApiCallLog] = useState(false);
+  const [showOtherApi, setShowOtherApi] = useState(false);
   const [showRealtimeModal, setShowRealtimeModal] = useState(false);
   const [showCloudModal, setShowCloudModal] = useState(false);
   const [showGithubModal, setShowGithubModal] = useState(false);
@@ -1452,20 +1453,30 @@ const Settings: React.FC = () => {
         </button>
 
         {/* 其他 API 区域 — 非 LLM 类（语音、写歌等），不会跟随预设切换 */}
-        <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
-            <div className="flex items-center gap-2 mb-4">
-                <div className="p-2 bg-amber-100/50 rounded-xl text-amber-600">
+        <section className="bg-white/80 rounded-3xl shadow-sm border border-white/50 overflow-hidden">
+            <button
+                type="button"
+                onClick={() => setShowOtherApi(s => !s)}
+                className="w-full p-5 flex items-center gap-3 active:scale-[0.99] transition-transform text-left"
+            >
+                <div className="p-2 bg-amber-100/60 rounded-xl text-amber-600 shrink-0">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9 3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5 5.25 5.25" />
                     </svg>
                 </div>
-                <h2 className="text-sm font-semibold text-slate-600 tracking-wider">其他 API</h2>
-            </div>
-            <p className="text-[11px] text-slate-400 mb-4 leading-relaxed pl-1">
-                语音 / 写歌等非 LLM 类 API。这些设置 <span className="font-semibold text-slate-500">不会随预设切换</span>，通常只配置一次。
-            </p>
+                <div className="flex-1 min-w-0">
+                    <h2 className="text-sm font-semibold text-slate-600 tracking-wider">其他 API</h2>
+                    <p className="text-[11px] text-slate-400 mt-0.5">语音 / 写歌等非 LLM 类 API</p>
+                </div>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={`w-4 h-4 text-slate-300 shrink-0 transition-transform ${showOtherApi ? 'rotate-90' : ''}`}>
+                    <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clipRule="evenodd" />
+                </svg>
+            </button>
 
-            <div className="space-y-4">
+            {showOtherApi && <div className="px-5 pb-5 space-y-4">
+                <p className="text-[11px] text-slate-400 leading-relaxed pl-1">
+                    语音 / 写歌等非 LLM 类 API。这些设置 <span className="font-semibold text-slate-500">不会随预设切换</span>，通常只配置一次。
+                </p>
                 <p className="text-[11px] text-slate-400 -mt-1 pl-1 leading-relaxed">
                     🎙️ 语音生成支持 <span className="font-semibold text-slate-500">MiniMax</span> 和 <span className="font-semibold text-slate-500">鱼声 Fish</span> 两家——下面两边都可以填，最后在底部「当前语音引擎」里二选一。
                 </p>
@@ -1714,7 +1725,7 @@ const Settings: React.FC = () => {
                 <button onClick={handleSaveOtherApis} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-amber-500/20 bg-amber-500 active:scale-95 transition-all mt-2">
                     {otherStatusMsg || '保存其他 API'}
                 </button>
-            </div>
+            </div>}
         </section>
 
         {/* 实时感知配置区域 */}

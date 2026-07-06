@@ -1,7 +1,7 @@
 
 
 
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useCallback } from 'react';
 import { Message, ChatTheme } from '../../types';
 import { tryParseLifeSimResetCard } from '../../utils/lifeSimChatCard';
 import { VALID_INTERJECTION_TAGS, cleanVoiceMarkupForDisplay } from '../../utils/minimaxTts';
@@ -858,6 +858,8 @@ interface MessageItemProps {
         customColors?: { bg?: string; accent?: string; text?: string };
         onOpenSettings?: () => void;
     };
+    /** 声音模式：角色消息也显示为语音气泡（仅控制显示，不影响存储） */
+    voiceMode?: boolean;
 }
 
 const MessageItem = React.memo(({
@@ -896,6 +898,7 @@ avatarShape = 'circle',
     onLuckinCandidate,
     onResolveTransfer,
     thinkingChainOptions,
+    voiceMode = false,
 }: MessageItemProps) => {
     const isUser = m.role === 'user';
     const isSystem = m.role === 'system';
@@ -914,6 +917,7 @@ avatarShape = 'circle',
 
     const styleConfig = isUser ? activeTheme.user : activeTheme.ai;
     const [showVoiceText, setShowVoiceText] = useState(false);
+    const [showSttText, setShowSttText] = useState(false);
     const [replyOffset, setReplyOffset] = useState(0);
     const [isReplyGestureActive, setIsReplyGestureActive] = useState(false);
     const [isReplyReady, setIsReplyReady] = useState(false);
@@ -1402,9 +1406,9 @@ const timeHint = durationSec <= 240 ? '差不多是一杯咖啡的时间' : '像
                     </div>
                 </div>
 
-                {/* User Avatar - Absolute Positioned */}
+                {/* User Avatar - Absolute Positioned (top-aligned so it stays put when bubble expands) */}
                 {isUser && (
-                    <div className="absolute right-3 bottom-[1.25rem] z-0">
+                    <div className="absolute right-3 top-0 z-0">
                         {renderAvatar(userAvatar)}
                     </div>
                 )}
@@ -2754,7 +2758,7 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
     // even when no audio was synthesized (e.g. character has no MiniMax voice configured),
     // so fake voice messages stay readable just like real ones.
     const voiceTagText = hasVoiceTag ? cleanVoiceText(m.content.match(/<[语語]音[^>]*>([\s\S]*?)<\/[语語]音>/)?.[1]?.trim() || '') : '';
-    const hasVoiceContent = voiceData?.url || voiceLoading || hasVoiceTag;
+    const hasVoiceContent = voiceData?.url || voiceLoading || hasVoiceTag || (!isUser && !!voiceMode);
     // Don't render empty bubbles (e.g. messages that were just "---"), unless voice data exists or pending
     if (!displayContent && !hasVoiceContent) return null;
 
@@ -2779,6 +2783,84 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
             </div>
         );
     })() : null;
+
+    // STT 语音气泡：仅用户主动以语音条格式发送的消息
+    const isVoiceBubble = m.type === 'text' && isUser && m.metadata?.voice === true;
+
+    if (isVoiceBubble) {
+        const durationMs: number = m.metadata?.durationMs ?? 0;
+        const durationSec = durationMs > 0 ? Math.max(1, Math.ceil(durationMs / 1000)) : null;
+        const textToPlay = displayContent || m.content;
+        const bgColor = styleConfig.backgroundColor ?? '#3b82f6';
+        const textColor = styleConfig.textColor ?? '#ffffff';
+        const r = styleConfig.borderRadius ?? 18;
+
+        const bubble = (
+            <div
+                className="animate-bubble-pop-right select-none"
+                style={{
+                    backgroundColor: bgColor,
+                    color: textColor,
+                    borderRadius: r,
+                    minWidth: 100,
+                    maxWidth: 220,
+                    boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
+                    overflow: 'hidden',
+                }}
+            >
+                {/* 波纹行 */}
+                <div className="flex items-center gap-2 px-4 py-2.5">
+                    {/* 静态波纹条 */}
+                    <div className="flex items-center gap-[2px]" style={{ height: 16 }}>
+                        {[5, 9, 6, 13, 8, 11, 5, 10, 7, 12, 5, 9].map((h, i) => (
+                            <span key={i} style={{
+                                display: 'inline-block',
+                                width: 2.5,
+                                height: `${Math.max(2, h * 0.5)}px`,
+                                background: 'currentColor',
+                                borderRadius: 2,
+                                opacity: 0.6 + (h / 13) * 0.35,
+                            }} />
+                        ))}
+                    </div>
+                    {durationSec && (
+                        <span className="text-xs shrink-0" style={{ opacity: 0.75 }}>{durationSec}″</span>
+                    )}
+                    {/* 转文字按钮 */}
+                    <button
+                        onClick={(e) => { e.stopPropagation(); setShowSttText(t => !t); }}
+                        className="shrink-0 ml-auto w-6 h-6 flex items-center justify-center rounded-lg transition-all active:scale-95"
+                        style={{
+                            background: showSttText ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.15)',
+                            color: textColor,
+                        }}
+                    >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h8"/><path d="M8 14h4"/></svg>
+                    </button>
+                </div>
+                {/* 展开的文字，横线分割，同一气泡内 */}
+                {showSttText && (
+                    <div
+                        className="px-4 pb-3 pt-2 text-[13px] leading-relaxed whitespace-pre-wrap"
+                        style={{
+                            borderTop: `1px solid rgba(255,255,255,0.2)`,
+                            color: textColor,
+                            opacity: 0.92,
+                        }}
+                    >
+                        {textToPlay}
+                    </div>
+                )}
+            </div>
+        );
+
+        return commonLayout(
+            <>
+            {quoteBlock}
+            {bubble}
+            </>
+        );
+    }
 
     return commonLayout(
         <>
@@ -2816,8 +2898,8 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
 
             {/* Layer 3: Reply/Quote — moved outside bubble, rendered above as quoteBlock */}
 
-            {/* Layer 4: Text Content — shown when there's visible text after stripping voice tags */}
-            {displayContent && (
+            {/* Layer 4: Text Content — hidden in voiceMode (text accessible via 转文字 toggle on voice bar) */}
+            {displayContent && !(voiceMode && !isUser) && (
             <div className="relative z-10 text-[15px] leading-relaxed whitespace-pre-wrap break-all select-text" style={{ color: styleConfig.textColor }}>
                 {renderContent(displayContent)}
             </div>
@@ -2907,7 +2989,7 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
                                 </div>
                                 {/* Text toggle button — always available so user can read the text */}
                                 <div
-                                    className={`shrink-0 ml-0.5 px-1.5 py-0.5 rounded-lg text-[9px] font-medium transition-all ${showVoiceText ? 'ring-1 ring-current/20' : ''}`}
+                                    className={`shrink-0 ml-0.5 w-5 h-5 flex items-center justify-center rounded-lg transition-all ${showVoiceText ? 'ring-1 ring-current/20' : ''}`}
                                     style={{
                                         color: vbText || 'rgba(100,116,139,0.7)',
                                         backgroundColor: showVoiceText ? 'rgba(0,0,0,0.08)' : 'rgba(0,0,0,0.04)',
@@ -2918,7 +3000,7 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
                                         setShowVoiceText(v => !v);
                                     }}
                                 >
-                                    {showVoiceText ? '收起' : '转文字'}
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h8"/><path d="M8 14h4"/></svg>
                                 </div>
                             </button>
                             {/* Expandable text area — shows spoken text + Chinese translation */}
@@ -3000,14 +3082,14 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
                                 </div>
                                 {(voiceTagText || displayContent) ? (
                                     <div
-                                        className={`shrink-0 ml-0.5 px-1.5 py-0.5 rounded-lg text-[9px] font-medium transition-all ${showVoiceText ? 'ring-1 ring-current/20' : ''}`}
+                                        className={`shrink-0 ml-0.5 w-5 h-5 flex items-center justify-center rounded-lg transition-all ${showVoiceText ? 'ring-1 ring-current/20' : ''}`}
                                         style={{
                                             color: vbText || 'rgba(100,116,139,0.7)',
                                             backgroundColor: showVoiceText ? 'rgba(0,0,0,0.08)' : 'rgba(0,0,0,0.04)',
                                         }}
                                         onClick={(e) => { e.stopPropagation(); e.preventDefault(); setShowVoiceText(v => !v); }}
                                     >
-                                        {showVoiceText ? '收起' : '转文字'}
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h8"/><path d="M8 14h4"/></svg>
                                     </div>
                                 ) : (
                                     <span className="text-[9px] shrink-0" style={{ color: vbText || 'rgba(100,116,139,0.7)' }}>语音</span>

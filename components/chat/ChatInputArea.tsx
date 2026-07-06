@@ -1,5 +1,5 @@
-import React, { useRef, useState, useEffect } from 'react';
-import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, PencilSimple, BellSimpleRinging, NotePencil, GameController } from '@phosphor-icons/react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
+import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, PencilSimple, BellSimpleRinging, NotePencil, GameController, Microphone, Waveform } from '@phosphor-icons/react';
 import { intifaceClient } from '../../utils/intifaceClient';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
@@ -54,6 +54,11 @@ interface ChatInputAreaProps {
     chromeStyle?: 'soft' | 'flat' | 'floating' | 'pixel';
     /** 动森彩蛋模式：输入栏换成木质草绿圆角。 */
     acnh?: boolean;
+    /** STT 语音发送回调：文字内容 + 录音时长 */
+    onVoiceSend?: (text: string, durationMs: number) => void;
+    /** 声音模式：角色回复也显示为语音气泡 */
+    voiceMode?: boolean;
+    onToggleVoiceMode?: () => void;
 }
 
 const ChatInputArea: React.FC<ChatInputAreaProps> = ({
@@ -76,6 +81,9 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     sendButtonStyle = 'circle',
     chromeStyle = 'soft',
     acnh = false,
+    onVoiceSend,
+    voiceMode = false,
+    onToggleVoiceMode,
 }) => {
     const chatImageInputRef = useRef<HTMLInputElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -409,29 +417,51 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             <Plus className="w-6 h-6" weight="bold" />
                         </span>
                     </button>
-                    <div className={`flex-1 min-w-0 flex items-center px-1 transition-all ${useIOSStandaloneInputFix ? 'overflow-visible' : 'overflow-hidden'} ${inputWrapClass} ${isPixelStyle ? 'focus-within:bg-[#fff7ed]' : isDiscordStyle ? 'focus-within:bg-slate-800 focus-within:border-white/20' : 'border border-transparent focus-within:bg-white focus-within:border-primary/30'}`}>
-                        <textarea 
+                    <div className={`flex-1 min-w-0 flex items-center px-1 transition-all relative ${useIOSStandaloneInputFix ? 'overflow-visible' : 'overflow-hidden'} ${inputWrapClass} ${isPixelStyle ? 'focus-within:bg-[#fff7ed]' : isDiscordStyle ? 'focus-within:bg-slate-800 focus-within:border-white/20' : 'border border-transparent focus-within:bg-white focus-within:border-primary/30'}`}>
+                        <textarea
                             ref={textareaRef}
-                            rows={1} 
-                            value={input} 
-                            onChange={(e) => setInput(e.target.value)} 
-                            onKeyDown={handleKeyDown} 
+                            rows={1}
+                            value={input}
+                            onChange={(e) => setInput(e.target.value)}
+                            onKeyDown={handleKeyDown}
                             onFocus={handleInputFocus}
                             inputMode="text"
                             enterKeyHint="send"
                             autoCorrect="on"
                             autoCapitalize="sentences"
-                            className={`flex-1 min-w-0 bg-transparent px-4 py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-24 no-scrollbar ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`} 
-                            placeholder="Message..." 
-                            style={{ height: 'auto' }} 
+                            className={`flex-1 min-w-0 bg-transparent px-4 py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-24 no-scrollbar ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`}
+                            placeholder="Message..."
+                            style={{ height: 'auto' }}
                         />
                         <button onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={`p-2 shrink-0 ${isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}>
                             <Smiley className="w-6 h-6" weight="regular" />
                         </button>
                     </div>
-                    <button 
-                        onClick={onSend} 
-                        disabled={!input.trim()} 
+                    {/* 语音条发送按钮 — 有 onVoiceSend 时才显示，有文字时才可点 */}
+                    {onVoiceSend && (
+                        <button
+                            type="button"
+                            disabled={!input.trim()}
+                            onClick={() => {
+                                const text = input.trim();
+                                if (!text) return;
+                                const durationMs = Math.max(1000, text.length * 280);
+                                onVoiceSend(text, durationMs);
+                                setInput('');
+                            }}
+                            className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all select-none ${
+                                input.trim()
+                                    ? isDiscordStyle ? 'text-sky-400' : isPixelStyle ? 'text-[#8f674a]' : 'text-primary'
+                                    : 'text-slate-300 cursor-not-allowed'
+                            }`}
+                        >
+                            <Microphone className="w-5 h-5" weight={input.trim() ? 'fill' : 'regular'} />
+                        </button>
+                    )}
+
+                    <button
+                        onClick={onSend}
+                        disabled={!input.trim()}
                         className={`${sendButtonClass} ${input.trim() ? '' : 'opacity-45 shadow-none'}`}
                     >
                         {sendButtonStyle === 'pill' ? <span>发送</span> : <PaperPlaneTilt className="w-5 h-5" weight="fill" />}
@@ -641,6 +671,21 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 </div>)}
                                 <span className="text-xs font-bold">日程/情绪</span>
                             </button>
+
+                            {/* 声音模式：角色回复也显示为语音气泡 */}
+                            {onToggleVoiceMode && (
+                                <button onClick={onToggleVoiceMode} className={`flex flex-col items-center gap-2 tool-btn relative ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
+                                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border relative ${
+                                        voiceMode
+                                            ? (isDiscordStyle ? 'bg-rose-500/20 text-rose-300 border-rose-400/30' : 'bg-rose-50 text-rose-500 border-rose-200')
+                                            : (isDiscordStyle ? 'bg-slate-800 text-slate-400 border-white/10' : 'bg-slate-50 text-slate-400 border-slate-100')
+                                    }`}>
+                                        <Waveform className="w-6 h-6" weight="bold" />
+                                        {voiceMode && <span className={`absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full border-2 ${isDiscordStyle ? 'bg-rose-400 border-slate-900' : 'bg-rose-500 border-white'}`} />}
+                                    </div>
+                                    <span className="text-xs font-bold">声音模式</span>
+                                </button>
+                            )}
 
                           </div>
 
