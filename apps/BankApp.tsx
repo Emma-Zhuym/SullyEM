@@ -1636,14 +1636,15 @@ const FilterChip: React.FC<{
   label: string;
   active: boolean;
   onClick: () => void;
-}> = ({ label, active, onClick }) => (
+  tint?: { bg: string; fg: string };
+}> = ({ label, active, onClick, tint }) => (
   <button
     onClick={onClick}
     className="px-3 py-1.5 text-xs font-medium shrink-0 flex-1 text-center"
     style={{
       borderRadius: R.medium,
-      background: active ? F.surfaceRaised : 'transparent',
-      color: active ? F.textPrimary : F.textTertiary,
+      background: active ? (tint ? tint.bg : F.surfaceRaised) : 'transparent',
+      color: active ? (tint ? tint.fg : F.textPrimary) : F.textTertiary,
       boxShadow: active ? S.raisedSoft : 'none',
       fontWeight: active ? 600 : 400,
       transition: `all ${MOTION.hover} ${MOTION.ease}`,
@@ -1673,9 +1674,15 @@ const TransactionsTab: React.FC<{
 }> = ({ transactions, accounts, categories, onRefresh, showFilters, setShowFilters }) => {
   const { characters, apiConfig, userProfile } = useOS();
   const [timeRange, setTimeRange] = useState<TimeRange>('month');
-  const [filterAccountId, setFilterAccountId] = useState<string | null>(null);
+  const [filterAccountIds, setFilterAccountIds] = useState<Set<string>>(new Set());
   const [filterType, setFilterType] = useState<'all' | 'expense' | 'income'>('all');
   const [editingTx, setEditingTx] = useState<FinanceTransaction | 'new' | null>(null);
+
+  const toggleAccount = (id: string) => setFilterAccountIds(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
 
   // ── 今日情报 ──
   const [gossipChar, setGossipChar] = useState<CharacterProfile | null>(null);
@@ -1762,7 +1769,7 @@ const TransactionsTab: React.FC<{
 
   const filtered = transactions.filter(t => {
     if (t.dateStr < from || t.dateStr > to) return false;
-    if (filterAccountId && t.accountId !== filterAccountId) return false;
+    if (filterAccountIds.size > 0 && !filterAccountIds.has(t.accountId)) return false;
     if (filterType === 'expense' && t.type !== 'expense') return false;
     if (filterType === 'income' && t.type !== 'income' && t.type !== 'refund') return false;
     return true;
@@ -1787,7 +1794,7 @@ const TransactionsTab: React.FC<{
     return ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()];
   };
 
-  const activeFilters = (filterAccountId ? 1 : 0) + (filterType !== 'all' ? 1 : 0);
+  const activeFilters = (filterAccountIds.size > 0 ? 1 : 0) + (filterType !== 'all' ? 1 : 0);
 
   return (
     <div className="px-5 pt-2 pb-4">
@@ -1807,16 +1814,17 @@ const TransactionsTab: React.FC<{
             <div className="text-[11px] text-[#9E9891] mb-2">类型</div>
             <SunkenSelector>
               {([['all', '全部'], ['expense', '支出'], ['income', '收入']] as const).map(([val, label]) => (
-                <FilterChip key={val} label={label} active={filterType === val} onClick={() => setFilterType(val)} />
+                <FilterChip key={val} label={label} active={filterType === val} onClick={() => setFilterType(val)}
+                  tint={val !== 'all' ? { bg: HUE.indigo.tint, fg: HUE.indigo.ink } : undefined} />
               ))}
             </SunkenSelector>
           </div>
           <div>
             <div className="text-[11px] text-[#9E9891] mb-2">账户</div>
             <div className="flex gap-2 flex-wrap">
-              <FilterChip label="全部" active={!filterAccountId} onClick={() => setFilterAccountId(null)} />
+              <FilterChip label="全部" active={filterAccountIds.size === 0} onClick={() => setFilterAccountIds(new Set())} />
               {accounts.filter(a => !a.isArchived).map(a => (
-                <FilterChip key={a.id} label={a.name} active={filterAccountId === a.id} onClick={() => setFilterAccountId(a.id)} />
+                <FilterChip key={a.id} label={a.name} active={filterAccountIds.has(a.id)} onClick={() => toggleAccount(a.id)} />
               ))}
             </div>
           </div>
