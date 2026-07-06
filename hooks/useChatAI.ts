@@ -24,6 +24,8 @@ import { LUCKIN_PROPOSE_TOOL, autoFixProposalCodesByName as autoFixLuckinProposa
 import { callLuckinTool } from '../utils/luckinMcpClient';
 import { buildChatRequestPayload } from '../utils/chatRequestPayload';
 import { buildTodayHealthSummary } from '../utils/healthContextBuilder';
+import { buildShoppingDeliveryContext } from '../utils/shoppingContextBuilder';
+import { ShoppingDB } from '../utils/shoppingDb';
 import { intifaceClient } from '../utils/intifaceClient';
 import { handleIntifaceToolCall, buildIntifaceTool, buildIntifaceSystemPrompt } from './useIntiface';
 import {
@@ -675,6 +677,8 @@ export const useChatAI = ({
 
             // EM: 每次发消息前实时读今日健康摘要，确保下午锻炼后立刻生效
             const freshHealthSummary = await buildTodayHealthSummary().catch(() => null);
+            // EM: 购物送达感知 — ETA 到了就注入角色 prompt
+            const shoppingDelivery = await buildShoppingDeliveryContext(char.id).catch(() => null);
 
             const payload = await stageT('payload', buildChatRequestPayload({
                 char: charForGen, userProfile, groups, emojis, categories,
@@ -718,6 +722,7 @@ export const useChatAI = ({
                 luckinChat: luckinChatRef?.current?.active ? luckinChatRef.current : undefined,
                 charAvailability,
                 healthSummary: freshHealthSummary,
+                shoppingDelivery,
             }));
             const systemPrompt = payload.systemPrompt;
             const cleanedApiMessages = payload.cleanedApiMessages;
@@ -1276,6 +1281,9 @@ export const useChatAI = ({
             // Phase 1 会让 instant push 路径也调它 (skipSecondPassLLM=true);
             // Phase 2 会让 worker 端把识别的副作用打包成 directives 传过来重放。
             const rawAiContent = data.choices?.[0]?.message?.content || '';
+            if (rawAiContent && shoppingDelivery) {
+                ShoppingDB.captureReply(char.id, rawAiContent.slice(0, 200)).catch(() => {});
+            }
             const xhsCaches: XhsCaches = {
                 xsecTokenCache: xsecTokenCacheRef.current,
                 noteTitleCache: noteTitleCacheRef.current,

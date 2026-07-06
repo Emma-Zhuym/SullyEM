@@ -174,3 +174,20 @@ export function buildEventMap(events: HealthEvent[]): Record<string, HealthEvent
   }
   return map;
 }
+
+// ── 备份导出/导入 ────────────────────────────────────────────────────────────
+
+export async function exportAllHealthEvents(): Promise<HealthEvent[]> {
+  return getAllHealthEvents();
+}
+
+export async function importAllHealthEvents(events: HealthEvent[]): Promise<void> {
+  const db = await openDB();
+  const t = db.transaction(STORE, 'readwrite');
+  t.objectStore(STORE).clear();
+  for (const e of events) t.objectStore(STORE).put(e);
+  return new Promise<void>((resolve, reject) => {
+    t.oncomplete = () => resolve();
+    t.onerror = () => reject(t.error);
+  });
+}

@@ -79,6 +79,8 @@ export interface BuildChatPayloadInput {
     charAvailability?: 'online' | 'busy' | 'offline';
     /** EM: 今日健康摘要（由 healthContextBuilder 构建，注入 system prompt 末尾） */
     healthSummary?: string | null;
+    /** EM: 购物送达通知（由 shoppingContextBuilder 构建，注入 system prompt 末尾） */
+    shoppingDelivery?: string | null;
 }
 
 export interface BuildChatPayloadResult {
@@ -236,6 +238,11 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     // ── 3.5 EM: 健康感知第一层常驻注入 ────────────────────
     if (input.healthSummary) {
         systemPrompt += `\n\n${input.healthSummary}`;
+    }
+
+    // ── 3.55 EM: 购物送达感知注入 ──────────────────────────
+    if (input.shoppingDelivery) {
+        systemPrompt += input.shoppingDelivery;
     }
 
     // ── 3.6 EM: busy 状态注入简短回复提示 ──────────────────

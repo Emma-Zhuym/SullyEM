@@ -2892,6 +2892,35 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   } catch { return {}; }
               })(),
               // [EM-END: finance-backup-export]
+
+              // [EM-START: health-backup-export] EM 健康系统（独立 IndexedDB: SullyEM_Health）
+              ...await (async () => {
+                  if (mode !== 'text_only' && mode !== 'full') return {};
+                  try {
+                      const { exportAllHealthEvents } = await import('../utils/healthDb');
+                      const events = await exportAllHealthEvents();
+                      if (!events.length) return {};
+                      return { emHealthEvents: events };
+                  } catch { return {}; }
+              })(),
+              // [EM-END: health-backup-export]
+
+              // [EM-START: shopping-backup-export] EM 购物系统（独立 IndexedDB: SullyEM_Shopping）
+              ...await (async () => {
+                  if (mode !== 'text_only' && mode !== 'full') return {};
+                  try {
+                      const { ShoppingDB } = await import('../utils/shoppingDb');
+                      const sd = await ShoppingDB.exportAll();
+                      if (!sd.products.length && !sd.orders.length) return {};
+                      return {
+                          emShoppingProducts: sd.products,
+                          emShoppingCart: sd.cart.length ? sd.cart : undefined,
+                          emShoppingOrders: sd.orders.length ? sd.orders : undefined,
+                          emShoppingSettings: sd.settings.length ? sd.settings : undefined,
+                      };
+                  } catch { return {}; }
+              })(),
+              // [EM-END: shopping-backup-export]
           };
 
           const totalSteps = storesToProcess.length + 3;
@@ -3551,6 +3580,29 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               } catch (e) { console.warn('EM FinanceDB restore failed:', e); }
           }
           // [EM-END: finance-backup-restore]
+
+          // [EM-START: health-backup-restore] EM 健康系统（独立 IndexedDB: SullyEM_Health）
+          if (data.emHealthEvents?.length) {
+              try {
+                  const { importAllHealthEvents } = await import('../utils/healthDb');
+                  await importAllHealthEvents(data.emHealthEvents);
+              } catch (e) { console.warn('EM HealthDB restore failed:', e); }
+          }
+          // [EM-END: health-backup-restore]
+
+          // [EM-START: shopping-backup-restore] EM 购物系统（独立 IndexedDB: SullyEM_Shopping）
+          if (data.emShoppingProducts?.length || data.emShoppingOrders?.length) {
+              try {
+                  const { ShoppingDB } = await import('../utils/shoppingDb');
+                  await ShoppingDB.importAll({
+                      products: data.emShoppingProducts,
+                      cart: data.emShoppingCart,
+                      orders: data.emShoppingOrders,
+                      settings: data.emShoppingSettings,
+                  });
+              } catch (e) { console.warn('EM ShoppingDB restore failed:', e); }
+          }
+          // [EM-END: shopping-backup-restore]
 
           if (data.socialAppData) {
               await restoreAssetsInPlace(data.socialAppData, '动态设置');

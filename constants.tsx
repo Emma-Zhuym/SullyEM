@@ -38,6 +38,7 @@ import {
   Planet,
   Wrench,
   HouseLine,
+  Storefront,
 } from '@phosphor-icons/react';
 
 // SVG 图标库 - Phosphor Icons
@@ -80,6 +81,7 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
   VRWorld: ({ className }) => <Planet className={className} weight="bold" />,
   CharCreatorDev: ({ className }) => <Wrench className={className} weight="fill" />,
   WorldHome: ({ className }) => <HouseLine className={className} weight="bold" />,
+  Shopping: ({ className }) => <Storefront className={className} weight="bold" />,
 };
 
 export const INSTALLED_APPS: AppConfig[] = [
@@ -97,6 +99,7 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.User, name: '档案', icon: 'User', color: 'blue' },
   { id: AppID.Bank, name: '存钱罐', icon: 'Bank', color: 'lime' }, // Hidden
   { id: AppID.Health, name: '健康', icon: 'Health', color: 'rose' },
+  { id: AppID.Shopping, name: '投喂站', icon: 'Shopping', color: 'teal' },
   { id: AppID.Journal, name: '交换日记', icon: 'Journal', color: 'amber' },
   // { id: AppID.Handbook, name: '手账', icon: 'Handbook', color: 'fuchsia' }, // Hidden temporarily, pending update
   { id: AppID.Social, name: 'Spark', icon: 'Social', color: 'red' },
