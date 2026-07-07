@@ -16,6 +16,7 @@ import type { Anticipation, EventBox, MemoryNode, ScoredMemory } from './types';
 import { ROOM_CONFIGS, getRoomLabel } from './types';
 import { MemoryNodeDB, EventBoxDB } from './db';
 import { recordRecallReceipt } from './recallReceipts';
+import { setLastRecallBriefs, toSnippet, type RecalledMemoryBrief } from './recallBrief'; // [EM: token-panel-recall]
 
 const DEFAULT_MAX_OUTPUT_ITEMS = 15;
 const MAX_LIVE_NODES_PER_BOX = 8; // 单盒最多展开多少条活节点（防止超大盒污染）
@@ -35,6 +36,11 @@ interface RenderItem {
     debugLabel: string;
     /** 实际落到 prompt 里的 memoryId 列表（事件盒会展开成 summary + 活节点） */
     sourceIds: string[];
+    // [EM-START: token-panel-recall] ⚡ 面板简报（代表 id + 一句话摘要 + 来源标签）
+    briefId: string;
+    briefSnippet: string;
+    briefSource: string;
+    // [EM-END: token-panel-recall]
 }
 
 /**
@@ -61,7 +67,10 @@ export async function expandAndFormat(
     const pinnedNodes = allCharNodes.filter(n => n.pinnedUntil && n.pinnedUntil > now && !n.archived);
     const pinnedIds = new Set(pinnedNodes.map(n => n.id));
 
-    if (results.length === 0 && anticipations.length === 0 && pinnedNodes.length === 0) return '';
+    if (results.length === 0 && anticipations.length === 0 && pinnedNodes.length === 0) {
+        setLastRecallBriefs(charId, []); // [EM: token-panel-recall] 本轮 0 条也如实记录
+        return '';
+    }
 
     // 1. 按 eventBoxId 去重分组（同一 box 多次命中合并；保留命中里最高分作 box 分）
     //    boxItem: { boxId, topScore, hitNodeIds[] }
@@ -129,6 +138,17 @@ export async function expandAndFormat(
         // 回执只是 extraction 阶段的辅助，写失败不影响本次召回输出
         console.warn('🏰 [MemoryPalace] recordRecallReceipt failed:', e);
     }
+
+    // [EM-START: token-panel-recall] ⚡ 面板简报：与回执同一瞬间落缓存（数据现成，零额外检索）
+    try {
+        const briefs: RecalledMemoryBrief[] = [];
+        for (const p of pinnedNodes) briefs.push({ id: p.id, snippet: toSnippet(p.content), source: '便利贴' });
+        for (const it of finalItems) briefs.push({ id: it.briefId, snippet: it.briefSnippet, source: it.briefSource });
+        setLastRecallBriefs(charId, briefs);
+    } catch (e) {
+        console.warn('🏰 [MemoryPalace] setLastRecallBriefs failed:', e);
+    }
+    // [EM-END: token-panel-recall]
 
     // ─── 调试：打印最终注入 prompt 的完整列表 ─────────────
     //
@@ -251,6 +271,11 @@ function buildStandaloneItem(r: ScoredMemory): RenderItem {
         importance: node.importance,
         debugLabel: `mem ${node.id}`,
         sourceIds: [node.id],
+        // [EM-START: token-panel-recall]
+        briefId: node.id,
+        briefSnippet: toSnippet(node.content),
+        briefSource: '记忆',
+        // [EM-END: token-panel-recall]
     };
 }
 
@@ -318,5 +343,10 @@ async function buildBoxItem(
         importance,
         debugLabel: `box ${box.id} (${liveNodes.length} live${summary ? ' + summary' : ''})`,
         sourceIds,
+        // [EM-START: token-panel-recall] 盒子用「盒名 + 代表内容」做摘要
+        briefId: box.id,
+        briefSnippet: toSnippet(`${box.name}：${summary?.content || liveToShow[0]?.content || ''}`),
+        briefSource: '事件盒',
+        // [EM-END: token-panel-recall]
     };
 }

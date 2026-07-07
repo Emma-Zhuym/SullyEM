@@ -531,6 +531,19 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                                     历史消息: {contextComposition.historyMessageCount} 条 · 文本约 {contextComposition.historyCharsApprox} 字 · 含图 {contextComposition.historyImageTurns} 条
                                 </div>
                                 <div>contextLimit: {contextComposition.contextLimit}</div>
+                                {/* [EM-START: token-panel-recall] 本轮召回记忆小节（0 条也显示——"没召回"本身是有用信息） */}
+                                <div className="border-t border-slate-100 pt-2 mt-2 text-slate-500 font-sans text-[10px]">🧠 本轮召回记忆 ({(contextComposition.recalledMemories || []).length})</div>
+                                {(contextComposition.recalledMemories || []).length > 0 ? (
+                                    (contextComposition.recalledMemories || []).map((m) => (
+                                        <div key={m.id} className="flex items-start gap-1.5 font-sans">
+                                            {m.source && <span className="shrink-0 text-[9px] px-1.5 py-px rounded-full bg-violet-50 text-violet-600 font-bold mt-px">{m.source}</span>}
+                                            <span className="text-[10px] text-slate-500 leading-snug truncate">{m.snippet}</span>
+                                        </div>
+                                    ))
+                                ) : (
+                                    <div className="text-[10px] text-slate-400 font-sans">本轮未触发记忆召回</div>
+                                )}
+                                {/* [EM-END: token-panel-recall] */}
                             </>
                         ) : (
                             <div className="text-[10px] text-amber-600 font-sans pt-1">暂无字符级构成（需走主聊天 triggerAI 一轮后才会更新）</div>

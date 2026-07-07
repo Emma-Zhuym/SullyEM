@@ -16,6 +16,7 @@ import type { CharacterProfile, UserProfile, GroupProfile, Emoji, EmojiCategory,
 import { ChatPrompts } from './chatPrompts';
 import { ContextBuilder } from './context';
 import { injectMemoryPalace } from './memoryPalace/pipeline';
+import { clearLastRecallBriefs, getLastRecallBriefs, type RecalledMemoryBrief } from './memoryPalace/recallBrief'; // [EM: token-panel-recall]
 import { buildHtmlPrompt } from './htmlPrompt';
 import { buildThinkingChainPrompt } from './thinkingChainPrompt';
 import { buildMcdMiniAppContextBlock } from './mcdToolBridge';
@@ -105,6 +106,8 @@ export interface BuildChatPayloadResult {
         coreContextChars: number;
         systemCharsBeforeBilingual: number;
         bilingualAddonChars: number;
+        /** [EM: token-panel-recall] 本轮记忆宫殿实际注入的记忆简报 */
+        recalledMemories: RecalledMemoryBrief[];
     };
     // [EM-END: context-breakdown-type]
 }
@@ -210,6 +213,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     }
 
     // ── 1. Memory Palace 向量召回 ─────────────────────────
+    clearLastRecallBriefs(char.id); // [EM: token-panel-recall] 先清上一轮残留，本轮没跑召回时面板如实显示 0 条
     await injectMemoryPalace(char, recentMsgsHint, input.recallQueryHint, userProfile?.name);
 
     // ── 2. 解析音乐共听（如果 caller 没显式给，就从 snapshot 推） ──
@@ -367,6 +371,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
             coreContextChars,
             systemCharsBeforeBilingual,
             bilingualAddonChars: systemPrompt.length - systemCharsBeforeBilingual,
+            recalledMemories: getLastRecallBriefs(char.id), // [EM: token-panel-recall]
         },
         // [EM-END: context-breakdown-return]
     };

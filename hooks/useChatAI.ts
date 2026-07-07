@@ -40,6 +40,8 @@ import { applyEmotionEvalRaw } from '../utils/emotionApply';
 import { isEmotionEvalSkipped } from '../utils/devDebug';
 
 // [EM-START: context-composition-type] Token 面板用的上下文组成分解
+import type { RecalledMemoryBrief } from '../utils/memoryPalace/recallBrief'; // [EM: token-panel-recall]
+export type { RecalledMemoryBrief };
 export interface ContextComposition {
     coreContextChars: number;
     /** buildSystemPrompt 在核心人设之外注入的部分：实时信息、群聊摘要、日记/笔记标题、纪念日、聊天规范与全量表情名、小红书/搜索等长规则、语音说明等 */
@@ -51,6 +53,8 @@ export interface ContextComposition {
     /** 多模态消息条数（含 image_url，vision 模型会显著增加 prompt_tokens） */
     historyImageTurns: number;
     contextLimit: number;
+    /** [EM: token-panel-recall] 本轮记忆宫殿实际注入的记忆简报（空数组 = 本轮未触发召回） */
+    recalledMemories: RecalledMemoryBrief[];
 }
 // [EM-END: context-composition-type]
 
@@ -753,6 +757,7 @@ export const useChatAI = ({
                 historyCharsApprox: historyTotalChars,
                 historyImageTurns: cleanedApiMessages.reduce((n: number, m: any) => n + (Array.isArray(m.content) && m.content.some((p: any) => p?.type === 'image_url') ? 1 : 0), 0),
                 contextLimit: limit,
+                recalledMemories: bd?.recalledMemories ?? [], // [EM: token-panel-recall]
             });
             // [EM-END: context-composition-set]
 
