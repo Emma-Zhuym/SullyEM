@@ -147,7 +147,29 @@ if (m.type === 'interaction' && m.metadata?.kind === 'notion_diary_nudge') {
 3. **不要大面积重写上游文件**，否则每次合并都痛苦
 4. **未来新功能**（如 Notion 高级管理）建议做成独立 App（`apps/NotionApp.tsx`），配置和逻辑放自己的文件里，跟上游 Settings 里的基础 Notion 配置互不干扰
 
-### 9. Online/Busy/Offline 状态系统
+### 9. 天气 Open-Meteo（免 key）
+- `utils/openMeteo.ts` — 独立模块：WMO code 中文映射、geocoding 城市搜索、坐标解析（geo/city 双模式）
+- `utils/realtimeContext.ts` — `fetchWeather` 改走 Open-Meteo，`RealtimeConfig` 的 `weatherApiKey/weatherCity` → `weatherMode/weatherLocation`（存坐标，城市名仅显示）
+- `context/OSContext.tsx` — 旧 OpenWeatherMap 配置迁移（转 city 模式但留空，**不要自动 geocoding 选第一个**）
+- `apps/Settings.tsx` — 模式切换 + 城市搜索候选（三段显示根治 Birmingham 重名）
+- `types.ts` — RealtimeConfig 天气字段（与 realtimeContext.ts 那份**双份定义要同步改**）
+- 哨兵：`[EM-START/END: weather-openmeteo]`
+
+### 10. 照片收藏 + 查手机轮播
+- `types.ts` — `GalleryImage.favorited?: boolean`（undefined 视为 false，零迁移）
+- `utils/db.ts` — `updateGalleryImageFavorite`
+- `apps/Gallery.tsx` — 详情页星标钮 + 缩略图星角标 + 全部/收藏筛选
+- `apps/CheckPhone.tsx` — `PhotoCarouselWidget`（收藏优先池上限 12、无收藏回退最近 4 张、5s crossfade、visibilitychange 清 timer）
+- 哨兵：`[EM-START/END: photo-favorites]`
+
+### 11. Token 面板召回展示
+- `utils/memoryPalace/recallBrief.ts` — 独立模块：模块级缓存 charId → RecalledMemoryBrief[]（与 recallReceipts **平行**，别耦合）
+- `utils/memoryPalace/formatter.ts` — expandAndFormat 在写回执同一位置落简报（RenderItem 的 briefId/briefSnippet/briefSource）
+- `utils/chatRequestPayload.ts` — inject 前 `clearLastRecallBriefs`，contextBreakdown 加 `recalledMemories`
+- `hooks/useChatAI.ts` / `components/chat/ChatHeaderShell.tsx` — ContextComposition 穿透 + ⚡ 面板「🧠 本轮召回记忆」小节（0 条显示"未触发"，不隐藏）
+- 哨兵：`[EM-START/END: token-panel-recall]`
+
+### 12. Online/Busy/Offline 状态系统
 - `utils/charStatus.ts` — 核心逻辑：根据日程 slot 计算状态，关键词 fallback
 - `hooks/useCharStatus.ts` — React hook，精确 setTimeout + visibilitychange
 - `utils/scheduleGenerator.ts` — 生成日程时 LLM 直接标注 `availability` 字段
