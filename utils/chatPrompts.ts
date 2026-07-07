@@ -41,7 +41,11 @@ function summarizeGroupMsgContent(m: Message): string {
     switch (m.type) {
         case 'image': return '[图片]';
         case 'emoji': return '[表情]';
-        case 'interaction': return '[戳了戳]';
+        case 'interaction': {
+            const mk = (m.metadata as any)?.kind;
+            if (mk === 'delivery_arrived') return `[${(m.metadata as any)?.typeLabel || '快递'}已送达]`;
+            return '[戳了戳]';
+        }
         case 'transfer': return `[转账${meta.amount ?? ''}]`;
         case 'social_card': return `[分享帖子${meta.post?.title ? '：' + meta.post.title : ''}]`;
         case 'chat_forward': return '[转发的聊天记录]';
@@ -666,11 +670,17 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                 
                 if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') content = `${content}\n\n${timeGapHint}`; 
                 
-                // [EM-START: notion-diary-nudge] 必须在普通 interaction 判断之前
+                // [EM-START: interaction-dispatch] 按 metadata.kind 分发，必须在普通 interaction 判断之前
                 if (m.type === 'interaction' && m.metadata?.kind === 'notion_diary_nudge') {
                     content = emNotionDiaryNudgePrompt(timeStr);
-                } else if (m.type === 'interaction') content = `${timeStr} [系统: 用户戳了你一下]`;
-                // [EM-END: notion-diary-nudge]
+                } else if (m.type === 'interaction' && m.metadata?.kind === 'delivery_arrived') {
+                    const meta = m.metadata as any;
+                    const itemList = (meta.items as string[])?.join('、') || '一些东西';
+                    content = `${timeStr} [系统: 用户给你买的${meta.typeLabel || '东西'}已送达——${itemList}。请结合你的人设自然地回应这件事，比如感谢、评价、期待拆开等。]`;
+                } else if (m.type === 'interaction') {
+                    content = `${timeStr} [系统: 用户戳了你一下]`;
+                }
+                // [EM-END: interaction-dispatch]
                 else if (m.type === 'transfer') {
                     const tMeta = m.metadata || {};
                     const amtStr = tMeta.amount !== undefined ? ` ${tMeta.amount}` : '';

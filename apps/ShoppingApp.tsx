@@ -995,11 +995,11 @@ const ShoppingApp: React.FC = () => {
             const items = o.lines.map(l => {
               const p = products.find(x => x.id === l.id);
               return p ? p.name : '';
-            }).filter(Boolean).join('、');
+            }).filter(Boolean);
             const typeLabel = o.type === 'food' ? '外卖' : '快递';
             await ShoppingDB.saveOrder({ ...o, status: 'done', awaitingReply: true });
             if (o.receiverCharId) {
-              await DB.saveMessage({ charId: o.receiverCharId, role: 'user', type: 'interaction', content: `[用户给你买的${typeLabel}（${items}）已送达]` });
+              await DB.saveMessage({ charId: o.receiverCharId, role: 'user', type: 'interaction', content: `📦`, metadata: { kind: 'delivery_arrived', typeLabel, items, receiver: o.receiver } });
             }
             await refresh();
             flash('已确认收货 ✓');
