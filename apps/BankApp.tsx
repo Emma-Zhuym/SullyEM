@@ -2584,8 +2584,8 @@ const AnalyticsTab: React.FC<{
         <div className="text-xs mb-3" style={{ color: F.textTertiary }}>选一个角色来评价你{periodLabel}的消费</div>
 
         {/* 角色选择 — 直接用全量 characters */}
-        <div className="overflow-x-auto pb-1 scrollbar-none mb-3">
-          <SunkenSelector>
+        <div className="mb-3">
+          <SunkenSelector className="overflow-x-auto scrollbar-none">
             {characters.map(c => {
               const isActive = selectedCharId === c.id;
               return (
