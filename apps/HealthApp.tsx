@@ -1523,7 +1523,7 @@ const HealthApp: React.FC = () => {
               })}
             </div>
 
-            {/* Content — flex-1 fills remaining space, each tab uses flex with mt-auto on save btn */}
+            {/* Content — flex-1 fills remaining space */}
             <div className="flex-1 overflow-y-auto">
 
               {/* ── Workout ── */}
@@ -1599,7 +1599,7 @@ const HealthApp: React.FC = () => {
                     style={{ background: F.surfaceSunken, borderRadius: R.input, boxShadow: S.sunken, border: `1px solid ${F.borderSoft}`, minHeight: '60px' }} />
 
                   <button onClick={handleSubmitWorkout} disabled={(workoutActivities.length === 0 && !recordText.trim() && !workoutCalories) || isSubmitting}
-                    className={`w-full shrink-0 text-white font-bold py-3.5 mt-auto disabled:opacity-40 ${clay.press}`}
+                    className={`w-full shrink-0 text-white font-bold py-3.5 mt-4 disabled:opacity-40 ${clay.press}`}
                     style={{ background: CAT_COLORS.workout.active, borderRadius: R.pill, boxShadow: S.raisedMedium }}>
                     保存
                   </button>
@@ -1653,7 +1653,7 @@ const HealthApp: React.FC = () => {
                     style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
 
                   <button onClick={handleSubmitSleep} disabled={isSubmitting}
-                    className={`w-full text-white font-bold py-3.5 mt-auto disabled:opacity-50 ${clay.press}`}
+                    className={`w-full text-white font-bold py-3.5 mt-4 disabled:opacity-50 ${clay.press}`}
                     style={{ background: CAT_COLORS.sleep.active, borderRadius: R.pill, boxShadow: S.raisedMedium }}>
                     保存
                   </button>
@@ -1740,7 +1740,7 @@ const HealthApp: React.FC = () => {
                     style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
 
                   <button onClick={handleSubmitDiet} disabled={!dietCalories || isSubmitting}
-                    className={`w-full text-white font-bold py-3.5 mt-auto disabled:opacity-40 ${clay.press}`}
+                    className={`w-full text-white font-bold py-3.5 mt-4 disabled:opacity-40 ${clay.press}`}
                     style={{ background: CAT_COLORS.diet.active, borderRadius: R.pill, boxShadow: S.raisedMedium }}>
                     保存
                   </button>
@@ -1787,7 +1787,7 @@ const HealthApp: React.FC = () => {
                     })}
                   </div>
                   <button onClick={handleSubmitPeriod} disabled={(!periodFlow && pmsSymptoms.length === 0) || isSubmitting}
-                    className={`w-full text-white font-bold py-3.5 mt-auto disabled:opacity-40 ${clay.press}`}
+                    className={`w-full text-white font-bold py-3.5 mt-4 disabled:opacity-40 ${clay.press}`}
                     style={{ background: CAT_COLORS.period.active, borderRadius: R.pill, boxShadow: S.raisedMedium }}>
                     保存
                   </button>
@@ -1815,7 +1815,7 @@ const HealthApp: React.FC = () => {
                   </div>
                   <p className="text-[10px] mt-2" style={{ color: F.textTertiary }}>经期相关症状（痛经等）在经期 tab 里记录</p>
                   <button onClick={handleSubmitSymptom} disabled={(periodSymptoms.length === 0 && !editingId) || isSubmitting}
-                    className={`w-full text-white font-bold py-3.5 mt-auto disabled:opacity-40 ${clay.press}`}
+                    className={`w-full text-white font-bold py-3.5 mt-4 disabled:opacity-40 ${clay.press}`}
                     style={{ background: CAT_COLORS.symptom.active, borderRadius: R.pill, boxShadow: S.raisedMedium }}>
                     保存
                   </button>

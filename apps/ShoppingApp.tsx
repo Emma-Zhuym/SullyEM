@@ -192,11 +192,15 @@ const ShoppingApp: React.FC = () => {
     await refresh();
   };
 
-  const updateCartNote = async (id: string, note: string) => {
+  const composingRef = React.useRef(false);
+
+  const updateCartNote = (id: string, note: string) => {
+    setCart(prev => prev.map(c => c.id === id ? { ...c, note: note || undefined } : c));
+  };
+
+  const flushCartNote = async (id: string, note: string) => {
     const existing = cart.find(c => c.id === id);
-    if (!existing) return;
-    await ShoppingDB.saveCartItem({ ...existing, note: note || undefined });
-    await refresh();
+    if (existing) await ShoppingDB.saveCartItem({ ...existing, note: note || undefined });
   };
 
   const placeOrder = async () => {
@@ -587,6 +591,9 @@ const ShoppingApp: React.FC = () => {
               <input
                 value={c.note ?? ''}
                 onChange={e => updateCartNote(c.id, e.target.value)}
+                onCompositionStart={() => { composingRef.current = true; }}
+                onCompositionEnd={e => { composingRef.current = false; flushCartNote(c.id, (e.target as HTMLInputElement).value); }}
+                onBlur={e => flushCartNote(c.id, e.target.value)}
                 placeholder="备注：三分糖 · 去冰"
                 style={{ width: '100%', marginTop: 10, padding: '8px 12px', fontSize: 13, color: F.textPrimary, background: F.surfaceSunken, borderRadius: R.small, border: 'none', boxShadow: S.sunken, outline: 'none' }}
               />
@@ -900,6 +907,19 @@ const ShoppingApp: React.FC = () => {
           );
         })}
       </div>
+      {/* save/delete inside scroll area so keyboard doesn't cover them */}
+      <div className="flex gap-3" style={{ paddingTop: 8 }}>
+        {editingProductId && (
+          <button onClick={() => deleteProduct(editingProductId)} className="flex items-center justify-center active:translate-y-[1px] transition-transform"
+            style={{ width: 52, height: 52, borderRadius: R.smallCard, background: F.surfaceSunken, boxShadow: S.sunken }}>
+            <Trash size={20} weight="bold" color={STATUS.danger.main} />
+          </button>
+        )}
+        <button onClick={saveProduct} className="flex-1 flex items-center justify-center active:translate-y-[1px] transition-transform"
+          style={{ height: 52, borderRadius: R.smallCard, background: F.textPrimary, color: F.surfaceRaised, fontSize: 16, fontWeight: 600, boxShadow: S.raisedMedium }}>
+          {editingProductId ? '保存修改' : '加入商城'}
+        </button>
+      </div>
     </>
   );
 
@@ -975,20 +995,6 @@ const ShoppingApp: React.FC = () => {
             </div>
           );
         })()}
-        {screen === 'add' && (
-          <div className="flex gap-3">
-            {editingProductId && (
-              <button onClick={() => deleteProduct(editingProductId)} className="flex items-center justify-center active:translate-y-[1px] transition-transform"
-                style={{ width: 52, height: 52, borderRadius: R.smallCard, background: F.surfaceSunken, boxShadow: S.sunken }}>
-                <Trash size={20} weight="bold" color={STATUS.danger.main} />
-              </button>
-            )}
-            <button onClick={saveProduct} className="flex-1 flex items-center justify-center active:translate-y-[1px] transition-transform"
-              style={{ height: 52, borderRadius: R.smallCard, background: F.textPrimary, color: F.surfaceRaised, fontSize: 16, fontWeight: 600, boxShadow: S.raisedMedium }}>
-              {editingProductId ? '保存修改' : '加入商城'}
-            </button>
-          </div>
-        )}
         {screen === 'detail' && currentOrder?.status === 'active' && (
           <button onClick={async () => {
             const o = currentOrder!;
