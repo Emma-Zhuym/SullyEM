@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Wallet, Receipt, ChartPie, CaretLeft, CaretRight, CaretDown, Plus, Trash, Gear, CreditCard, PiggyBank, Money, type Icon } from '@phosphor-icons/react';
+import { Wallet, Receipt, ChartPie, CaretLeft, CaretRight, CaretDown, Plus, Trash, Gear, CreditCard, PiggyBank, Money, Coffee, type Icon } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { FinanceDB } from '../utils/financeDb';
 import { DB } from '../utils/db';
@@ -26,8 +26,8 @@ const TABS: { id: TabId; label: string; icon: Icon }[] = [
 ];
 
 const ACCOUNT_COLORS = [
-  '#3B82F6', '#EF4444', '#10B981', '#F59E0B', '#8B5CF6',
-  '#EC4899', '#06B6D4', '#F97316', '#6366F1', '#14B8A6',
+  HUE.blue.main, HUE.red.main, HUE.green.main, HUE.amber.main, HUE.purple.main,
+  HUE.rose.main, HUE.cyan.main, HUE.orange.main, HUE.indigo.main, HUE.teal.main,
 ];
 
 const ACCOUNT_TYPE_LABELS: Record<FinanceAccount['type'], string> = {
@@ -127,7 +127,7 @@ const BankApp: React.FC = () => {
   if (loading) {
     return (
       <div className="h-full flex items-center justify-center" style={{ background: F.appBg }}>
-        <div className="text-[#9E9891] text-sm">加载中...</div>
+        <div className="text-sm" style={{ color: F.textTertiary }}>加载中...</div>
       </div>
     );
   }
@@ -135,7 +135,7 @@ const BankApp: React.FC = () => {
   return (
     <div className="h-full flex flex-col" style={{ background: F.appBg }}>
       {/* 顶部导航栏 */}
-      <div className="shrink-0 relative flex items-center px-5 pb-3" style={{ paddingTop: 'calc(var(--safe-top, 0px) + 2rem)' }}>
+      <div className="shrink-0 relative flex items-center px-5 py-3" style={{ paddingTop: 'var(--chrome-top)' }}>
         <button
           onClick={closeApp}
           className="flex items-center justify-center active:translate-y-[2px] transition-transform z-10"
@@ -143,7 +143,7 @@ const BankApp: React.FC = () => {
         >
           <CaretLeft className="w-5 h-5" weight="bold" />
         </button>
-        <span className="absolute left-0 right-0 flex justify-center text-sm font-semibold text-[#2E2A28] pointer-events-none">
+        <span className="absolute left-0 right-0 flex justify-center text-sm font-semibold pointer-events-none" style={{ color: F.textPrimary }}>
           {activeTab === 'assets' ? '资产' : activeTab === 'transactions' ? (
             <button
               onClick={() => setShowTxFilters(f => !f)}
@@ -171,7 +171,7 @@ const BankApp: React.FC = () => {
                         style={{
                           borderRadius: R.medium,
                           background: analyticsFilter === val ? HUE.indigo.main : 'transparent',
-                          color: analyticsFilter === val ? '#fff' : F.textSecondary,
+                          color: analyticsFilter === val ? F.surfaceRaised : F.textSecondary,
                           boxShadow: analyticsFilter === val ? S.raisedSoft : 'none',
                         }}
                       >
@@ -321,17 +321,21 @@ const AccountForm: React.FC<{
   return (
     <div className="absolute inset-0 z-50 flex flex-col" style={{ background: F.appBg }}>
       {/* Header */}
-      <div className="shrink-0 flex items-center justify-between px-4 pb-3" style={{ paddingTop: 'calc(var(--safe-top, 0px) + 0.5rem)' }}>
-        <button onClick={onClose} className="flex items-center text-[#C7834B] text-sm">
-          <CaretLeft className="w-5 h-5" weight="bold" /> 返回
+      <div className="shrink-0 flex items-center justify-between px-4 py-3" style={{ paddingTop: 'var(--chrome-top)' }}>
+        <button onClick={onClose}
+          className="flex items-center justify-center active:translate-y-[1px] transition-transform"
+          style={{ width: 44, height: 44, borderRadius: R.pill, background: F.surfaceRaised,
+                   border: `1px solid ${F.borderSoft}`, boxShadow: S.raisedSoft }}>
+          <CaretLeft size={20} weight="bold" style={{ color: F.textSecondary }} />
         </button>
-        <span className="text-sm font-semibold text-[#2E2A28]">
+        <span className="text-sm font-semibold" style={{ color: F.textPrimary }}>
           {isEdit ? '编辑账户' : '新建账户'}
         </span>
         <button
           onClick={handleSave}
           disabled={!name.trim()}
-          className="text-[#C7834B] text-sm font-semibold disabled:text-[#9E9891]"
+          className="text-sm font-semibold"
+          style={{ color: !name.trim() ? F.textTertiary : F.accent }}
         >
           保存
         </button>
@@ -345,14 +349,14 @@ const AccountForm: React.FC<{
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder="如：招商储蓄卡"
-              className="w-full text-right text-sm text-[#2E2A28] outline-none bg-transparent placeholder:text-[#9E9891]"
+              className="w-full text-right text-sm outline-none bg-transparent placeholder:opacity-40" style={{ color: F.textPrimary }}
             />
           </FormRow>
           <FormRow label="类型" border>
             <select
               value={type}
               onChange={e => setType(e.target.value as FinanceAccount['type'])}
-              className="w-full text-right text-sm text-[#2E2A28] outline-none bg-transparent appearance-none"
+              className="w-full text-right text-sm outline-none bg-transparent appearance-none" style={{ color: F.textPrimary }}
             >
               {Object.entries(ACCOUNT_TYPE_LABELS).map(([k, v]) => (
                 <option key={k} value={k}>{v}</option>
@@ -363,7 +367,7 @@ const AccountForm: React.FC<{
             <select
               value={currency}
               onChange={e => setCurrency(e.target.value)}
-              className="w-full text-right text-sm text-[#2E2A28] outline-none bg-transparent appearance-none"
+              className="w-full text-right text-sm outline-none bg-transparent appearance-none" style={{ color: F.textPrimary }}
             >
               {currencyOptions.map(c => (
                 <option key={c} value={c}>{c}</option>
@@ -377,7 +381,7 @@ const AccountForm: React.FC<{
               type="number"
               inputMode="decimal"
               placeholder="0.00"
-              className="w-full text-right text-sm text-[#2E2A28] outline-none bg-transparent placeholder:text-[#9E9891]"
+              className="w-full text-right text-sm outline-none bg-transparent placeholder:opacity-40" style={{ color: F.textPrimary }}
             />
           </FormRow>
           <FormRow label="图标（emoji）" border>
@@ -385,7 +389,7 @@ const AccountForm: React.FC<{
               value={icon}
               onChange={e => setIcon(e.target.value)}
               placeholder="💳"
-              className="w-full text-right text-sm text-[#2E2A28] outline-none bg-transparent placeholder:text-[#9E9891]"
+              className="w-full text-right text-sm outline-none bg-transparent placeholder:opacity-40" style={{ color: F.textPrimary }}
               maxLength={4}
             />
           </FormRow>
@@ -393,7 +397,7 @@ const AccountForm: React.FC<{
 
         {/* 颜色选择 */}
         <div className="p-4 mb-4" style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.bigCard, boxShadow: S.raisedSoft }}>
-          <div className="text-xs text-[#9E9891] mb-3">卡片颜色</div>
+          <div className="text-xs mb-3" style={{ color: F.textTertiary }}>卡片颜色</div>
           <div className="flex flex-wrap gap-3">
             {ACCOUNT_COLORS.map(c => (
               <button
@@ -402,7 +406,7 @@ const AccountForm: React.FC<{
                 className="w-8 h-8 rounded-full transition-transform"
                 style={{
                   backgroundColor: c,
-                  boxShadow: color === c ? `0 0 0 3px #F0E8FF, 0 0 0 5px ${c}` : 'none',
+                  boxShadow: color === c ? `0 0 0 3px ${HUE.purple.tint}, 0 0 0 5px ${c}` : 'none',
                   transform: color === c ? 'scale(1.1)' : 'scale(1)',
                 }}
               />
@@ -412,19 +416,19 @@ const AccountForm: React.FC<{
 
         {/* 预览 */}
         <div className="p-4 mb-6" style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.bigCard, boxShadow: S.raisedSoft }}>
-          <div className="text-xs text-[#9E9891] mb-2">预览</div>
+          <div className="text-xs mb-2" style={{ color: F.textTertiary }}>预览</div>
           <div className="flex items-center">
             <div
-              className="w-10 h-10 rounded-xl flex items-center justify-center text-white text-base font-bold shrink-0 mr-3"
-              style={{ backgroundColor: color }}
+              className="w-10 h-10 flex items-center justify-center text-base font-bold shrink-0 mr-3"
+              style={{ borderRadius: R.small, color: F.surfaceRaised, backgroundColor: color }}
             >
               {icon || (name ? name.slice(0, 2) : '💳')}
             </div>
             <div className="flex-1">
-              <div className="text-sm font-medium text-[#2E2A28]">{name || '账户名称'}</div>
-              <div className="text-[11px] text-[#9E9891]">{ACCOUNT_TYPE_LABELS[type]} · {currency}</div>
+              <div className="text-sm font-medium" style={{ color: F.textPrimary }}>{name || '账户名称'}</div>
+              <div className="text-[11px]" style={{ color: F.textTertiary }}>{ACCOUNT_TYPE_LABELS[type]} · {currency}</div>
             </div>
-            <div className="text-sm font-semibold text-[#2E2A28]">
+            <div className="text-sm font-semibold" style={{ color: F.textPrimary }}>
               {formatAmount(parseFloat(initialBalance) || 0, currency)}
             </div>
           </div>
@@ -436,16 +440,17 @@ const AccountForm: React.FC<{
             {!confirmDelete ? (
               <button
                 onClick={() => setConfirmDelete(true)}
-                className="w-full py-3.5 text-sm text-[#F45B5B] font-medium flex items-center justify-center gap-1.5"
+                className="w-full py-3.5 text-sm font-medium flex items-center justify-center gap-1.5"
+                style={{ color: STATUS.danger.main }}
               >
                 <Trash className="w-4 h-4" /> 删除账户
               </button>
             ) : (
               <div className="p-4 text-center">
-                <div className="text-sm text-[#6E665F] mb-3">确定删除「{name}」？相关交易不会被删除。</div>
+                <div className="text-sm mb-3" style={{ color: F.textSecondary }}>确定删除「{name}」？相关交易不会被删除。</div>
                 <div className="flex gap-3 justify-center">
-                  <button onClick={() => setConfirmDelete(false)} className="px-4 py-2 text-sm text-[#6E665F] bg-[#ECE8E1] rounded-xl">取消</button>
-                  <button onClick={onDelete} className="px-4 py-2 text-sm text-white bg-red-500 rounded-xl">删除</button>
+                  <button onClick={() => setConfirmDelete(false)} className="px-4 py-2 text-sm" style={{ color: F.textSecondary, background: F.surfaceSunken, borderRadius: R.medium }}>取消</button>
+                  <button onClick={onDelete} className="px-4 py-2 text-sm" style={{ color: F.surfaceRaised, background: STATUS.danger.main, borderRadius: R.medium }}>删除</button>
                 </div>
               </div>
             )}
@@ -461,8 +466,8 @@ const FormRow: React.FC<{
   border?: boolean;
   children: React.ReactNode;
 }> = ({ label, border, children }) => (
-  <div className={`flex items-center px-4 py-3.5 ${border ? 'border-t border-[#E8E1D8]' : ''}`}>
-    <span className="text-sm text-[#2E2A28] shrink-0 mr-4">{label}</span>
+  <div className={`flex items-center px-4 py-3.5`} style={border ? { borderTop: `1px solid ${F.borderSoft}` } : undefined}>
+    <span className="text-sm shrink-0 mr-4" style={{ color: F.textPrimary }}>{label}</span>
     <div className="flex-1 min-w-0 text-right">{children}</div>
   </div>
 );
@@ -529,11 +534,14 @@ const SettingsPage: React.FC<{
 
   return (
     <div className="absolute inset-0 z-50 flex flex-col" style={{ background: F.appBg }}>
-      <div className="shrink-0 flex items-center justify-between px-4 pb-3" style={{ paddingTop: 'calc(var(--safe-top, 0px) + 0.5rem)' }}>
-        <button onClick={onClose} className="flex items-center text-[#C7834B] text-sm">
-          <CaretLeft className="w-5 h-5" weight="bold" /> 返回
+      <div className="shrink-0 flex items-center justify-between px-4 py-3" style={{ paddingTop: 'var(--chrome-top)' }}>
+        <button onClick={onClose}
+          className="flex items-center justify-center active:translate-y-[1px] transition-transform"
+          style={{ width: 44, height: 44, borderRadius: R.pill, background: F.surfaceRaised,
+                   border: `1px solid ${F.borderSoft}`, boxShadow: S.raisedSoft }}>
+          <CaretLeft size={20} weight="bold" style={{ color: F.textSecondary }} />
         </button>
-        <span className="text-sm font-semibold text-[#2E2A28]">设置</span>
+        <span className="text-sm font-semibold" style={{ color: F.textPrimary }}>设置</span>
         <div className="w-12" />
       </div>
 
@@ -542,12 +550,12 @@ const SettingsPage: React.FC<{
         <div className="overflow-hidden mb-4" style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.bigCard, boxShadow: S.raisedSoft }}>
           <div className="flex items-center justify-between px-4 pt-4 pb-2">
             <div>
-              <div className="text-sm font-medium text-[#2E2A28] mb-0.5">分类管理</div>
-              <div className="text-[11px] text-[#9E9891]">点击编辑，展开查看子分类</div>
+              <div className="text-sm font-medium mb-0.5" style={{ color: F.textPrimary }}>分类管理</div>
+              <div className="text-[11px]" style={{ color: F.textTertiary }}>点击编辑，展开查看子分类</div>
             </div>
             <button
               onClick={() => setEditingCat('new-top')}
-              className="text-xs text-[#C7834B] font-medium px-3 py-1.5 rounded-full bg-[#EAF1FF] active:scale-95 transition-transform"
+              className="text-xs font-medium px-3 py-1.5 rounded-full active:scale-95 transition-transform" style={{ color: F.accent, background: HUE.blue.tint }}
             >
               + 一级分类
             </button>
@@ -562,31 +570,31 @@ const SettingsPage: React.FC<{
               return (
                 <div key={cat.id}>
                   {/* 一级分类行 */}
-                  <div className="flex items-center px-2 py-2.5 rounded-xl group">
+                  <div className="flex items-center px-2 py-2.5 group" style={{ borderRadius: R.medium }}>
                     <button
                       onClick={() => setExpandedTopCat(isExpanded ? null : cat.id)}
-                      className="w-7 h-7 flex items-center justify-center text-[#9E9891] shrink-0"
+                      className="w-7 h-7 flex items-center justify-center shrink-0" style={{ color: F.textTertiary }}
                     >
                       <span className={`text-xs transition-transform ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
                     </button>
                     <span className="text-lg mr-2">{cat.icon || '📋'}</span>
-                    <span className="text-sm text-[#2E2A28] flex-1">{cat.name}</span>
-                    <span className="text-[10px] text-[#9E9891] mr-2">{children.length} 子项</span>
+                    <span className="text-sm flex-1" style={{ color: F.textPrimary }}>{cat.name}</span>
+                    <span className="text-[10px] mr-2" style={{ color: F.textTertiary }}>{children.length} 子项</span>
                     <button
                       onClick={() => setEditingCat(cat)}
-                      className="text-[11px] text-[#C7834B] px-2 py-1 rounded-lg active:bg-[#EAF1FF]"
+                      className="text-[11px] px-2 py-1 rounded-lg" style={{ color: F.accent }}
                     >
                       编辑
                     </button>
                     {isConfirmingDelete ? (
                       <div className="flex gap-1 ml-1">
-                        <button onClick={() => handleDeleteCat(cat.id)} className="text-[10px] text-white bg-red-500 px-2 py-1 rounded-lg">确认</button>
-                        <button onClick={() => setConfirmDeleteId(null)} className="text-[10px] text-[#9E9891] px-2 py-1 rounded-lg">取消</button>
+                        <button onClick={() => handleDeleteCat(cat.id)} className="text-[10px] px-2 py-1 rounded-lg" style={{ color: F.surfaceRaised, background: STATUS.danger.main }}>确认</button>
+                        <button onClick={() => setConfirmDeleteId(null)} className="text-[10px] px-2 py-1 rounded-lg" style={{ color: F.textTertiary }}>取消</button>
                       </div>
                     ) : (
                       <button
                         onClick={() => setConfirmDeleteId(cat.id)}
-                        className="text-[11px] text-red-300 px-1 py-1 rounded-lg active:bg-red-50 ml-1"
+                        className="text-[11px] px-1 py-1 rounded-lg ml-1" style={{ color: HUE.red.soft }}
                       >
                         <Trash className="w-3.5 h-3.5" />
                       </button>
@@ -601,22 +609,22 @@ const SettingsPage: React.FC<{
                         return (
                           <div key={child.id} className="flex items-center px-2 py-2 rounded-lg">
                             <span className="text-base mr-2">{child.icon || '📋'}</span>
-                            <span className="text-sm text-[#6E665F] flex-1">{child.name}</span>
+                            <span className="text-sm flex-1" style={{ color: F.textSecondary }}>{child.name}</span>
                             <button
                               onClick={() => setEditingCat(child)}
-                              className="text-[11px] text-[#C7834B] px-2 py-1 rounded-lg active:bg-[#EAF1FF]"
+                              className="text-[11px] px-2 py-1 rounded-lg" style={{ color: F.accent }}
                             >
                               编辑
                             </button>
                             {isChildConfirm ? (
                               <div className="flex gap-1 ml-1">
-                                <button onClick={() => handleDeleteCat(child.id)} className="text-[10px] text-white bg-red-500 px-2 py-1 rounded-lg">确认</button>
-                                <button onClick={() => setConfirmDeleteId(null)} className="text-[10px] text-[#9E9891] px-2 py-1 rounded-lg">取消</button>
+                                <button onClick={() => handleDeleteCat(child.id)} className="text-[10px] px-2 py-1 rounded-lg" style={{ color: F.surfaceRaised, background: STATUS.danger.main }}>确认</button>
+                                <button onClick={() => setConfirmDeleteId(null)} className="text-[10px] px-2 py-1 rounded-lg" style={{ color: F.textTertiary }}>取消</button>
                               </div>
                             ) : (
                               <button
                                 onClick={() => setConfirmDeleteId(child.id)}
-                                className="text-[11px] text-red-300 px-1 py-1 rounded-lg active:bg-red-50 ml-1"
+                                className="text-[11px] px-1 py-1 rounded-lg ml-1" style={{ color: HUE.red.soft }}
                               >
                                 <Trash className="w-3.5 h-3.5" />
                               </button>
@@ -626,7 +634,7 @@ const SettingsPage: React.FC<{
                       })}
                       <button
                         onClick={() => setEditingCat({ parentId: cat.id })}
-                        className="flex items-center gap-1.5 px-2 py-2 text-[11px] text-[#C7834B] font-medium rounded-lg active:bg-[#EAF1FF] w-full"
+                        className="flex items-center gap-1.5 px-2 py-2 text-[11px] font-medium rounded-lg w-full" style={{ color: F.accent }}
                       >
                         <Plus className="w-3.5 h-3.5" /> 添加子分类
                       </button>
@@ -641,8 +649,8 @@ const SettingsPage: React.FC<{
         {/* ── 常用币种 ── */}
         <div className="overflow-hidden mb-4" style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.bigCard, boxShadow: S.raisedSoft }}>
           <div className="px-4 pt-4 pb-2">
-            <div className="text-sm font-medium text-[#2E2A28] mb-1">常用币种</div>
-            <div className="text-[11px] text-[#9E9891]">选择你需要用到的币种，新建账户时只显示这些</div>
+            <div className="text-sm font-medium mb-1" style={{ color: F.textPrimary }}>常用币种</div>
+            <div className="text-[11px]" style={{ color: F.textTertiary }}>选择你需要用到的币种，新建账户时只显示这些</div>
           </div>
           <div className="px-4 pb-4">
             <div className="grid grid-cols-2 gap-2 mt-2">
@@ -652,18 +660,23 @@ const SettingsPage: React.FC<{
                   <button
                     key={cur}
                     onClick={() => toggleCurrency(cur)}
-                    className={`flex items-center gap-2 px-3 py-2.5 rounded-xl text-left transition-colors ${
-                      isEnabled ? 'bg-[#EAF1FF] ring-1 ring-[#C9DCFF]' : 'bg-[#ECE8E1]'
-                    }`}
+                    className="flex items-center gap-2 px-3 py-2.5 text-left transition-colors"
+                    style={{
+                      borderRadius: R.medium,
+                      background: isEnabled ? HUE.blue.tint : F.surfaceSunken,
+                      ...(isEnabled ? { outline: `1px solid ${HUE.blue.soft}` } : {}),
+                    }}
                   >
-                    <div className={`w-5 h-5 rounded-md flex items-center justify-center text-xs font-bold ${
-                      isEnabled ? 'bg-[#EAF1FF]0 text-white' : 'bg-[#E8E1D8] text-[#9E9891]'
-                    }`}>
+                    <div className="w-5 h-5 rounded-md flex items-center justify-center text-xs font-bold"
+                      style={{
+                        background: isEnabled ? HUE.blue.main : F.borderStrong,
+                        color: isEnabled ? F.surfaceRaised : F.textTertiary,
+                      }}>
                       {isEnabled ? '✓' : ''}
                     </div>
                     <div>
-                      <div className={`text-sm font-medium ${isEnabled ? 'text-[#2E2A28]' : 'text-[#9E9891]'}`}>{cur}</div>
-                      <div className="text-[10px] text-[#9E9891]">{CURRENCY_LABELS[cur]?.split(' ').slice(0, -1).join(' ') || cur}</div>
+                      <div className="text-sm font-medium" style={{ color: isEnabled ? F.textPrimary : F.textTertiary }}>{cur}</div>
+                      <div className="text-[10px]" style={{ color: F.textTertiary }}>{CURRENCY_LABELS[cur]?.split(' ').slice(0, -1).join(' ') || cur}</div>
                     </div>
                   </button>
                 );
@@ -675,8 +688,8 @@ const SettingsPage: React.FC<{
         {/* ── 默认显示币种 ── */}
         <div className="overflow-hidden mb-4" style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.bigCard, boxShadow: S.raisedSoft }}>
           <div className="px-4 pt-4 pb-2">
-            <div className="text-sm font-medium text-[#2E2A28] mb-1">默认显示币种</div>
-            <div className="text-[11px] text-[#9E9891]">新建账户和金额显示的默认币种</div>
+            <div className="text-sm font-medium mb-1" style={{ color: F.textPrimary }}>默认显示币种</div>
+            <div className="text-[11px]" style={{ color: F.textTertiary }}>新建账户和金额显示的默认币种</div>
           </div>
           <div className="px-4 pb-4 mt-2">
             <SunkenSelector className="flex-wrap">
@@ -709,10 +722,10 @@ const SettingsPage: React.FC<{
             className="w-full px-4 py-4 flex items-center justify-between active:translate-y-[2px] transition-transform"
           >
             <div>
-              <div className="text-sm font-medium text-[#2E2A28]">导出 CSV</div>
-              <div className="text-[11px] text-[#9E9891]">下载全部交易记录为 CSV 文件</div>
+              <div className="text-sm font-medium" style={{ color: F.textPrimary }}>导出 CSV</div>
+              <div className="text-[11px]" style={{ color: F.textTertiary }}>下载全部交易记录为 CSV 文件</div>
             </div>
-            <span className="text-lg">📥</span>
+            <Receipt size={18} weight="bold" style={{ color: F.textSecondary }} />
           </button>
         </div>
       </div>
@@ -750,17 +763,21 @@ const CategoryEditForm: React.FC<{
 
   return (
     <div className="absolute inset-0 z-50 flex flex-col" style={{ background: F.appBg }}>
-      <div className="shrink-0 flex items-center justify-between px-4 pb-3" style={{ paddingTop: 'calc(var(--safe-top, 0px) + 0.5rem)' }}>
-        <button onClick={onClose} className="flex items-center text-[#C7834B] text-sm">
-          <CaretLeft className="w-5 h-5" weight="bold" /> 返回
+      <div className="shrink-0 flex items-center justify-between px-4 py-3" style={{ paddingTop: 'var(--chrome-top)' }}>
+        <button onClick={onClose}
+          className="flex items-center justify-center active:translate-y-[1px] transition-transform"
+          style={{ width: 44, height: 44, borderRadius: R.pill, background: F.surfaceRaised,
+                   border: `1px solid ${F.borderSoft}`, boxShadow: S.raisedSoft }}>
+          <CaretLeft size={20} weight="bold" style={{ color: F.textSecondary }} />
         </button>
-        <span className="text-sm font-semibold text-[#2E2A28]">
+        <span className="text-sm font-semibold" style={{ color: F.textPrimary }}>
           {isEdit ? '编辑分类' : (parentId ? '新建子分类' : '新建一级分类')}
         </span>
         <button
           onClick={handleSave}
           disabled={!name.trim()}
-          className="text-[#C7834B] text-sm font-semibold disabled:text-[#9E9891]"
+          className="text-sm font-semibold"
+          style={{ color: !name.trim() ? F.textTertiary : F.accent }}
         >
           保存
         </button>
@@ -773,7 +790,7 @@ const CategoryEditForm: React.FC<{
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder="如：宠物"
-              className="w-full text-right text-sm text-[#2E2A28] outline-none bg-transparent placeholder:text-[#9E9891]"
+              className="w-full text-right text-sm outline-none bg-transparent placeholder:opacity-40" style={{ color: F.textPrimary }}
               autoFocus
             />
           </FormRow>
@@ -782,7 +799,7 @@ const CategoryEditForm: React.FC<{
               value={icon}
               onChange={e => setIcon(e.target.value)}
               placeholder="选一个 emoji"
-              className="w-full text-right text-sm text-[#2E2A28] outline-none bg-transparent placeholder:text-[#9E9891]"
+              className="w-full text-right text-sm outline-none bg-transparent placeholder:opacity-40" style={{ color: F.textPrimary }}
               maxLength={4}
             />
           </FormRow>
@@ -790,24 +807,27 @@ const CategoryEditForm: React.FC<{
 
         {/* 预览 */}
         <div className="p-4 mb-4" style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.bigCard, boxShadow: S.raisedSoft }}>
-          <div className="text-xs text-[#9E9891] mb-2">预览</div>
+          <div className="text-xs mb-2" style={{ color: F.textTertiary }}>预览</div>
           <div className="flex items-center gap-2">
             <span className="text-2xl">{icon || '📋'}</span>
-            <span className="text-sm font-medium text-[#2E2A28]">{name || '分类名称'}</span>
+            <span className="text-sm font-medium" style={{ color: F.textPrimary }}>{name || '分类名称'}</span>
           </div>
         </div>
 
         {/* 快速选 emoji */}
         <div className="p-4" style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.bigCard, boxShadow: S.raisedSoft }}>
-          <div className="text-xs text-[#9E9891] mb-3">常用图标</div>
+          <div className="text-xs mb-3" style={{ color: F.textTertiary }}>常用图标</div>
           <div className="grid grid-cols-6 gap-2">
             {EMOJI_SUGGESTIONS.map(e => (
               <button
                 key={e}
                 onClick={() => setIcon(e)}
-                className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl transition-colors ${
-                  icon === e ? 'bg-[#EAF1FF] ring-1 ring-[#C9DCFF]' : 'bg-[#ECE8E1] active:bg-[#ECE8E1]'
-                }`}
+                className="w-10 h-10 flex items-center justify-center text-xl transition-colors"
+                style={{
+                  borderRadius: R.medium,
+                  background: icon === e ? HUE.blue.tint : F.surfaceSunken,
+                  ...(icon === e ? { outline: `1px solid ${HUE.blue.soft}` } : {}),
+                }}
               >
                 {e}
               </button>
@@ -874,13 +894,13 @@ const RecurringRulesSection: React.FC<{
     <div className="overflow-hidden mb-4" style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.bigCard, boxShadow: S.raisedSoft }}>
       <div className="flex items-center justify-between px-4 pt-4 pb-2">
         <div>
-          <div className="text-sm font-medium text-[#2E2A28] mb-0.5">周期性交易</div>
-          <div className="text-[11px] text-[#9E9891]">自动记录房租、订阅等固定支出</div>
+          <div className="text-sm font-medium mb-0.5" style={{ color: F.textPrimary }}>周期性交易</div>
+          <div className="text-[11px]" style={{ color: F.textTertiary }}>自动记录房租、订阅等固定支出</div>
         </div>
         <button
           onClick={() => setEditing('new')}
-          className="text-xs font-medium px-3 py-1.5 rounded-full active:translate-y-[2px] transition-transform text-white"
-          style={{ background: BANK_HUE.income.main, boxShadow: S.raisedSoft }}
+          className="text-xs font-medium px-3 py-1.5 rounded-full active:translate-y-[2px] transition-transform"
+          style={{ background: BANK_HUE.income.main, boxShadow: S.raisedSoft, color: F.surfaceRaised }}
         >
           + 添加
         </button>
@@ -897,26 +917,28 @@ const RecurringRulesSection: React.FC<{
             const cat = categories.find(c => c.id === rule.categoryId);
             const acc = accounts.find(a => a.id === rule.accountId);
             return (
-              <div key={rule.id} className="flex items-center px-3 py-2.5 rounded-xl bg-[#ECE8E1]/80">
+              <div key={rule.id} className="flex items-center px-3 py-2.5" style={{ borderRadius: R.medium, background: F.surfaceSunken }}>
                 <button onClick={() => toggleEnabled(rule)} className="mr-2.5 shrink-0">
-                  <div className={`w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-bold ${
-                    rule.enabled ? 'bg-[#35C45A] text-white' : 'bg-[#E8E1D8] text-[#9E9891]'
-                  }`}>
+                  <div className="w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-bold"
+                    style={{
+                      background: rule.enabled ? STATUS.success.main : F.borderStrong,
+                      color: rule.enabled ? F.surfaceRaised : F.textTertiary,
+                    }}>
                     {rule.enabled ? '✓' : ''}
                   </div>
                 </button>
                 <div className="flex-1 min-w-0" onClick={() => setEditing(rule)}>
-                  <div className="text-sm text-[#2E2A28] truncate">
+                  <div className="text-sm truncate" style={{ color: F.textPrimary }}>
                     {cat?.icon || '📋'} {rule.note || cat?.name || '未命名'}
                   </div>
-                  <div className="text-[10px] text-[#9E9891]">
+                  <div className="text-[10px]" style={{ color: F.textTertiary }}>
                     {FREQ_LABELS[rule.frequency]} · {formatAmount(rule.amount, rule.currency)} · {acc?.name || ''}
                   </div>
                 </div>
-                <div className="text-[10px] text-[#9E9891] mx-2">下次: {rule.nextDate.slice(5)}</div>
+                <div className="text-[10px] mx-2" style={{ color: F.textTertiary }}>下次: {rule.nextDate.slice(5)}</div>
                 <button
                   onClick={() => handleDelete(rule.id)}
-                  className="text-red-300 active:text-[#F45B5B] p-1"
+                  className="p-1" style={{ color: HUE.red.soft }}
                 >
                   <Trash className="w-3.5 h-3.5" />
                 </button>
@@ -972,9 +994,14 @@ const RecurringRuleForm: React.FC<{
   return (
     <div className="overflow-hidden mb-4 p-4" style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.bigCard, boxShadow: S.raisedSoft }}>
       <div className="flex items-center justify-between mb-3">
-        <button onClick={onClose} className="text-xs text-[#C7834B] font-medium">← 返回</button>
-        <span className="text-sm font-semibold text-[#2E2A28]">{initial ? '编辑规则' : '新建规则'}</span>
-        <button onClick={handleSave} disabled={!parseFloat(amount)} className="text-xs text-[#C7834B] font-semibold disabled:text-[#9E9891]">保存</button>
+        <button onClick={onClose}
+          className="flex items-center justify-center active:translate-y-[1px] transition-transform"
+          style={{ width: 44, height: 44, borderRadius: R.pill, background: F.surfaceRaised,
+                   border: `1px solid ${F.borderSoft}`, boxShadow: S.raisedSoft }}>
+          <CaretLeft size={20} weight="bold" style={{ color: F.textSecondary }} />
+        </button>
+        <span className="text-sm font-semibold" style={{ color: F.textPrimary }}>{initial ? '编辑规则' : '新建规则'}</span>
+        <button onClick={handleSave} disabled={!parseFloat(amount)} className="text-xs font-semibold" style={{ color: !parseFloat(amount) ? F.textTertiary : F.accent }}>保存</button>
       </div>
 
       {/* 类型 */}
@@ -1008,14 +1035,14 @@ const RecurringRuleForm: React.FC<{
           type="number"
           inputMode="decimal"
           placeholder="金额"
-          className="flex-1 px-3 py-2.5 rounded-xl text-sm bg-[#ECE8E1] outline-none"
-          style={{ boxShadow: S.sunken }}
+          className="flex-1 px-3 py-2.5 text-sm outline-none"
+          style={{ borderRadius: R.medium, background: F.surfaceSunken, boxShadow: S.sunken }}
         />
         <select
           value={frequency}
           onChange={e => setFrequency(e.target.value as RecurringFrequency)}
-          className="px-3 py-2.5 rounded-xl text-sm bg-[#ECE8E1] outline-none appearance-none"
-          style={{ boxShadow: S.sunken }}
+          className="px-3 py-2.5 text-sm outline-none appearance-none"
+          style={{ borderRadius: R.medium, background: F.surfaceSunken, boxShadow: S.sunken }}
         >
           {(Object.entries(FREQ_LABELS) as [RecurringFrequency, string][]).map(([k, v]) => (
             <option key={k} value={k}>{v}</option>
@@ -1027,8 +1054,8 @@ const RecurringRuleForm: React.FC<{
       <select
         value={accountId}
         onChange={e => setAccountId(e.target.value)}
-        className="w-full px-3 py-2.5 rounded-xl text-sm bg-[#ECE8E1] outline-none appearance-none mb-3"
-        style={{ boxShadow: S.sunken }}
+        className="w-full px-3 py-2.5 text-sm outline-none appearance-none mb-3"
+        style={{ borderRadius: R.medium, background: F.surfaceSunken, boxShadow: S.sunken }}
       >
         {accounts.filter(a => !a.isArchived).map(a => (
           <option key={a.id} value={a.id}>{a.icon || ''} {a.name}</option>
@@ -1041,9 +1068,12 @@ const RecurringRuleForm: React.FC<{
           <button
             key={cat.id}
             onClick={() => setCategoryId(cat.id)}
-            className={`px-2.5 py-1.5 text-xs rounded-lg font-medium transition-colors ${
-              categoryId === cat.id ? 'bg-[#EAF1FF]0 text-white' : 'bg-[#ECE8E1] text-[#6E665F]'
-            }`}
+            className="px-2.5 py-1.5 text-xs font-medium transition-colors"
+            style={{
+              borderRadius: R.small,
+              background: categoryId === cat.id ? HUE.blue.main : F.surfaceSunken,
+              color: categoryId === cat.id ? F.surfaceRaised : F.textSecondary,
+            }}
           >
             {cat.icon} {cat.name}
           </button>
@@ -1055,17 +1085,17 @@ const RecurringRuleForm: React.FC<{
         value={note}
         onChange={e => setNote(e.target.value)}
         placeholder="备注（如：房租）"
-        className="w-full px-3 py-2.5 rounded-xl text-sm bg-[#ECE8E1] outline-none mb-3"
-        style={{ boxShadow: S.sunken }}
+        className="w-full px-3 py-2.5 text-sm outline-none mb-3"
+        style={{ borderRadius: R.medium, background: F.surfaceSunken, boxShadow: S.sunken }}
       />
       <div className="flex items-center gap-2">
-        <span className="text-xs text-[#6E665F]">下次记录日期</span>
+        <span className="text-xs" style={{ color: F.textSecondary }}>下次记录日期</span>
         <input
           value={nextDate}
           onChange={e => setNextDate(e.target.value)}
           type="date"
-          className="flex-1 px-3 py-2 rounded-xl text-sm bg-[#ECE8E1] outline-none"
-          style={{ boxShadow: S.sunken }}
+          className="flex-1 px-3 py-2 text-sm outline-none"
+          style={{ borderRadius: R.medium, background: F.surfaceSunken, boxShadow: S.sunken }}
         />
       </div>
     </div>
@@ -1139,23 +1169,27 @@ const TransactionForm: React.FC<{
     return (
       <div className="absolute inset-0 z-50 flex flex-col items-center justify-center" style={{ background: F.appBg }}>
         <div className="text-4xl mb-3">💳</div>
-        <div className="text-[#6E665F] text-sm mb-1">请先在资产页添加账户</div>
-        <button onClick={onClose} className="mt-4 px-5 py-2 text-sm text-[#C7834B] font-medium">返回</button>
+        <div className="text-sm mb-1" style={{ color: F.textSecondary }}>请先在资产页添加账户</div>
+        <button onClick={onClose} className="mt-4 px-5 py-2 text-sm font-medium" style={{ color: F.accent }}>返回</button>
       </div>
     );
   }
 
   return (
     <div className="absolute inset-0 z-50 flex flex-col" style={{ background: F.appBg }}>
-      <div className="shrink-0 flex items-center justify-between px-4 pb-3" style={{ paddingTop: 'calc(var(--safe-top, 0px) + 0.5rem)' }}>
-        <button onClick={onClose} className="flex items-center text-[#C7834B] text-sm">
-          <CaretLeft className="w-5 h-5" weight="bold" /> 返回
+      <div className="shrink-0 flex items-center justify-between px-4 py-3" style={{ paddingTop: 'var(--chrome-top)' }}>
+        <button onClick={onClose}
+          className="flex items-center justify-center active:translate-y-[1px] transition-transform"
+          style={{ width: 44, height: 44, borderRadius: R.pill, background: F.surfaceRaised,
+                   border: `1px solid ${F.borderSoft}`, boxShadow: S.raisedSoft }}>
+          <CaretLeft size={20} weight="bold" style={{ color: F.textSecondary }} />
         </button>
-        <span className="text-sm font-semibold text-[#2E2A28]">{isEdit ? '编辑交易' : '新增交易'}</span>
+        <span className="text-sm font-semibold" style={{ color: F.textPrimary }}>{isEdit ? '编辑交易' : '新增交易'}</span>
         <button
           onClick={handleSave}
           disabled={!canSave}
-          className="text-[#C7834B] text-sm font-semibold disabled:text-[#9E9891]"
+          className="text-sm font-semibold"
+          style={{ color: !canSave ? F.textTertiary : F.accent }}
         >
           保存
         </button>
@@ -1188,9 +1222,9 @@ const TransactionForm: React.FC<{
 
         {/* 金额 */}
         <div className="px-5 py-4 mb-4" style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.bigCard, boxShadow: S.raisedSoft }}>
-          <div className="text-xs text-[#9E9891] mb-2">金额</div>
+          <div className="text-xs mb-2" style={{ color: F.textTertiary }}>金额</div>
           <div className="flex items-baseline gap-2">
-            <span className="text-2xl text-[#9E9891] font-light">
+            <span className="text-2xl font-light" style={{ color: F.textTertiary }}>
               {CURRENCY_SYMBOLS[selectedAcc?.currency || 'CNY'] || '¥'}
             </span>
             <input
@@ -1200,7 +1234,7 @@ const TransactionForm: React.FC<{
               inputMode="decimal"
               placeholder="0.00"
               autoFocus
-              className="flex-1 text-4xl font-bold text-[#2E2A28] outline-none bg-transparent placeholder:text-[#D8CFC4] min-w-0"
+              className="flex-1 text-4xl font-bold outline-none bg-transparent placeholder:opacity-30 min-w-0" style={{ color: F.textPrimary }}
             />
           </div>
         </div>
@@ -1209,9 +1243,9 @@ const TransactionForm: React.FC<{
         {txType !== 'transfer' && (
           <div className="p-4 mb-4" style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.bigCard, boxShadow: S.raisedSoft }}>
             <div className="flex items-center justify-between mb-3">
-              <span className="text-xs text-[#9E9891]">分类</span>
+              <span className="text-xs" style={{ color: F.textTertiary }}>分类</span>
               {selectedCat && (
-                <span className="text-xs font-medium text-[#C7834B]">
+                <span className="text-xs font-medium" style={{ color: F.accent }}>
                   {selectedCat.icon} {selectedCat.name}
                 </span>
               )}
@@ -1224,25 +1258,32 @@ const TransactionForm: React.FC<{
                   <button
                     key={cat.id}
                     onClick={() => handleCatClick(cat.id)}
-                    className={`flex flex-col items-center gap-1 py-2.5 rounded-xl transition-all ${
-                      isActive || isExpanded ? 'bg-[#EAF1FF] ring-1 ring-[#C9DCFF]' : 'bg-[#ECE8E1]'
-                    }`}
+                    className="flex flex-col items-center gap-1 py-2.5 transition-all"
+                    style={{
+                      borderRadius: R.medium,
+                      background: isActive || isExpanded ? HUE.blue.tint : F.surfaceSunken,
+                      ...(isActive || isExpanded ? { outline: `1px solid ${HUE.blue.soft}` } : {}),
+                    }}
                   >
                     <span className="text-xl">{cat.icon}</span>
-                    <span className="text-[9px] text-[#6E665F] leading-tight text-center">{cat.name}</span>
+                    <span className="text-[9px] leading-tight text-center" style={{ color: F.textSecondary }}>{cat.name}</span>
                   </button>
                 );
               })}
             </div>
             {expandedTopCat && (
-              <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-slate-50">
+              <div className="flex flex-wrap gap-2 mt-3 pt-3" style={{ borderTop: `1px solid ${F.divider}` }}>
                 {categories.filter(c => c.parentId === expandedTopCat).map(child => (
                   <button
                     key={child.id}
                     onClick={() => { setCategoryId(child.id); setExpandedTopCat(null); }}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs transition-colors ${
-                      categoryId === child.id ? 'bg-[#EAF1FF]0 text-white font-medium' : 'bg-[#ECE8E1] text-[#6E665F]'
-                    }`}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs transition-colors"
+                    style={{
+                      borderRadius: R.pill,
+                      background: categoryId === child.id ? HUE.blue.main : F.surfaceSunken,
+                      color: categoryId === child.id ? F.surfaceRaised : F.textSecondary,
+                      fontWeight: categoryId === child.id ? 500 : 400,
+                    }}
                   >
                     <span>{child.icon}</span>
                     <span>{child.name}</span>
@@ -1259,7 +1300,7 @@ const TransactionForm: React.FC<{
             <select
               value={accountId}
               onChange={e => setAccountId(e.target.value)}
-              className="w-full text-right text-sm text-[#2E2A28] outline-none bg-transparent appearance-none"
+              className="w-full text-right text-sm outline-none bg-transparent appearance-none" style={{ color: F.textPrimary }}
             >
               {accounts.filter(a => !a.isArchived).map(a => (
                 <option key={a.id} value={a.id}>{a.name}</option>
@@ -1271,7 +1312,7 @@ const TransactionForm: React.FC<{
               <select
                 value={toAccountId}
                 onChange={e => setToAccountId(e.target.value)}
-                className="w-full text-right text-sm text-[#2E2A28] outline-none bg-transparent appearance-none"
+                className="w-full text-right text-sm outline-none bg-transparent appearance-none" style={{ color: F.textPrimary }}
               >
                 <option value="">请选择</option>
                 {accounts.filter(a => !a.isArchived && a.id !== accountId).map(a => (
@@ -1285,7 +1326,7 @@ const TransactionForm: React.FC<{
               type="date"
               value={dateStr}
               onChange={e => setDateStr(e.target.value)}
-              className="w-full text-right text-sm text-[#2E2A28] outline-none bg-transparent"
+              className="w-full text-right text-sm outline-none bg-transparent" style={{ color: F.textPrimary }}
             />
           </FormRow>
           <FormRow label="备注" border>
@@ -1293,7 +1334,7 @@ const TransactionForm: React.FC<{
               value={note}
               onChange={e => setNote(e.target.value)}
               placeholder="可选"
-              className="w-full text-right text-sm text-[#2E2A28] outline-none bg-transparent placeholder:text-[#9E9891]"
+              className="w-full text-right text-sm outline-none bg-transparent placeholder:opacity-40" style={{ color: F.textPrimary }}
             />
           </FormRow>
         </div>
@@ -1304,16 +1345,17 @@ const TransactionForm: React.FC<{
             {!confirmDelete ? (
               <button
                 onClick={() => setConfirmDelete(true)}
-                className="w-full py-3.5 text-sm text-[#F45B5B] font-medium flex items-center justify-center gap-1.5"
+                className="w-full py-3.5 text-sm font-medium flex items-center justify-center gap-1.5"
+                style={{ color: STATUS.danger.main }}
               >
                 <Trash className="w-4 h-4" /> 删除交易
               </button>
             ) : (
               <div className="p-4 text-center">
-                <div className="text-sm text-[#6E665F] mb-3">确定删除这条交易记录？</div>
+                <div className="text-sm mb-3" style={{ color: F.textSecondary }}>确定删除这条交易记录？</div>
                 <div className="flex gap-3 justify-center">
-                  <button onClick={() => setConfirmDelete(false)} className="px-4 py-2 text-sm text-[#6E665F] bg-[#ECE8E1] rounded-xl">取消</button>
-                  <button onClick={onDelete} className="px-4 py-2 text-sm text-white bg-red-500 rounded-xl">删除</button>
+                  <button onClick={() => setConfirmDelete(false)} className="px-4 py-2 text-sm" style={{ color: F.textSecondary, background: F.surfaceSunken, borderRadius: R.medium }}>取消</button>
+                  <button onClick={onDelete} className="px-4 py-2 text-sm" style={{ color: F.surfaceRaised, background: STATUS.danger.main, borderRadius: R.medium }}>删除</button>
                 </div>
               </div>
             )}
@@ -1427,12 +1469,12 @@ const TrendChart: React.FC<{
         <>
           <svg width="100%" height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="overflow-visible">
             {assetPath && (
-              <path d={assetPath} fill="none" stroke="#8b5cf6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              <path d={assetPath} fill="none" stroke={HUE.purple.main} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
             )}
           </svg>
-          <div className="flex justify-between mt-2 text-[11px] text-[#9E9891]">
+          <div className="flex justify-between mt-2 text-[11px]" style={{ color: F.textTertiary }}>
             <span>当前 {formatAmount(latestBal)} {selectedCurrency}</span>
-            <span className={change >= 0 ? 'text-emerald-500' : 'text-rose-400'}>
+            <span style={{ color: change >= 0 ? HUE.green.main : HUE.rose.main }}>
               {change >= 0 ? '▲' : '▼'} {formatAmount(Math.abs(change))}
             </span>
           </div>
@@ -1499,15 +1541,15 @@ const AssetsTab: React.FC<{
     <div className="px-5 pt-2 pb-4">
       {/* 总资产（按币种分列） */}
       <div className="mb-6">
-        <div className="text-[#6E665F] text-xs mb-1">总资产</div>
+        <div className="text-xs mb-1" style={{ color: F.textSecondary }}>总资产</div>
         {currencyEntries.length <= 1 ? (
-          <div className="text-3xl font-bold text-[#2E2A28] tracking-tight">
+          <div className="text-3xl font-bold tracking-tight" style={{ color: F.textPrimary }}>
             {formatAmount(currencyEntries[0]?.[1] ?? 0, currencyEntries[0]?.[0])}
           </div>
         ) : (
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
             {currencyEntries.map(([cur, amt]) => (
-              <span key={cur} className="text-2xl font-bold text-[#2E2A28] tracking-tight">
+              <span key={cur} className="text-2xl font-bold tracking-tight" style={{ color: F.textPrimary }}>
                 {formatAmount(amt, cur)}
               </span>
             ))}
@@ -1525,8 +1567,8 @@ const AssetsTab: React.FC<{
           <span style={{ color: F.textTertiary, fontSize: 14, marginBottom: 12 }}>还没有账户</span>
           <button
             onClick={() => setEditingAccount('new')}
-            className="px-5 py-2.5 text-white text-sm font-medium active:scale-95 transition-transform"
-            style={{ background: HUE.blue.main, borderRadius: R.medium, boxShadow: S.raisedSoft }}
+            className="px-5 py-2.5 text-sm font-medium active:scale-95 transition-transform"
+            style={{ background: HUE.blue.main, borderRadius: R.medium, boxShadow: S.raisedSoft, color: F.surfaceRaised }}
           >
             添加第一个账户
           </button>
@@ -1536,7 +1578,7 @@ const AssetsTab: React.FC<{
           if (accs.length === 0) return null;
           return (
             <div key={type} className="mb-4">
-              <div className="text-xs text-[#9E9891] font-medium mb-2 px-1">
+              <div className="text-xs font-medium mb-2 px-1" style={{ color: F.textTertiary }}>
                 {ACCOUNT_TYPE_LABELS[type as FinanceAccount['type']]}
               </div>
               <div className="overflow-hidden" style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.bigCard, boxShadow: S.raisedSoft }}>
@@ -1544,13 +1586,12 @@ const AssetsTab: React.FC<{
                   <button
                     key={acc.id}
                     onClick={() => setEditingAccount(acc)}
-                    className={`w-full flex items-center px-4 py-3.5 text-left active:translate-y-[2px] transition-transform ${
-                      i < accs.length - 1 ? 'border-b border-[#E8E1D8]' : ''
-                    }`}
+                    className="w-full flex items-center px-4 py-3.5 text-left active:translate-y-[2px] transition-transform"
+                    style={i < accs.length - 1 ? { borderBottom: `1px solid ${F.divider}` } : undefined}
                   >
                     <div
-                      className="flex items-center justify-center text-white text-sm font-bold shrink-0 mr-3"
-                      style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: acc.color || F.textTertiary, boxShadow: S.raisedSoft, border: '2px solid rgba(255,255,255,0.3)' }}
+                      className="flex items-center justify-center text-sm font-bold shrink-0 mr-3"
+                      style={{ width: 44, height: 44, borderRadius: R.small, backgroundColor: acc.color || F.textTertiary, boxShadow: S.raisedSoft, border: '2px solid rgba(255,255,255,0.3)', color: F.surfaceRaised }}
                     >
                       {acc.type === 'credit' ? <CreditCard size={20} weight="bold" /> :
                        acc.type === 'savings' ? <PiggyBank size={20} weight="bold" /> :
@@ -1558,14 +1599,13 @@ const AssetsTab: React.FC<{
                        <Wallet size={20} weight="bold" />}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-[#2E2A28] truncate">{acc.name}</div>
+                      <div className="text-sm font-medium truncate" style={{ color: F.textPrimary }}>{acc.name}</div>
                     </div>
-                    <div className={`text-sm font-semibold ${
-                      (balances[acc.id] ?? 0) < 0 ? 'text-[#F45D8A]' : 'text-[#2E2A28]'
-                    }`}>
+                    <div className="text-sm font-semibold"
+                      style={{ color: (balances[acc.id] ?? 0) < 0 ? HUE.rose.main : F.textPrimary }}>
                       {formatAmount(balances[acc.id] ?? acc.initialBalance, acc.currency)}
                     </div>
-                    <div className="text-[#9E9891] ml-2 text-xs">›</div>
+                    <div className="ml-2 text-xs" style={{ color: F.textTertiary }}>›</div>
                   </button>
                 ))}
               </div>
@@ -1577,8 +1617,8 @@ const AssetsTab: React.FC<{
       {/* FAB 新增账户 */}
       <button
         onClick={() => setEditingAccount('new')}
-        className="fixed right-5 bottom-32 flex items-center justify-center text-white active:scale-90 transition-transform z-10"
-        style={{ width: 56, height: 56, borderRadius: R.pill, background: HUE.blue.main, boxShadow: S.floating }}
+        className="fixed right-5 bottom-32 flex items-center justify-center active:scale-90 transition-transform z-10"
+        style={{ width: 56, height: 56, borderRadius: R.pill, background: HUE.blue.main, boxShadow: S.floating, color: F.surfaceRaised }}
       >
         <Plus className="w-6 h-6" weight="bold" />
       </button>
@@ -1811,7 +1851,7 @@ const TransactionsTab: React.FC<{
       {showFilters && (
         <div className="p-4 mb-4 space-y-3" style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.bigCard, boxShadow: S.raisedSoft }}>
           <div>
-            <div className="text-[11px] text-[#9E9891] mb-2">类型</div>
+            <div className="text-[11px] mb-2" style={{ color: F.textTertiary }}>类型</div>
             <SunkenSelector>
               {([['all', '全部'], ['expense', '支出'], ['income', '收入']] as const).map(([val, label]) => (
                 <FilterChip key={val} label={label} active={filterType === val} onClick={() => setFilterType(val)}
@@ -1820,7 +1860,7 @@ const TransactionsTab: React.FC<{
             </SunkenSelector>
           </div>
           <div>
-            <div className="text-[11px] text-[#9E9891] mb-2">账户</div>
+            <div className="text-[11px] mb-2" style={{ color: F.textTertiary }}>账户</div>
             <div className="flex gap-2 flex-wrap">
               <FilterChip label="全部" active={filterAccountIds.size === 0} onClick={() => setFilterAccountIds(new Set())} />
               {accounts.filter(a => !a.isArchived).map(a => (
@@ -1847,34 +1887,35 @@ const TransactionsTab: React.FC<{
       <div className="p-4 mb-5" style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.bigCard, boxShadow: S.raisedSoft }}>
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <span className="text-base">☕</span>
-            <span className="text-sm font-medium text-[#2E2A28]">今日情报</span>
+            <Coffee size={18} weight="bold" style={{ color: F.textSecondary }} />
+            <span className="text-sm font-medium" style={{ color: F.textPrimary }}>今日情报</span>
           </div>
           <button
             onClick={generateGossip}
             disabled={gossipLoading}
-            className="text-xs text-[#C7834B] font-medium active:scale-95 transition-transform disabled:text-[#9E9891]"
+            className="text-xs font-medium active:scale-95 transition-transform"
+            style={{ color: gossipLoading ? F.textTertiary : F.accent }}
           >
             {gossipLoading ? '生成中...' : gossipText ? '换一条' : '来一条 →'}
           </button>
         </div>
         {gossipChar && gossipText ? (
           <div>
-            <div className="text-xs text-[#6E665F] leading-relaxed mb-2">「{gossipText}」</div>
+            <div className="text-xs leading-relaxed mb-2" style={{ color: F.textSecondary }}>「{gossipText}」</div>
             <div className="flex items-center gap-1.5">
-              <span className="text-[10px] text-[#9E9891]">关于</span>
+              <span className="text-[10px]" style={{ color: F.textTertiary }}>关于</span>
               {gossipChar.avatar ? (
                 <img src={gossipChar.avatar} className="w-4 h-4 rounded-full object-cover" />
               ) : (
-                <div className="w-4 h-4 rounded-full bg-[#E8E1D8] flex items-center justify-center text-[9px] text-[#6E665F]">
+                <div className="w-4 h-4 rounded-full flex items-center justify-center text-[9px]" style={{ background: F.borderStrong, color: F.textSecondary }}>
                   {gossipChar.name[0]}
                 </div>
               )}
-              <span className="text-[10px] text-[#9E9891]">{gossipChar.name}</span>
+              <span className="text-[10px]" style={{ color: F.textTertiary }}>{gossipChar.name}</span>
             </div>
           </div>
         ) : (
-          <div className="text-xs text-[#9E9891]">点击右上角获取今日情报</div>
+          <div className="text-xs" style={{ color: F.textTertiary }}>点击右上角获取今日情报</div>
         )}
       </div>
 
@@ -1894,12 +1935,12 @@ const TransactionsTab: React.FC<{
           return (
             <div key={dateStr} className="mb-4">
               <div className="flex items-center justify-between mb-2 px-1">
-                <div className="text-sm font-medium text-[#2E2A28]">
+                <div className="text-sm font-medium" style={{ color: F.textPrimary }}>
                   {parseInt(month)}月{parseInt(day)}日 · {formatWeekday(dateStr)}
                 </div>
                 <div className="flex gap-3 text-xs">
-                  {dayExpense > 0 && <span className="text-rose-400">-{formatAmount(dayExpense)}</span>}
-                  {dayIncome > 0 && <span className="text-emerald-500">+{formatAmount(dayIncome)}</span>}
+                  {dayExpense > 0 && <span style={{ color: HUE.rose.main }}>-{formatAmount(dayExpense)}</span>}
+                  {dayIncome > 0 && <span style={{ color: HUE.green.main }}>+{formatAmount(dayIncome)}</span>}
                 </div>
               </div>
               <div className="overflow-hidden" style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.bigCard, boxShadow: S.raisedSoft }}>
@@ -1911,23 +1952,21 @@ const TransactionsTab: React.FC<{
                     <button
                       key={t.id}
                       onClick={() => setEditingTx(t)}
-                      className={`w-full flex items-center px-4 py-3 text-left active:bg-[#ECE8E1] transition-colors ${
-                        i < txs.length - 1 ? 'border-b border-slate-50' : ''
-                      }`}
+                      className="w-full flex items-center px-4 py-3 text-left transition-colors"
+                      style={i < txs.length - 1 ? { borderBottom: `1px solid ${F.divider}` } : undefined}
                     >
-                      <div className="w-8 h-8 rounded-xl bg-[#ECE8E1] flex items-center justify-center text-base mr-3 shrink-0">
+                      <div className="w-8 h-8 flex items-center justify-center text-base mr-3 shrink-0" style={{ borderRadius: R.medium, background: F.surfaceSunken }}>
                         {cat?.icon || '📋'}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="text-sm text-[#2E2A28] truncate">{t.note || cat?.name || '未分类'}</div>
-                        <div className="text-[11px] text-[#9E9891]">#{acc?.name || '未知账户'}</div>
+                        <div className="text-sm truncate" style={{ color: F.textPrimary }}>{t.note || cat?.name || '未分类'}</div>
+                        <div className="text-[11px]" style={{ color: F.textTertiary }}>#{acc?.name || '未知账户'}</div>
                       </div>
-                      <div className={`text-sm font-semibold ${
-                        t.type === 'income' || t.type === 'refund' ? 'text-emerald-500' : 'text-[#2E2A28]'
-                      }`}>
+                      <div className="text-sm font-semibold"
+                        style={{ color: t.type === 'income' || t.type === 'refund' ? HUE.green.main : F.textPrimary }}>
                         {t.type === 'income' || t.type === 'refund' ? '+' : '-'}{sym}{t.amount.toLocaleString()}
                       </div>
-                      <div className="text-[#9E9891] ml-2 text-xs">›</div>
+                      <div className="ml-2 text-xs" style={{ color: F.textTertiary }}>›</div>
                     </button>
                   );
                 })}
@@ -1940,8 +1979,8 @@ const TransactionsTab: React.FC<{
       {/* 新增按钮 */}
       <button
         onClick={() => setEditingTx('new')}
-        className="fixed right-5 bottom-32 flex items-center justify-center text-white active:scale-90 transition-transform z-10"
-        style={{ width: 56, height: 56, borderRadius: R.pill, background: HUE.blue.main, boxShadow: S.floating }}
+        className="fixed right-5 bottom-32 flex items-center justify-center active:scale-90 transition-transform z-10"
+        style={{ width: 56, height: 56, borderRadius: R.pill, background: HUE.blue.main, boxShadow: S.floating, color: F.surfaceRaised }}
       >
         <Plus className="w-6 h-6" weight="bold" />
       </button>
@@ -1952,8 +1991,8 @@ const TransactionsTab: React.FC<{
 // ── 分析 + TA 读 Tab ──
 
 const CHART_COLORS = [
-  '#FF6B6B', '#FFA06B', '#FFD93D', '#6BCB77', '#4D96FF',
-  '#9B59B6', '#FF85A1', '#00BCD4', '#FF7043', '#78909C',
+  HUE.red.main, HUE.orange.main, HUE.amber.main, HUE.green.main, HUE.blue.main,
+  HUE.purple.main, HUE.rose.main, HUE.cyan.main, HUE.orange.main, HUE.gray.main,
 ];
 
 type Tone = 'teasing' | 'serious' | 'encouraging' | 'caring';
@@ -1977,7 +2016,7 @@ const DonutChart: React.FC<{
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="mx-auto">
       <circle
         cx={size / 2} cy={size / 2} r={radius}
-        fill="none" stroke="#f1f5f9" strokeWidth={strokeWidth}
+        fill="none" stroke={F.borderSoft} strokeWidth={strokeWidth}
       />
       {data.map((seg, i) => {
         const pct = total > 0 ? seg.value / total : 0;
@@ -1998,8 +2037,8 @@ const DonutChart: React.FC<{
           />
         );
       })}
-      <text x={size / 2} y={size / 2 - 6} textAnchor="middle" className="fill-slate-400 text-[10px]">{centerTitle}</text>
-      <text x={size / 2} y={size / 2 + 12} textAnchor="middle" className="fill-slate-800 text-sm font-bold">{centerLabel}</text>
+      <text x={size / 2} y={size / 2 - 6} textAnchor="middle" className="text-[10px]" fill={F.textTertiary}>{centerTitle}</text>
+      <text x={size / 2} y={size / 2 + 12} textAnchor="middle" className="text-sm font-bold" fill={F.textPrimary}>{centerLabel}</text>
     </svg>
   );
 };
@@ -2415,7 +2454,7 @@ const AnalyticsTab: React.FC<{
       {/* 展开账户筛选 */}
       {showFilters && (
         <div className="p-4 mb-4" style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.bigCard, boxShadow: S.raisedSoft }}>
-          <div className="text-[11px] text-[#9E9891] mb-2">账户</div>
+          <div className="text-[11px] mb-2" style={{ color: F.textTertiary }}>账户</div>
           <div className="flex gap-2 flex-wrap">
             <FilterChip label="全部" active={!filterAccountId} onClick={() => setFilterAccountId(null)} />
             {accounts.filter(a => !a.isArchived).map(a => (
@@ -2493,14 +2532,15 @@ const AnalyticsTab: React.FC<{
             return (
               <div
                 key={cat?.id || i}
-                className={`px-4 py-3 ${i < catList.length - 1 ? 'border-b border-slate-50' : ''}`}
+                className="px-4 py-3"
+                style={i < catList.length - 1 ? { borderBottom: `1px solid ${F.divider}` } : undefined}
               >
                 <div className="flex items-center">
                   <div className="w-3 h-3 rounded-full shrink-0 mr-2.5" style={{ backgroundColor: color }} />
                   <span className="text-base mr-2">{cat?.icon || '📋'}</span>
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm text-[#2E2A28]">{cat?.name || '未分类'}</div>
-                    <div className="w-full h-1.5 bg-[#ECE8E1] rounded-full mt-1.5 overflow-hidden">
+                    <div className="text-sm" style={{ color: F.textPrimary }}>{cat?.name || '未分类'}</div>
+                    <div className="w-full h-1.5 rounded-full mt-1.5 overflow-hidden" style={{ background: F.surfaceSunken }}>
                       <div
                         className="h-full rounded-full transition-all"
                         style={{ width: `${pct}%`, backgroundColor: color }}
@@ -2508,16 +2548,16 @@ const AnalyticsTab: React.FC<{
                     </div>
                   </div>
                   <div className="text-right ml-3">
-                    <div className="text-sm font-semibold text-[#2E2A28]">{formatAmount(amount)}</div>
-                    <div className="text-[10px] text-[#9E9891]">{pct}%</div>
+                    <div className="text-sm font-semibold" style={{ color: F.textPrimary }}>{formatAmount(amount)}</div>
+                    <div className="text-[10px]" style={{ color: F.textTertiary }}>{pct}%</div>
                   </div>
                 </div>
                 {/* 预算进度条 */}
                 {budget && budgetPct !== null && filterType === 'expense' && (period === 'month' || period === 'week') && (
                   <div className="mt-2 ml-[22px]">
                     <div className="flex items-center justify-between mb-0.5">
-                      <span className="text-[10px] text-[#9E9891]">预算 {formatAmount(budget)}</span>
-                      <span className={`text-[10px] font-medium ${overBudget ? 'text-[#F45B5B]' : 'text-[#9E9891]'}`}>
+                      <span className="text-[10px]" style={{ color: F.textTertiary }}>预算 {formatAmount(budget)}</span>
+                      <span className="text-[10px] font-medium" style={{ color: overBudget ? STATUS.danger.main : F.textTertiary }}>
                         {Math.round(budgetPct)}%{overBudget ? ' 超支' : ''}
                       </span>
                     </div>
@@ -2540,8 +2580,8 @@ const AnalyticsTab: React.FC<{
 
       {/* TA 读区域 */}
       <div className="p-4" style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.bigCard, boxShadow: S.raisedSoft }}>
-        <div className="text-sm font-medium text-[#2E2A28] mb-3">TA 怎么看</div>
-        <div className="text-xs text-[#9E9891] mb-3">选一个角色来评价你{periodLabel}的消费</div>
+        <div className="text-sm font-medium mb-3" style={{ color: F.textPrimary }}>TA 怎么看</div>
+        <div className="text-xs mb-3" style={{ color: F.textTertiary }}>选一个角色来评价你{periodLabel}的消费</div>
 
         {/* 角色选择 — 直接用全量 characters */}
         <div className="overflow-x-auto pb-1 scrollbar-none mb-3">
@@ -2582,10 +2622,10 @@ const AnalyticsTab: React.FC<{
 
         {/* 评论内容 */}
         {!selectedCharId ? (
-          <div className="text-center py-6 text-[#9E9891] text-sm">点击上方角色开始</div>
+          <div className="text-center py-6 text-sm" style={{ color: F.textTertiary }}>点击上方角色开始</div>
         ) : commentary ? (
           <div className="py-3">
-            <div className="text-sm text-[#6E665F] leading-relaxed whitespace-pre-wrap mb-3">
+            <div className="text-sm leading-relaxed whitespace-pre-wrap mb-3" style={{ color: F.textSecondary }}>
               「{commentary}」
             </div>
             <button
@@ -2595,7 +2635,8 @@ const AnalyticsTab: React.FC<{
                 generateCommentary();
               }}
               disabled={loadingComment}
-              className="text-xs text-[#C7834B] font-medium disabled:text-[#9E9891]"
+              className="text-xs font-medium"
+              style={{ color: loadingComment ? F.textTertiary : F.accent }}
             >
               换一个说法
             </button>
@@ -2605,12 +2646,17 @@ const AnalyticsTab: React.FC<{
             <button
               onClick={generateCommentary}
               disabled={loadingComment || totalAmount === 0}
-              className="px-5 py-2.5 bg-[#EAF1FF]0 text-white text-sm rounded-xl font-medium active:scale-95 transition-transform disabled:bg-[#E8E1D8] disabled:text-[#9E9891]"
+              className="px-5 py-2.5 text-sm font-medium active:scale-95 transition-transform"
+              style={{
+                borderRadius: R.medium,
+                background: loadingComment || totalAmount === 0 ? F.borderStrong : HUE.blue.main,
+                color: loadingComment || totalAmount === 0 ? F.textTertiary : F.surfaceRaised,
+              }}
             >
               {loadingComment ? '生成中...' : `让${characters.find(c => c.id === selectedCharId)?.name || 'TA'}来说说`}
             </button>
             {totalAmount === 0 && (
-              <div className="text-[11px] text-[#9E9891] mt-2">没有{typeLabel}数据</div>
+              <div className="text-[11px] mt-2" style={{ color: F.textTertiary }}>没有{typeLabel}数据</div>
             )}
           </div>
         )}

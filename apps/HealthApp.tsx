@@ -704,11 +704,12 @@ const HealthApp: React.FC = () => {
     <div className="flex flex-col h-full overflow-hidden relative" style={{ background: clay.bg }}>
 
       {/* ── Header ── */}
-      <div className="shrink-0 pt-12 pb-3 px-5 flex items-center justify-between sticky top-0 z-20" style={{ background: clay.bg }}>
+      <div className="shrink-0 px-5 flex flex-col sticky top-0 z-20" style={{ paddingTop: 'var(--chrome-top)', background: clay.bg }}>
+      <div className="py-3 flex items-center justify-between">
         <button onClick={closeApp}
           className={`w-11 h-11 flex items-center justify-center ${clay.pressSmall}`}
           style={{ background: F.surfaceRaised, borderRadius: R.pill, border: `1px solid ${F.borderSoft}`, boxShadow: S.raisedSoft }}>
-          <CaretLeft size={18} weight="bold" className="text-[#6E665F]" />
+          <CaretLeft size={20} weight="bold" style={{ color: F.textSecondary }} />
         </button>
 
         {topTab === 'calendar' && (
@@ -716,7 +717,7 @@ const HealthApp: React.FC = () => {
             <div className="flex items-center gap-2 px-4 py-1.5"
               style={{ background: F.surfaceRaised, borderRadius: R.pill, boxShadow: S.raisedSoft, width: 192 }}>
               <button onClick={prevMonth} className={clay.pressSmall}>
-                <CaretLeft size={14} weight="bold" className="text-[#9E9891]" />
+                <CaretLeft size={14} weight="bold" style={{ color: F.textTertiary }} />
               </button>
               <button onClick={() => setShowDatePicker(v => !v)}
                 className="text-sm font-bold flex-1 text-center active:opacity-60 transition-opacity"
@@ -724,7 +725,7 @@ const HealthApp: React.FC = () => {
                 {viewYear} · {MONTH_NAMES[viewMonth - 1]}
               </button>
               <button onClick={nextMonth} className={clay.pressSmall}>
-                <CaretRight size={14} weight="bold" className="text-[#9E9891]" />
+                <CaretRight size={14} weight="bold" style={{ color: F.textTertiary }} />
               </button>
             </div>
             {showDatePicker && (<>
@@ -742,7 +743,7 @@ const HealthApp: React.FC = () => {
                       className="py-1.5 text-xs font-medium rounded-lg active:scale-95 transition-all"
                       style={{
                         background: viewMonth === i + 1 ? F.accent : 'transparent',
-                        color: viewMonth === i + 1 ? '#fff' : F.textSecondary,
+                        color: viewMonth === i + 1 ? F.surfaceRaised : F.textSecondary,
                         boxShadow: viewMonth === i + 1 ? S.raisedSoft : 'none',
                       }}>{mn.replace('月', '')}</button>
                   ))}
@@ -760,7 +761,7 @@ const HealthApp: React.FC = () => {
             <div className="flex items-center gap-2 px-4 py-1.5"
               style={{ background: F.surfaceRaised, borderRadius: R.pill, boxShadow: S.raisedSoft, width: 192 }}>
               <button onClick={() => setTodayViewOffset(o => o - 1)} className={clay.pressSmall}>
-                <CaretLeft size={14} weight="bold" className="text-[#9E9891]" />
+                <CaretLeft size={14} weight="bold" style={{ color: F.textTertiary }} />
               </button>
               <button onClick={() => setShowDatePicker(v => !v)}
                 className="text-sm font-bold flex-1 text-center whitespace-nowrap active:opacity-60 transition-opacity"
@@ -768,7 +769,7 @@ const HealthApp: React.FC = () => {
                 {viewDay.getMonth() + 1}月{viewDay.getDate()}日 · 周{WEEKDAYS[viewDay.getDay()]}
               </button>
               <button onClick={() => setTodayViewOffset(o => o + 1)} className={clay.pressSmall}>
-                <CaretRight size={14} weight="bold" className="text-[#9E9891]" />
+                <CaretRight size={14} weight="bold" style={{ color: F.textTertiary }} />
               </button>
             </div>
             {showDatePicker && (<>
@@ -794,7 +795,7 @@ const HealthApp: React.FC = () => {
                       style={{
                         fontWeight: toDateStr(pickerYear, pickerMonth, day) === todayStr ? 700 : 400,
                         background: day === viewDay.getDate() && pickerMonth === viewDay.getMonth() + 1 ? F.accent : 'transparent',
-                        color: day === viewDay.getDate() && pickerMonth === viewDay.getMonth() + 1 ? '#fff' : toDateStr(pickerYear, pickerMonth, day) === todayStr ? F.accent : F.textPrimary,
+                        color: day === viewDay.getDate() && pickerMonth === viewDay.getMonth() + 1 ? F.surfaceRaised : toDateStr(pickerYear, pickerMonth, day) === todayStr ? F.accent : F.textPrimary,
                       }}>{day}</button>
                   ))}
                 </div>
@@ -811,6 +812,7 @@ const HealthApp: React.FC = () => {
           style={{ background: F.surfaceRaised, borderRadius: R.pill, border: `1px solid ${F.borderSoft}`, boxShadow: S.raisedSoft }}>
           <Gear size={16} weight="bold" style={{ color: F.textTertiary }} />
         </button>
+      </div>
       </div>
 
       {/* ── Top tab bar (月历 / 今日) ── */}
@@ -842,7 +844,7 @@ const HealthApp: React.FC = () => {
           {/* Cycle Status */}
           <div className="shrink-0 mx-5 mt-1 px-4 py-3.5 flex items-center justify-between"
             style={{
-              background: cycleStatus.lastPeriodStart ? CAT_COLORS.period.bg : '#ECE8E1',
+              background: cycleStatus.lastPeriodStart ? CAT_COLORS.period.bg : F.surfaceSunken,
               borderRadius: R.bigCard,
               boxShadow: cycleStatus.lastPeriodStart ? S.raisedSoft : S.sunken,
             }}>
@@ -851,14 +853,14 @@ const HealthApp: React.FC = () => {
               {cycleStatus.lastPeriodStart ? (
                 <span className="text-[13px]" style={{ color: CAT_COLORS.period.fg }}>
                   周期第 <span className="font-bold" style={{ color: CAT_COLORS.period.shadow }}>{cycleStatus.cycleDay}</span> 天
-                  {cycleStatus.uncertain && <span className="text-xs text-[#9E9891] ml-1">（预测不确定）</span>}
+                  {cycleStatus.uncertain && <span className="text-xs ml-1" style={{ color: F.textTertiary }}>（预测不确定）</span>}
                 </span>
               ) : (
-                <span className="text-sm text-[#9E9891]">暂无经期数据</span>
+              <span className="text-sm" style={{ color: F.textTertiary }}>暂无经期数据</span>
               )}
             </div>
             {cycleStatus.lastPeriodStart && (
-              <span className="text-xs text-[#9E9891]">预计下次 {cycleStatus.nextRangeStr}</span>
+            <span className="text-xs" style={{ color: F.textTertiary }}>预计下次 {cycleStatus.nextRangeStr}</span>
             )}
           </div>
 
@@ -881,13 +883,13 @@ const HealthApp: React.FC = () => {
             <span className="flex items-center gap-1.5 text-[12px]" style={{ color: CAT_COLORS.symptom.fg, fontWeight: 500 }}>
               <span style={{ width: 8, height: 8, borderRadius: '50%', background: CAT_COLORS.symptom.shadow, flexShrink: 0 }} />症状
             </span>
-            {isLoading && <div className="ml-auto"><ArrowClockwise size={12} className="text-[#9E9891] animate-spin" /></div>}
+            {isLoading && <div className="ml-auto"><ArrowClockwise size={12} className="animate-spin" style={{ color: F.textTertiary }} /></div>}
           </div>
 
           {/* Calendar */}
           <div className="shrink-0 px-5 mt-3">
             <div className="grid grid-cols-7 mb-1">
-              {WEEKDAYS.map(d => <div key={d} className="text-center text-xs font-semibold text-[#9E9891] py-1">{d}</div>)}
+            {WEEKDAYS.map(d => <div key={d} className="text-center text-xs font-semibold py-1" style={{ color: F.textTertiary }}>{d}</div>)}
             </div>
             <div className="grid grid-cols-7 gap-1">
               {calendarDays.map((day, idx) => {
@@ -943,7 +945,7 @@ const HealthApp: React.FC = () => {
             ) : (
               <>
                 <div className="flex items-center justify-between mb-3">
-                  <span className="text-xs font-bold text-[#9E9891] tracking-wider">
+                <span className="text-xs font-bold tracking-wider" style={{ color: F.textTertiary }}>
                     {viewMonth}月{parseInt(selectedDate.split('-')[2])}日
                   </span>
                   <button onClick={() => openRecord('workout')}
@@ -1037,7 +1039,7 @@ const HealthApp: React.FC = () => {
                   <div className="mb-3" style={{ ...clay.cardRose, padding: '14px 16px' }}>
                     <div className="flex items-center gap-3">
                       <div style={{ width: 36, height: 36, borderRadius: R.small, background: CAT_COLORS.period.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                        <Drop size={16} weight="fill" color="#fff" />
+                        <Drop size={16} weight="fill" color={F.surfaceRaised} />
                       </div>
                       <div className="flex-1 min-w-0">
                         <span style={{ fontSize: '15px', fontWeight: 600, color: CAT_COLORS.period.fg }}>经期</span>
@@ -1214,7 +1216,7 @@ const HealthApp: React.FC = () => {
             </span>
           </div>
           {dietHasMacros && (
-            <div className="flex justify-center gap-4 -mt-2 mb-3 text-[10px] text-[#9E9891]">
+          <div className="flex justify-center gap-4 -mt-2 mb-3 text-[10px]" style={{ color: F.textTertiary }}>
               <span className="flex items-center gap-1">
                 <span style={{ width: 6, height: 6, borderRadius: '50%', background: MACRO_COLORS.protein }} />蛋白
               </span>
@@ -1281,22 +1283,22 @@ const HealthApp: React.FC = () => {
             return (
               <div className="mb-3 p-3" style={{ ...clay.card }}>
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-bold text-[#6E665F]">体重趋势</span>
-                  <span className="text-[10px] text-[#9E9891]">
+                  <span className="text-xs font-bold" style={{ color: F.textSecondary }}>体重趋势</span>
+                  <span className="text-[10px]" style={{ color: F.textTertiary }}>
                     {weightHistory[0].date.slice(5)} → {weightHistory[weightHistory.length - 1].date.slice(5)}
                   </span>
                 </div>
                 <svg viewBox={`-4 -4 ${W + 8} ${H + 8}`} width="100%" height={H + 8}>
-                  <polyline points={points} fill="none" stroke="#6366f1" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+                  <polyline points={points} fill="none" stroke={HUE.indigo.main} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
                   {vals.map((v, i) => {
                     const x = vals.length === 1 ? W / 2 : (i / (vals.length - 1)) * W;
                     const y = H - ((v - min) / range) * H;
-                    return <circle key={i} cx={x} cy={y} r="3" fill="#6366f1" />;
+                    return <circle key={i} cx={x} cy={y} r="3" fill={HUE.indigo.main} />;
                   })}
                 </svg>
-                <div className="flex justify-between text-[10px] text-[#9E9891] mt-1">
+                <div className="flex justify-between text-[10px] mt-1" style={{ color: F.textTertiary }}>
                   <span>{vals[0]}kg</span>
-                  <span>最新 <b className="text-[#6E665F]">{vals[vals.length - 1]}kg</b></span>
+                  <span>最新 <b style={{ color: F.textSecondary }}>{vals[vals.length - 1]}kg</b></span>
                 </div>
               </div>
             );
@@ -1312,7 +1314,7 @@ const HealthApp: React.FC = () => {
 
           {/* Today records */}
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-[#9E9891] tracking-wider">
+          <span className="text-xs font-bold tracking-wider" style={{ color: F.textTertiary }}>
               {todayViewOffset === 0 ? '今日记录' : `${viewDay.getMonth() + 1}月${viewDay.getDate()}日记录`}
             </span>
             <button onClick={() => openRecord('workout')}
@@ -1392,7 +1394,7 @@ const HealthApp: React.FC = () => {
             <div className="mb-3" style={{ ...clay.cardRose, padding: '14px 16px' }}>
               <div className="flex items-center gap-3">
                 <div style={{ width: 36, height: 36, borderRadius: R.small, background: CAT_COLORS.period.shadow, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <Drop size={16} weight="fill" color="#fff" />
+                  <Drop size={16} weight="fill" color={F.surfaceRaised} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <span style={{ fontSize: '14px', fontWeight: 600, color: CAT_COLORS.period.fg }}>经期</span>
@@ -1454,8 +1456,8 @@ const HealthApp: React.FC = () => {
           onClick={(e) => { if (e.target === e.currentTarget) closeRecord(); }}>
           <div className="w-full px-5 pt-2 pb-10 flex flex-col"
             style={{
-              background: clay.bg, borderRadius: '28px 28px 0 0',
-              boxShadow: '0 -6px 16px rgba(0,0,0,0.10), 0 3px 10px rgba(255,255,255,0.70)',
+              background: clay.bg, borderRadius: `${R.sheet}px ${R.sheet}px 0 0`,
+              boxShadow: S.floating,
               height: `${modalHeight}px`,
               transition: isDraggingModal ? 'none' : 'height 0.25s ease',
             }}>
@@ -1484,23 +1486,23 @@ const HealthApp: React.FC = () => {
                   const { maxH } = modalDragRef.current;
                   setModalHeight(h => (h - MODAL_BASE_H < (maxH - MODAL_BASE_H) / 2 ? MODAL_BASE_H : maxH));
                 }}>
-                <div className="w-10 h-1 rounded-full bg-[#D8CFC4]" />
+                <div className="w-10 h-1 rounded-full" style={{ background: F.borderStrong }} />
               </div>
             ) : (
               <div className="shrink-0 h-3" />
             )}
 
             <div className="flex items-center justify-between mb-4 shrink-0">
-              <span className="text-base font-bold text-[#2E2A28]">{editingId ? '编辑记录' : '新记录'}</span>
+            <span className="text-base font-bold" style={{ color: F.textPrimary }}>{editingId ? '编辑记录' : '新记录'}</span>
               <button onClick={closeRecord} className={`w-7 h-7 flex items-center justify-center ${clay.pressSmall}`}
                 style={{ background: F.surfaceRaised, borderRadius: R.pill, boxShadow: S.raisedSoft }}>
-                <X size={14} className="text-[#9E9891]" />
+                <X size={14} style={{ color: F.textTertiary }} />
               </button>
             </div>
 
             {/* 5-tab selector — category colored */}
             <div className="flex gap-1 mb-4 p-1 shrink-0"
-              style={{ background: F.surfaceSunken, borderRadius: '28px' }}>
+              style={{ background: F.surfaceSunken, borderRadius: R.sheet }}>
               {TAB_ORDER.map(tab => {
                 const c = CAT_COLORS[tab.id];
                 const isActive = recordMode === tab.id;
@@ -1511,7 +1513,7 @@ const HealthApp: React.FC = () => {
                     style={{
                       borderRadius: R.pill,
                       background: isActive ? c.active : 'transparent',
-                      color: isActive ? '#fff' : F.textTertiary,
+                      color: isActive ? F.surfaceRaised : F.textTertiary,
                       fontWeight: isActive ? 600 : 400,
                       boxShadow: isActive ? S.raisedMedium : 'none',
                     }}>
@@ -1527,7 +1529,7 @@ const HealthApp: React.FC = () => {
               {/* ── Workout ── */}
               {recordMode === 'workout' && (
                 <div className="flex flex-col h-full">
-                  <span className="text-xs font-bold text-[#9E9891] uppercase tracking-wider">运动项目</span>
+                <span className="text-xs font-bold uppercase tracking-wider" style={{ color: F.textTertiary }}>运动项目</span>
                   <div className="flex flex-wrap gap-1.5 mt-1.5">
                     {WORKOUT_ACTIVITIES.map(act => {
                       const on = workoutActivities.includes(act);
@@ -1538,7 +1540,7 @@ const HealthApp: React.FC = () => {
                           style={{
                             borderRadius: R.pill,
                             background: on ? CAT_COLORS.workout.active : F.surfaceRaised,
-                            color: on ? '#fff' : F.textTertiary,
+                            color: on ? F.surfaceRaised : F.textTertiary,
                             fontWeight: on ? 600 : 400,
                             boxShadow: on ? S.raisedMedium : S.raisedSoft,
                           }}>
@@ -1550,7 +1552,7 @@ const HealthApp: React.FC = () => {
 
                   {workoutActivities.includes('力量') && (
                     <>
-                      <span className="text-xs font-bold text-[#9E9891] uppercase tracking-wider mt-3">训练部位</span>
+                    <span className="text-xs font-bold uppercase tracking-wider mt-3" style={{ color: F.textTertiary }}>训练部位</span>
                       <div className="flex flex-wrap gap-1.5 mt-1.5">
                         {WORKOUT_PARTS.map(part => {
                           const on = workoutParts.includes(part);
@@ -1575,25 +1577,25 @@ const HealthApp: React.FC = () => {
 
                   <div className="flex gap-3 mt-3">
                     <div className="flex-1">
-                      <span className="text-xs font-bold text-[#9E9891]">消耗热量</span>
+                    <span className="text-xs font-bold" style={{ color: F.textTertiary }}>消耗热量</span>
                       <input type="number" value={workoutCalories} onChange={e => setWorkoutCalories(e.target.value ? Number(e.target.value) : '')}
                         placeholder="kcal"
-                        className="mt-1 w-full px-4 py-2.5 text-sm text-[#2E2A28] focus:outline-none"
+                          className="mt-1 w-full px-4 py-2.5 text-sm focus:outline-none" style={{ color: F.textPrimary }}
                         style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
                     </div>
                     <div className="flex-1">
-                      <span className="text-xs font-bold text-[#9E9891]">时长（分钟）</span>
+                    <span className="text-xs font-bold" style={{ color: F.textTertiary }}>时长（分钟）</span>
                       <input type="number" value={workoutDuration} onChange={e => setWorkoutDuration(e.target.value ? Number(e.target.value) : '')}
                         placeholder="60"
-                        className="mt-1 w-full px-4 py-2.5 text-sm text-[#2E2A28] focus:outline-none"
+                          className="mt-1 w-full px-4 py-2.5 text-sm focus:outline-none" style={{ color: F.textPrimary }}
                         style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
                     </div>
                   </div>
 
-                  <span className="text-xs font-bold text-[#9E9891] uppercase tracking-wider mt-3">备注（可选）</span>
+                  <span className="text-xs font-bold uppercase tracking-wider mt-3" style={{ color: F.textTertiary }}>备注（可选）</span>
                   <textarea value={recordText} onChange={e => setRecordText(e.target.value)}
                     placeholder="杠铃划船三组、深蹲三组..."
-                    className="mt-1.5 w-full px-4 py-3 text-sm text-[#2E2A28] placeholder:text-[#9E9891] resize-none focus:outline-none leading-relaxed"
+                      className="mt-1.5 w-full px-4 py-3 text-sm placeholder:text-[#9E9891] resize-none focus:outline-none leading-relaxed" style={{ color: F.textPrimary }}
                     style={{ background: F.surfaceSunken, borderRadius: R.input, boxShadow: S.sunken, border: `1px solid ${F.borderSoft}`, minHeight: '60px' }} />
 
                   <button onClick={handleSubmitWorkout} disabled={(workoutActivities.length === 0 && !recordText.trim() && !workoutCalories) || isSubmitting}
@@ -1607,28 +1609,28 @@ const HealthApp: React.FC = () => {
               {/* ── Sleep ── */}
               {recordMode === 'sleep' && (
                 <div className="flex flex-col h-full">
-                  <span className="text-xs font-bold text-[#9E9891] uppercase tracking-wider">入睡 / 起床时间</span>
+                <span className="text-xs font-bold uppercase tracking-wider" style={{ color: F.textTertiary }}>入睡 / 起床时间</span>
                   <div className="flex gap-3 mt-2 items-end">
                     <div className="flex-1">
-                      <label className="text-[10px] text-[#9E9891]">入睡</label>
+                    <label className="text-[10px]" style={{ color: F.textTertiary }}>入睡</label>
                       <input type="time" value={sleepBedtime} onChange={e => setSleepBedtime(e.target.value)}
-                        className="w-full px-3 py-2.5 text-center text-base font-bold text-[#2E2A28] focus:outline-none"
+                        className="w-full px-3 py-2.5 text-center text-base font-bold focus:outline-none" style={{ color: F.textPrimary }}
                         style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
                     </div>
-                    <span className="text-[#9E9891] pb-3">→</span>
+                    <span className="pb-3" style={{ color: F.textTertiary }}>→</span>
                     <div className="flex-1">
-                      <label className="text-[10px] text-[#9E9891]">起床</label>
+                    <label className="text-[10px]" style={{ color: F.textTertiary }}>起床</label>
                       <input type="time" value={sleepWakeTime} onChange={e => setSleepWakeTime(e.target.value)}
-                        className="w-full px-3 py-2.5 text-center text-base font-bold text-[#2E2A28] focus:outline-none"
+                        className="w-full px-3 py-2.5 text-center text-base font-bold focus:outline-none" style={{ color: F.textPrimary }}
                         style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
                     </div>
                   </div>
                   <div className="text-center py-3">
-                    <span className="text-2xl font-bold text-[#2E2A28]">{fmtDuration(calcSleepMinutes(sleepBedtime, sleepWakeTime))}</span>
-                    <p className="text-[10px] text-[#9E9891] mt-1">睡眠时长</p>
+                    <span className="text-2xl font-bold" style={{ color: F.textPrimary }}>{fmtDuration(calcSleepMinutes(sleepBedtime, sleepWakeTime))}</span>
+                    <p className="text-[10px] mt-1" style={{ color: F.textTertiary }}>睡眠时长</p>
                   </div>
 
-                  <span className="text-xs font-bold text-[#9E9891] uppercase tracking-wider mt-2">睡眠质量</span>
+                  <span className="text-xs font-bold uppercase tracking-wider mt-2" style={{ color: F.textTertiary }}>睡眠质量</span>
                   <div className="flex gap-2 mt-1.5">
                     {(['good','ok','poor'] as SleepQuality[]).map(q => (
                       <button key={q} onClick={() => setSleepQuality(q)}
@@ -1636,7 +1638,7 @@ const HealthApp: React.FC = () => {
                         style={{
                           borderRadius: R.pill,
                           background: sleepQuality === q ? CAT_COLORS.sleep.active : F.surfaceRaised,
-                          color: sleepQuality === q ? '#fff' : F.textSecondary,
+                          color: sleepQuality === q ? F.surfaceRaised : F.textSecondary,
                           fontWeight: sleepQuality === q ? 600 : 400,
                           boxShadow: sleepQuality === q ? S.raisedMedium : S.raisedSoft,
                         }}>
@@ -1645,9 +1647,9 @@ const HealthApp: React.FC = () => {
                     ))}
                   </div>
 
-                  <span className="text-xs font-bold text-[#9E9891] uppercase tracking-wider mt-4">备注（可选）</span>
+                  <span className="text-xs font-bold uppercase tracking-wider mt-4" style={{ color: F.textTertiary }}>备注（可选）</span>
                   <input value={sleepNote} onChange={e => setSleepNote(e.target.value)} placeholder="做梦、失眠..."
-                    className="mt-1.5 w-full px-4 py-2.5 text-sm text-[#2E2A28] focus:outline-none"
+                    className="mt-1.5 w-full px-4 py-2.5 text-sm focus:outline-none" style={{ color: F.textPrimary }}
                     style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
 
                   <button onClick={handleSubmitSleep} disabled={isSubmitting}
@@ -1661,14 +1663,14 @@ const HealthApp: React.FC = () => {
               {/* ── Diet ── */}
               {recordMode === 'diet' && (
                 <div className="flex flex-col h-full">
-                  <span className="text-xs font-bold text-[#9E9891] uppercase tracking-wider">描述今天吃了什么</span>
+                <span className="text-xs font-bold uppercase tracking-wider" style={{ color: F.textTertiary }}>描述今天吃了什么</span>
                   <textarea value={dietText}
                     onChange={e => {
                       setDietText(e.target.value); setDietParsed(false);
                       if (!editingId) saveDietDraft(periodDate, e.target.value); // 实时存草稿，关弹窗不丢
                     }}
                     placeholder="随手记：包子两个、麻辣烫...（晚上一起估算）"
-                    className="mt-1.5 w-full px-4 py-3 text-sm text-[#2E2A28] placeholder:text-[#9E9891] resize-none focus:outline-none leading-relaxed"
+                      className="mt-1.5 w-full px-4 py-3 text-sm placeholder:text-[#9E9891] resize-none focus:outline-none leading-relaxed" style={{ color: F.textPrimary }}
                     style={{ background: F.surfaceSunken, borderRadius: R.input, boxShadow: S.sunken, border: `1px solid ${F.borderSoft}`, minHeight: '80px' }} />
 
                   <div className="flex gap-2 mt-2">
@@ -1681,20 +1683,20 @@ const HealthApp: React.FC = () => {
                       <button onClick={() => setShowCameraMenu(!showCameraMenu)}
                         className={`w-11 h-[42px] flex items-center justify-center ${clay.pressSmall}`}
                         style={{ background: CAT_COLORS.diet.bg, borderRadius: R.pill, boxShadow: S.raisedSoft }}>
-                        <Camera size={18} weight="bold" className="text-amber-700" />
+                        <Camera size={18} weight="bold" style={{ color: HUE.amber.ink }} />
                       </button>
                       {showCameraMenu && (
                         <div className="absolute bottom-full right-0 mb-2 py-1 w-32 z-10"
                           style={{ background: F.surfaceRaised, borderRadius: R.bigCard, boxShadow: S.raisedSoft }}>
-                          <label className="flex items-center gap-2 px-3 py-2.5 text-xs font-medium text-[#2E2A28] hover:bg-[#ECE8E1] cursor-pointer">
+                          <label className="flex items-center gap-2 px-3 py-2.5 text-xs font-medium cursor-pointer" style={{ color: F.textPrimary }}>
                             拍照
                             <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handleImageInput} />
                           </label>
-                          <label className="flex items-center gap-2 px-3 py-2.5 text-xs font-medium text-[#2E2A28] hover:bg-[#ECE8E1] cursor-pointer">
+                          <label className="flex items-center gap-2 px-3 py-2.5 text-xs font-medium cursor-pointer" style={{ color: F.textPrimary }}>
                             从相册选择
                             <input type="file" accept="image/*" className="hidden" onChange={handleImageInput} />
                           </label>
-                          <label className="flex items-center gap-2 px-3 py-2.5 text-xs font-medium text-[#2E2A28] hover:bg-[#ECE8E1] cursor-pointer">
+                          <label className="flex items-center gap-2 px-3 py-2.5 text-xs font-medium cursor-pointer" style={{ color: F.textPrimary }}>
                             上传文件
                             <input type="file" className="hidden" onChange={handleImageInput} />
                           </label>
@@ -1706,35 +1708,35 @@ const HealthApp: React.FC = () => {
                   {/* Macro panel — 常驻可手填，AI 估算后自动填充 */}
                   <div className="mt-3 p-3" style={clay.cardAmber}>
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-bold text-amber-800">
+                      <span className="text-xs font-bold" style={{ color: HUE.amber.ink }}>
                         {dietParsed && !editingId ? '估算结果 · 可修改' : '营养数据（可手填）'}
                       </span>
                       {dietParsed && !editingId && (
-                        <button onClick={handleDietEstimate} className="text-[10px] text-amber-600">重新估算</button>
+                        <button onClick={handleDietEstimate} className="text-[10px]" style={{ color: HUE.amber.main }}>重新估算</button>
                       )}
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       {([
-                        { label: '总热量', val: dietCalories, set: setDietCalories, unit: 'kcal', color: '#92400e' },
-                        { label: '蛋白质', val: dietProtein,  set: setDietProtein,  unit: 'g', color: '#0d9488' },
-                        { label: '碳水',   val: dietCarbs,    set: setDietCarbs,    unit: 'g', color: '#d97706' },
-                        { label: '脂肪',   val: dietFat,      set: setDietFat,      unit: 'g', color: '#e11d48' },
+                        { label: '总热量', val: dietCalories, set: setDietCalories, unit: 'kcal', color: HUE.amber.ink },
+                        { label: '蛋白质', val: dietProtein,  set: setDietProtein,  unit: 'g', color: HUE.teal.ink },
+                        { label: '碳水',   val: dietCarbs,    set: setDietCarbs,    unit: 'g', color: HUE.amber.main },
+                        { label: '脂肪',   val: dietFat,      set: setDietFat,      unit: 'g', color: STATUS.danger.main },
                       ] as const).map(f => (
                         <div key={f.label} className="flex items-baseline gap-1">
-                          <span className="text-[10px] text-[#9E9891] w-10">{f.label}</span>
+                        <span className="text-[10px] w-10" style={{ color: F.textTertiary }}>{f.label}</span>
                           <input type="number" value={f.val} onChange={e => f.set(e.target.value ? Number(e.target.value) : '')}
                             placeholder="—"
                             className="w-14 text-sm font-bold text-right focus:outline-none"
                             style={{ background: 'transparent', color: f.color, border: 'none' }} />
-                          <span className="text-[10px] text-[#9E9891]">{f.unit}</span>
+                            <span className="text-[10px]" style={{ color: F.textTertiary }}>{f.unit}</span>
                         </div>
                       ))}
                     </div>
                   </div>
 
-                  <span className="text-xs font-bold text-[#9E9891] uppercase tracking-wider mt-4">标签（可选）</span>
+                  <span className="text-xs font-bold uppercase tracking-wider mt-4" style={{ color: F.textTertiary }}>标签（可选）</span>
                   <input value={dietNote} onChange={e => setDietNote(e.target.value)} placeholder="早餐、午餐、晚餐..."
-                    className="mt-1.5 w-full px-4 py-2.5 text-sm text-[#2E2A28] focus:outline-none"
+                    className="mt-1.5 w-full px-4 py-2.5 text-sm focus:outline-none" style={{ color: F.textPrimary }}
                     style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
 
                   <button onClick={handleSubmitDiet} disabled={!dietCalories || isSubmitting}
@@ -1748,7 +1750,7 @@ const HealthApp: React.FC = () => {
               {/* ── Period ── */}
               {recordMode === 'period' && (
                 <div className="flex flex-col h-full">
-                  <span className="text-xs font-bold text-[#9E9891] uppercase tracking-wider">经期量</span>
+                <span className="text-xs font-bold uppercase tracking-wider" style={{ color: F.textTertiary }}>经期量</span>
                   <div className="flex gap-2 mt-1.5">
                     {(['spotting','light','medium','heavy'] as PeriodFlow[]).map(f => (
                       <button key={f} onClick={() => setPeriodFlow(f)}
@@ -1756,7 +1758,7 @@ const HealthApp: React.FC = () => {
                         style={{
                           borderRadius: R.pill,
                           background: periodFlow === f ? CAT_COLORS.period.active : F.surfaceRaised,
-                          color: periodFlow === f ? '#fff' : F.textSecondary,
+                          color: periodFlow === f ? F.surfaceRaised : F.textSecondary,
                           fontWeight: periodFlow === f ? 600 : 400,
                           boxShadow: periodFlow === f ? S.raisedMedium : S.raisedSoft,
                         }}>
@@ -1764,7 +1766,7 @@ const HealthApp: React.FC = () => {
                       </button>
                     ))}
                   </div>
-                  <span className="text-xs font-bold text-[#9E9891] uppercase tracking-wider mt-4">伴随症状（可选）</span>
+                  <span className="text-xs font-bold uppercase tracking-wider mt-4" style={{ color: F.textTertiary }}>伴随症状（可选）</span>
                   <div className="flex flex-wrap gap-2 mt-1.5">
                     {PMS_SYMPTOMS.map(sym => {
                       const on = pmsSymptoms.includes(sym);
@@ -1775,7 +1777,7 @@ const HealthApp: React.FC = () => {
                           style={{
                             borderRadius: R.pill,
                             background: on ? CAT_COLORS.period.active : F.surfaceRaised,
-                            color: on ? '#fff' : F.textSecondary,
+                            color: on ? F.surfaceRaised : F.textSecondary,
                             fontWeight: on ? 600 : 400,
                             boxShadow: on ? S.raisedMedium : S.raisedSoft,
                           }}>
@@ -1795,7 +1797,7 @@ const HealthApp: React.FC = () => {
               {/* ── Symptom（身体不适） ── */}
               {recordMode === 'symptom' && (
                 <div className="flex flex-col h-full">
-                  <span className="text-xs font-bold text-[#9E9891] uppercase tracking-wider">身体不适（可多选）</span>
+                <span className="text-xs font-bold uppercase tracking-wider" style={{ color: F.textTertiary }}>身体不适（可多选）</span>
                   <div className="flex flex-wrap gap-2 mt-1.5">
                     {GENERAL_SYMPTOMS.map(sym => (
                       <button key={sym} onClick={() => toggleSymptom(sym)}
@@ -1803,7 +1805,7 @@ const HealthApp: React.FC = () => {
                         style={{
                           borderRadius: R.pill,
                           background: periodSymptoms.includes(sym) ? CAT_COLORS.symptom.active : F.surfaceRaised,
-                          color: periodSymptoms.includes(sym) ? '#fff' : F.textSecondary,
+                          color: periodSymptoms.includes(sym) ? F.surfaceRaised : F.textSecondary,
                           fontWeight: periodSymptoms.includes(sym) ? 600 : 400,
                           boxShadow: periodSymptoms.includes(sym) ? S.raisedMedium : S.raisedSoft,
                         }}>
@@ -1811,7 +1813,7 @@ const HealthApp: React.FC = () => {
                       </button>
                     ))}
                   </div>
-                  <p className="text-[10px] text-[#9E9891] mt-2">经期相关症状（痛经等）在经期 tab 里记录</p>
+                  <p className="text-[10px] mt-2" style={{ color: F.textTertiary }}>经期相关症状（痛经等）在经期 tab 里记录</p>
                   <button onClick={handleSubmitSymptom} disabled={(periodSymptoms.length === 0 && !editingId) || isSubmitting}
                     className={`w-full text-white font-bold py-3.5 mt-auto disabled:opacity-40 ${clay.press}`}
                     style={{ background: CAT_COLORS.symptom.active, borderRadius: R.pill, boxShadow: S.raisedMedium }}>
@@ -1831,35 +1833,35 @@ const HealthApp: React.FC = () => {
         <div className="absolute inset-0 bg-black/15 backdrop-blur-sm z-50 flex items-center justify-center"
           onClick={(e) => { if (e.target === e.currentTarget && profile) setShowProfileSetup(false); }}>
           <div className="w-[85%] max-w-xs p-5 flex flex-col gap-3 max-h-[80vh] overflow-y-auto"
-            style={{ background: clay.bg, borderRadius: '28px', boxShadow: S.raisedSoft }}>
+            style={{ background: clay.bg, borderRadius: R.sheet, boxShadow: S.raisedSoft }}>
 
-            <span className="text-base font-bold text-[#2E2A28]">健康档案</span>
-            <p className="text-[11px] text-[#9E9891] -mt-1">用于计算基础代谢率(BMR)，数据仅存本地</p>
+            <span className="text-base font-bold" style={{ color: F.textPrimary }}>健康档案</span>
+            <p className="text-[11px] -mt-1" style={{ color: F.textTertiary }}>用于计算基础代谢率(BMR)，数据仅存本地</p>
 
             <div className="flex gap-3">
               <div className="flex-1">
-                <span className="text-[10px] text-[#9E9891]">身高(cm)</span>
+              <span className="text-[10px]" style={{ color: F.textTertiary }}>身高(cm)</span>
                 <input type="number" value={pfHeight} onChange={e => setPfHeight(e.target.value ? Number(e.target.value) : '')}
-                  placeholder="165" className="mt-1 w-full px-3 py-2 text-sm font-bold text-[#2E2A28] focus:outline-none"
+                placeholder="165" className="mt-1 w-full px-3 py-2 text-sm font-bold focus:outline-none" style={{ color: F.textPrimary }}
                   style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
               </div>
               <div className="flex-1">
-                <span className="text-[10px] text-[#9E9891]">体重(kg)</span>
+              <span className="text-[10px]" style={{ color: F.textTertiary }}>体重(kg)</span>
                 <input type="number" step="0.1" value={pfWeight} onChange={e => setPfWeight(e.target.value ? Number(e.target.value) : '')}
-                  placeholder="55" className="mt-1 w-full px-3 py-2 text-sm font-bold text-[#2E2A28] focus:outline-none"
+                placeholder="55" className="mt-1 w-full px-3 py-2 text-sm font-bold focus:outline-none" style={{ color: F.textPrimary }}
                   style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
               </div>
             </div>
 
             <div className="flex gap-3">
               <div className="flex-1">
-                <span className="text-[10px] text-[#9E9891]">年龄</span>
+              <span className="text-[10px]" style={{ color: F.textTertiary }}>年龄</span>
                 <input type="number" value={pfAge} onChange={e => setPfAge(e.target.value ? Number(e.target.value) : '')}
-                  placeholder="24" className="mt-1 w-full px-3 py-2 text-sm font-bold text-[#2E2A28] focus:outline-none"
+                placeholder="24" className="mt-1 w-full px-3 py-2 text-sm font-bold focus:outline-none" style={{ color: F.textPrimary }}
                   style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
               </div>
               <div className="flex-1">
-                <span className="text-[10px] text-[#9E9891]">性别</span>
+              <span className="text-[10px]" style={{ color: F.textTertiary }}>性别</span>
                 <div className="flex gap-1.5 mt-1">
                   {(['F', 'M'] as const).map(s => (
                     <button key={s} onClick={() => setPfSex(s)}
@@ -1867,7 +1869,7 @@ const HealthApp: React.FC = () => {
                       style={{
                         borderRadius: R.pill,
                         background: pfSex === s ? HUE.blue.main : F.surfaceRaised,
-                        color: pfSex === s ? '#fff' : F.textSecondary,
+                        color: pfSex === s ? F.surfaceRaised : F.textSecondary,
                         boxShadow: pfSex === s ? S.raisedMedium : S.raisedSoft,
                       }}>
                       {s === 'F' ? '女' : '男'}
@@ -1878,16 +1880,16 @@ const HealthApp: React.FC = () => {
             </div>
 
             <div>
-              <span className="text-[10px] text-[#9E9891]">体脂率 %（可选，有的话 BMR 更准）</span>
+            <span className="text-[10px]" style={{ color: F.textTertiary }}>体脂率 %（可选，有的话 BMR 更准）</span>
               <input type="number" step="0.1" value={pfBf} onChange={e => setPfBf(e.target.value ? Number(e.target.value) : '')}
-                placeholder="如 22.5" className="mt-1 w-full px-3 py-2 text-sm font-bold text-[#2E2A28] focus:outline-none"
+              placeholder="如 22.5" className="mt-1 w-full px-3 py-2 text-sm font-bold focus:outline-none" style={{ color: F.textPrimary }}
                 style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
             </div>
 
             <div className="h-px" style={{ background: F.divider }} />
 
             <div>
-              <span className="text-[10px] text-[#9E9891]">目标</span>
+            <span className="text-[10px]" style={{ color: F.textTertiary }}>目标</span>
               <div className="flex gap-1.5 mt-1">
                 {([
                   { id: 'maintain' as FitnessGoal, label: '维持' },
@@ -1905,7 +1907,7 @@ const HealthApp: React.FC = () => {
                     style={{
                       borderRadius: R.pill,
                       background: pfGoal === g.id ? HUE.green.main : F.surfaceRaised,
-                      color: pfGoal === g.id ? '#fff' : F.textSecondary,
+                      color: pfGoal === g.id ? F.surfaceRaised : F.textSecondary,
                       boxShadow: pfGoal === g.id ? S.raisedMedium : S.raisedSoft,
                     }}>
                     {g.label}
@@ -1916,27 +1918,27 @@ const HealthApp: React.FC = () => {
 
             <div className="flex gap-3">
               <div className="flex-1">
-                <span className="text-[10px] text-[#9E9891]">每日摄入目标(kcal)</span>
+              <span className="text-[10px]" style={{ color: F.textTertiary }}>每日摄入目标(kcal)</span>
                 <input type="number" value={pfCalTarget} onChange={e => setPfCalTarget(e.target.value ? Number(e.target.value) : '')}
                   placeholder={pfHeight && pfWeight && pfAge ? String(recommendCalories(calcBMR({ heightCm: Number(pfHeight), weightKg: Number(pfWeight), age: Number(pfAge), sex: pfSex, bodyFatPct: pfBf ? Number(pfBf) : undefined }), pfGoal)) : '1800'}
-                  className="mt-1 w-full px-3 py-2 text-sm font-bold text-[#2E2A28] focus:outline-none"
+                    className="mt-1 w-full px-3 py-2 text-sm font-bold focus:outline-none" style={{ color: F.textPrimary }}
                   style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
               </div>
             </div>
 
             <div className="flex gap-3">
               <div className="flex-1">
-                <span className="text-[10px] text-[#9E9891]">训练目标(kcal)</span>
+              <span className="text-[10px]" style={{ color: F.textTertiary }}>训练目标(kcal)</span>
                 <input type="number" value={pfWorkoutTarget} onChange={e => setPfWorkoutTarget(e.target.value ? Number(e.target.value) : '')}
                   placeholder="500"
-                  className="mt-1 w-full px-3 py-2 text-sm font-bold text-[#2E2A28] focus:outline-none"
+                    className="mt-1 w-full px-3 py-2 text-sm font-bold focus:outline-none" style={{ color: F.textPrimary }}
                   style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
               </div>
               <div className="flex-1">
-                <span className="text-[10px] text-[#9E9891]">睡眠目标(小时)</span>
+              <span className="text-[10px]" style={{ color: F.textTertiary }}>睡眠目标(小时)</span>
                 <input type="number" step="0.5" value={pfSleepTarget} onChange={e => setPfSleepTarget(e.target.value ? Number(e.target.value) : '')}
                   placeholder="8"
-                  className="mt-1 w-full px-3 py-2 text-sm font-bold text-[#2E2A28] focus:outline-none"
+                    className="mt-1 w-full px-3 py-2 text-sm font-bold focus:outline-none" style={{ color: F.textPrimary }}
                   style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
               </div>
             </div>
@@ -1950,8 +1952,8 @@ const HealthApp: React.FC = () => {
             <div className="h-px mt-2" style={{ background: F.divider }} />
 
             <button onClick={() => { addToast('导入功能开发中', 'info'); }}
-              className={`w-full text-[#6E665F] font-medium py-2.5 text-xs ${clay.pressSmall}`}
-              style={{ background: F.surfaceRaised, borderRadius: R.pill, boxShadow: S.raisedSoft }}>
+              className={`w-full font-medium py-2.5 text-xs ${clay.pressSmall}`}
+              style={{ color: F.textSecondary, background: F.surfaceRaised, borderRadius: R.pill, boxShadow: S.raisedSoft }}>
               导入 Apple Health 数据
             </button>
           </div>

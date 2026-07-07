@@ -96,8 +96,8 @@ const InputField: React.FC<React.InputHTMLAttributes<HTMLInputElement>> = (props
 
 const AddBtn: React.FC<{ onClick: () => void; color: string }> = ({ onClick, color }) => (
   <button onClick={onClick} className="flex items-center justify-center shrink-0 active:scale-90 transition-transform"
-    style={{ width: 30, height: 30, borderRadius: 10, background: color, boxShadow: `0 2px 6px ${color}40` }}>
-    <Plus size={16} weight="bold" color="#fff" />
+    style={{ width: 30, height: 30, borderRadius: R.small, background: color, boxShadow: S.raisedSoft }}>
+    <Plus size={16} weight="bold" color={F.surfaceRaised} />
   </button>
 );
 
@@ -311,17 +311,6 @@ const ShoppingApp: React.FC = () => {
     );
   }
 
-  // ── Top Bar ──
-  const TopBar: React.FC<{ title: string; onBack: () => void; right?: React.ReactNode }> = ({ title, onBack, right }) => (
-    <div className="relative flex items-center justify-between shrink-0" style={{ minHeight: 44 }}>
-      <IconBtn onClick={onBack}>
-        <CaretLeft size={22} weight="bold" color={F.textPrimary} />
-      </IconBtn>
-      <span className="absolute left-0 right-0 flex justify-center text-[17px] font-semibold pointer-events-none" style={{ color: F.textPrimary }}>{title}</span>
-      {right || <div style={{ width: 44 }} />}
-    </div>
-  );
-
   // ── Cart Badge Button ──
   const CartBtn: React.FC = () => (
     <IconBtn onClick={() => go('cart')}>
@@ -329,7 +318,7 @@ const ShoppingApp: React.FC = () => {
       {cartCount > 0 && (
         <span className="absolute -top-1 -right-1 flex items-center justify-center" style={{
           minWidth: 18, height: 18, padding: '0 4px', borderRadius: R.pill,
-          background: STATUS.danger.main, color: '#fff', fontSize: 11, fontWeight: 700, border: `2px solid ${F.surface}`,
+          background: STATUS.danger.main, color: F.surfaceRaised, fontSize: 11, fontWeight: 700, border: `2px solid ${F.surface}`,
         }}>{cartCount}</span>
       )}
     </IconBtn>
@@ -360,25 +349,19 @@ const ShoppingApp: React.FC = () => {
   // ── SCREEN: Home ──
   const renderHome = () => (
     <>
-      <div className="relative flex items-center justify-between shrink-0" style={{ minHeight: 44 }}>
-        <IconBtn onClick={closeApp}><CaretLeft size={22} weight="bold" color={F.textPrimary} /></IconBtn>
-        <span className="absolute left-0 right-0 flex justify-center text-[17px] font-semibold pointer-events-none" style={{ color: F.textPrimary }}>投喂站</span>
-        <div className="relative"><CartBtn /></div>
-      </div>
-
       {/* 网购 / 外卖 入口 */}
       <div className="grid grid-cols-2 gap-3">
         <button onClick={() => go('net')} className="flex flex-col gap-2.5 active:scale-[.98] transition-transform text-left"
           style={{ borderRadius: R.bigCard, background: TEAL.tint, padding: 16, boxShadow: S.raisedSoft }}>
-          <div className="flex items-center justify-center" style={{ width: 44, height: 44, borderRadius: 12, background: TEAL.main, boxShadow: `0 3px 8px ${TEAL.ink}40` }}>
-            <ShoppingCart size={24} weight="bold" color="#fff" />
+          <div className="flex items-center justify-center" style={{ width: 44, height: 44, borderRadius: R.medium, background: TEAL.main, boxShadow: S.raisedSoft }}>
+            <ShoppingCart size={24} weight="bold" color={F.surfaceRaised} />
           </div>
           <div><div style={{ fontSize: 16, fontWeight: 600, color: TEAL.ink }}>网购</div><div style={{ fontSize: 12, color: TEAL.ink, opacity: 0.7, marginTop: 2 }}>按日期送达</div></div>
         </button>
         <button onClick={() => go('food')} className="flex flex-col gap-2.5 active:scale-[.98] transition-transform text-left"
           style={{ borderRadius: R.bigCard, background: AMBER.tint, padding: 16, boxShadow: S.raisedSoft }}>
-          <div className="flex items-center justify-center" style={{ width: 44, height: 44, borderRadius: 12, background: AMBER.main, boxShadow: `0 3px 8px ${AMBER.ink}40` }}>
-            <svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+          <div className="flex items-center justify-center" style={{ width: 44, height: 44, borderRadius: R.medium, background: AMBER.main, boxShadow: S.raisedSoft }}>
+            <svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke={F.surfaceRaised} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
               <path d="M5 11l1.5-4.5A2 2 0 0 1 8.4 5h7.2a2 2 0 0 1 1.9 1.5L19 11" />
               <path d="M3 11h18v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
               <path d="M7 15v3M17 15v3" />
@@ -402,7 +385,7 @@ const ShoppingApp: React.FC = () => {
               <button key={o.id} onClick={() => { setCurrentOrderId(o.id); go('detail'); }}
                 className="flex items-center gap-3.5 active:scale-[.99] transition-transform text-left"
                 style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.bigCard, padding: '14px 16px', boxShadow: S.raisedSoft }}>
-                <div className="shrink-0" style={{ width: 44, height: 44, borderRadius: 12, overflow: 'hidden', background: c.tint, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div className="shrink-0" style={{ width: 44, height: 44, borderRadius: R.medium, overflow: 'hidden', background: c.tint, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <CharAvatar name={o.receiver} avatar={findAvatar(o.receiver)} size={44} bg={c.tint} />
                 </div>
                 <div className="flex-1 min-w-0">
@@ -456,12 +439,11 @@ const ShoppingApp: React.FC = () => {
   // ── SCREEN: Net List ──
   const renderNetList = () => (
     <>
-      <TopBar title="网购" onBack={back} right={<div className="relative"><CartBtn /></div>} />
       <div className="grid grid-cols-2 gap-3">
         {netProducts.map(p => (
           <div key={p.id} className="relative" style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.large, overflow: 'hidden', boxShadow: S.raisedSoft }}>
             <button onClick={() => startEdit(p)} className="absolute top-2 right-2 flex items-center justify-center active:scale-90 transition-transform"
-              style={{ width: 28, height: 28, borderRadius: 8, background: `${F.surface}cc`, backdropFilter: 'blur(4px)' }}>
+              style={{ width: 28, height: 28, borderRadius: R.tiny, background: `${F.surface}cc`, backdropFilter: 'blur(4px)' }}>
               <PencilSimple size={14} weight="bold" color={F.textTertiary} />
             </button>
             <div className="flex items-center justify-center" style={{ height: 104, background: TEAL.tint }}>
@@ -489,11 +471,10 @@ const ShoppingApp: React.FC = () => {
   // ── SCREEN: Food List (shop grouped) ──
   const renderFoodList = () => (
     <>
-      <TopBar title="外卖" onBack={back} right={<div className="relative"><CartBtn /></div>} />
       {foodShops.map(s => (
         <div key={s.shop} style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.bigCard, overflow: 'hidden', boxShadow: S.raisedSoft }}>
           <div className="flex items-center gap-3" style={{ padding: '14px 16px 10px' }}>
-            <div className="flex items-center justify-center shrink-0" style={{ width: 44, height: 44, borderRadius: 12, background: AMBER.tint, fontSize: 18, fontWeight: 700, color: AMBER.ink }}>
+            <div className="flex items-center justify-center shrink-0" style={{ width: 44, height: 44, borderRadius: R.medium, background: AMBER.tint, fontSize: 18, fontWeight: 700, color: AMBER.ink }}>
               {mono(s.shop)}
             </div>
             <div className="flex-1 min-w-0">
@@ -506,7 +487,7 @@ const ShoppingApp: React.FC = () => {
               <div style={{ height: 1, background: F.divider, margin: '0 16px' }} />
               <div className="flex items-center gap-3" style={{ padding: '12px 16px' }}>
                 <button onClick={() => startEdit(p)} className="flex items-center justify-center shrink-0 active:scale-90 transition-transform"
-                  style={{ width: 28, height: 28, borderRadius: 8, background: F.surfaceSunken }}>
+                  style={{ width: 28, height: 28, borderRadius: R.tiny, background: F.surfaceSunken }}>
                   <PencilSimple size={14} weight="bold" color={F.textTertiary} />
                 </button>
                 <div className="flex-1 min-w-0">
@@ -539,7 +520,6 @@ const ShoppingApp: React.FC = () => {
 
     return (
       <>
-        <TopBar title="购物车" onBack={back} />
         {cartLines.length === 0 ? (
           <EmptyState
             icon={<ShoppingCart size={24} weight="bold" color={F.textTertiary} />}
@@ -548,7 +528,7 @@ const ShoppingApp: React.FC = () => {
         ) : (
           cartLines.map(c => (
             <div key={c.id} className="flex items-center gap-3" style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.large, padding: '14px 16px', boxShadow: S.raisedSoft }}>
-              <div className="flex items-center justify-center shrink-0" style={{ width: 46, height: 46, borderRadius: 12, background: c.cp.tint }}>
+              <div className="flex items-center justify-center shrink-0" style={{ width: 46, height: 46, borderRadius: R.medium, background: c.cp.tint }}>
                 <CatIcon cat={c.p.cat} color={c.cp.ink} size={24} />
               </div>
               <div className="flex-1 min-w-0">
@@ -556,14 +536,14 @@ const ShoppingApp: React.FC = () => {
                 <div style={{ fontSize: 12, color: F.textTertiary, marginTop: 1 }}>{c.p.brand}{c.p.note ? ' · ' + c.p.note : ''}</div>
               </div>
               {/* sunken stepper */}
-              <div className="flex items-center gap-2" style={{ padding: 4, borderRadius: 12, background: F.surfaceSunken, boxShadow: S.sunken }}>
+              <div className="flex items-center gap-2" style={{ padding: 4, borderRadius: R.medium, background: F.surfaceSunken, boxShadow: S.sunken }}>
                 <button onClick={() => updateQty(c.id, -1)} className="flex items-center justify-center active:scale-90 transition-transform"
-                  style={{ width: 26, height: 26, borderRadius: 8, background: F.surfaceRaised, boxShadow: '0 1px 3px rgba(70,66,58,.12)', color: F.textSecondary }}>
+                  style={{ width: 26, height: 26, borderRadius: R.tiny, background: F.surfaceRaised, boxShadow: S.raisedSoft, color: F.textSecondary }}>
                   <Minus size={14} weight="bold" />
                 </button>
                 <span style={{ minWidth: 18, textAlign: 'center', fontSize: 14, fontWeight: 600, color: F.textPrimary }}>{c.qty}</span>
                 <button onClick={() => updateQty(c.id, 1)} className="flex items-center justify-center active:scale-90 transition-transform"
-                  style={{ width: 26, height: 26, borderRadius: 8, background: F.surfaceRaised, boxShadow: '0 1px 3px rgba(70,66,58,.12)', color: F.textSecondary }}>
+                  style={{ width: 26, height: 26, borderRadius: R.tiny, background: F.surfaceRaised, boxShadow: S.raisedSoft, color: F.textSecondary }}>
                   <Plus size={14} weight="bold" />
                 </button>
               </div>
@@ -594,8 +574,6 @@ const ShoppingApp: React.FC = () => {
 
     return (
       <>
-        <TopBar title="确认订单" onBack={back} />
-
         {/* 收货角色 */}
         <div style={{ fontSize: 13, fontWeight: 600, color: F.textSecondary, paddingLeft: 4 }}>收货角色</div>
         <div className="flex gap-2.5">
@@ -608,7 +586,7 @@ const ShoppingApp: React.FC = () => {
                   width: 56, height: 56, borderRadius: '50%', overflow: 'hidden',
                   border: active ? `3px solid ${C.main}` : '3px solid transparent',
                   background: active ? C.main : F.surfaceSunken,
-                  boxShadow: active ? `0 3px 8px ${C.ink}40` : 'none',
+                  boxShadow: active ? S.raisedSoft : 'none',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}>
                   <CharAvatar name={r.name} avatar={r.avatar} size={50} bg={active ? C.main : F.surfaceSunken} />
@@ -626,7 +604,7 @@ const ShoppingApp: React.FC = () => {
             <React.Fragment key={c.id}>
               {i > 0 && <div style={{ height: 1, background: F.divider, margin: '0 16px' }} />}
               <div className="flex items-center gap-3.5" style={{ padding: '14px 16px' }}>
-                <div className="flex items-center justify-center shrink-0" style={{ width: 48, height: 48, borderRadius: 12, background: c.cp.tint }}>
+                <div className="flex items-center justify-center shrink-0" style={{ width: 48, height: 48, borderRadius: R.medium, background: c.cp.tint }}>
                   <CatIcon cat={c.p.cat} color={c.cp.ink} size={24} />
                 </div>
                 <div className="flex-1 min-w-0">
@@ -635,14 +613,14 @@ const ShoppingApp: React.FC = () => {
                   <div style={{ fontSize: 13, color: c.cp.ink, fontWeight: 600, marginTop: 2 }}>{yuan(c.p.price)}</div>
                 </div>
                 {/* sunken stepper */}
-                <div className="flex items-center gap-2" style={{ padding: 4, borderRadius: 12, background: F.surfaceSunken, boxShadow: S.sunken }}>
+                <div className="flex items-center gap-2" style={{ padding: 4, borderRadius: R.medium, background: F.surfaceSunken, boxShadow: S.sunken }}>
                   <button onClick={() => updateQty(c.id, -1)} className="flex items-center justify-center active:scale-90 transition-transform"
-                    style={{ width: 28, height: 28, borderRadius: 8, background: F.surfaceRaised, boxShadow: '0 1px 3px rgba(70,66,58,.12)', color: F.textSecondary }}>
+                    style={{ width: 28, height: 28, borderRadius: R.tiny, background: F.surfaceRaised, boxShadow: S.raisedSoft, color: F.textSecondary }}>
                     <Minus size={14} weight="bold" />
                   </button>
                   <span style={{ minWidth: 16, textAlign: 'center', fontSize: 14, fontWeight: 600, color: F.textPrimary }}>{c.qty}</span>
                   <button onClick={() => updateQty(c.id, 1)} className="flex items-center justify-center active:scale-90 transition-transform"
-                    style={{ width: 28, height: 28, borderRadius: 8, background: c.cp.main, boxShadow: `0 1px 3px ${c.cp.ink}30`, color: '#fff' }}>
+                    style={{ width: 28, height: 28, borderRadius: R.tiny, background: c.cp.main, boxShadow: S.raisedSoft, color: F.surfaceRaised }}>
                     <Plus size={14} weight="bold" />
                   </button>
                 </div>
@@ -675,8 +653,8 @@ const ShoppingApp: React.FC = () => {
                     style={{
                       height: 36, padding: '0 16px', borderRadius: R.button, fontSize: 13, fontWeight: 600,
                       background: active ? C.main : F.surfaceRaised,
-                      color: active ? '#fff' : F.textSecondary,
-                      boxShadow: active ? `0 2px 6px ${C.ink}30` : S.raisedSoft,
+                      color: active ? F.surfaceRaised : F.textSecondary,
+                      boxShadow: S.raisedSoft,
                     }}>
                     {isFood ? `${v} 分钟` : `${v} 天`}
                   </button>
@@ -696,11 +674,6 @@ const ShoppingApp: React.FC = () => {
   // ── SCREEN: Orders ──
   const renderOrders = () => (
     <>
-      <div className="relative flex items-center justify-between shrink-0" style={{ minHeight: 44 }}>
-        <IconBtn onClick={closeApp}><CaretLeft size={22} weight="bold" color={F.textPrimary} /></IconBtn>
-        <span className="absolute left-0 right-0 flex justify-center text-[17px] font-semibold pointer-events-none" style={{ color: F.textPrimary }}>我的订单</span>
-        <div style={{ width: 44 }} />
-      </div>
       <SunkenBox>
         <SegBtn label="进行中" active={ordersTab === 'active'} onClick={() => setOrdersTab('active')} />
         <SegBtn label="已完成" active={ordersTab === 'done'} onClick={() => setOrdersTab('done')} />
@@ -717,7 +690,7 @@ const ShoppingApp: React.FC = () => {
               className="flex flex-col gap-3 active:scale-[.99] transition-transform text-left"
               style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.bigCard, padding: 16, boxShadow: S.raisedSoft }}>
               <div className="flex items-center gap-2.5">
-                <div className="shrink-0" style={{ width: 36, height: 36, borderRadius: 10, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', background: c.tint }}>
+                <div className="shrink-0" style={{ width: 36, height: 36, borderRadius: R.small, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', background: c.tint }}>
                   <CharAvatar name={o.receiver} avatar={findAvatar(o.receiver)} size={36} bg={c.tint} />
                 </div>
                 <div className="flex-1"><span style={{ fontSize: 12, color: F.textTertiary }}>{o.type === 'food' ? '外卖' : '网购'} · 送给 {o.receiver}</span></div>
@@ -741,22 +714,21 @@ const ShoppingApp: React.FC = () => {
 
   // ── SCREEN: Order Detail ──
   const renderDetail = () => {
-    if (!currentOrder) return <TopBar title="订单详情" onBack={back} />;
+    if (!currentOrder) return null;
     const o = currentOrder;
     const c = pal(o.type);
     const total = o.lines.reduce((a, l) => { const p = products.find(x => x.id === l.id); return a + (p ? p.price * l.qty : 0); }, 0);
 
     return (
       <>
-        <TopBar title="订单详情" onBack={back} />
         {/* receiver hero */}
         <div className="flex items-center gap-3" style={{ padding: '14px 16px', borderRadius: R.bigCard, background: c.tint, boxShadow: S.raisedSoft }}>
-          <div className="shrink-0" style={{ width: 48, height: 48, borderRadius: '50%', overflow: 'hidden', boxShadow: `0 3px 8px ${c.ink}30` }}>
+          <div className="shrink-0" style={{ width: 48, height: 48, borderRadius: '50%', overflow: 'hidden', boxShadow: S.raisedSoft }}>
             <CharAvatar name={o.receiver} avatar={findAvatar(o.receiver)} size={48} bg={c.main} />
           </div>
           <div className="flex-1">
             <div style={{ fontSize: 13, opacity: 0.75, color: c.ink }}>送给</div>
-            <div style={{ fontSize: 17, fontWeight: 600, color: c.ink }}>{o.receiver}</div>
+            <div style={{ fontSize: 16, fontWeight: 600, color: c.ink }}>{o.receiver}</div>
           </div>
           <span style={{ padding: '5px 12px', borderRadius: R.pill, background: F.surface, fontSize: 12, fontWeight: 600, color: c.ink }}>
             {o.status === 'done' ? '已完成' : (o.type === 'food' ? '配送中' : '运送中')}
@@ -798,7 +770,7 @@ const ShoppingApp: React.FC = () => {
             <div className="flex flex-col items-center" style={{ width: 20 }}>
               <span style={{ width: 14, height: 14, borderRadius: R.pill, flexShrink: 0,
                 background: o.status === 'done' ? c.main : F.surfaceSunken,
-                boxShadow: o.status === 'done' ? `0 0 0 3px ${c.tint}` : 'inset 1px 1px 2px rgba(70,66,58,.15)' }} />
+                boxShadow: o.status === 'done' ? `0 0 0 3px ${c.tint}` : S.sunken }} />
             </div>
             <div className="flex-1 pb-3">
               <div style={{ fontSize: 14, fontWeight: o.status === 'done' ? 700 : 600, color: o.status === 'done' ? c.ink : F.textTertiary }}>送达</div>
@@ -813,7 +785,7 @@ const ShoppingApp: React.FC = () => {
             if (!p) return null;
             return (
               <div key={l.id} className="flex items-center gap-3.5" style={{ padding: '12px 16px' }}>
-                <div className="flex items-center justify-center shrink-0" style={{ width: 44, height: 44, borderRadius: 12, background: c.tint }}>
+                <div className="flex items-center justify-center shrink-0" style={{ width: 44, height: 44, borderRadius: R.medium, background: c.tint }}>
                   <CatIcon cat={p.cat} color={c.ink} size={22} />
                 </div>
                 <div className="flex-1 min-w-0">
@@ -834,8 +806,8 @@ const ShoppingApp: React.FC = () => {
           </div>
           {/* user bubble - right */}
           <div className="flex justify-end">
-            <div style={{ maxWidth: '78%', padding: '10px 14px', borderRadius: '14px 14px 4px 14px', background: c.main, boxShadow: S.raisedSoft }}>
-              <span style={{ fontSize: 14, color: '#fff', lineHeight: 1.5 }}>{o.note}</span>
+            <div style={{ maxWidth: '78%', padding: '10px 14px', borderRadius: `${R.medium}px ${R.medium}px 4px ${R.medium}px`, background: c.main, boxShadow: S.raisedSoft }}>
+              <span style={{ fontSize: 14, color: F.surfaceRaised, lineHeight: 1.5 }}>{o.note}</span>
             </div>
           </div>
           {/* char reply - left */}
@@ -843,7 +815,7 @@ const ShoppingApp: React.FC = () => {
             <div className="shrink-0" style={{ width: 32, height: 32, borderRadius: '50%', overflow: 'hidden' }}>
               <CharAvatar name={o.receiver} avatar={findAvatar(o.receiver)} size={32} bg={c.tint} />
             </div>
-            <div style={{ maxWidth: '78%', padding: '10px 14px', borderRadius: '4px 14px 14px 14px', background: o.charReply ? c.tint : F.surfaceSunken }}>
+            <div style={{ maxWidth: '78%', padding: '10px 14px', borderRadius: `4px ${R.medium}px ${R.medium}px ${R.medium}px`, background: o.charReply ? c.tint : F.surfaceSunken }}>
               <span style={{ fontSize: 13, color: o.charReply ? c.ink : F.textTertiary, lineHeight: 1.5, fontStyle: o.charReply ? 'normal' : 'italic' }}>
                 {o.charReply || `送达后,${o.receiver}的回应会出现在这里…`}
               </span>
@@ -857,7 +829,6 @@ const ShoppingApp: React.FC = () => {
   // ── SCREEN: Add / Edit Product ──
   const renderAdd = () => (
     <>
-      <TopBar title={editingProductId ? '编辑商品' : '新增商品'} onBack={() => { clearForm(); back(); }} />
       <div style={{ fontSize: 13, fontWeight: 600, color: F.textSecondary, paddingLeft: 4 }}>商品名称</div>
       <InputField value={fName} onChange={e => setFName(e.target.value)} placeholder="草莓蛋糕" />
       <div style={{ fontSize: 13, fontWeight: 600, color: F.textSecondary, paddingLeft: 4 }}>店铺 / 品牌</div>
@@ -881,7 +852,7 @@ const ShoppingApp: React.FC = () => {
             <button key={key} onClick={() => setFCat(key)} className="inline-flex items-center gap-1.5 transition-all"
               style={{
                 height: 34, padding: '0 12px', borderRadius: R.pill, fontSize: 13, fontWeight: 600, cursor: 'pointer',
-                background: sel ? '#FBF4EA' : F.surface, color: sel ? HUE.brown.ink : F.textSecondary,
+                background: sel ? HUE.brown.tint : F.surface, color: sel ? HUE.brown.ink : F.textSecondary,
                 border: `1px solid ${sel ? F.accent : F.borderSoft}`,
               }}>
               <CatIcon cat={key} color={sel ? HUE.brown.ink : F.textTertiary} size={16} />
@@ -897,10 +868,34 @@ const ShoppingApp: React.FC = () => {
   const showTab = screen === 'home' || screen === 'orders';
   const showCartFooter = screen === 'cart' && cartCount > 0;
 
+  // Screen-specific TopBar config (rendered outside scroll container)
+  const topBarConfig: Record<Screen, { title: string; onBack: () => void; right?: React.ReactNode } | null> = {
+    home: { title: '投喂站', onBack: closeApp, right: <div className="relative"><CartBtn /></div> },
+    net: { title: '网购', onBack: back, right: <div className="relative"><CartBtn /></div> },
+    food: { title: '外卖', onBack: back, right: <div className="relative"><CartBtn /></div> },
+    cart: { title: '购物车', onBack: back },
+    checkout: { title: '确认订单', onBack: back },
+    orders: { title: '我的订单', onBack: closeApp },
+    detail: { title: '订单详情', onBack: back },
+    add: { title: editingProductId ? '编辑商品' : '新增商品', onBack: () => { clearForm(); back(); } },
+  };
+
   return (
     <div className="h-full flex flex-col" style={{ background: F.appBg }}>
+      {/* TopBar outside scroll container */}
+      {topBarConfig[screen] && (
+        <div className="shrink-0" style={{ paddingTop: 'var(--chrome-top)' }}>
+          <div className="relative flex items-center justify-between py-3" style={{ minHeight: 44, padding: '0 20px' }}>
+            <IconBtn onClick={topBarConfig[screen]!.onBack}>
+              <CaretLeft size={20} weight="bold" color={F.textSecondary} />
+            </IconBtn>
+            <span className="absolute left-0 right-0 flex justify-center font-semibold pointer-events-none" style={{ fontSize: 16, color: F.textPrimary }}>{topBarConfig[screen]!.title}</span>
+            {topBarConfig[screen]!.right || <div style={{ width: 44 }} />}
+          </div>
+        </div>
+      )}
       {/* scrollable content */}
-      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3.5" style={{ padding: '8px 20px 16px', paddingTop: 'calc(var(--safe-top, 0px) + 0.5rem)' }}>
+      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3.5" style={{ padding: '8px 20px 16px' }}>
         {screen === 'home' && renderHome()}
         {screen === 'net' && renderNetList()}
         {screen === 'food' && renderFoodList()}
@@ -920,7 +915,7 @@ const ShoppingApp: React.FC = () => {
               <div style={{ fontSize: 18, fontWeight: 700, color: F.textPrimary }}>{yuan(cartTotal)}</div>
             </div>
             <button onClick={() => go('checkout')} className="inline-flex items-center active:translate-y-[1px] transition-transform"
-              style={{ height: 44, padding: '0 24px', borderRadius: R.button, background: F.textPrimary, color: '#fff', fontSize: 15, fontWeight: 600, boxShadow: S.raisedSoft }}>
+              style={{ height: 44, padding: '0 24px', borderRadius: R.button, background: F.textPrimary, color: F.surfaceRaised, fontSize: 15, fontWeight: 600, boxShadow: S.raisedSoft }}>
               去结算
             </button>
           </div>
@@ -935,7 +930,7 @@ const ShoppingApp: React.FC = () => {
                 <div style={{ fontSize: 22, fontWeight: 700, color: cc.ink }}>{yuan(cartTotal)}</div>
               </div>
               <button onClick={placeOrder} className="inline-flex items-center active:translate-y-[1px] transition-transform"
-                style={{ height: 52, padding: '0 32px', borderRadius: R.button, background: cc.main, color: '#fff', fontSize: 16, fontWeight: 600, boxShadow: `0 2px 6px ${cc.ink}30, 0 8px 20px ${cc.ink}20` }}>
+                style={{ height: 52, padding: '0 32px', borderRadius: R.button, background: cc.main, color: F.surfaceRaised, fontSize: 16, fontWeight: 600, boxShadow: S.raisedMedium }}>
                 下单
               </button>
             </div>
@@ -950,7 +945,7 @@ const ShoppingApp: React.FC = () => {
               </button>
             )}
             <button onClick={saveProduct} className="flex-1 flex items-center justify-center active:translate-y-[1px] transition-transform"
-              style={{ height: 52, borderRadius: R.smallCard, background: F.textPrimary, color: '#fff', fontSize: 16, fontWeight: 600, boxShadow: S.raisedMedium }}>
+              style={{ height: 52, borderRadius: R.smallCard, background: F.textPrimary, color: F.surfaceRaised, fontSize: 16, fontWeight: 600, boxShadow: S.raisedMedium }}>
               {editingProductId ? '保存修改' : '加入商城'}
             </button>
           </div>
@@ -970,7 +965,7 @@ const ShoppingApp: React.FC = () => {
             await refresh();
             flash('已确认收货 ✓');
           }} className="w-full flex items-center justify-center gap-2 active:translate-y-[1px] transition-transform"
-            style={{ height: 48, borderRadius: R.button, background: pal(currentOrder.type).main, color: '#fff', fontSize: 15, fontWeight: 600, boxShadow: S.raisedMedium }}>
+            style={{ height: 48, borderRadius: R.button, background: pal(currentOrder.type).main, color: F.surfaceRaised, fontSize: 15, fontWeight: 600, boxShadow: S.raisedMedium }}>
             <CheckCircle size={20} weight="bold" />
             确认收货
           </button>
@@ -980,7 +975,7 @@ const ShoppingApp: React.FC = () => {
 
       {/* toast */}
       {toast && (
-        <div className="absolute left-1/2 -translate-x-1/2 z-20" style={{ bottom: 120, padding: '12px 20px', borderRadius: R.button, background: F.textPrimary, color: '#fff', fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap', boxShadow: S.floating }}>
+        <div className="absolute left-1/2 -translate-x-1/2 z-20" style={{ bottom: 120, padding: '12px 20px', borderRadius: R.button, background: F.textPrimary, color: F.surfaceRaised, fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap', boxShadow: S.floating }}>
           {toast}
         </div>
       )}
