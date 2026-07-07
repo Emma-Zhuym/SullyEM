@@ -2,6 +2,23 @@
 
 Emma（阿萌）的 SullyOS 个人 fork。基于上游 [SullyOS](https://github.com/qegj567-cloud/SullyOS) 添加个人功能。
 
+## ⚠️ UI 铁律（写任何界面代码前必须遵守——这是规则，不是建议）
+
+规则全文：`../design_prototype/design-system/`（`DESIGN_SYSTEM.md` + `APP_CONVENTIONS.md`）。
+**动 UI 前必须完整读过 APP_CONVENTIONS.md 的 §0 页面骨架硬规格**，并且：
+
+1. **样式取值只能来自 `utils/clayTokens.ts` 常量（F/S/R/HUE/STATUS/MOTION）**。
+   UI 代码里出现裸 hex 颜色、手写 boxShadow 字符串、自造 borderRadius = 违规，必须返工。
+   tokens 里没有需要的值 → **停下来问阿萌**，不许自己发明阴影/颜色/圆角。
+2. **顶栏/返回钮/标题逐字抄 §0.2/0.3/0.4 配方**：新 App 进 `utils/safeAreaApps.ts` 自理名单、
+   让位只写 `var(--chrome-top)`（禁止手拼 safe-top 算式）、返回钮 = 44px 凸起圆钮
+   （CaretLeft 20px bold textSecondary，子页/表单页同样，禁止裸文字"‹ 返回"）、
+   居中标题 16px/600、顶栏放滚动容器外 shrink-0。
+3. **每屏彩色预算**：1 Product 主色 + ≤1 辅助色 + 状态色；大面积只许 Tint；
+   全系统禁止渐变填充；界面 chrome 禁止 emoji（用 2px 描边 icon）。
+4. **完工自查**：新页面与 Health/Bank 截图摆一起对比顶栏——不像同一个系统 = 抄漏了，回 §0 重对。
+5. 遇到公约没覆盖的新模式 → 按通用公约推导 → **把结果补录进 APP_CONVENTIONS.md 第二部分模式库**。
+
 ## 上游合并策略
 
 SullyOS 会持续更新，需要定期合并上游改动。**建议两周一合，别攒**（上游一周能出几十个提交，攒久了很痛）。
