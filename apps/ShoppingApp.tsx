@@ -726,7 +726,7 @@ const ShoppingApp: React.FC = () => {
       ) : (
         shownOrders.map(o => {
           const c = pal(o.type);
-          const title = o.lines.map(l => { const p = products.find(x => x.id === l.id); return p ? p.name + ' ×' + l.qty : ''; }).join('、');
+          const title = orderTitle(o);
           const total = o.lines.reduce((a, l) => { const p = products.find(x => x.id === l.id); return a + (p ? p.price * l.qty : 0); }, 0);
           return (
             <button key={o.id} onClick={() => { setCurrentOrderId(o.id); go('detail'); }}
