@@ -36,6 +36,7 @@ const CharCreatorDevApp: React.FC = () => {
     const [psdParsing, setPsdParsing] = useState(false);
     const [psdParts, setPsdParts] = useState<ParsedPsdPart[]>([]);
     const [psdWarnings, setPsdWarnings] = useState<string[]>([]);
+    const [showRules, setShowRules] = useState(true); // PSD 命名规则说明，默认展开给创作者看
 
     // 加载：解析成 base64 供 <img> 显示，并把存量 base64 惰性迁移成 Blob 令牌落库。
     const load = useCallback(async () => setParts(await loadCreatorPartsForRender()), []);
@@ -176,11 +177,33 @@ const CharCreatorDevApp: React.FC = () => {
                         <FileArrowUp size={14} weight="bold" className="text-amber-300" />
                         PSD 整批导入
                     </div>
-                    <div className="text-[10px] text-white/45 leading-relaxed">
-                        顶层<b>图层组 = 一个类目</b>（组名写类目，如 <code>眼睛</code> / <code>前发</code>），
-                        <b>组里每个图层 = 一个部件</b>（图层名 = 部件名，如眼睛组里「杏眼」「圆眼」各一层）。
-                        名字加 <code>#色</code> / <code>#原色</code> 可强制换色开关，头发类目默认可换色。
-                    </div>
+                    <button onClick={() => setShowRules(v => !v)}
+                        className="text-[10.5px] font-bold text-amber-200/90 flex items-center gap-1 active:opacity-70">
+                        {showRules ? '▾' : '▸'} PSD 命名规则（给创作者看）
+                    </button>
+                    {showRules && (
+                        <div className="text-[10px] text-white/55 leading-relaxed space-y-2 rounded-lg bg-black/25 p-2.5 border border-white/10">
+                            <div>
+                                <b className="text-white/85">① 结构</b>：顶层<b>图层组 = 一个类目</b>，<b>组内每个图层 = 一个部件</b>。<br />
+                                例：<code>眼睛</code> 组里放 <code>杏眼</code> / <code>圆眼</code> / <code>狐狸眼</code> 各一层 → 拆成三个眼睛部件。
+                            </div>
+                            <div>
+                                <b className="text-white/85">② 组名 = 类目</b>（下面任一名字都认，中文英文都行）：
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                    {CC_CATEGORIES.map(c => (
+                                        <span key={c.key} className="px-1.5 py-0.5 rounded bg-white/8 text-white/75">
+                                            {c.label}<span className="text-white/35"> / {c.key}</span>
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
+                            <div><b className="text-white/85">③ 图层名 = 部件显示名</b>，随便起（杏眼、云朵刘海…）。</div>
+                            <div><b className="text-white/85">④ 换色</b>：名字加 <code>#色</code> 强制可换色、<code>#原色</code> 强制不可换色；不写时<b>头发四类默认可换色</b>，其余默认不可。</div>
+                            <div><b className="text-white/85">⑤ 显示 / 隐藏</b>：要导入的图层<b>保持显示</b>（小眼睛打开）；<b>隐藏的图层会被跳过</b>——正好用来藏草稿/参考层。图层不透明度记得拉满 100%。</div>
+                            <div><b className="text-white/85">⑥ 画布</b>：<b>472×472</b> 正方形（过大会自动缩，只要锚点/构图对齐即可）。</div>
+                            <div className="text-white/40">认不出类目也没关系，导进来后每个部件可在下面手动选类目。</div>
+                        </div>
+                    )}
                     <input ref={psdRef} type="file" accept=".psd" className="hidden" onChange={e => void onPsdFile(e.target.files?.[0])} />
                     <button onClick={() => psdRef.current?.click()} disabled={psdParsing}
                         className="w-full rounded-lg border border-dashed border-white/30 py-3 text-[11px] text-white/60 active:bg-white/5 disabled:opacity-50">
