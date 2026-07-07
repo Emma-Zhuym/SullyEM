@@ -18,11 +18,13 @@ export interface ShopProduct {
 export interface CartItem {
   id: string;
   qty: number;
+  note?: string;
 }
 
 export interface OrderLine {
   id: string;
   qty: number;
+  note?: string;
 }
 
 export interface ShopOrder {

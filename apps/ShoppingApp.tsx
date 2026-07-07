@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { CaretLeft, CaretRight, Plus, Minus, House, Package, CheckCircle, ShoppingCart, Clock, PencilSimple, Trash } from '@phosphor-icons/react';
+import { CaretLeft, CaretRight, CaretDown, Plus, Minus, House, Package, CheckCircle, ShoppingCart, Clock, PencilSimple, Trash } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { ShoppingDB, type ShopProduct, type CartItem, type ShopOrder } from '../utils/shoppingDb';
 import { DB } from '../utils/db';
@@ -130,6 +130,7 @@ const ShoppingApp: React.FC = () => {
 
   // add/edit form
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
+  const [expandedShops, setExpandedShops] = useState<Set<string>>(new Set());
   const [fName, setFName] = useState('');
   const [fBrand, setFBrand] = useState('');
   const [fPrice, setFPrice] = useState('');
@@ -186,8 +187,15 @@ const ShoppingApp: React.FC = () => {
     if (newQty <= 0) {
       await ShoppingDB.removeCartItem(id);
     } else {
-      await ShoppingDB.saveCartItem({ id, qty: newQty });
+      await ShoppingDB.saveCartItem({ ...existing, qty: newQty });
     }
+    await refresh();
+  };
+
+  const updateCartNote = async (id: string, note: string) => {
+    const existing = cart.find(c => c.id === id);
+    if (!existing) return;
+    await ShoppingDB.saveCartItem({ ...existing, note: note || undefined });
     await refresh();
   };
 
@@ -210,7 +218,7 @@ const ShoppingApp: React.FC = () => {
       note: noteText || '记得趁热喝,爱你 ♡',
       placedAt: now,
       etaTimestamp,
-      lines: cart.map(c => ({ id: c.id, qty: c.qty })),
+      lines: cart.map(c => ({ id: c.id, qty: c.qty, ...(c.note ? { note: c.note } : {}) })),
     };
     await ShoppingDB.saveOrder(order);
     await ShoppingDB.clearCart();
@@ -260,6 +268,13 @@ const ShoppingApp: React.FC = () => {
   const clearForm = () => {
     setEditingProductId(null);
     setFName(''); setFBrand(''); setFPrice(''); setFNote('');
+  };
+
+  const orderTitle = (o: ShopOrder) => {
+    const totalQty = o.lines.reduce((a, l) => a + l.qty, 0);
+    const first = products.find(x => x.id === o.lines[0]?.id);
+    const name = first?.name || '';
+    return totalQty > 1 ? `${name} 等${totalQty}件` : name;
   };
 
   // derived
@@ -380,7 +395,7 @@ const ShoppingApp: React.FC = () => {
           </div>
           {activeOrders.slice(0, 2).map(o => {
             const c = pal(o.type);
-            const title = o.lines.map(l => { const p = products.find(x => x.id === l.id); return p ? p.name + ' ×' + l.qty : ''; }).join('、');
+            const title = orderTitle(o);
             return (
               <button key={o.id} onClick={() => { setCurrentOrderId(o.id); go('detail'); }}
                 className="flex items-center gap-3.5 active:scale-[.99] transition-transform text-left"
@@ -468,39 +483,59 @@ const ShoppingApp: React.FC = () => {
     </>
   );
 
-  // ── SCREEN: Food List (shop grouped) ──
+  // ── SCREEN: Food List (shop grouped, collapsible) ──
+  const toggleShop = (shop: string) => {
+    setExpandedShops(prev => {
+      const next = new Set(prev);
+      if (next.has(shop)) next.delete(shop); else next.add(shop);
+      return next;
+    });
+  };
+
   const renderFoodList = () => (
     <>
-      {foodShops.map(s => (
-        <div key={s.shop} style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.bigCard, overflow: 'hidden', boxShadow: S.raisedSoft }}>
-          <div className="flex items-center gap-3" style={{ padding: '14px 16px 10px' }}>
-            <div className="flex items-center justify-center shrink-0" style={{ width: 44, height: 44, borderRadius: R.medium, background: AMBER.tint, fontSize: 18, fontWeight: 700, color: AMBER.ink }}>
-              {mono(s.shop)}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div style={{ fontSize: 16, fontWeight: 600, color: F.textPrimary }}>{s.shop}</div>
-              <div style={{ fontSize: 12, color: F.textTertiary, marginTop: 1 }}>{s.etaText}</div>
-            </div>
-          </div>
-          {s.items.map((p, i) => (
-            <React.Fragment key={p.id}>
-              <div style={{ height: 1, background: F.divider, margin: '0 16px' }} />
-              <div className="flex items-center gap-3" style={{ padding: '12px 16px' }}>
-                <button onClick={() => startEdit(p)} className="flex items-center justify-center shrink-0 active:scale-90 transition-transform"
-                  style={{ width: 28, height: 28, borderRadius: R.tiny, background: F.surfaceSunken }}>
-                  <PencilSimple size={14} weight="bold" color={F.textTertiary} />
-                </button>
-                <div className="flex-1 min-w-0">
-                  <div style={{ fontSize: 15, fontWeight: 600, color: F.textPrimary }}>{p.name}</div>
-                  {p.note && <div style={{ fontSize: 13, color: F.textTertiary, marginTop: 2 }}>{p.note}</div>}
-                </div>
-                <span style={{ fontSize: 15, fontWeight: 700, color: AMBER.ink }}>{yuan(p.price)}</span>
-                <AddBtn onClick={() => addToCart(p.id)} color={AMBER.main} />
+      {foodShops.map(s => {
+        const open = expandedShops.has(s.shop);
+        return (
+          <div key={s.shop} style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.bigCard, overflow: 'hidden', boxShadow: S.raisedSoft }}>
+            <button onClick={() => toggleShop(s.shop)} className="flex items-center gap-3 w-full active:scale-[.99] transition-transform" style={{ padding: '14px 16px', cursor: 'pointer', background: 'transparent', textAlign: 'left' }}>
+              <div className="flex items-center justify-center shrink-0" style={{ width: 44, height: 44, borderRadius: R.medium, background: AMBER.tint, fontSize: 18, fontWeight: 700, color: AMBER.ink }}>
+                {mono(s.shop)}
               </div>
-            </React.Fragment>
-          ))}
-        </div>
-      ))}
+              <div className="flex-1 min-w-0">
+                <div style={{ fontSize: 16, fontWeight: 600, color: F.textPrimary }}>{s.shop}</div>
+                <div style={{ fontSize: 12, color: F.textTertiary, marginTop: 1 }}>{s.etaText}</div>
+              </div>
+              <div style={{ fontSize: 12, color: F.textTertiary, marginRight: 2 }}>{s.items.length} 件</div>
+              <CaretDown size={16} weight="bold" color={F.textTertiary} style={{ transform: open ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s ease' }} />
+            </button>
+            {open && (<>
+              {s.items.map(p => (
+                <React.Fragment key={p.id}>
+                  <div style={{ height: 1, background: F.divider, margin: '0 16px' }} />
+                  <div className="flex items-center gap-3" style={{ padding: '12px 16px' }}>
+                    <button onClick={() => startEdit(p)} className="flex items-center justify-center shrink-0 active:scale-90 transition-transform"
+                      style={{ width: 28, height: 28, borderRadius: R.tiny, background: F.surfaceSunken }}>
+                      <PencilSimple size={14} weight="bold" color={F.textTertiary} />
+                    </button>
+                    <div className="flex-1 min-w-0">
+                      <div style={{ fontSize: 15, fontWeight: 600, color: F.textPrimary }}>{p.name}</div>
+                    </div>
+                    <span style={{ fontSize: 15, fontWeight: 700, color: AMBER.ink }}>{yuan(p.price)}</span>
+                    <AddBtn onClick={() => addToCart(p.id)} color={AMBER.main} />
+                  </div>
+                </React.Fragment>
+              ))}
+              <div style={{ height: 1, background: F.divider, margin: '0 16px' }} />
+              <button onClick={() => { clearForm(); setFType('food'); setFCat('drink'); setFBrand(s.shop); go('add'); }}
+                className="flex items-center justify-center gap-1.5 w-full active:scale-[.98] transition-transform"
+                style={{ padding: '10px 16px', background: 'transparent', color: AMBER.ink, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                <Plus size={14} weight="bold" />添加商品
+              </button>
+            </>)}
+          </div>
+        );
+      })}
       <button onClick={() => { clearForm(); setFType('food'); setFCat('drink'); go('add'); }}
         className="flex items-center justify-center gap-2 active:scale-[.99] transition-transform"
         style={{ height: 52, borderRadius: R.smallCard, border: `1.5px dashed ${AMBER.soft}`, background: 'transparent', color: AMBER.ink, fontSize: 15, fontWeight: 600 }}>
@@ -527,26 +562,34 @@ const ShoppingApp: React.FC = () => {
           />
         ) : (
           cartLines.map(c => (
-            <div key={c.id} className="flex items-center gap-3" style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.large, padding: '14px 16px', boxShadow: S.raisedSoft }}>
-              <div className="flex items-center justify-center shrink-0" style={{ width: 46, height: 46, borderRadius: R.medium, background: c.cp.tint }}>
-                <CatIcon cat={c.p.cat} color={c.cp.ink} size={24} />
+            <div key={c.id} style={{ background: F.surface, border: `1px solid ${F.borderSoft}`, borderRadius: R.large, padding: '14px 16px', boxShadow: S.raisedSoft }}>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center justify-center shrink-0" style={{ width: 46, height: 46, borderRadius: R.medium, background: c.cp.tint }}>
+                  <CatIcon cat={c.p.cat} color={c.cp.ink} size={24} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div style={{ fontSize: 15, fontWeight: 600, color: F.textPrimary }}>{c.p.name}</div>
+                  {c.p.brand && <div style={{ fontSize: 12, color: F.textTertiary, marginTop: 1 }}>{c.p.brand}</div>}
+                </div>
+                {/* sunken stepper */}
+                <div className="flex items-center gap-2" style={{ padding: 4, borderRadius: R.medium, background: F.surfaceSunken, boxShadow: S.sunken }}>
+                  <button onClick={() => updateQty(c.id, -1)} className="flex items-center justify-center active:scale-90 transition-transform"
+                    style={{ width: 26, height: 26, borderRadius: R.tiny, background: F.surfaceRaised, boxShadow: S.raisedSoft, color: F.textSecondary }}>
+                    <Minus size={14} weight="bold" />
+                  </button>
+                  <span style={{ minWidth: 18, textAlign: 'center', fontSize: 14, fontWeight: 600, color: F.textPrimary }}>{c.qty}</span>
+                  <button onClick={() => updateQty(c.id, 1)} className="flex items-center justify-center active:scale-90 transition-transform"
+                    style={{ width: 26, height: 26, borderRadius: R.tiny, background: F.surfaceRaised, boxShadow: S.raisedSoft, color: F.textSecondary }}>
+                    <Plus size={14} weight="bold" />
+                  </button>
+                </div>
               </div>
-              <div className="flex-1 min-w-0">
-                <div style={{ fontSize: 15, fontWeight: 600, color: F.textPrimary }}>{c.p.name}</div>
-                <div style={{ fontSize: 12, color: F.textTertiary, marginTop: 1 }}>{c.p.brand}{c.p.note ? ' · ' + c.p.note : ''}</div>
-              </div>
-              {/* sunken stepper */}
-              <div className="flex items-center gap-2" style={{ padding: 4, borderRadius: R.medium, background: F.surfaceSunken, boxShadow: S.sunken }}>
-                <button onClick={() => updateQty(c.id, -1)} className="flex items-center justify-center active:scale-90 transition-transform"
-                  style={{ width: 26, height: 26, borderRadius: R.tiny, background: F.surfaceRaised, boxShadow: S.raisedSoft, color: F.textSecondary }}>
-                  <Minus size={14} weight="bold" />
-                </button>
-                <span style={{ minWidth: 18, textAlign: 'center', fontSize: 14, fontWeight: 600, color: F.textPrimary }}>{c.qty}</span>
-                <button onClick={() => updateQty(c.id, 1)} className="flex items-center justify-center active:scale-90 transition-transform"
-                  style={{ width: 26, height: 26, borderRadius: R.tiny, background: F.surfaceRaised, boxShadow: S.raisedSoft, color: F.textSecondary }}>
-                  <Plus size={14} weight="bold" />
-                </button>
-              </div>
+              <input
+                value={c.note ?? ''}
+                onChange={e => updateCartNote(c.id, e.target.value)}
+                placeholder="备注：三分糖 · 去冰"
+                style={{ width: '100%', marginTop: 10, padding: '8px 12px', fontSize: 13, color: F.textPrimary, background: F.surfaceSunken, borderRadius: R.small, border: 'none', boxShadow: S.sunken, outline: 'none' }}
+              />
             </div>
           ))
         )}
@@ -561,7 +604,7 @@ const ShoppingApp: React.FC = () => {
       if (!p) return null;
       const cp = pal(p.type);
       return { ...c, p, cp };
-    }).filter(Boolean) as { id: string; qty: number; p: ShopProduct; cp: typeof TEAL }[];
+    }).filter(Boolean) as { id: string; qty: number; note?: string; p: ShopProduct; cp: typeof TEAL }[];
 
     const firstProduct = cartLines[0]?.p;
     const isFood = firstProduct?.type === 'food';
@@ -609,7 +652,7 @@ const ShoppingApp: React.FC = () => {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div style={{ fontSize: 15, fontWeight: 600, color: F.textPrimary }}>{c.p.name}</div>
-                  {(c.p.brand || c.p.note) && <div style={{ fontSize: 12, color: F.textTertiary, marginTop: 1 }}>{c.p.brand}{c.p.note ? ' · ' + c.p.note : ''}</div>}
+                  {(c.p.brand || c.note) && <div style={{ fontSize: 12, color: F.textTertiary, marginTop: 1 }}>{c.p.brand}{c.note ? ' · ' + c.note : ''}</div>}
                   <div style={{ fontSize: 13, color: c.cp.ink, fontWeight: 600, marginTop: 2 }}>{yuan(c.p.price)}</div>
                 </div>
                 {/* sunken stepper */}
@@ -790,7 +833,7 @@ const ShoppingApp: React.FC = () => {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div style={{ fontSize: 15, fontWeight: 600, color: F.textPrimary }}>{p.name}</div>
-                  <div style={{ fontSize: 12, color: F.textTertiary, marginTop: 1 }}>{p.note ? p.note + ' · ' : ''}×{l.qty}</div>
+                  <div style={{ fontSize: 12, color: F.textTertiary, marginTop: 1 }}>{l.note ? l.note + ' · ' : ''}×{l.qty}</div>
                 </div>
                 <span style={{ fontSize: 15, fontWeight: 600, color: c.ink }}>{yuan(p.price * l.qty)}</span>
               </div>
@@ -835,10 +878,6 @@ const ShoppingApp: React.FC = () => {
       <InputField value={fBrand} onChange={e => setFBrand(e.target.value)} placeholder="奈雪的茶" />
       <div style={{ fontSize: 13, fontWeight: 600, color: F.textSecondary, paddingLeft: 4 }}>价格</div>
       <InputField value={fPrice} onChange={e => setFPrice(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="38" inputMode="numeric" />
-      <div style={{ fontSize: 13, fontWeight: 600, color: F.textSecondary, paddingLeft: 4 }}>
-        备注 <span style={{ fontWeight: 400, color: F.textTertiary }}>(规格 / 口味,可选)</span>
-      </div>
-      <InputField value={fNote} onChange={e => setFNote(e.target.value)} placeholder="三分糖 · 去冰" />
       <div style={{ fontSize: 13, fontWeight: 600, color: F.textSecondary, paddingLeft: 4 }}>类型</div>
       <SunkenBox>
         <SegBtn label="外卖(按时长)" active={fType === 'food'} onClick={() => setFType('food')} />
