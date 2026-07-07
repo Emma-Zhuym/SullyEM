@@ -14,6 +14,7 @@ const Gallery: React.FC = () => {
     const [selectedImage, setSelectedImage] = useState<GalleryImage | null>(null);
     const [isReviewing, setIsReviewing] = useState(false);
     const [showChatContext, setShowChatContext] = useState(false);
+    const [gridFilter, setGridFilter] = useState<'all' | 'favorited'>('all'); // [EM: photo-favorites]
 
     // Long-press delete state
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -106,6 +107,22 @@ const Gallery: React.FC = () => {
             }
         });
     };
+
+    // [EM-START: photo-favorites] 收藏/取消收藏（收藏照片会进查手机 widget 轮播）
+    const handleToggleFavorite = async () => {
+        if (!selectedImage) return;
+        const next = !selectedImage.favorited;
+        try {
+            await DB.updateGalleryImageFavorite(selectedImage.id, next);
+            const updated = { ...selectedImage, favorited: next };
+            setSelectedImage(updated);
+            setImages(prev => prev.map(img => img.id === selectedImage.id ? updated : img));
+            addToast(next ? '已收藏' : '已取消收藏', 'success');
+        } catch (e: any) {
+            addToast(`收藏失败: ${e?.message || e}`, 'error');
+        }
+    };
+    // [EM-END: photo-favorites]
 
     const handleReview = async () => {
         if (!selectedImage || !activeCharId || !apiConfig.apiKey) {
@@ -282,26 +299,40 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
         </div>
     );
 
-    const renderGrid = () => (
+    const renderGrid = () => {
+        // [EM-START: photo-favorites] 全部/收藏筛选 + 缩略图星角标
+        const shownImages = gridFilter === 'favorited' ? images.filter(img => img.favorited) : images;
+        return (
         <div className="flex-1 overflow-y-auto p-1.5 animate-fade-in">
-            {images.length === 0 ? (
+            {images.some(img => img.favorited) && (
+                <div className="flex gap-1.5 px-1 pb-2 pt-0.5">
+                    <button onClick={() => setGridFilter('all')} className={`px-3 py-1 text-[11px] font-bold rounded-full transition-colors ${gridFilter === 'all' ? 'bg-slate-800 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}>全部</button>
+                    <button onClick={() => setGridFilter('favorited')} className={`px-3 py-1 text-[11px] font-bold rounded-full transition-colors ${gridFilter === 'favorited' ? 'bg-slate-800 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}>收藏</button>
+                </div>
+            )}
+            {shownImages.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-slate-300 gap-3 py-20">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor" className="w-14 h-14 opacity-40"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg>
-                    <span className="text-sm">还没有照片</span>
+                    <span className="text-sm">{gridFilter === 'favorited' ? '还没有收藏的照片' : '还没有照片'}</span>
                 </div>
             ) : (
                 <div className="grid grid-cols-3 gap-1">
-                    {images.map(img => (
+                    {shownImages.map(img => (
                         <div key={img.id} onClick={() => handleImageClick(img)} className="aspect-square bg-slate-100 relative cursor-pointer overflow-hidden rounded-sm">
                             <img src={img.url} className="w-full h-full object-cover hover:scale-105 transition-transform duration-300" loading="lazy" />
-                            {img.review && <div className="absolute top-1.5 right-1.5 w-2 h-2 bg-primary rounded-full ring-2 ring-white shadow-sm"></div>}
+                            <div className="absolute top-1.5 right-1.5 flex items-center gap-1">
+                                {img.favorited && <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#facc15" className="w-4 h-4 drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]"><path fillRule="evenodd" d="M10.788 3.21c.448-1.077 1.976-1.077 2.424 0l2.082 5.006 5.404.434c1.164.093 1.636 1.545.749 2.305l-4.117 3.527 1.257 5.273c.271 1.136-.964 2.033-1.96 1.425L12 18.354 7.373 21.18c-.996.608-2.231-.29-1.96-1.425l1.257-5.273-4.117-3.527c-.887-.76-.415-2.212.749-2.305l5.404-.434 2.082-5.005Z" clipRule="evenodd" /></svg>}
+                                {img.review && <div className="w-2 h-2 bg-primary rounded-full ring-2 ring-white shadow-sm"></div>}
+                            </div>
                             {img.savedDate && <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/50 to-transparent px-1.5 pb-1 pt-3"><span className="text-[8px] text-white/80 font-mono">{img.savedDate}</span></div>}
                         </div>
                     ))}
                 </div>
             )}
         </div>
-    );
+        );
+        // [EM-END: photo-favorites]
+    };
 
     const renderDetail = () => selectedImage && (
         <div className="flex flex-col h-full bg-black relative animate-fade-in">
@@ -310,9 +341,20 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
                 <button onClick={() => setView('grid')} className="text-white bg-black/40 backdrop-blur-md p-2 rounded-full pointer-events-auto active:scale-95 transition-transform hover:bg-black/60 border border-white/10">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                 </button>
+                <div className="flex items-center gap-2">
+                {/* [EM-START: photo-favorites] 详情页星标钮 */}
+                <button onClick={handleToggleFavorite} className="text-white bg-black/40 backdrop-blur-md p-2 rounded-full pointer-events-auto active:scale-95 transition-transform hover:bg-black/60 border border-white/10">
+                    {selectedImage.favorited ? (
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#facc15" className="w-5 h-5"><path fillRule="evenodd" d="M10.788 3.21c.448-1.077 1.976-1.077 2.424 0l2.082 5.006 5.404.434c1.164.093 1.636 1.545.749 2.305l-4.117 3.527 1.257 5.273c.271 1.136-.964 2.033-1.96 1.425L12 18.354 7.373 21.18c-.996.608-2.231-.29-1.96-1.425l1.257-5.273-4.117-3.527c-.887-.76-.415-2.212.749-2.305l5.404-.434 2.082-5.005Z" clipRule="evenodd" /></svg>
+                    ) : (
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z" /></svg>
+                    )}
+                </button>
+                {/* [EM-END: photo-favorites] */}
                 <button onClick={handleDeleteImage} className="text-white bg-black/40 backdrop-blur-md p-2 rounded-full pointer-events-auto active:scale-95 transition-transform hover:bg-red-600/60 border border-white/10">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
                 </button>
+                </div>{/* [EM: photo-favorites] 右侧按钮组闭合 */}
             </div>
 
             {/* Date badge */}

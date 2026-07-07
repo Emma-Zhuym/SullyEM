@@ -24,6 +24,42 @@ import {
 
 type LayoutId = NonNullable<PhoneCustomApp['layout']>;
 
+// [EM-START: photo-favorites] 照片 widget 轮播：5s 切换 + crossfade（两层 img 叠加，新图 opacity 0→1 盖在旧图上，避免闪白）。
+// timer 在页面不可见时清掉（visibilitychange），组件卸载时也清，防止长停留堆积泄漏。
+const PhotoCarouselWidget: React.FC<{ photos: GalleryImage[] }> = ({ photos }) => {
+    const [idx, setIdx] = useState(() => Math.floor(Math.random() * Math.max(photos.length, 1))); // 随机起始位
+    const [prevIdx, setPrevIdx] = useState<number | null>(null);
+
+    // 照片池变化（切角色/收藏变动）→ 重置到随机起始位
+    useEffect(() => {
+        setIdx(photos.length ? Math.floor(Math.random() * photos.length) : 0);
+        setPrevIdx(null);
+    }, [photos]);
+
+    useEffect(() => {
+        if (photos.length < 2) return;
+        let timer: ReturnType<typeof setInterval> | null = null;
+        const start = () => { if (timer == null) timer = setInterval(() => setIdx(cur => { setPrevIdx(cur); return (cur + 1) % photos.length; }), 5000); };
+        const stop = () => { if (timer != null) { clearInterval(timer); timer = null; } };
+        const onVis = () => (document.hidden ? stop() : start());
+        start();
+        document.addEventListener('visibilitychange', onVis);
+        return () => { stop(); document.removeEventListener('visibilitychange', onVis); };
+    }, [photos]);
+
+    const cur = photos[idx % photos.length];
+    const prev = prevIdx != null ? photos[prevIdx % photos.length] : null;
+    if (!cur) return null;
+    return (
+        <div className="relative w-full h-full" style={{ background: '#efe9dd' }}>
+            {prev && <img src={prev.url} className="absolute inset-0 w-full h-full object-cover" alt="" />}
+            <img key={idx} src={cur.url} className="absolute inset-0 w-full h-full object-cover" style={{ animation: 'emPhotoFade 0.8s ease both' }} alt="" loading="lazy" />
+            <style>{`@keyframes emPhotoFade { from { opacity: 0 } to { opacity: 1 } }`}</style>
+        </div>
+    );
+};
+// [EM-END: photo-favorites]
+
 const APP_LAYOUTS: { id: LayoutId; name: string; desc: string; icon: string }[] = [
     { id: 'generic', name: '通用卡片', desc: '标题 + 内容信息流', icon: '🗂️' },
     { id: 'shop', name: '购物风格', desc: '商品 / 价格 / 状态', icon: '🛍️' },
@@ -387,7 +423,12 @@ const CheckPhone: React.FC = () => {
     useEffect(() => {
         if (targetChar?.id) {
             DB.getGalleryImages(targetChar.id).then(imgs => {
-                setGalleryPhotos(imgs.sort((a, b) => b.timestamp - a.timestamp).slice(0, 4));
+                // [EM-START: photo-favorites] 收藏照片优先全部进轮播池（上限 12 防内存）；
+                // 一张收藏都没有时回退最近 4 张，保持原行为不让 widget 空白。
+                const sorted = imgs.sort((a, b) => b.timestamp - a.timestamp);
+                const favs = sorted.filter(i => i.favorited);
+                setGalleryPhotos(favs.length > 0 ? favs.slice(0, 12) : sorted.slice(0, 4));
+                // [EM-END: photo-favorites]
             }).catch(() => setGalleryPhotos([]));
         } else {
             setGalleryPhotos([]);
@@ -3089,7 +3130,7 @@ ${olderText}
                 <div className="shrink-0 rounded-[16px] overflow-hidden shadow-sm"
                     style={{ width: 'calc(50% - 6px)', aspectRatio: '1', border: `1px solid ${CF.border}` }}>
                     {galleryPhotos.length > 0
-                        ? <img src={galleryPhotos[0].url} className="w-full h-full object-cover" alt="" loading="lazy" />
+                        ? <PhotoCarouselWidget photos={galleryPhotos} /> /* [EM: photo-favorites] 静态首图 → 收藏轮播 */
                         : <div className="w-full h-full flex items-center justify-center" style={{ background: '#efe9dd' }}><ImagesSquare size={28} style={{ color: CF.sub }} /></div>}
                 </div>
                 <div className="flex-1 grid grid-cols-2 gap-y-2 gap-x-1 content-center">

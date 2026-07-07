@@ -1081,6 +1081,26 @@ export const DB = {
       });
   },
 
+  // [EM-START: photo-favorites] 收藏标记更新（同 updateGalleryImageReview 模式）
+  updateGalleryImageFavorite: async (id: string, favorited: boolean): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_GALLERY, 'readwrite');
+      const store = transaction.objectStore(STORE_GALLERY);
+      return new Promise((resolve, reject) => {
+          const req = store.get(id);
+          req.onsuccess = () => {
+              const data = req.result as GalleryImage;
+              if (data) {
+                  data.favorited = favorited;
+                  store.put(data);
+                  resolve();
+              } else reject(new Error('Image not found'));
+          };
+          req.onerror = () => reject(req.error);
+      });
+  },
+  // [EM-END: photo-favorites]
+
   deleteGalleryImage: async (id: string): Promise<void> => {
       const db = await openDB();
       const transaction = db.transaction(STORE_GALLERY, 'readwrite');
