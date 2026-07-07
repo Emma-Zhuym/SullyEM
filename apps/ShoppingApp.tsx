@@ -619,8 +619,8 @@ const ShoppingApp: React.FC = () => {
       <>
         {/* 收货角色 */}
         <div style={{ fontSize: 13, fontWeight: 600, color: F.textSecondary, paddingLeft: 4 }}>收货角色</div>
-        <div className="flex gap-2.5">
-          {roles.slice(0, 4).map(r => {
+        <div className="flex gap-2.5 overflow-x-auto" style={{ paddingBottom: 4 }}>
+          {roles.map(r => {
             const active = receiver === r.name;
             return (
               <button key={r.id} onClick={() => { setReceiver(r.name); setReceiverCharId(r.id); }}
