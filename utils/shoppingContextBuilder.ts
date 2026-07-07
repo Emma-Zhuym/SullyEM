@@ -28,7 +28,6 @@ export async function buildShoppingDeliveryContext(charId: string): Promise<stri
 
     for (const o of orders) {
       if (!o.receiverCharId || o.receiverCharId !== charId) continue;
-      if (o.status !== 'active' || !o.etaTimestamp) continue;
 
       const items = o.lines.map(l => {
         const p = products.find(x => x.id === l.id);
@@ -38,6 +37,18 @@ export async function buildShoppingDeliveryContext(charId: string): Promise<stri
       if (!items) continue;
 
       const noteClause = o.note ? `，用户附言：「${o.note}」` : '';
+
+      // 已确认收货但角色还没回应 → 强提醒
+      if (o.status === 'done' && o.awaitingReply) {
+        if (o.type === 'food') {
+          justDelivered.push(`外卖（${items}）已送达${noteClause}`);
+        } else {
+          netArrived.push(`快递（${items}）已送达${noteClause}`);
+        }
+        continue;
+      }
+
+      if (o.status !== 'active' || !o.etaTimestamp) continue;
 
       if (o.type === 'food') {
         if (o.etaTimestamp <= now) {
@@ -67,10 +78,10 @@ export async function buildShoppingDeliveryContext(charId: string): Promise<stri
     }
 
     if (justDelivered.length > 0) {
-      parts.push(`🍜 外卖到了：${justDelivered.join('；')}。自然地表现出收到吃的/喝的反应——惊喜、感谢、评价味道都行，用你自己的方式，不要生硬复述。`);
+      parts.push(`⚠️🍜 外卖已送达：${justDelivered.join('；')}。**你必须在这轮回复中提到你收到了这些具体的食物**，自然地表现出反应——惊喜、感谢、评价味道都行，用你自己的方式，不要生硬复述菜名但要让用户知道你清楚收到了什么。`);
     }
     if (netArrived.length > 0) {
-      parts.push(`📦 快递到了：${netArrived.join('；')}。表现出拆快递的反应——好奇、开心、评价礼物都行，用你自己的方式表达。`);
+      parts.push(`⚠️📦 快递已送达：${netArrived.join('；')}。**你必须在这轮回复中提到你收到了这些具体的东西**，表现出拆快递的反应——好奇、开心、评价礼物都行，用你自己的方式表达。`);
     }
     if (justOrdered.length > 0) {
       parts.push(`🛒 新订单：${justOrdered.join('；')}。可以表现出期待，但不必每句话都提。`);
