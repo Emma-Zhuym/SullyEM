@@ -127,6 +127,7 @@ const ShoppingApp: React.FC = () => {
   const [toast, setToast] = useState('');
   const [customEtaMin, setCustomEtaMin] = useState<number | null>(null);
   const [showEtaPicker, setShowEtaPicker] = useState(false);
+  const [isGiftFromChar, setIsGiftFromChar] = useState(false);
 
   // add/edit form
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
@@ -159,7 +160,7 @@ const ShoppingApp: React.FC = () => {
   const go = (s: Screen) => {
     screenStack.current.push(s);
     setScreen(s);
-    if (s === 'checkout') { setCustomEtaMin(null); setShowEtaPicker(false); }
+    if (s === 'checkout') { setCustomEtaMin(null); setShowEtaPicker(false); setIsGiftFromChar(false); }
   };
   const back = () => {
     screenStack.current.pop();
@@ -219,10 +220,11 @@ const ShoppingApp: React.FC = () => {
       receiver,
       receiverCharId: receiverCharId || undefined,
       status: 'active',
-      note: noteText || '记得趁热喝,爱你 ♡',
+      note: noteText || (isGiftFromChar ? '' : '记得趁热喝,爱你 ♡'),
       placedAt: now,
       etaTimestamp,
       lines: cart.map(c => ({ id: c.id, qty: c.qty, ...(c.note ? { note: c.note } : {}) })),
+      ...(isGiftFromChar ? { isGiftFromChar: true } : {}),
     };
     await ShoppingDB.saveOrder(order);
     await ShoppingDB.clearCart();
@@ -232,7 +234,7 @@ const ShoppingApp: React.FC = () => {
     screenStack.current = ['home', 'orders'];
     setScreen('orders');
     setOrdersTab('active');
-    flash('已下单 · 送给 ' + receiver);
+    flash(isGiftFromChar ? `已下单 · ${receiver} 送的礼物` : '已下单 · 送给 ' + receiver);
   };
 
   const saveProduct = async () => {
@@ -624,8 +626,10 @@ const ShoppingApp: React.FC = () => {
 
     return (
       <>
-        {/* 收货角色 */}
-        <div style={{ fontSize: 13, fontWeight: 600, color: F.textSecondary, paddingLeft: 4 }}>收货角色</div>
+        {/* 角色选择 */}
+        <div style={{ fontSize: 13, fontWeight: 600, color: F.textSecondary, paddingLeft: 4 }}>
+          {isGiftFromChar ? '谁送的' : '收货角色'}
+        </div>
         <div className="flex gap-2.5 overflow-x-auto" style={{ paddingBottom: 4 }}>
           {roles.map(r => {
             const active = receiver === r.name;
@@ -646,6 +650,27 @@ const ShoppingApp: React.FC = () => {
             );
           })}
         </div>
+
+        {/* 礼物方向切换 */}
+        <button onClick={() => setIsGiftFromChar(v => !v)}
+          className="flex items-center gap-3 active:scale-[.99] transition-transform"
+          style={{ padding: '12px 16px', borderRadius: R.smallCard, background: isGiftFromChar ? C.tint : F.surface, border: `1px solid ${isGiftFromChar ? C.soft : F.borderSoft}`, boxShadow: S.raisedSoft }}>
+          <div style={{
+            width: 36, height: 20, borderRadius: R.pill, padding: 2,
+            background: isGiftFromChar ? C.main : F.surfaceSunken,
+            boxShadow: isGiftFromChar ? S.raisedSoft : S.sunken,
+            transition: 'background 0.2s, box-shadow 0.2s',
+          }}>
+            <div style={{
+              width: 16, height: 16, borderRadius: '50%', background: F.surfaceRaised, boxShadow: S.raisedSoft,
+              transform: isGiftFromChar ? 'translateX(16px)' : 'translateX(0)',
+              transition: 'transform 0.2s',
+            }} />
+          </div>
+          <span style={{ fontSize: 14, fontWeight: 600, color: isGiftFromChar ? C.ink : F.textSecondary }}>
+            这是 {receiver} 送给我的
+          </span>
+        </button>
 
         {/* 商品 */}
         <div style={{ fontSize: 13, fontWeight: 600, color: F.textSecondary, paddingLeft: 4 }}>商品</div>
@@ -714,9 +739,12 @@ const ShoppingApp: React.FC = () => {
           )}
         </div>
 
-        {/* 写给 TA 的话 */}
-        <div style={{ fontSize: 13, fontWeight: 600, color: F.textSecondary, paddingLeft: 4 }}>写给 TA 的话</div>
-        <InputField value={noteText} onChange={e => setNoteText(e.target.value)} placeholder="记得趁热喝,爱你 ♡" />
+        {/* 留言 */}
+        <div style={{ fontSize: 13, fontWeight: 600, color: F.textSecondary, paddingLeft: 4 }}>
+          {isGiftFromChar ? `${receiver} 的留言` : '写给 TA 的话'}
+        </div>
+        <InputField value={noteText} onChange={e => setNoteText(e.target.value)}
+          placeholder={isGiftFromChar ? '给你买的，不用谢~' : '记得趁热喝,爱你 ♡'} />
       </>
     );
   };
@@ -743,7 +771,7 @@ const ShoppingApp: React.FC = () => {
                 <div className="shrink-0" style={{ width: 36, height: 36, borderRadius: R.small, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', background: c.tint }}>
                   <CharAvatar name={o.receiver} avatar={findAvatar(o.receiver)} size={36} bg={c.tint} />
                 </div>
-                <div className="flex-1"><span style={{ fontSize: 12, color: F.textTertiary }}>{o.type === 'food' ? '外卖' : '网购'} · 送给 {o.receiver}</span></div>
+                <div className="flex-1"><span style={{ fontSize: 12, color: F.textTertiary }}>{o.type === 'food' ? '外卖' : '网购'} · {o.isGiftFromChar ? `来自 ${o.receiver}` : `送给 ${o.receiver}`}</span></div>
                 <span className="shrink-0" style={{
                   padding: '4px 10px', borderRadius: R.pill, fontSize: 12, fontWeight: 600,
                   background: o.status === 'done' ? HUE.gray.tint : c.tint,
@@ -777,7 +805,7 @@ const ShoppingApp: React.FC = () => {
             <CharAvatar name={o.receiver} avatar={findAvatar(o.receiver)} size={48} bg={c.main} />
           </div>
           <div className="flex-1">
-            <div style={{ fontSize: 13, opacity: 0.75, color: c.ink }}>送给</div>
+            <div style={{ fontSize: 13, opacity: 0.75, color: c.ink }}>{o.isGiftFromChar ? '来自' : '送给'}</div>
             <div style={{ fontSize: 16, fontWeight: 600, color: c.ink }}>{o.receiver}</div>
           </div>
           <span style={{ padding: '5px 12px', borderRadius: R.pill, background: F.surface, fontSize: 12, fontWeight: 600, color: c.ink }}>
@@ -1005,7 +1033,8 @@ const ShoppingApp: React.FC = () => {
             const typeLabel = o.type === 'food' ? '外卖' : '快递';
             await ShoppingDB.saveOrder({ ...o, status: 'done', awaitingReply: true });
             if (o.receiverCharId) {
-              await DB.saveMessage({ charId: o.receiverCharId, role: 'user', type: 'interaction', content: `📦`, metadata: { kind: 'delivery_arrived', typeLabel, items, receiver: o.receiver } });
+              const kind = o.isGiftFromChar ? 'gift_delivered' : 'delivery_arrived';
+              await DB.saveMessage({ charId: o.receiverCharId, role: 'user', type: 'interaction', content: `📦`, metadata: { kind, typeLabel, items, receiver: o.receiver, isGiftFromChar: !!o.isGiftFromChar } });
             }
             await refresh();
             flash('已确认收货 ✓');

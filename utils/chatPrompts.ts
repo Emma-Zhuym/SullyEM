@@ -44,6 +44,7 @@ function summarizeGroupMsgContent(m: Message): string {
         case 'interaction': {
             const mk = (m.metadata as any)?.kind;
             if (mk === 'delivery_arrived') return `[${(m.metadata as any)?.typeLabel || '快递'}已送达]`;
+            if (mk === 'gift_delivered') return `[你送的${(m.metadata as any)?.typeLabel || '礼物'}已送达]`;
             return '[戳了戳]';
         }
         case 'transfer': return `[转账${meta.amount ?? ''}]`;
@@ -677,6 +678,10 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                     const meta = m.metadata as any;
                     const itemList = (meta.items as string[])?.join('、') || '一些东西';
                     content = `${timeStr} [系统: 用户给你买的${meta.typeLabel || '东西'}已送达——${itemList}。请结合你的人设自然地回应这件事，比如感谢、评价、期待拆开等。]`;
+                } else if (m.type === 'interaction' && m.metadata?.kind === 'gift_delivered') {
+                    const meta = m.metadata as any;
+                    const itemList = (meta.items as string[])?.join('、') || '一些东西';
+                    content = `${timeStr} [系统: 你之前给用户买的${meta.typeLabel || '东西'}已送达——${itemList}。用户已经收到了，请自然地跟进，比如问好不好用、喜不喜欢、合不合适等。]`;
                 } else if (m.type === 'interaction') {
                     content = `${timeStr} [系统: 用户戳了你一下]`;
                 }

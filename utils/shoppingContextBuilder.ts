@@ -25,6 +25,8 @@ export async function buildShoppingDeliveryContext(charId: string): Promise<stri
     const netArrived: string[] = [];
     const inTransit: string[] = [];
     const justOrdered: string[] = [];
+    const giftDelivered: string[] = [];
+    const giftInTransit: string[] = [];
 
     for (const o of orders) {
       if (!o.receiverCharId || o.receiverCharId !== charId) continue;
@@ -36,11 +38,14 @@ export async function buildShoppingDeliveryContext(charId: string): Promise<stri
 
       if (!items) continue;
 
-      const noteClause = o.note ? `，用户附言：「${o.note}」` : '';
+      const isGift = !!o.isGiftFromChar;
+      const noteClause = o.note ? `，${isGift ? '你的留言' : '用户附言'}：「${o.note}」` : '';
 
       // 已确认收货但角色还没回应 → 强提醒
       if (o.status === 'done' && o.awaitingReply) {
-        if (o.type === 'food') {
+        if (isGift) {
+          giftDelivered.push(`你买的${o.type === 'food' ? '外卖' : '快递'}（${items}）已送达给用户${noteClause}`);
+        } else if (o.type === 'food') {
           justDelivered.push(`外卖（${items}）已送达${noteClause}`);
         } else {
           netArrived.push(`快递（${items}）已送达${noteClause}`);
@@ -50,7 +55,20 @@ export async function buildShoppingDeliveryContext(charId: string): Promise<stri
 
       if (o.status !== 'active' || !o.etaTimestamp) continue;
 
-      if (o.type === 'food') {
+      if (isGift) {
+        if (o.etaTimestamp <= now) {
+          giftDelivered.push(`你买的${o.type === 'food' ? '外卖' : '快递'}（${items}）刚送到用户手上了${noteClause}`);
+          await ShoppingDB.saveOrder({ ...o, status: 'done', awaitingReply: true });
+        } else {
+          const remainMin = Math.ceil((o.etaTimestamp - now) / 60000);
+          if (o.type === 'food') {
+            giftInTransit.push(`你给用户点的外卖（${items}）在路上，还有约 ${remainMin} 分钟`);
+          } else {
+            const d = new Date(o.etaTimestamp);
+            giftInTransit.push(`你给用户买的快递（${items}）在路上，预计 ${d.getMonth() + 1}月${d.getDate()}日 到`);
+          }
+        }
+      } else if (o.type === 'food') {
         if (o.etaTimestamp <= now) {
           justDelivered.push(`外卖（${items}）刚刚送到了${noteClause}`);
           await ShoppingDB.saveOrder({ ...o, status: 'done', awaitingReply: true });
@@ -83,11 +101,17 @@ export async function buildShoppingDeliveryContext(charId: string): Promise<stri
     if (netArrived.length > 0) {
       parts.push(`⚠️📦 快递已送达：${netArrived.join('；')}。**你必须在这轮回复中提到你收到了这些具体的东西**，表现出拆快递的反应——好奇、开心、评价礼物都行，用你自己的方式表达。`);
     }
+    if (giftDelivered.length > 0) {
+      parts.push(`⚠️🎁 你送的礼物已送达：${giftDelivered.join('；')}。**你必须在这轮回复中跟进你送出的东西**——问用户喜不喜欢、好不好用、合不合适等，用你自己的方式关心。`);
+    }
     if (justOrdered.length > 0) {
       parts.push(`🛒 新订单：${justOrdered.join('；')}。可以表现出期待，但不必每句话都提。`);
     }
     if (inTransit.length > 0) {
       parts.push(`🚚 配送中：${inTransit.join('；')}。知道有东西在路上就好，偶尔提一嘴但不用刻意。`);
+    }
+    if (giftInTransit.length > 0) {
+      parts.push(`🎁 你送的礼物配送中：${giftInTransit.join('；')}。你知道自己给用户买了东西在路上，可以偶尔提一嘴期待。`);
     }
 
     if (parts.length === 0) return null;

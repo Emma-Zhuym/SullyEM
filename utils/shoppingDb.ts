@@ -37,6 +37,7 @@ export interface ShopOrder {
   placedAt: number;
   etaTimestamp?: number;
   lines: OrderLine[];
+  isGiftFromChar?: boolean;
   awaitingReply?: boolean;
   charReply?: string;
 }
