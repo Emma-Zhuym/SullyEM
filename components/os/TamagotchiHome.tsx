@@ -84,6 +84,12 @@ const SCHEMES: TgStyle[] = [
     { id: 'mint', name: '薄荷青', hue: 168, dark: false, gold: false, mute: false },
     { id: 'sakura', name: '粉樱梦', hue: 340, dark: false, gold: false, mute: false },
     { id: 'abyss', name: '深海蓝', hue: 218, dark: true, gold: false, mute: false },
+    { id: 'peach', name: '蜜桃汽水', hue: 25, dark: false, gold: false, mute: false },
+    { id: 'aurora', name: '极光青', hue: 185, dark: true, gold: false, mute: false },
+    { id: 'silver', name: '月雾银', hue: 240, dark: false, gold: false, mute: true },
+    { id: 'rose', name: '蔷薇夜', hue: 350, dark: true, gold: false, mute: false },
+    { id: 'matcha', name: '抹茶拿铁', hue: 105, dark: false, gold: false, mute: false },
+    { id: 'graphite', name: '曜夜银', hue: 250, dark: true, gold: false, mute: true },
 ];
 const STYLE_KEY = 'tama_style_v2';
 const LEGACY_HUE_KEY = 'tama_accent_hue'; // 旧版单色相偏好，迁移用
@@ -96,8 +102,10 @@ const makeVars = (st: TgStyle): React.CSSProperties => {
     const sat = (s: number) => (mute ? Math.min(s, 10) : s);
     const accentH = gold ? 45 : h + 75;
     if (dark) {
+        // gold 方案的线/字保持暖金（不压饱和，黑金=香槟字）；非金的 mute 方案（曜夜银）线/字转银灰
         const lineH = gold ? 45 : h;
-        const lineS = gold ? 48 : 42;
+        const lineS = gold ? 48 : (mute ? 12 : 42);
+        const textSat = (s: number) => (gold ? s : sat(s));
         return {
             '--tg-frame': hsl(lineH, lineS, 70),
             '--tg-frame-soft': hsl(lineH, lineS, 70, 0.5),
@@ -105,12 +113,12 @@ const makeVars = (st: TgStyle): React.CSSProperties => {
             '--tg-frame-a22': hsl(lineH, lineS, 70, 0.22),
             '--tg-card': hsl(h, sat(26), 13, 0.8),
             '--tg-card-strong': hsl(h, sat(26), 16, 0.95),
-            '--tg-ink': hsl(h, 30, 84),
-            '--tg-grape': hsl(h, 45, 93),
-            '--tg-fade': hsl(h, 18, 64),
+            '--tg-ink': hsl(h, textSat(30), 84),
+            '--tg-grape': hsl(h, textSat(45), 93),
+            '--tg-fade': hsl(h, textSat(18), 64),
             '--tg-pink': hsl(accentH, gold ? 48 : 60, 76),
             '--tg-hot': hsl(accentH, gold ? 52 : 62, 66),
-            '--tg-peri': hsl(h - 31, 38, 72),
+            '--tg-peri': hsl(h - 31, textSat(38), 72),
             '--tg-rim3': hsl(h, sat(30), 40),
             '--tg-heart': hsl(accentH, gold ? 48 : 58, 76),
             '--tg-heart-deep': hsl(accentH, gold ? 52 : 60, 68),
@@ -128,7 +136,7 @@ const makeVars = (st: TgStyle): React.CSSProperties => {
         } as React.CSSProperties;
     }
     const lineH = gold ? 43 : h;
-    const lineS = gold ? 42 : 49;
+    const lineS = gold ? 42 : sat(49);
     const lineL = gold ? 56 : 72;
     return {
         '--tg-frame': hsl(lineH, lineS, lineL),
@@ -137,33 +145,33 @@ const makeVars = (st: TgStyle): React.CSSProperties => {
         '--tg-frame-a22': hsl(lineH, lineS, lineL, 0.22),
         '--tg-card': 'rgba(255,255,255,0.8)',
         '--tg-card-strong': 'rgba(255,255,255,0.95)',
-        '--tg-ink': hsl(h, 35, 55),
-        '--tg-grape': hsl(h, 28, 45),
-        '--tg-fade': hsl(h, 30, 66),
+        '--tg-ink': hsl(h, sat(35), 55),
+        '--tg-grape': hsl(h, sat(28), 45),
+        '--tg-fade': hsl(h, sat(30), 66),
         '--tg-pink': hsl(accentH, 76, 78),
         '--tg-hot': hsl(accentH, 70, 62),
-        '--tg-peri': hsl(h - 31, 58, 76),
-        '--tg-rim3': hsl(h, 42, 84),
+        '--tg-peri': hsl(h - 31, sat(58), 76),
+        '--tg-rim3': hsl(h, sat(42), 84),
         '--tg-heart': hsl(accentH, 70, 78),
         '--tg-heart-deep': hsl(accentH, 66, 70),
         '--tg-gem': hsl(accentH, 70, 72, 0.75),
-        '--tg-cloud-shadow': hsl(h, 52, 85),
-        '--tg-glow16': hsl(h, 42, 60, 0.16),
-        '--tg-glow25': hsl(h, 45, 62, 0.25),
-        '--tg-glow35': hsl(h, 48, 64, 0.35),
+        '--tg-cloud-shadow': hsl(h, sat(52), 85),
+        '--tg-glow16': hsl(h, sat(42), 60, 0.16),
+        '--tg-glow25': hsl(h, sat(45), 62, 0.25),
+        '--tg-glow35': hsl(h, sat(48), 64, 0.35),
         '--tg-hotglow45': hsl(accentH, 66, 66, 0.45),
         '--tg-hotglow60': hsl(accentH, 66, 66, 0.6),
-        '--tg-bg-top': hsl(h, 57, 91),
-        '--tg-bg-mid': hsl(h, 54, 88),
-        '--tg-bg-bot': hsl(h, 52, 85),
-        '--tg-drawer': hsl(h, 40, 95, 0.97),
+        '--tg-bg-top': hsl(h, sat(57), 91),
+        '--tg-bg-mid': hsl(h, sat(54), 88),
+        '--tg-bg-bot': hsl(h, sat(52), 85),
+        '--tg-drawer': hsl(h, sat(40), 95, 0.97),
     } as React.CSSProperties;
 };
 
 // 面板小预览用：方案的底色 / 线色
 const schemePreview = (s: TgStyle) => ({
-    bg: s.dark ? hsl(s.hue, s.mute ? 10 : 26, 14) : hsl(s.hue, 50, 92),
-    line: s.gold ? (s.dark ? hsl(45, 48, 64) : hsl(43, 42, 56)) : hsl(s.hue, 45, s.dark ? 74 : 62),
+    bg: s.dark ? hsl(s.hue, s.mute ? 10 : 26, 14) : hsl(s.hue, s.mute ? 10 : 50, 92),
+    line: s.gold ? (s.dark ? hsl(45, 48, 64) : hsl(43, 42, 56)) : hsl(s.hue, s.mute ? 12 : 45, s.dark ? 74 : 62),
 });
 
 const FLOOR_HORIZON = 65; // 与 RoomApp 一致：地平线 65%
@@ -607,82 +615,96 @@ const FullStage = React.memo<{
     );
 });
 
-// ─── 墙上的日程木牌：写着 ta 此刻在干嘛，轻轻晃；点开垂下当日全程纸卷 ────
+// ─── 墙上的日程挂牌：写着 ta 此刻在干嘛；点开垂下当日全程卷轴 ────────
+// 跟随界面风格（细线半透卡 + 内描边），端端正正不摇晃。
 const HangingSign = React.memo<{ text: string; onTap: () => void }>(({ text, onTap }) => (
     <div className="absolute left-[6%] z-[30] flex flex-col items-center pointer-events-none"
         style={{ top: 'calc(var(--safe-top, 0px) + 5.3rem)' }}>
         {/* 两根吊绳 */}
         <div className="flex gap-6">
-            <span style={{ width: 1.5, height: 22, background: PAPER.lineSoft }} />
-            <span style={{ width: 1.5, height: 22, background: PAPER.lineSoft }} />
+            <span style={{ width: 1.5, height: 22, background: PAL.frameSoft }} />
+            <span style={{ width: 1.5, height: 22, background: PAL.frameSoft }} />
         </div>
         <button onClick={onTap}
-            className="pointer-events-auto active:scale-95 px-3 py-1.5 rounded-xl -mt-px"
+            className="pointer-events-auto active:scale-95 relative px-3.5 py-2 rounded-xl -mt-px transition-transform"
             style={{
-                background: 'linear-gradient(180deg, #fffdf8, #f7efdf)',
-                border: `2px solid ${PAPER.line}`,
-                boxShadow: '0 4px 10px var(--tg-glow25)',
-                transformOrigin: 'top center',
-                animation: 'tama-swing 5.5s ease-in-out infinite',
+                background: PAL.card,
+                border: `1.5px solid ${PAL.frameSoft}`,
+                boxShadow: '0 4px 12px var(--tg-glow25)',
             }}>
-            <span className="text-[10px] font-bold whitespace-nowrap" style={{ fontFamily: FONT_CN, color: PAPER.hi }}>{text}</span>
+            <span className="absolute inset-[3px] rounded-[0.6rem] pointer-events-none" style={{ border: '1px solid var(--tg-frame-a22)' }} />
+            <span className="absolute top-[2px] right-[5px] text-[7px] pointer-events-none" style={{ color: PAL.frame, opacity: 0.7 }}>✦</span>
+            <span className="text-[10px] font-bold whitespace-nowrap" style={{ fontFamily: FONT_CN, color: PAL.grape }}>{text}</span>
         </button>
     </div>
 ));
 
-// ─── 当日全程纸卷（点木牌垂下来）；每个时段可「偷看」调 API 演一段小剧场 ────
+// ─── 当日全程卷轴（点挂牌垂下来）；每个时段可「偷看」调 API 演一段小剧场 ────
+// 跟随界面风格：细线半透强卡 + 内描边 + 星芒标题
 const DayScroll = React.memo<{ slots: { time: string; text: string; passed: boolean; current: boolean }[]; onPeek: (i: number) => void; onClose: () => void }>(({ slots, onPeek, onClose }) => (
     <>
         <div className="absolute inset-0 z-[85]" onClick={onClose} />
-        <div className="absolute left-4 right-[22%] z-[86] rounded-b-2xl rounded-t-md px-4 pt-3 pb-4 animate-pop-in"
+        <div className="absolute left-4 right-[22%] z-[86] rounded-2xl px-4 pt-3 pb-4 animate-pop-in"
             style={{
                 top: 'calc(var(--safe-top, 0px) + 7.8rem)',
-                background: 'linear-gradient(180deg, #fffdf8 0%, #fbf5e8 100%)',
-                border: `2px solid ${PAPER.line}`, borderTopWidth: 4,
+                background: PAL.cardHi,
+                border: `1.5px solid ${PAL.frameSoft}`,
                 boxShadow: '0 10px 26px var(--tg-glow35)',
             }}>
+            <div className="absolute inset-[4px] rounded-[0.85rem] pointer-events-none" style={{ border: '1px solid var(--tg-frame-a22)' }} />
             <div className="flex items-center justify-between mb-2">
-                <span className="text-[11px] font-bold" style={{ fontFamily: FONT_CN, color: PAPER.hi }}>今天的一天 ✦</span>
-                <button onClick={onClose} className="px-1" style={{ color: PAPER.dim }}>×</button>
+                <span className="text-[11px] font-bold" style={{ fontFamily: FONT_CN, color: PAL.grape }}>今天的一天 ✦</span>
+                <button onClick={onClose} className="px-1" style={{ color: PAL.fade }}>×</button>
             </div>
             {slots.length > 0 ? (
                 <div className="space-y-1 max-h-[42vh] overflow-y-auto no-scrollbar">
                     {slots.map((s, i) => (
                         <div key={i} className="flex items-center gap-2 py-0.5">
-                            <span className="text-[9px] tabular-nums shrink-0" style={{ fontFamily: FONT_PX, color: s.passed ? PAPER.ink : PAPER.dim }}>{s.time}</span>
-                            <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: s.current ? PAPER.hot : (s.passed ? PAPER.ink : PAPER.lineSoft) }} />
-                            <span className="flex-1 text-[10.5px] leading-relaxed" style={{ fontFamily: FONT_CN, color: s.passed ? PAPER.hi : PAPER.dim }}>{s.text}</span>
+                            <span className="text-[9px] tabular-nums shrink-0" style={{ fontFamily: FONT_PX, color: s.passed ? PAL.ink : PAL.fade }}>{s.time}</span>
+                            <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: s.current ? PAL.hot : (s.passed ? PAL.ink : 'var(--tg-frame-a30)') }} />
+                            <span className="flex-1 text-[10.5px] leading-relaxed" style={{ fontFamily: FONT_CN, color: s.passed ? PAL.grape : PAL.fade }}>{s.text}</span>
                             {/* 偷看这一刻：调 API 演一段角色行为（小剧场） */}
                             <button onClick={() => onPeek(i)} className="shrink-0 px-2 py-[3px] rounded-full text-[9px] font-bold active:scale-95"
-                                style={{ background: s.current ? `linear-gradient(135deg, #f4a6cc, ${PAPER.hot})` : PAPER.cream, color: s.current ? '#fff' : PAPER.hi, border: `1.5px solid ${s.current ? 'transparent' : PAPER.lineSoft}`, fontFamily: FONT_CN }}>
+                                style={{ background: s.current ? `linear-gradient(135deg, ${PAL.pink}, ${PAL.hot})` : PAL.card, color: s.current ? '#fff' : PAL.grape, border: `1.5px solid ${s.current ? 'transparent' : PAL.frameSoft}`, fontFamily: FONT_CN }}>
                                 偷看
                             </button>
                         </div>
                     ))}
                 </div>
             ) : (
-                <p className="text-[10px] leading-relaxed" style={{ fontFamily: FONT_CN, color: PAPER.dim }}>今天的日程还没生成——去聊两句，ta 的一天就会长出来。</p>
+                <p className="text-[10px] leading-relaxed" style={{ fontFamily: FONT_CN, color: PAL.fade }}>今天的日程还没生成——去聊两句，ta 的一天就会长出来。</p>
             )}
         </div>
     </>
 ));
 
-// ─── 右侧世界之门：家园 / 像素家园 / 梦境，做成挂在墙上的小圆牌（无 emoji）───
+// ─── 右侧世界之门：家园 / 像素家园 / 梦境——细线胶囊，跟随界面风格 + ◆连饰 ───
 const WorldPortals = React.memo<{ onHome: () => void; onPixel: () => void; onDream: () => void }>(({ onHome, onPixel, onDream }) => {
     const portals = [
-        { key: 'home', label: '家园', icon: ICON.door, onClick: onHome },
-        { key: 'pixel', label: '像素', icon: ICON.tv, onClick: onPixel },
-        { key: 'dream', label: '梦境', icon: ICON.moon, onClick: onDream },
+        { key: 'home', label: '家园', en: 'HOME', icon: ICON.door, onClick: onHome },
+        { key: 'pixel', label: '像素', en: 'PIXEL', icon: ICON.tv, onClick: onPixel },
+        { key: 'dream', label: '梦境', en: 'DREAM', icon: ICON.moon, onClick: onDream },
     ];
     return (
-        <div className="absolute right-3 z-[35] flex flex-col gap-2.5" style={{ top: 'calc(var(--safe-top, 0px) + 7.5rem)' }}>
-            {portals.map(p => (
-                <button key={p.key} onClick={p.onClick} className="flex flex-col items-center gap-0.5 active:scale-90 transition-transform">
-                    <span className="w-10 h-10 rounded-2xl flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.82)', border: `2px solid ${PAPER.lineSoft}`, boxShadow: '0 3px 8px var(--tg-glow25)', color: PAPER.hi }}>
-                        <span className="w-5 h-5">{p.icon}</span>
-                    </span>
-                    <span className="text-[8px] font-bold" style={{ fontFamily: FONT_CN, color: PAPER.hi, textShadow: '0 1px 3px rgba(255,255,255,0.7)' }}>{p.label}</span>
-                </button>
+        <div className="absolute right-3 z-[35] flex flex-col items-center" style={{ top: 'calc(var(--safe-top, 0px) + 7.5rem)' }}>
+            {portals.map((p, i) => (
+                <React.Fragment key={p.key}>
+                    {i > 0 && (
+                        <div className="flex flex-col items-center py-0.5 pointer-events-none">
+                            <span style={{ width: 1, height: 7, background: PAL.frameSoft }} />
+                            <span className="text-[6px] leading-none my-0.5" style={{ color: PAL.frame }}>◆</span>
+                            <span style={{ width: 1, height: 7, background: PAL.frameSoft }} />
+                        </div>
+                    )}
+                    <button onClick={p.onClick}
+                        className="relative w-[3.1rem] py-2.5 rounded-full flex flex-col items-center gap-1 active:scale-95 transition-transform"
+                        style={{ background: PAL.card, border: `1.5px solid ${PAL.frameSoft}`, boxShadow: '0 4px 12px var(--tg-glow25)' }}>
+                        <span className="absolute inset-[3px] rounded-full pointer-events-none" style={{ border: '1px solid var(--tg-frame-a22)' }} />
+                        <span className="w-[17px] h-[17px]" style={{ color: PAL.frame }}>{p.icon}</span>
+                        <span className="text-[10px] leading-none" style={{ fontFamily: FONT_CN, color: PAL.grape }}>{p.label}</span>
+                        <span className="text-[5.5px] font-bold leading-none" style={{ fontFamily: FONT_PX, color: PAL.fade, letterSpacing: '0.16em' }}>{p.en}</span>
+                    </button>
+                </React.Fragment>
             ))}
         </div>
     );
@@ -1016,7 +1038,6 @@ const TamagotchiHome: React.FC = () => {
                 @keyframes tama-zzz { 0%,100% { opacity: 0.35; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-4px); } }
                 @keyframes tama-twinkle { 0%,100% { opacity: 0.25; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.1); } }
                 @keyframes tama-drift { 0% { transform: translateX(-4%); } 100% { transform: translateX(5%); } }
-                @keyframes tama-swing { 0%,100% { transform: rotate(-2.2deg); } 50% { transform: rotate(2.2deg); } }
                 @keyframes tama-heart { 0% { opacity: 0; transform: translate(-50%, 0) scale(0.5); } 25% { opacity: 1; } 100% { opacity: 0; transform: translate(calc(-50% + var(--dx, 0px)), -46px) scale(1.1); } }
             `}</style>
 
