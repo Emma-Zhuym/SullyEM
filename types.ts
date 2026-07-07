@@ -375,10 +375,17 @@ export interface ApiPreset {
 
 // 实时上下文配置 - 让AI角色感知真实世界
 export interface RealtimeConfig {
-  // 天气配置
+  // 天气配置 [EM-START: weather-openmeteo] Open-Meteo 免 key（与 utils/openMeteo.ts 的 WeatherLocation 结构一致）
   weatherEnabled: boolean;
-  weatherApiKey: string;  // OpenWeatherMap API Key
-  weatherCity: string;    // 城市名
+  weatherMode: 'geo' | 'city';   // geo=自动定位（默认）；city=固定城市
+  weatherLocation?: {            // city 模式选定的城市；geo 模式作定位失败降级
+    name: string;
+    admin1?: string;
+    country?: string;
+    latitude: number;
+    longitude: number;
+  };
+  // [EM-END: weather-openmeteo]
 
   // 新闻配置
   newsEnabled: boolean;
@@ -2294,6 +2301,7 @@ export interface GalleryImage {
     reviewTimestamp?: number;
     savedDate?: string; // YYYY-MM-DD format
     chatContext?: string[]; // Recent chat messages at time of save
+    favorited?: boolean; // [EM: photo-favorites] 收藏标记，undefined 视为 false
 }
 
 export interface StickerData {

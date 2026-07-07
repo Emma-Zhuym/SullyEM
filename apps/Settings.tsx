@@ -9,6 +9,7 @@ import { safeResponseJson } from '../utils/safeApi';
 import { EXPORT_CHUNK_SIZE, sliceRanges } from '../utils/backupExport';
 import Modal from '../components/os/Modal';
 import { NotionManager, FeishuManager } from '../utils/realtimeContext';
+import { searchCities, fetchOpenMeteoCurrent, resolveWeatherCoords, formatLocationLabel, type WeatherLocation } from '../utils/openMeteo'; // [EM: weather-openmeteo]
 import { XhsMcpClient } from '../utils/xhsMcpClient';
 import { getMcdToken, setMcdToken as saveMcdToken, isMcdEnabled, setMcdEnabled as saveMcdEnabled, testMcdConnection, resetMcdSession } from '../utils/mcdMcpClient';
 import { getLuckinToken, setLuckinToken as saveLuckinToken, isLuckinEnabled, setLuckinEnabled as saveLuckinEnabled, testLuckinConnection, resetLuckinSession } from '../utils/luckinMcpClient';
@@ -162,8 +163,13 @@ const Settings: React.FC = () => {
 
   // 实时感知配置的本地状态
   const [rtWeatherEnabled, setRtWeatherEnabled] = useState(realtimeConfig.weatherEnabled);
-  const [rtWeatherKey, setRtWeatherKey] = useState(realtimeConfig.weatherApiKey);
-  const [rtWeatherCity, setRtWeatherCity] = useState(realtimeConfig.weatherCity);
+  // [EM-START: weather-openmeteo] 免 key：模式切换 + 城市搜索选定（存坐标）
+  const [rtWeatherMode, setRtWeatherMode] = useState<'geo' | 'city'>(realtimeConfig.weatherMode || 'geo');
+  const [rtWeatherLocation, setRtWeatherLocation] = useState<WeatherLocation | undefined>(realtimeConfig.weatherLocation);
+  const [rtCityQuery, setRtCityQuery] = useState('');
+  const [rtCityCandidates, setRtCityCandidates] = useState<WeatherLocation[]>([]);
+  const [rtCitySearching, setRtCitySearching] = useState(false);
+  // [EM-END: weather-openmeteo]
   const [rtNewsEnabled, setRtNewsEnabled] = useState(realtimeConfig.newsEnabled);
   const [rtNewsApiKey, setRtNewsApiKey] = useState(realtimeConfig.newsApiKey || '');
   const [rtNewsPlatforms, setRtNewsPlatforms] = useState<string[]>(realtimeConfig.newsPlatforms || ['weibo', 'zhihu', 'baidu', 'bilibili', 'douyin']);
@@ -832,8 +838,8 @@ const Settings: React.FC = () => {
   const handleSaveRealtimeConfig = () => {
       updateRealtimeConfig({
           weatherEnabled: rtWeatherEnabled,
-          weatherApiKey: rtWeatherKey,
-          weatherCity: rtWeatherCity,
+          weatherMode: rtWeatherMode,           // [EM: weather-openmeteo]
+          weatherLocation: rtWeatherLocation,   // [EM: weather-openmeteo]
           newsEnabled: rtNewsEnabled,
           newsApiKey: rtNewsApiKey,
           newsPlatforms: rtNewsPlatforms,
@@ -875,26 +881,39 @@ const Settings: React.FC = () => {
       setShowRealtimeModal(false);
   };
 
-  // 测试天气API连接
+  // [EM-START: weather-openmeteo] 测试天气（Open-Meteo 免 key，按当前模式取坐标）
   const testWeatherApi = async () => {
-      if (!rtWeatherKey) {
-          setRtTestStatus('请先填写 API Key');
+      if (rtWeatherMode === 'city' && !rtWeatherLocation) {
+          setRtTestStatus('请先搜索并选择一个城市');
           return;
       }
-      setRtTestStatus('正在测试...');
-      try {
-          const url = `https://api.openweathermap.org/data/2.5/weather?q=${rtWeatherCity}&appid=${rtWeatherKey}&units=metric&lang=zh_cn`;
-          const res = await fetch(url);
-          if (res.ok) {
-              const data = await safeResponseJson(res);
-              setRtTestStatus(`连接成功！${data.name}: ${data.weather[0]?.description}, ${Math.round(data.main.temp)}°C`);
-          } else {
-              setRtTestStatus(`连接失败: HTTP ${res.status}`);
-          }
-      } catch (e: any) {
-          setRtTestStatus(`网络错误: ${e.message}`);
+      setRtTestStatus(rtWeatherMode === 'geo' ? '正在定位并查询天气...' : '正在查询天气...');
+      const coords = await resolveWeatherCoords(rtWeatherMode, rtWeatherLocation);
+      if (!coords) {
+          setRtTestStatus('定位失败（可能拒绝了权限），可改用固定城市模式');
+          return;
+      }
+      const current = await fetchOpenMeteoCurrent(coords.latitude, coords.longitude);
+      if (current) {
+          setRtTestStatus(`连接成功！${coords.displayName}: ${current.description}, ${current.temp}°C（体感 ${current.feelsLike}°C）`);
+      } else {
+          setRtTestStatus('天气查询失败，请检查网络后重试');
       }
   };
+
+  // 城市搜索（Open-Meteo Geocoding，候选带国家/州名，重名点选一次根治）
+  const handleCitySearch = async () => {
+      const q = rtCityQuery.trim();
+      if (!q) return;
+      setRtCitySearching(true);
+      const results = await searchCities(q);
+      setRtCityCandidates(results);
+      setRtCitySearching(false);
+      if (results.length === 0) {
+          setRtTestStatus('没有找到匹配的城市，试试英文名或换个关键词');
+      }
+  };
+  // [EM-END: weather-openmeteo]
 
   // 测试Notion连接
   const testNotionApi = async () => {
@@ -2702,19 +2721,46 @@ const Settings: React.FC = () => {
                           <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
                       </label>
                   </div>
+                  {/* [EM-START: weather-openmeteo] 免 key：自动定位 / 固定城市（搜索选定存坐标） */}
                   {rtWeatherEnabled && (
                       <div className="space-y-2">
-                          <div>
-                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">OpenWeatherMap API Key</label>
-                              <input type="password" value={rtWeatherKey} onChange={e => setRtWeatherKey(e.target.value)} className="w-full bg-white/80 border border-emerald-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="获取: openweathermap.org" />
+                          <div className="flex bg-white/60 rounded-xl p-1 gap-1">
+                              <button onClick={() => setRtWeatherMode('geo')} className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-colors ${rtWeatherMode === 'geo' ? 'bg-emerald-500 text-white' : 'text-slate-400'}`}>自动定位</button>
+                              <button onClick={() => setRtWeatherMode('city')} className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-colors ${rtWeatherMode === 'city' ? 'bg-emerald-500 text-white' : 'text-slate-400'}`}>固定城市</button>
                           </div>
-                          <div>
-                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">城市 (英文)</label>
-                              <input type="text" value={rtWeatherCity} onChange={e => setRtWeatherCity(e.target.value)} className="w-full bg-white/80 border border-emerald-200 rounded-xl px-3 py-2 text-sm" placeholder="Beijing, Shanghai, etc." />
-                          </div>
-                          <button onClick={testWeatherApi} className="w-full py-2 bg-emerald-100 text-emerald-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试天气API</button>
+                          {rtWeatherMode === 'geo' ? (
+                              <p className="text-[11px] text-slate-400 px-1">跟随你的位置自动取天气，首次会请求定位权限（免 API key）</p>
+                          ) : (
+                              <div className="space-y-2">
+                                  {rtWeatherLocation ? (
+                                      <div className="flex items-center justify-between bg-white/80 border border-emerald-200 rounded-xl px-3 py-2">
+                                          <span className="text-sm text-emerald-700 font-bold truncate">{formatLocationLabel(rtWeatherLocation)}</span>
+                                          <button onClick={() => { setRtWeatherLocation(undefined); setRtCityCandidates([]); }} className="text-xs text-slate-400 font-bold shrink-0 ml-2">重选</button>
+                                      </div>
+                                  ) : (
+                                      <>
+                                          <p className="text-[11px] text-amber-500 px-1">天气已升级为免 key 服务，请搜索并选择城市（或改用自动定位）</p>
+                                          <div className="flex gap-2">
+                                              <input type="text" value={rtCityQuery} onChange={e => setRtCityQuery(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleCitySearch(); }} className="flex-1 bg-white/80 border border-emerald-200 rounded-xl px-3 py-2 text-sm" placeholder="城市名，如 Birmingham / 北京" />
+                                              <button onClick={handleCitySearch} disabled={rtCitySearching} className="px-4 py-2 bg-emerald-100 text-emerald-600 text-xs font-bold rounded-xl active:scale-95 transition-transform shrink-0">{rtCitySearching ? '搜索中' : '搜索'}</button>
+                                          </div>
+                                          {rtCityCandidates.length > 0 && (
+                                              <div className="bg-white/80 border border-emerald-200 rounded-xl divide-y divide-emerald-50 max-h-44 overflow-y-auto">
+                                                  {rtCityCandidates.map((c, i) => (
+                                                      <button key={i} onClick={() => { setRtWeatherLocation(c); setRtCityCandidates([]); setRtCityQuery(''); }} className="w-full text-left px-3 py-2 text-sm text-slate-600 active:bg-emerald-50">
+                                                          {formatLocationLabel(c)}
+                                                      </button>
+                                                  ))}
+                                              </div>
+                                          )}
+                                      </>
+                                  )}
+                              </div>
+                          )}
+                          <button onClick={testWeatherApi} className="w-full py-2 bg-emerald-100 text-emerald-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试天气</button>
                       </div>
                   )}
+                  {/* [EM-END: weather-openmeteo] */}
               </div>
 
               {/* 新闻配置 */}

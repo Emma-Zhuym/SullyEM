@@ -163,8 +163,7 @@ const loadJSZip = async (): Promise<JSZipCtorLike> => {
 // 默认实时配置
 const defaultRealtimeConfig: RealtimeConfig = {
   weatherEnabled: false,
-  weatherApiKey: '',
-  weatherCity: 'Beijing',
+  weatherMode: 'geo', // [EM: weather-openmeteo]
   newsEnabled: false,
   newsApiKey: '',
   newsPlatforms: ['weibo', 'zhihu', 'baidu', 'bilibili', 'douyin'],
@@ -960,7 +959,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         const savedRealtimeConfig = localStorage.getItem('os_realtime_config');
         if (savedRealtimeConfig) {
             try {
-                setRealtimeConfig({ ...defaultRealtimeConfig, ...JSON.parse(savedRealtimeConfig) });
+                // [EM-START: weather-openmeteo] 旧 OpenWeatherMap 配置迁移：
+                // 有 weatherApiKey/weatherCity 且无 weatherMode → 转 city 模式但不自动 geocoding
+                // 选第一个（会复现 Birmingham 重名歧义），留空让用户在 Settings 重新选城市。
+                const parsed = JSON.parse(savedRealtimeConfig);
+                if (!parsed.weatherMode && (parsed.weatherApiKey || parsed.weatherCity)) {
+                    parsed.weatherMode = 'city';
+                }
+                setRealtimeConfig({ ...defaultRealtimeConfig, ...parsed });
+                // [EM-END: weather-openmeteo]
             } catch (e) {
                 console.error('Failed to load realtime config', e);
             }

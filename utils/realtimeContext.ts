@@ -9,13 +9,16 @@ import type { NotionDiaryExtraProperty, NotionExtraDatabase } from '../types';
 import { getProxyWorkerUrl } from './proxyWorker';
 import { nowInTimeZone } from './timezone';
 import { getMotionContextLine } from './deviceMotion';
+// [EM-START: weather-openmeteo]
+import { fetchOpenMeteoCurrent, resolveWeatherCoords, type WeatherLocation } from './openMeteo';
+export type { WeatherLocation };
+// [EM-END: weather-openmeteo]
 
 export interface WeatherData {
     temp: number;
     feelsLike: number;
     humidity: number;
     description: string;
-    icon: string;
     city: string;
 }
 
@@ -33,10 +36,11 @@ export interface SearchResult {
 }
 
 export interface RealtimeConfig {
-    // 天气配置
+    // 天气配置 [EM-START: weather-openmeteo] Open-Meteo 免 key，坐标查天气
     weatherEnabled: boolean;
-    weatherApiKey: string;  // OpenWeatherMap API Key
-    weatherCity: string;    // 城市名 (如 "Beijing" 或 "Shanghai")
+    weatherMode: 'geo' | 'city';        // geo=自动定位（默认）；city=固定城市（Settings 搜索选定）
+    weatherLocation?: WeatherLocation;  // city 模式选定的城市；geo 模式作定位失败的降级
+    // [EM-END: weather-openmeteo]
 
     // 新闻配置
     newsEnabled: boolean;
@@ -76,8 +80,7 @@ export interface RealtimeConfig {
 // 默认配置
 export const defaultRealtimeConfig: RealtimeConfig = {
     weatherEnabled: false,
-    weatherApiKey: '',
-    weatherCity: 'Beijing',
+    weatherMode: 'geo', // [EM: weather-openmeteo]
     newsEnabled: false,
     newsApiKey: '',
     newsPlatforms: ['weibo', 'zhihu', 'baidu', 'bilibili', 'douyin'],
@@ -120,46 +123,36 @@ export const RealtimeContextManager = {
      * 获取天气信息
      */
     fetchWeather: async (config: RealtimeConfig): Promise<WeatherData | null> => {
-        if (!config.weatherEnabled || !config.weatherApiKey) {
+        // [EM-START: weather-openmeteo] OpenWeatherMap → Open-Meteo（免 key，坐标查天气）
+        if (!config.weatherEnabled) {
             return null;
         }
 
         const now = Date.now();
         const cacheMs = config.cacheMinutes * 60 * 1000;
 
-        // 检查缓存
+        // 检查缓存（geo 模式缓存窗口内的位移可忽略，key 不带坐标）
         if (weatherCache.data && (now - weatherCache.timestamp) < cacheMs) {
             return weatherCache.data;
         }
 
-        try {
-            const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(config.weatherCity)}&appid=${config.weatherApiKey}&units=metric&lang=zh_cn`;
+        const coords = await resolveWeatherCoords(config.weatherMode || 'geo', config.weatherLocation);
+        if (!coords) {
+            return null; // 拒权/超时且无已存城市 → 本轮静默跳过天气注入
+        }
 
-            const response = await fetch(url);
-            if (!response.ok) {
-                console.error('Weather API error:', response.status);
-                return null;
-            }
-
-            const data = await safeResponseJson(response);
-
-            const weather: WeatherData = {
-                temp: Math.round(data.main.temp),
-                feelsLike: Math.round(data.main.feels_like),
-                humidity: data.main.humidity,
-                description: data.weather[0]?.description || '未知',
-                icon: data.weather[0]?.icon || '01d',
-                city: data.name
-            };
-
-            // 更新缓存
-            weatherCache = { data: weather, timestamp: now };
-
-            return weather;
-        } catch (e) {
-            console.error('Failed to fetch weather:', e);
+        const current = await fetchOpenMeteoCurrent(coords.latitude, coords.longitude);
+        if (!current) {
             return null;
         }
+
+        const weather: WeatherData = { ...current, city: coords.displayName };
+
+        // 更新缓存
+        weatherCache = { data: weather, timestamp: now };
+
+        return weather;
+        // [EM-END: weather-openmeteo]
     },
 
     // hot_news（orz.ai）平台 key → 中文展示名。用于 source 标注，让提示词读起来自然。
@@ -540,7 +533,7 @@ export const RealtimeContextManager = {
         }
 
         // 3. 天气信息
-        if (config.weatherEnabled && config.weatherApiKey) {
+        if (config.weatherEnabled) { // [EM: weather-openmeteo] 免 key，去掉 apiKey 守卫
             const weather = await RealtimeContextManager.fetchWeather(config);
             if (weather) {
                 parts.push('');
