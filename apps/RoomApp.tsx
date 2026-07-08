@@ -1461,7 +1461,7 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
             {mode === 'edit' && (
                 <div className={`absolute bottom-0 w-full bg-white border-t border-slate-200 z-[150] transition-transform duration-300 flex flex-col ${isToolbarCollapsed ? 'translate-y-[calc(100%-2.5rem)]' : ''}`} style={{ maxHeight: isToolbarCollapsed ? 'auto' : '45vh' }}>
                     <div className="h-10 w-full flex items-center justify-center cursor-pointer bg-white active:bg-slate-50 border-b border-slate-100" onClick={() => setIsToolbarCollapsed(!isToolbarCollapsed)}><div className="w-10 h-1 bg-slate-200 rounded-full"></div></div>
-                    <div className="p-4 overflow-y-auto flex-1">
+                    <div className="p-4 overflow-y-auto flex-1" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 24px)' }}>
                         {selectedItemId ? (
                             <div className="flex flex-col gap-3">
                                 <div className="flex justify-between items-center"><span className="text-xs font-bold text-slate-500">调整家具</span><button onClick={deleteSelectedItem} className="text-xs text-red-500 font-bold bg-red-50 px-3 py-1 rounded-full">删除</button></div>
