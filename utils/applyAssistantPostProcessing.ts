@@ -774,24 +774,34 @@ export async function applyAssistantPostProcessing(
     aiContent = aiContent.replace(/\[\[SEARCH:.*?\]\]/g, '').trim();
 
     // [EM-START: fav-photo] 5.55 角色主动收藏用户照片（[[FAV_PHOTO]] → 该角色相册最新一张标星）
+    // 防滥用硬限制：每角色 24h 冷却。LLM 讨好型倾向靠提示词拦不干净，冷却期内标记静默剥掉不执行，
+    // 这样"收藏"在用户视角永远是稀罕事件。
     if (/\[\[FAV_PHOTO\]\]/.test(aiContent)) {
         aiContent = aiContent.replace(/\[\[FAV_PHOTO\]\]/g, '').trim();
-        try {
-            const imgs = await DB.getGalleryImages(char.id);
-            const latest = imgs.sort((a, b) => b.timestamp - a.timestamp)[0];
-            if (latest && !latest.favorited) {
-                await DB.updateGalleryImageFavorite(latest.id, true);
-                await DB.saveMessage({
-                    charId: char.id,
-                    role: 'system',
-                    type: 'text',
-                    content: `⭐ ${char.name}收藏了你发的照片`,
-                    metadata: { kind: 'fav_photo', imageId: latest.id },
-                } as any);
-                addToast(`${char.name} 收藏了你的照片`, 'info');
-                console.log('⭐ [FavPhoto] 角色收藏照片:', latest.id);
-            }
-        } catch (e) { console.warn('[FavPhoto] 收藏失败:', e); }
+        const cooldownKey = `emFavPhotoLast_${char.id}`;
+        const FAV_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+        const last = Number(localStorage.getItem(cooldownKey) || 0);
+        if (Date.now() - last < FAV_COOLDOWN_MS) {
+            console.log('⭐ [FavPhoto] 冷却期内，忽略收藏指令');
+        } else {
+            try {
+                const imgs = await DB.getGalleryImages(char.id);
+                const latest = imgs.sort((a, b) => b.timestamp - a.timestamp)[0];
+                if (latest && !latest.favorited) {
+                    await DB.updateGalleryImageFavorite(latest.id, true);
+                    localStorage.setItem(cooldownKey, String(Date.now()));
+                    await DB.saveMessage({
+                        charId: char.id,
+                        role: 'system',
+                        type: 'text',
+                        content: `⭐ ${char.name}收藏了你发的照片`,
+                        metadata: { kind: 'fav_photo', imageId: latest.id },
+                    } as any);
+                    addToast(`${char.name} 收藏了你的照片`, 'info');
+                    console.log('⭐ [FavPhoto] 角色收藏照片:', latest.id);
+                }
+            } catch (e) { console.warn('[FavPhoto] 收藏失败:', e); }
+        }
     }
     // [EM-END: fav-photo]
 
