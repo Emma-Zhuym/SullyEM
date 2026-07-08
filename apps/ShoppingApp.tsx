@@ -1026,15 +1026,17 @@ const ShoppingApp: React.FC = () => {
         {screen === 'detail' && currentOrder?.status === 'active' && (
           <button onClick={async () => {
             const o = currentOrder!;
-            const items = o.lines.map(l => {
+            const orderLines = o.lines.map(l => {
               const p = products.find(x => x.id === l.id);
-              return p ? p.name : '';
-            }).filter(Boolean);
+              return p ? { name: p.name, qty: l.qty, price: p.price } : null;
+            }).filter(Boolean) as { name: string; qty: number; price: number }[];
+            const items = orderLines.map(l => l.name);
+            const total = orderLines.reduce((s, l) => s + l.price * l.qty, 0);
             const typeLabel = o.type === 'food' ? '外卖' : '快递';
             await ShoppingDB.saveOrder({ ...o, status: 'done', awaitingReply: true });
             if (o.receiverCharId) {
               const kind = o.isGiftFromChar ? 'gift_delivered' : 'delivery_arrived';
-              await DB.saveMessage({ charId: o.receiverCharId, role: 'user', type: 'interaction', content: `📦`, metadata: { kind, typeLabel, items, receiver: o.receiver, isGiftFromChar: !!o.isGiftFromChar } });
+              await DB.saveMessage({ charId: o.receiverCharId, role: 'user', type: 'interaction', content: `📦`, metadata: { kind, typeLabel, items, receiver: o.receiver, isGiftFromChar: !!o.isGiftFromChar, orderLines, total, orderType: o.type, note: o.note } });
             }
             await refresh();
             flash('已确认收货 ✓');

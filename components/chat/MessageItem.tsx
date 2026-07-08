@@ -1283,6 +1283,77 @@ const timeHint = durationSec <= 240 ? '差不多是一杯咖啡的时间' : '像
     }
 
     if (m.type === 'interaction') {
+        const metaKind = m.metadata?.kind as string | undefined;
+        const isDeliveryCard = metaKind === 'delivery_arrived' || metaKind === 'gift_delivered';
+
+        if (isDeliveryCard) {
+            const meta: any = m.metadata || {};
+            const orderLines: { name: string; qty: number; price: number }[] = meta.orderLines || [];
+            const total: number = meta.total ?? orderLines.reduce((s: number, l: { price: number; qty: number }) => s + l.price * l.qty, 0);
+            const isGift = !!meta.isGiftFromChar;
+            const typeLabel: string = meta.typeLabel || '快递';
+            const receiver: string = meta.receiver || charName;
+            const note: string = meta.note || '';
+            const isFood = meta.orderType === 'food' || typeLabel === '外卖';
+            const accent = isFood ? '#F5A914' : '#39B4A6';
+            const accentTint = isFood ? '#FFF8EE' : '#F0FAF8';
+            const accentInk = isFood ? '#8A5A00' : '#1F7068';
+            const title = isGift ? `来自 ${receiver} 的${typeLabel}` : `${typeLabel}已送达`;
+            const icon = isFood ? '🥡' : '📦';
+
+            return (
+                <div className={`flex flex-col items-center ${marginBottom} w-full animate-fade-in relative transition-[padding] duration-300 ${selectionMode ? 'pl-8' : ''}`}>
+                    {selectionMode && (
+                        <div className="absolute left-2 top-1/2 -translate-y-1/2 cursor-pointer z-20" onClick={() => onToggleSelect(m.id)}>
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-slate-300 bg-white/80'}`}>
+                                {isSelected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>}
+                            </div>
+                        </div>
+                    )}
+                    <div className="text-[10px] text-slate-400 mb-1 opacity-70">{formatTime(m.timestamp)}</div>
+                    <div className="w-[272px] rounded-[18px] overflow-hidden select-none" style={{ background: accentTint, boxShadow: '0 2px 8px rgba(70,66,58,.08), 0 8px 24px rgba(70,66,58,.06)', border: `1px solid ${accent}20` }} {...interactionProps}>
+                        {/* header */}
+                        <div className="flex items-center gap-2.5 px-4 pt-3.5 pb-2">
+                            <span className="text-2xl">{icon}</span>
+                            <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                    <span className="text-[13px] font-semibold" style={{ color: accentInk }}>{title}</span>
+                                    <span className="text-[10px] px-1.5 py-[1px] rounded-full font-medium" style={{ background: `${accent}18`, color: accent }}>已签收</span>
+                                </div>
+                                {isGift && <div className="text-[11px] mt-0.5" style={{ color: '#9E9891' }}>送给你的{typeLabel === '外卖' ? '美食' : '礼物'}</div>}
+                            </div>
+                        </div>
+                        {/* divider */}
+                        <div className="mx-3" style={{ height: 1, background: `${accent}15` }} />
+                        {/* items */}
+                        <div className="px-4 py-2.5 flex flex-col gap-1.5">
+                            {orderLines.length > 0 ? orderLines.map((l, i) => (
+                                <div key={i} className="flex items-baseline justify-between">
+                                    <span className="text-[13px] truncate flex-1 mr-2" style={{ color: '#2E2A28' }}>{l.name}{l.qty > 1 ? ` ×${l.qty}` : ''}</span>
+                                    <span className="text-[13px] font-medium tabular-nums shrink-0" style={{ color: accentInk }}>¥{(l.price * l.qty).toFixed(0)}</span>
+                                </div>
+                            )) : (
+                                <div className="text-[12px]" style={{ color: '#9E9891' }}>{(meta.items as string[])?.join('、') || '—'}</div>
+                            )}
+                        </div>
+                        {/* 留言 */}
+                        {note && (
+                            <>
+                                <div className="mx-3" style={{ height: 1, background: `${accent}15` }} />
+                                <div className="px-4 py-2 text-[12px]" style={{ color: accent }}>{isGift ? `${receiver} 说：「${note}」` : `你的留言：「${note}」`}</div>
+                            </>
+                        )}
+                        {/* total */}
+                        <div className="mx-3" style={{ height: 1, background: `${accent}15` }} />
+                        <div className="flex items-baseline justify-between px-4 py-2.5">
+                            <span className="text-[12px]" style={{ color: '#9E9891' }}>合计</span>
+                            <span className="text-[18px] font-bold tabular-nums" style={{ color: accent }}>¥{total.toFixed(0)}</span>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
         const isOfflineHint = m.metadata?.kind === 'offline_hint';
 
         return (
