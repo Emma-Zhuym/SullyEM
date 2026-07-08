@@ -72,6 +72,9 @@ check "Token 面板 set（不能写死0）" hooks/useChatAI.ts "[EM-START: conte
 check "日记第四参数 (pendingDiary)" utils/pendingDiary.ts "notionDiaryExtraProperties"
 check "日记第四参数 (postProcessing)" utils/applyAssistantPostProcessing.ts "notionDiaryExtraProperties"
 check "schedule 时间解析" utils/chatParser.ts "[EM-START: parse-schedule-due-at]"
+check "收藏照片处理" utils/applyAssistantPostProcessing.ts "[EM-START: fav-photo]"
+check "收藏照片教学调用点" utils/chatPrompts.ts "emFavPhotoAddon()"
+check "收藏照片标签兜底剥离" utils/sanitize.ts "[EM: fav-photo-strip]"
 
 echo "── 天气 Open-Meteo ──"
 check "openMeteo 独立模块" utils/openMeteo.ts "resolveWeatherCoords"

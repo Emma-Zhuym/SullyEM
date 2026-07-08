@@ -14,7 +14,7 @@ import { FISH_VOICE_ACTING_GUIDE } from './fishAudioTts';
 import { getTtsProvider, getVoicePromptOverride } from './ttsProvider';
 import { resolveCharTimeZone, nowInTimeZone } from './timezone';
 // [EM-START: prompt-addons] 个人化提示词全部在 emPromptAddons.ts，merge 时保住这行 import 和下面的调用点
-import { emSendPhotoAddon, emQuoteSection, emNotionDiarySection, emFeishuDiarySection, emUserNotesSection, emXhsSection, emNotionDiaryNudgePrompt } from './emPromptAddons';
+import { emSendPhotoAddon, emQuoteSection, emNotionDiarySection, emFeishuDiarySection, emUserNotesSection, emXhsSection, emNotionDiaryNudgePrompt, emFavPhotoAddon } from './emPromptAddons';
 // [EM-END: prompt-addons]
 
 // 语音格式指导按当前 TTS 服务商二选一：用 MiniMax 才注入 MiniMax 那套（含 <#秒#> 停顿标记），
@@ -445,6 +445,7 @@ ${emQuoteSection()}
    - 调取记忆: \`[[RECALL: YYYY-MM]]\`，请注意，当用户提及具体某个月份时，或者当你想仔细想某个月份的事情时，欢迎你随时使该动作
    - **添加日程/纪念日（时光契约）**: 当用户要求把某件事加到日程、日历、时光契约(Schedule App)里，或者你自己觉得今天值得纪念，**必须**用这个 action tag 而不是画 HTML 卡片。单独起一行输出: \`[[ACTION:ADD_EVENT | 标题(Title) | YYYY-MM-DD]]\`。
    - **定时发送消息**: 如果你想在未来某个时间主动发消息（比如晚安、早安或提醒），请单独起一行输出: \`[schedule_message | YYYY-MM-DD HH:MM:SS | fixed | 消息内容]\`，分行可以多输出很多该类消息。
+${emFavPhotoAddon()}
 ${notionEnabled ? `   - **翻阅日记(Notion)**: 你的记忆本身是完整可靠的，回忆过去优先靠记忆和 \`[[RECALL]]\`，**不需要**靠翻日记来"想起"事情。只有当你**自己**特别想重温那天日记里写下的心情、措辞或私密小细节时，才翻阅: \`[[READ_DIARY: 日期]]\`。支持格式: \`昨天\`、\`前天\`、\`3天前\`、\`1月15日\`、\`2024-01-15\`。` : ''}${feishuEnabled ? `
    - **翻阅日记(飞书)**: 同上——回忆优先靠记忆和 \`[[RECALL]]\`，只有你自己想重温那天日记的内容时才用: \`[[FS_READ_DIARY: 日期]]\`。支持格式同上。` : ''}${notionNotesEnabled ? `
    - **翻阅用户笔记**: 当你想看${userProfile.name}写的某篇笔记的详细内容时，使用: \`[[READ_NOTE: 标题关键词]]\`。系统会搜索匹配的笔记并返回内容给你。` : ''}

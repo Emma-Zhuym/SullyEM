@@ -773,6 +773,28 @@ export async function applyAssistantPostProcessing(
 
     aiContent = aiContent.replace(/\[\[SEARCH:.*?\]\]/g, '').trim();
 
+    // [EM-START: fav-photo] 5.55 角色主动收藏用户照片（[[FAV_PHOTO]] → 该角色相册最新一张标星）
+    if (/\[\[FAV_PHOTO\]\]/.test(aiContent)) {
+        aiContent = aiContent.replace(/\[\[FAV_PHOTO\]\]/g, '').trim();
+        try {
+            const imgs = await DB.getGalleryImages(char.id);
+            const latest = imgs.sort((a, b) => b.timestamp - a.timestamp)[0];
+            if (latest && !latest.favorited) {
+                await DB.updateGalleryImageFavorite(latest.id, true);
+                await DB.saveMessage({
+                    charId: char.id,
+                    role: 'system',
+                    type: 'text',
+                    content: `⭐ ${char.name}收藏了你发的照片`,
+                    metadata: { kind: 'fav_photo', imageId: latest.id },
+                } as any);
+                addToast(`${char.name} 收藏了你的照片`, 'info');
+                console.log('⭐ [FavPhoto] 角色收藏照片:', latest.id);
+            }
+        } catch (e) { console.warn('[FavPhoto] 收藏失败:', e); }
+    }
+    // [EM-END: fav-photo]
+
     // 5.6 Handle Diary Writing (写日记到 Notion)
     const diaryStartMatch = aiContent.match(/\[\[DIARY_START:\s*(.+?)\]\]\n?([\s\S]*?)\[\[DIARY_END\]\]/);
     const diaryMatch = diaryStartMatch || aiContent.match(/\[\[DIARY:\s*(.+?)\]\]/s);
