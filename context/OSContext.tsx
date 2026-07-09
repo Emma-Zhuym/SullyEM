@@ -1,9 +1,10 @@
 
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
-import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset, CloudBackupConfig, CloudBackupFile } from '../types';
+import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, CharacterGroup, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset, CloudBackupConfig, CloudBackupFile } from '../types';
 import { DB } from '../utils/db';
 import { modelRejectsSamplingParams, stripSamplingParams, isSamplingParamError } from '../utils/samplingParamCompat';
 import { extractImagesInPlace, deepCloneForExport } from '../utils/backupExport';
+import { isBlobRef, getBlobForRef, migrateDataUrlToRef, resolveBlobRefsDeep, BLOBREF_PREFIX } from '../utils/blobRef';
 import { writeV2Backup, assembleV2Backup, type BackupManifest, type ZipFileWriter, type ZipFileReader } from '../utils/backupFormat';
 import { encodeVectorsForBackup } from '../utils/memoryPalace/db';
 import { ProactiveChat } from '../utils/proactiveChat';
@@ -12,6 +13,7 @@ import { runVRSession } from '../utils/vrWorld/runSession';
 import { VR_DEFAULT_INTERVAL_MIN } from '../utils/vrWorld/constants';
 import { WorldScheduler } from '../utils/worldHome/scheduler';
 import { runWorldEpisode, rerollWorldCharBeat } from '../utils/worldHome/engine';
+import { migrateWorldDaySegs } from '../utils/worldHome/prompts';
 import { ChatParser } from '../utils/chatParser';
 import { safeFetchJson } from '../utils/safeApi';
 import { recordApiCall, setApiCallAmbientContext } from '../utils/apiCallLog';
@@ -31,9 +33,11 @@ import { isEmotionEvalSkipped } from '../utils/devDebug';
 import { toMountedWorldbook } from '../utils/worldbook';
 // 备份用：把存在 localStorage 的本机配置随导出一起带走（键名须与 importFullData 对齐）
 import { exportPostOfficeLocal } from '../utils/vrWorld/postOffice';
+import { exportSignalLocal } from '../utils/vrWorld/signal';
 import { exportWorldHomeLocal } from '../utils/worldHome/localBackup';
 import { exportLuckinLocal } from '../utils/luckinMcpClient';
 import { exportMcdLocal } from '../utils/mcdMcpClient';
+import { exportDesktopSkinLocal } from '../utils/desktopSkinBackup';
 import { inspectCsyBackup, prepareCsyMigration, type CsyMigrationReport } from '../utils/csyMigration';
 
 const normalizeProactiveAiContent = (raw: string): string => {
@@ -226,10 +230,16 @@ interface OSContextType {
   
   characters: CharacterProfile[];
   activeCharacterId: string;
-  addCharacter: () => void;
+  addCharacter: () => Promise<CharacterProfile>;
   updateCharacter: (id: string, updates: Partial<CharacterProfile> | ((prev: CharacterProfile) => Partial<CharacterProfile>)) => void;
   deleteCharacter: (id: string) => void;
   setActiveCharacterId: (id: string) => void;
+
+  // 角色分组（神经链接"文件夹"，与群聊 groups 无关）
+  characterGroups: CharacterGroup[];
+  createCharacterGroup: (name: string) => Promise<CharacterGroup | null>;
+  renameCharacterGroup: (id: string, name: string) => Promise<void>;
+  deleteCharacterGroup: (id: string) => Promise<void>;
   
   // Worldbooks
   worldbooks: Worldbook[];
@@ -357,6 +367,40 @@ interface OSContextType {
 }
 
 export const DEFAULT_WALLPAPER = 'linear-gradient(135deg, #FFDEE9 0%, #B5FFFC 100%)';
+
+// 壁纸改存 Blob（见 utils/blobRef.ts）：assets store 的 'wallpaper' 记录只存一个指针值
+// （blobref 令牌 / 旧 data: / http url），真正二进制在 blob_assets。内存里 theme.wallpaper
+// 必须是能直接喂给 CSS 的 url，所以令牌要解析成 objectURL。全 OS 只有一张壁纸，用一个模块级
+// 变量记住当前 objectURL，换壁纸时回收上一张，避免泄漏。
+let currentWallpaperObjUrl: string | null = null;
+
+/**
+ * 把「存储值」壁纸解析成可直接渲染的 url，并把指针（令牌）落进 assets 'wallpaper'。
+ *   · blobref 令牌 → 读 Blob 建 objectURL；
+ *   · 旧 data: → 惰性迁移成 Blob 令牌（存量用户下次加载即享空间收益），返回 objectURL；
+ *   · http(s) / 空 / 渐变 → 删除 assets 指针，原样返回。
+ * 传入空字符串（重置）时原样返回，交给上层用 DEFAULT_WALLPAPER 兜底。
+ */
+const resolveWallpaperStoredValue = async (w: string): Promise<string> => {
+    const revokePrev = () => {
+        if (currentWallpaperObjUrl) { try { URL.revokeObjectURL(currentWallpaperObjUrl); } catch { /* ignore */ } currentWallpaperObjUrl = null; }
+    };
+    if (isBlobRef(w) || (w && w.startsWith('data:'))) {
+        const token = isBlobRef(w) ? w : await migrateDataUrlToRef(w);
+        try { await DB.saveAsset('wallpaper', token); } catch { /* ignore */ }
+        const blob = await getBlobForRef(token);
+        revokePrev();
+        if (blob) {
+            currentWallpaperObjUrl = URL.createObjectURL(blob);
+            return currentWallpaperObjUrl;
+        }
+        return w; // Blob 意外缺失：data: 仍可渲染；令牌无解时保底不改
+    }
+    // http(s) 链接 / 重置 / 渐变：没有二进制要存，清掉指针
+    try { await DB.deleteAsset('wallpaper'); } catch { /* ignore */ }
+    revokePrev();
+    return w;
+};
 
 const defaultTheme: OSTheme = {
   hue: 245, // Default Indigo-ish
@@ -630,7 +674,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     }
   }, [activeCharacterId]);
   
-  const [groups, setGroups] = useState<GroupProfile[]>([]); 
+  const [groups, setGroups] = useState<GroupProfile[]>([]);
+  const [characterGroups, setCharacterGroups] = useState<CharacterGroup[]>([]);
   const [worldbooks, setWorldbooks] = useState<Worldbook[]>([]); 
   const [novels, setNovels] = useState<NovelBook[]>([]); // New
   const [songs, setSongs] = useState<SongSheet[]>([]);
@@ -923,7 +968,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                  ) {
                      loadedTheme.wallpaper = DEFAULT_WALLPAPER;
                  }
-                 if (loadedTheme.wallpaper.startsWith('data:')) {
+                 // LS 里绝不该有 data:（旧包）或 blob:（上会话临时 objectURL，重启即失效）壁纸——
+                 // 真值在 assets 'wallpaper'，下面会解析覆盖；这里先回退默认避免闪一帧坏图。
+                 if (loadedTheme.wallpaper.startsWith('data:') || loadedTheme.wallpaper.startsWith('blob:')) {
                      loadedTheme.wallpaper = defaultTheme.wallpaper;
                  }
                  // Deprecated legacy fields are forcibly stripped — they never render again.
@@ -956,9 +1003,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                 assets.forEach(a => assetMap[a.id] = a.data);
 
                 if (assetMap['wallpaper']) {
-                    loadedTheme.wallpaper = assetMap['wallpaper'];
+                    // assets 'wallpaper' 现在存的是指针（blobref 令牌 / 旧 data: / http）。
+                    // 解析成可渲染 url（令牌→objectURL；旧 data: 顺手迁移成 Blob）。
+                    loadedTheme.wallpaper = await resolveWallpaperStoredValue(assetMap['wallpaper']);
                 }
-                
+
                 // Deprecated legacy asset — purge silently so it can never be rendered again.
                 if (assetMap['launcherWidgetImage']) {
                     void DB.deleteAsset('launcherWidgetImage');
@@ -1055,14 +1104,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
             }
         };
 
-        const [dbChars, dbThemes, dbUser, dbGroups, dbWorldbooks, dbNovels, dbSongs] = await Promise.all([
+        const [dbChars, dbThemes, dbUser, dbGroups, dbWorldbooks, dbNovels, dbSongs, dbCharGroups] = await Promise.all([
             settle(DB.getAllCharacters(), 'characters', [] as CharacterProfile[]),
             settle(DB.getThemes(), 'themes', [] as ChatTheme[]),
             settle(DB.getUserProfile(), 'userProfile', null as UserProfile | null),
             settle(DB.getGroups(), 'groups', [] as GroupProfile[]),
             settle(DB.getAllWorldbooks(), 'worldbooks', [] as Worldbook[]),
             settle(DB.getAllNovels(), 'novels', [] as NovelBook[]),
-            settle(DB.getAllSongs(), 'songs', [] as SongSheet[])
+            settle(DB.getAllSongs(), 'songs', [] as SongSheet[]),
+            settle(DB.getCharacterGroups(), 'characterGroups', [] as CharacterGroup[])
         ]);
 
         let finalChars = dbChars;
@@ -1142,6 +1192,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         }
 
         setGroups(dbGroups);
+        setCharacterGroups(dbCharGroups);
         setWorldbooks(dbWorldbooks);
         setNovels(dbNovels);
         setSongs(dbSongs);
@@ -1980,11 +2031,17 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       window.addEventListener('world-reroll-request', onRerollRequest as EventListener);
       // 调度表存 localStorage 不随备份迁移，按 IndexedDB 里的世界配置对账
       void DB.getWorlds()
-          .then(worlds => WorldScheduler.reconcile(
-              worlds
-                  .filter(w => (w.offlineTickSlots?.length || 0) > 0)
-                  .map(w => ({ worldId: w.id, slots: w.offlineTickSlots! }))
-          ))
+          .then(async worlds => {
+              // 旧存档（一天三段制）→ 四段制（含凌晨）一次性迁移并写回
+              for (const w of worlds) {
+                  if (migrateWorldDaySegs(w)) await DB.saveWorld(w).catch(() => {});
+              }
+              WorldScheduler.reconcile(
+                  worlds
+                      .filter(w => (w.offlineTickSlots?.length || 0) > 0)
+                      .map(w => ({ worldId: w.id, slots: w.offlineTickSlots! }))
+              );
+          })
           .catch(() => {});
 
       return () => {
@@ -2012,16 +2069,13 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         delete w['br'];
         newTheme.launcherWidgets = Object.keys(w).length > 0 ? w : undefined;
     }
-    setTheme(newTheme);
-
-    // Persist large assets to IndexedDB
+    // 壁纸改存 Blob：把指针（令牌）落库并解析成可渲染 url 后再进 state。
+    // theme.wallpaper 在内存里始终是能直接喂 CSS 的值（objectURL / http / 渐变），
+    // 不是 blobref 令牌。
     if (wallpaper !== undefined) {
-        if (wallpaper && wallpaper.startsWith('data:')) {
-            await DB.saveAsset('wallpaper', wallpaper);
-        } else {
-            await DB.deleteAsset('wallpaper');
-        }
+        newTheme.wallpaper = await resolveWallpaperStoredValue(wallpaper);
     }
+    setTheme(newTheme);
 
     // Legacy single-image asset is permanently banned — always delete, never save.
     await DB.deleteAsset('launcherWidgetImage');
@@ -2079,9 +2133,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         }
     }
 
-    // Save lightweight settings to LocalStorage (strip data URIs)
+    // Save lightweight settings to LocalStorage (strip data URIs & blob object URLs)
+    // blob: objectURL 是本次会话临时的，重启后失效——不能进 LS，清空让加载路径从 assets 重新解析。
     const lsTheme = { ...newTheme };
-    if (lsTheme.wallpaper && lsTheme.wallpaper.startsWith('data:')) lsTheme.wallpaper = '';
+    if (lsTheme.wallpaper && (lsTheme.wallpaper.startsWith('data:') || lsTheme.wallpaper.startsWith('blob:'))) lsTheme.wallpaper = '';
     // Banned legacy field — never persist.
     lsTheme.launcherWidgetImage = undefined;
     // Strip data URIs and deprecated slots from widgets for LS
@@ -2240,10 +2295,45 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     setCharacters(prev => [...prev, newChar]);
     setActiveCharacterId(newChar.id);
     await DB.saveCharacter(newChar);
+    return newChar;
   };
   const updateCharacter = async (id: string, updates: Partial<CharacterProfile> | ((prev: CharacterProfile) => Partial<CharacterProfile>)) => { setCharacters(prev => { const updated = prev.map(c => c.id === id ? normalizeCharacterImpression({ ...c, ...(typeof updates === 'function' ? updates(c) : updates) }) : c); const target = updated.find(c => c.id === id); if (target) DB.saveCharacter(target); return updated; }); };
   const deleteCharacter = async (id: string) => { setCharacters(prev => { const remaining = prev.filter(c => c.id !== id); if (remaining.length > 0 && activeCharacterId === id) { setActiveCharacterId(remaining[0].id); } return remaining; }); await DB.deleteCharacter(id); };
-  
+
+  // 角色分组方法（神经链接"文件夹"）
+  const createCharacterGroup = async (name: string): Promise<CharacterGroup | null> => {
+      const trimmed = name.trim();
+      if (!trimmed) return null;
+      const newGroup: CharacterGroup = { id: `cgroup-${Date.now()}`, name: trimmed, createdAt: Date.now() };
+      await DB.saveCharacterGroup(newGroup);
+      setCharacterGroups(prev => [...prev, newGroup]);
+      return newGroup;
+  };
+
+  const renameCharacterGroup = async (id: string, name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      let target: CharacterGroup | undefined;
+      setCharacterGroups(prev => {
+          const updated = prev.map(g => g.id === id ? { ...g, name: trimmed } : g);
+          target = updated.find(g => g.id === id);
+          return updated;
+      });
+      if (target) await DB.saveCharacterGroup(target);
+  };
+
+  // 删分组 = 组内角色回落「未分组」+ 删分组定义本身，角色不受影响
+  const deleteCharacterGroup = async (id: string) => {
+      setCharacters(prev => prev.map(c => {
+          if (c.groupId !== id) return c;
+          const next = { ...c, groupId: undefined };
+          DB.saveCharacter(next);
+          return next;
+      }));
+      await DB.deleteCharacterGroup(id);
+      setCharacterGroups(prev => prev.filter(g => g.id !== id));
+  };
+
   // Group Methods
   const createGroup = async (name: string, members: string[]) => {
       const newGroup: GroupProfile = {
@@ -2388,11 +2478,17 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   // --- APPEARANCE PRESETS ---
   const saveAppearancePreset = async (name: string) => {
+      // theme.wallpaper 在内存里是 blob: objectURL（会话临时），不能存进预设。
+      // 换成 assets 'wallpaper' 里的持久指针（blobref 令牌 / http / 渐变）。
+      const presetTheme: OSTheme = { ...theme };
+      if (presetTheme.wallpaper && presetTheme.wallpaper.startsWith('blob:')) {
+          presetTheme.wallpaper = (await DB.getAsset('wallpaper')) || '';
+      }
       const preset: AppearancePreset = {
           id: `ap_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
           name,
           createdAt: Date.now(),
-          theme: { ...theme },
+          theme: presetTheme,
           customIcons: Object.keys(customIcons).length > 0 ? { ...customIcons } : undefined,
           chatThemes: customThemes.length > 0 ? [...customThemes] : undefined,
       };
@@ -2413,11 +2509,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           delete w['br'];
           sanitizedPresetTheme.launcherWidgets = Object.keys(w).length > 0 ? w : undefined;
       }
+      // 壁纸改存 Blob：把预设里的指针（blobref 令牌 / 旧 data:）落库并解析成 objectURL 再进 state。
+      if (sanitizedPresetTheme.wallpaper !== undefined && typeof sanitizedPresetTheme.wallpaper === 'string') {
+          sanitizedPresetTheme.wallpaper = await resolveWallpaperStoredValue(sanitizedPresetTheme.wallpaper);
+      }
       // Apply theme
       setTheme(sanitizedPresetTheme);
-      // 写 LS 前必须剥 data URI，否则 base64 壁纸会撑爆 5MB quota
+      // 写 LS 前必须剥 data URI / blob: objectURL，否则 base64 壁纸撑爆 quota、blob: 重启即失效
       const lsTheme: any = { ...sanitizedPresetTheme };
-      if (lsTheme.wallpaper && typeof lsTheme.wallpaper === 'string' && lsTheme.wallpaper.startsWith('data:')) lsTheme.wallpaper = '';
+      if (lsTheme.wallpaper && typeof lsTheme.wallpaper === 'string' && (lsTheme.wallpaper.startsWith('data:') || lsTheme.wallpaper.startsWith('blob:'))) lsTheme.wallpaper = '';
       lsTheme.launcherWidgetImage = undefined;
       if (lsTheme.launcherWidgets) {
           const cleanWidgets: Record<string, string> = {};
@@ -2462,10 +2562,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               return merged;
           });
       }
-      // Save wallpaper/widgets/decos to assets
-      if (preset.theme.wallpaper && preset.theme.wallpaper.startsWith('data:')) {
-          await DB.saveAsset('wallpaper', preset.theme.wallpaper);
-      }
+      // 壁纸指针已在上面 resolveWallpaperStoredValue 里落库（令牌→assets），此处不再重复写。
       if (preset.theme.desktopDecorations) {
           for (const d of preset.theme.desktopDecorations) {
               if (d.type === 'image' && d.content) {
@@ -2537,8 +2634,12 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const exportAppearancePreset = async (id: string): Promise<Blob> => {
       const preset = appearancePresets.find(p => p.id === id);
       if (!preset) throw new Error('预设不存在');
+      // 预设里的壁纸可能是 blobref 令牌（本机 blob_assets），导出到别的设备会失效——
+      // 先深拷贝再把令牌解析回 data:image，保证导出文件自包含可移植。
+      const exportPreset = deepCloneForExport(preset);
+      await resolveBlobRefsDeep(exportPreset);
       // 保留原始壁纸画质，把整个预设 JSON 塞进 zip 包压体积
-      const data = JSON.stringify({ type: 'sully_appearance_preset', version: 1, ...preset }, null, 2);
+      const data = JSON.stringify({ type: 'sully_appearance_preset', version: 1, ...exportPreset }, null, 2);
       const JSZip = await loadJSZip();
       const zip = new JSZip();
       (zip as any).file('preset.json', data);
@@ -2597,7 +2698,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // Strip Base64 Images (Recursive) - Used for Text Only Mode
           const stripBase64 = (obj: any): any => {
               if (typeof obj === 'string') {
-                  if (obj.startsWith('data:image')) return '';
+                  // text_only 模式剥掉所有图片：data:image 与 blobref 令牌（令牌无二进制随行，
+                  // 恢复端认不得，等同一张丢失的图）都清空。
+                  if (obj.startsWith('data:image') || obj.startsWith(BLOBREF_PREFIX)) return '';
                   return obj;
               }
               if (Array.isArray(obj)) {
@@ -2662,7 +2765,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // 1. Define Stores to Process based on Mode
           let storesToProcess: string[] = [];
           const allStores = [
-              'characters', 'messages', 'themes', 'emojis', 'emoji_categories', 'assets', 'gallery',
+              // character_groups（角色分组定义）必须与 characters 同进退：
+              // 角色身上的 groupId 指向这张表，漏导会让导入端全员回落「未分组」
+              'characters', 'character_groups', 'messages', 'themes', 'emojis', 'emoji_categories', 'assets', 'gallery',
               'user_profile', 'diaries', 'tasks', 'anniversaries', 'room_todos',
               'room_notes', 'groups', 'journal_stickers', 'social_posts', 'courses', 'games', 'worldbooks', 'novels', 'songs',
               'bank_transactions', 'bank_data',
@@ -2681,7 +2786,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               // 家园（同世界观多角色大世界）——世界定义 + 演绎历史。导入端早已支持恢复
               // （worldHomeLocal 本机配置也已随导出带走），但这两个 store 之前漏在清单外，
               // 导致导出的备份不含家园数据。
-              'worlds', 'world_episodes'
+              'worlds', 'world_episodes',
+              // 生活记录（档案 App：生理期/药盒/锻炼 + 药盒计划 + 设置；记账走 bank_transactions）
+              // 导入端 importFullData 已支持恢复，这里必须同步登记，否则备份不含生活记录。
+              'life_records', 'med_plans', 'life_record_settings'
           ];
 
           if (mode === 'full') {
@@ -2841,13 +2949,22 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               //  · 瑞幸 / 麦当劳 MCP 的点单 token + 启用状态（用户说的「那个码」）
               //  · 邮局身份、家园全局 API + 文风收藏
               vrPostOffice: (mode === 'text_only' || mode === 'full') ? exportPostOfficeLocal() : undefined,
+              vrSignal: (mode === 'text_only' || mode === 'full') ? exportSignalLocal() : undefined, // 信号坠落处：句子归属「你·角色」+ 反复用清单
               worldHomeLocal: (mode === 'text_only' || mode === 'full') ? exportWorldHomeLocal() : undefined,
               luckinLocal: (mode === 'text_only' || mode === 'full') ? exportLuckinLocal() : undefined,
               mcdLocal: (mode === 'text_only' || mode === 'full') ? exportMcdLocal() : undefined,
 
               // 梦境盲盒收藏册（账号级 localStorage，不挂在角色上，需单独随备份带走）
               dreamCollection: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('os_dream_collection'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
+
+              // 桌面电子宠物主题的主色调偏好（账号级 localStorage）。room_card 涓流卡片本身
+              // 是普通消息、随 messages store 一起导出，这里只补带走这个纯外观偏好。
+              gotchiAccentHue: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('tama_accent_hue'); return s !== null ? s : undefined; } catch { return undefined; } })() : undefined,
           };
+
+          // 桌面皮肤偏好（电子宠物/手游风的界面配色 + 看板 banner）——异步（看板图令牌需解析为
+          // data URL 才能跨设备），所以在对象字面量外单独 await。text_only 只带配色偏好、跳过看板大图。
+          backupData.desktopSkinLocal = await exportDesktopSkinLocal(mode !== 'text_only');
 
           const totalSteps = storesToProcess.length + 3;
           let currentStep = 0;
@@ -2855,6 +2972,21 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // Pre-process specialized image fields (Social App, Theme)。processObject 是
           // 原地改，所以这里按语句调用、不接返回值，读起来就是「就地处理这个对象」。
           if (mode !== 'text_only') {
+              // 壁纸 / 小屋自定义素材 / 外观预设里可能存的是 blobref 令牌（本机 blob_assets）。
+              // 先把令牌解析回 data:image，再交给下面 processObject 的 data:→zip 抽取管线，
+              // 备份格式与可移植性完全不变。theme.wallpaper 内存里是 blob: objectURL，
+              // resolveBlobRefsDeep 认不得 blob:，所以壁纸单独按令牌指针读 assets 还原。
+              if (backupData.theme) {
+                  const wp = (backupData.theme as any).wallpaper;
+                  if (typeof wp === 'string' && wp.startsWith('blob:')) {
+                      const ptr = await DB.getAsset('wallpaper'); // blobref 令牌 / 旧 data: / http
+                      (backupData.theme as any).wallpaper = ptr || '';
+                  }
+                  await resolveBlobRefsDeep(backupData.theme);
+              }
+              if (backupData.roomCustomAssets) await resolveBlobRefsDeep(backupData.roomCustomAssets);
+              if (backupData.appearancePresets) await resolveBlobRefsDeep(backupData.appearancePresets);
+
               if (backupData.socialAppData?.userProfile) processObject(backupData.socialAppData.userProfile);
               if (backupData.socialAppData?.userBg) processObject(backupData.socialAppData.userBg);
               if (backupData.roomCustomAssets) processObject(backupData.roomCustomAssets);
@@ -2874,6 +3006,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       ?.filter(d => d.type === 'preset')
                       .map(d => ({ id: d.id, content: d.content }));
                   const strippedTheme = stripBase64(backupData.theme) as OSTheme;
+                  // text_only 不带图片：内存里的壁纸是 blob: objectURL（会话临时，恢复端认不得），
+                  // blobref 令牌 stripBase64 已清空——这里补清 blob: 避免导出一个死链接壁纸。
+                  if (strippedTheme.wallpaper && strippedTheme.wallpaper.startsWith('blob:')) strippedTheme.wallpaper = '';
                   backupData.theme = strippedTheme;
                   // Restore preset SVGs and remove image decorations (they have no data in text mode)
                   if (strippedTheme.desktopDecorations && savedPresetDecos) {
@@ -2891,7 +3026,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const noImageStores = new Set([
               'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes',
               'room_plates', 'digest_reports',
-              'bank_transactions', 'scheduled_messages', 'memory_batches', 'hotnews_snapshots'
+              'bank_transactions', 'scheduled_messages', 'memory_batches', 'hotnews_snapshots',
+              'character_groups',
+              'life_records', 'med_plans', 'life_record_settings'
           ]);
 
           // Chunked processObject for large arrays — yields to main thread every 200 items
@@ -2930,6 +3067,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   vectorPayload = encodeVectorsForBackup(Array.isArray(rawData) ? rawData : []);
                   await new Promise(resolve => setTimeout(resolve, 10));
                   continue;
+              }
+
+              // 这些 store 的图片可能存的是 blobref 令牌，媒体/全量模式下先解析回 data:image，
+              // 令后面的 data:→zip 抽取能认得：
+              //  · characters：小屋 roomConfig.wallImage/floorImage/items[].image、sprites.chibi
+              //    （media_only 的 roomItems/backgrounds 提取也依赖已还原成 data:）
+              //  · cc_custom_parts：捏人器自定义部件的 src / shadowSrc
+              if ((storeName === 'characters' || storeName === 'cc_custom_parts') && mode !== 'text_only' && Array.isArray(rawData)) {
+                  for (const c of rawData) await resolveBlobRefsDeep(c);
               }
 
               // --- MODE SPECIFIC FILTERING ---
@@ -2998,6 +3144,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               // Assign to Backup Data
               switch(storeName) {
                   case 'characters': if(mode !== 'media_only') backupData.characters = processedData; break;
+                  // 角色分组定义 —— 键名须与 importFullData 读取的字段（data.characterGroups）对齐
+                  case 'character_groups': backupData.characterGroups = processedData; break;
                   case 'messages': backupData.messages = processedData; break;
                   case 'themes': backupData.customThemes = processedData; break;
                   case 'emojis': backupData.savedEmojis = processedData; break;
@@ -3037,6 +3185,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   case 'handbook': backupData.handbooks = processedData; break;
                   case 'trackers': backupData.trackers = processedData; break;
                   case 'tracker_entries': backupData.trackerEntries = processedData; break;
+                  case 'life_records': backupData.lifeRecords = processedData; break;
+                  case 'med_plans': backupData.medPlans = processedData; break;
+                  case 'life_record_settings': backupData.lifeRecordSettings = processedData; break;
                   case 'hotnews_snapshots': backupData.hotNewsSnapshots = processedData; break;
                   case 'memory_nodes': backupData.memoryNodes = processedData; break;
                   // memory_vectors 走二进制旁路（上面已 continue），不在此 switch 落 backupData
@@ -3486,6 +3637,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (typeof data.bm25Mode === 'string') localStorage.setItem('bm25_mode', data.bm25Mode);
           if (typeof data.lastActiveCharId === 'string') localStorage.setItem('os_last_active_char_id', data.lastActiveCharId);
           if (data.dreamCollection && typeof data.dreamCollection === 'object') localStorage.setItem('os_dream_collection', JSON.stringify(data.dreamCollection));
+          if (typeof data.gotchiAccentHue === 'string' && /^\d+$/.test(data.gotchiAccentHue)) localStorage.setItem('tama_accent_hue', data.gotchiAccentHue);
           if (data.eventNotifFlags && typeof data.eventNotifFlags === 'object') {
               for (const [key, val] of Object.entries(data.eventNotifFlags)) {
                   // 只允许 sullyos_ 前缀，避免污染其它键
@@ -3643,6 +3795,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     updateCharacter,
     deleteCharacter,
     setActiveCharacterId,
+    characterGroups,
+    createCharacterGroup,
+    renameCharacterGroup,
+    deleteCharacterGroup,
     worldbooks,
     addWorldbook,
     updateWorldbook,
