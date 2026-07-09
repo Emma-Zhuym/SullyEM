@@ -19,6 +19,15 @@ import { CaretLeft, CaretRight, PencilSimple, ArrowsClockwise, Sparkle, X, FileA
 // 图片本体仍写各 App 自己的消费字段——本组件不新增渲染路径。
 // ============================================================
 
+// 安全区（与彼方 ChibiEditor / index.html :root 单一来源对齐）：
+//  · 全屏浮层顶栏统一用 --chrome-top（安全区 + SullyOS 状态栏；状态栏隐藏时自动塌回 --safe-top）。
+//    不能只用 --safe-top，否则状态栏显示时顶栏会怼进时钟/电量条。
+//  · 底部用 --safe-bottom（带 JS 探测兜底，iOS 全屏 PWA 原生 env(safe-area-inset-bottom)
+//    偶发返回 0）+ 一点手势余量，别让控件贴着 home 条。
+const STUDIO_TOP = 'var(--chrome-top)';
+const STUDIO_BOTTOM = 'calc(2rem + var(--safe-bottom))';
+const STUDIO_SHEET_BOTTOM = 'calc(1.25rem + var(--safe-bottom) + 0.75rem)';
+
 interface SlotMeta {
     id: ChibiStudioSlotId;
     label: string;
@@ -360,7 +369,7 @@ const ChibiStudio: React.FC<{ charId: string; onClose: () => void }> = ({ charId
         return (
             <div className="fixed inset-0 z-[70] flex flex-col bg-black">
                 <div className="flex items-center gap-2 px-4 pb-2 shrink-0 text-white"
-                    style={{ background: 'linear-gradient(180deg,#241b3f 0%,#120d24 100%)', paddingTop: 'var(--safe-top)' }}>
+                    style={{ background: 'linear-gradient(180deg,#241b3f 0%,#120d24 100%)', paddingTop: STUDIO_TOP }}>
                     <button onClick={() => setEditing(null)} className="p-1.5 -ml-1.5 rounded-full active:bg-white/10"><CaretLeft size={20} weight="bold" /></button>
                     <span className="text-[14px] font-bold">捏 {char.name} 的{slotMeta.label}形象</span>
                 </div>
@@ -386,7 +395,7 @@ const ChibiStudio: React.FC<{ charId: string; onClose: () => void }> = ({ charId
         <div className="fixed inset-0 z-[60] flex flex-col" style={{ background: 'linear-gradient(180deg, #241b3f 0%, #171130 55%, #120d24 100%)' }}>
             <StudioStyle />
             {/* 顶栏 */}
-            <div className="shrink-0 px-5 pb-3" style={{ paddingTop: 'var(--safe-top)' }}>
+            <div className="shrink-0 px-5 pb-3" style={{ paddingTop: STUDIO_TOP }}>
                 <div className="flex items-center gap-2 pt-2">
                     <button onClick={onClose} className="p-2 -ml-2 rounded-full text-indigo-100 active:bg-white/10"><CaretLeft size={20} weight="bold" /></button>
                     <div>
@@ -411,8 +420,9 @@ const ChibiStudio: React.FC<{ charId: string; onClose: () => void }> = ({ charId
                 </button>
             </div>
 
-            {/* 展示柜（三层展台） */}
-            <div className="flex-1 overflow-y-auto no-scrollbar px-4 pb-8 space-y-4">
+            {/* 展示柜（三层展台）——底部给 home 条留白（iOS 全屏 PWA 用 --safe-bottom 兜底） */}
+            <div className="flex-1 overflow-y-auto no-scrollbar px-4 space-y-4"
+                style={{ paddingBottom: STUDIO_BOTTOM }}>
                 {views.map(v => (
                     <DisplayCase key={v.meta.id} view={v}
                         onEdit={() => setEditing(v.meta.id)}
@@ -431,7 +441,7 @@ const ChibiStudio: React.FC<{ charId: string; onClose: () => void }> = ({ charId
                 return (
                     <div className="absolute inset-0 z-10 flex items-end justify-center bg-black/60" onClick={() => !syncing && setSyncConfirm(null)}>
                         <div className="w-full max-w-md rounded-t-2xl p-5 border-t border-white/10"
-                            style={{ background: 'linear-gradient(180deg,#2b2150 0%,#171130 100%)', paddingBottom: 'calc(1.25rem + env(safe-area-inset-bottom))' }}
+                            style={{ background: 'linear-gradient(180deg,#2b2150 0%,#171130 100%)', paddingBottom: STUDIO_SHEET_BOTTOM }}
                             onClick={e => e.stopPropagation()}>
                             <div className="flex items-center mb-2">
                                 <span className="text-[14px] font-bold text-white">以「{meta.label}」这只为准？</span>
