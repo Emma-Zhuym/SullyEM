@@ -28,89 +28,50 @@ import { stripSensitiveCardFields } from '../utils/characterCard';
 import { confirmExportSafety } from '../utils/exportGuard';
 import { sortCharacterGroups, GROUP_FILTER_UNGROUPED } from '../components/character/CharacterGroupFilter';
 
-// ── 神经链接 · 游戏风视觉件 ─────────────────────────────────
-// 列表页整体走「淡紫星光 + 玻璃饰带」的游戏 UI：六边形功能钮、饰带分组条、
-// 华丽头像框（四向菱形饰角）+ 卡面暗纹章。仅列表页换装，编辑页不动。
+// ── 神经链接 · 列表页视觉件（淡紫留白风）────────────────────
+// 之前的「星点 + 玻璃饰带 + 华丽头像框」看久了眼花、低端机也重绘卡。
+// 改成留白为主的干净版：纯淡紫底、圆角方钮、朴素圆头像、素白卡片。
+// 无常驻动画 / 无 filter / 无大模糊阴影，既清爽又省电。仅列表页，编辑页不动。
 
-/** 尖顶六边形（顶栏功能钮用） */
-const HEX_CLIP = 'polygon(50% 0%, 100% 26%, 100% 74%, 50% 100%, 0% 74%, 0% 26%)';
-
-/** 背景星光（固定坐标，避免重渲染时抖动）。
- *  twinkle=true 的才做呼吸动画——全员无限 pulse 会让低端机每帧重绘背景，
- *  只挑 4 颗动、其余静止，观感几乎一样但省掉大半持续重绘。 */
-const LINK_SPARKLES: { top: string; left: string; s: number; o: number; twinkle?: boolean }[] = [
-    { top: '5%', left: '6%', s: 13, o: 0.85, twinkle: true }, { top: '11%', left: '86%', s: 9, o: 0.6 },
-    { top: '22%', left: '3%', s: 8, o: 0.5 }, { top: '30%', left: '92%', s: 12, o: 0.7, twinkle: true },
-    { top: '46%', left: '7%', s: 9, o: 0.45 }, { top: '55%', left: '88%', s: 8, o: 0.55, twinkle: true },
-    { top: '68%', left: '4%', s: 11, o: 0.5 }, { top: '78%', left: '91%', s: 9, o: 0.6, twinkle: true },
-    { top: '90%', left: '10%', s: 8, o: 0.45 }, { top: '17%', left: '46%', s: 7, o: 0.35 },
-];
-
-/** 顶栏六边形功能钮：白玻璃双层六边形 + 底部小字标签 */
-const HexButton: React.FC<{ label: string; title?: string; onClick: () => void; children: React.ReactNode }> = ({ label, title, onClick, children }) => (
+/** 顶栏圆角方钮（squircle）：白底细紫描边 + 线性图标 + 底部小字标签 */
+const ToolButton: React.FC<{ label: string; title?: string; onClick: () => void; children: React.ReactNode }> = ({ label, title, onClick, children }) => (
     <button onClick={onClick} title={title} className="flex flex-col items-center gap-1.5 active:scale-90 transition-transform">
-        <span className="relative w-11 h-12 flex items-center justify-center" style={{ filter: 'drop-shadow(0 3px 6px rgba(130,110,200,0.28))' }}>
-            <span className="absolute inset-0" style={{ clipPath: HEX_CLIP, background: 'linear-gradient(180deg, #d8cff2, #b5a5e0)' }} />
-            <span className="absolute inset-[2px]" style={{ clipPath: HEX_CLIP, background: 'linear-gradient(180deg, #ffffff, #f4f0fd)' }} />
-            <span className="relative z-10 text-indigo-500">{children}</span>
+        <span className="w-12 h-12 flex items-center justify-center rounded-2xl bg-white border border-violet-200/80 text-violet-500 shadow-[0_2px_6px_rgba(140,120,200,0.10)]">
+            {children}
         </span>
-        <span className="text-[11px] text-indigo-900/60 font-medium tracking-wider">{label}</span>
+        <span className="text-[11px] text-violet-400/90 font-medium tracking-wider">{label}</span>
     </button>
 );
 
-/** 头像饰角四向定位（rotate-45 小菱形） */
-const AVATAR_DIAMOND_POS = [
-    'top-0 left-1/2 -translate-x-1/2 -translate-y-[7px]',
-    'bottom-0 left-1/2 -translate-x-1/2 translate-y-[7px]',
-    'left-0 top-1/2 -translate-y-1/2 -translate-x-[7px]',
-    'right-0 top-1/2 -translate-y-1/2 translate-x-[7px]',
-];
-
 const CharacterCard: React.FC<{
     char: CharacterProfile;
-    /** 当前激活（正在聊）的角色走粉色高亮 */
+    /** 当前激活（正在聊）的角色走淡紫高亮 */
     active?: boolean;
     onClick: () => void;
     onDelete: (e: React.MouseEvent) => void;
 }> = ({ char, active, onClick, onDelete }) => (
     <div
         onClick={onClick}
-        className={`relative p-4 rounded-[26px] border transition-transform duration-200 cursor-pointer group shrink-0 overflow-hidden hover:scale-[1.01] ${
-            active
-                ? 'border-pink-200/90 shadow-[0_5px_14px_rgba(244,163,202,0.25)]'
-                : 'border-white/70 shadow-[0_4px_10px_rgba(140,120,200,0.12)]'
+        className={`relative px-4 py-3.5 rounded-3xl border bg-white transition-colors cursor-pointer group shrink-0 shadow-[0_2px_10px_rgba(140,120,200,0.07)] ${
+            active ? 'border-violet-300' : 'border-slate-100 hover:border-violet-200'
         }`}
-        style={{
-            background: active
-                ? 'linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(255,238,247,0.85) 100%)'
-                : 'linear-gradient(135deg, rgba(255,255,255,0.92) 0%, rgba(243,239,255,0.72) 100%)',
-        }}
     >
-        {/* 卡面暗纹章（纯装饰） */}
-        <span className={`absolute right-12 top-1/2 -translate-y-1/2 text-[56px] leading-none pointer-events-none select-none ${active ? 'text-pink-400/10' : 'text-indigo-400/10'}`}>❋</span>
         <div className="flex items-center gap-4">
-            {/* 华丽头像框：渐变描边 + 四向菱形饰角 */}
-            <div className="relative w-16 h-16 shrink-0">
-                <div className={`absolute -inset-[2px] rounded-full ${active ? 'bg-gradient-to-br from-pink-300 via-pink-100 to-violet-200' : 'bg-gradient-to-br from-violet-300 via-white to-violet-200'}`}></div>
-                <div className="absolute inset-0 rounded-full bg-white overflow-hidden border-2 border-white shadow-inner">
-                    <img src={char.avatar} className="w-full h-full object-cover" alt={char.name} />
-                </div>
-                {AVATAR_DIAMOND_POS.map(pos => (
-                    <span key={pos} className={`absolute ${pos} w-2 h-2 rotate-45 rounded-[2px] border shadow-sm ${active ? 'bg-pink-100 border-pink-300' : 'bg-white border-violet-300'}`} />
-                ))}
+            <div className="w-14 h-14 shrink-0 rounded-full overflow-hidden border border-violet-100 bg-violet-50">
+                <img src={char.avatar} className="w-full h-full object-cover" alt={char.name} />
             </div>
-            <div className="flex-1 min-w-0 relative z-10">
-                <h3 className="font-serif text-xl font-bold truncate text-indigo-950 tracking-wide">
+            <div className="flex-1 min-w-0 pr-6">
+                <h3 className="text-lg font-bold truncate text-slate-800">
                     {char.name}
                 </h3>
-                <p className={`text-xs truncate mt-1 font-light ${active ? 'text-pink-400/80' : 'text-indigo-400/70'}`}>
+                <p className="text-xs truncate mt-0.5 text-violet-400/80">
                     {char.description || '暂无描述'}
                 </p>
             </div>
         </div>
         <button
             onClick={onDelete}
-            className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full bg-white/90 border border-white text-violet-300 shadow-sm hover:text-pink-400 hover:border-pink-200 active:scale-90 transition-all z-10"
+            className="absolute top-1/2 -translate-y-1/2 right-4 w-7 h-7 flex items-center justify-center rounded-full bg-slate-50 border border-slate-100 text-slate-300 hover:text-violet-400 hover:border-violet-200 active:scale-90 transition-colors"
         >
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
@@ -329,6 +290,17 @@ const Character: React.FC = () => {
       }
       await createCharacterGroup(name);
       setNewGroupName('');
+  };
+
+  // 新建角色：建完直接进「设定」编辑页（而非停在列表往未分组里塞一张空白卡，
+  // 那样反直觉——用户点新建就是想马上填人设）。editingId 一设，下方 sync effect
+  // 会从 characters 里找到这张新卡填进 formData。
+  const handleAddCharacter = async () => {
+      const created = await addCharacter();
+      setEditingId(created.id);
+      setFormData(created); // 直接填好，避免跳转瞬间 characters 还没同步导致详情页闪白
+      setDetailTab('identity');
+      setView('detail');
   };
 
   const handleChange = (field: keyof CharacterProfile, value: any) => {
@@ -1061,50 +1033,34 @@ ${isInitialGeneration ? `
   return (
     <div className="h-full w-full bg-slate-50/30 font-light relative">
        {view === 'list' ? (
-           <div className="flex flex-col h-full animate-fade-in relative overflow-hidden"
-                style={{ background: 'linear-gradient(160deg, #efeaf9 0%, #e6def5 45%, #ddd3f0 100%)' }}>
-               {/* 氛围装饰层：柔光 + 星点 + 蝶影，纯装饰不挡点击。
-                   translateZ(0) 把整层提成独立合成层，滚动列表时这层不参与重绘 */}
-               <div className="absolute inset-0 pointer-events-none overflow-hidden" style={{ transform: 'translateZ(0)' }}>
-                   <div className="absolute -top-24 -left-20 w-72 h-72 rounded-full" style={{ background: 'radial-gradient(circle, rgba(255,255,255,0.6), transparent 70%)' }} />
-                   <div className="absolute top-1/3 -right-16 w-56 h-56 rounded-full" style={{ background: 'radial-gradient(circle, rgba(196,181,253,0.35), transparent 70%)' }} />
-                   <div className="absolute bottom-0 -left-10 w-64 h-64 rounded-full" style={{ background: 'radial-gradient(circle, rgba(244,214,237,0.4), transparent 70%)' }} />
-                   {LINK_SPARKLES.map((p, i) => (
-                       <span key={i} className={`absolute text-white select-none ${p.twinkle ? 'animate-pulse' : ''}`}
-                             style={{ top: p.top, left: p.left, fontSize: p.s, opacity: p.o, textShadow: '0 0 8px rgba(255,255,255,0.9)',
-                                      ...(p.twinkle ? { animationDelay: `${i * 0.6}s`, willChange: 'opacity' } : {}) }}>✦</span>
-                   ))}
-                   <span className="absolute top-[3%] left-[30%] text-2xl select-none" style={{ filter: 'grayscale(1) brightness(1.9)', opacity: 0.35, transform: 'rotate(-18deg)' }}>🦋</span>
-                   <span className="absolute top-[58%] right-[6%] text-lg select-none" style={{ filter: 'grayscale(1) brightness(1.9)', opacity: 0.22, transform: 'rotate(14deg)' }}>🦋</span>
-               </div>
-               {/* safe-area: 原本固定 pt-16(4rem) 顶部留白，改成 max(4rem, 刘海高度)，
-                   既保住原来的呼吸感，又保证内容在更高刘海设备上不被挡 */}
-               <div className="px-6 pb-4 shrink-0 flex items-start justify-between relative z-10" style={{ paddingTop: 'max(3.5rem, var(--safe-top))' }}>
+           <div className="flex flex-col h-full animate-fade-in relative"
+                style={{ background: 'linear-gradient(180deg, #f5f2fb 0%, #ece6f6 100%)' }}>
+               {/* safe-area: pt 用 max(3.5rem, 刘海高度)，保呼吸感同时更高刘海设备不被挡 */}
+               <div className="px-6 pb-4 shrink-0 flex items-start justify-between" style={{ paddingTop: 'max(3.5rem, var(--safe-top))' }}>
                    <div className="relative">
-                       <span className="absolute -top-4 -left-3 text-violet-300 text-sm select-none">✦</span>
-                       <span className="absolute top-0 -right-4 text-white text-[10px] select-none" style={{ textShadow: '0 0 6px rgba(255,255,255,0.9)' }}>✦</span>
-                       <h1 className="text-[30px] font-serif font-bold tracking-wide leading-tight" style={{ color: '#3d3470', textShadow: '0 2px 14px rgba(255,255,255,0.85)' }}>神经链接</h1>
-                       <div className="h-px w-36 mt-1.5 bg-gradient-to-r from-violet-300/90 via-violet-200/50 to-transparent" />
+                       <span className="absolute -top-3 -left-2 text-violet-300 text-xs select-none">✦</span>
+                       <span className="absolute -top-1 left-9 text-violet-200 text-[10px] select-none">✦</span>
+                       <h1 className="text-[30px] font-serif font-bold tracking-wide leading-tight text-slate-800">神经链接</h1>
                        <p className="text-xs text-violet-400/90 mt-2">已建立 <span className="font-bold text-violet-500">{characters.length}</span> 个角色连接</p>
                    </div>
                    <div className="flex gap-3 pt-1">
-                        <HexButton label="分组" title="角色分组管理" onClick={() => setShowGroupModal(true)}>
+                        <ToolButton label="分组" title="角色分组管理" onClick={() => setShowGroupModal(true)}>
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-5 h-5">
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z" />
                             </svg>
-                        </HexButton>
-                        <HexButton label="导入" title="导入角色卡" onClick={() => cardImportRef.current?.click()}>
+                        </ToolButton>
+                        <ToolButton label="导入" title="导入角色卡" onClick={() => cardImportRef.current?.click()}>
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-5 h-5">
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
                             </svg>
-                        </HexButton>
-                        <HexButton label="关闭" title="关闭" onClick={closeApp}>
+                        </ToolButton>
+                        <ToolButton label="关闭" title="关闭" onClick={closeApp}>
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
-                        </HexButton>
+                        </ToolButton>
                         <input type="file" ref={cardImportRef} className="hidden" accept=".json" onChange={handleImportCard} />
                    </div>
                </div>
-               <div className="flex-1 overflow-y-auto px-5 pb-20 no-scrollbar flex flex-col gap-3 relative z-10">
+               <div className="flex-1 overflow-y-auto px-5 pb-20 no-scrollbar flex flex-col gap-3">
                    {(() => {
                        // 建过分组 → 按组折叠展开（不再分页，分组本身就把列表变短了）；
                        // 没建过分组 → 维持原来的分页列表，零变化。
@@ -1129,21 +1085,18 @@ ${isInitialGeneration ? `
                                        const expanded = expandedGroups.includes(section.id);
                                        return (
                                            <div key={section.id} className="shrink-0">
-                                               {/* 饰带式分组条：斜切角玻璃条 + 菱形闪光 + 数量胶囊。
-                                                   不用 filter:drop-shadow 描边框阴影——filter 要走离屏渲染，滚动时每条饰带
-                                                   都重算会卡；改用裁剪面内部的 inset 阴影压出底边层次，观感接近、开销可忽略 */}
-                                               <button onClick={() => toggleGroupExpanded(section.id)} className="relative w-full h-11 flex items-center gap-2.5 px-6 text-left active:scale-[0.99] transition-transform">
-                                                   <span className="absolute inset-0" style={{ clipPath: 'polygon(16px 0, calc(100% - 16px) 0, 100% 100%, 0 100%)', background: 'linear-gradient(180deg, rgba(255,255,255,0.94), rgba(255,255,255,0.62))', boxShadow: 'inset 0 -2px 4px rgba(130,110,190,0.14), inset 0 1px 0 rgba(255,255,255,0.9)' }} />
-                                                   <svg viewBox="0 0 12 12" className={`relative z-10 w-2.5 h-2.5 text-violet-400 transition-transform ${expanded ? '' : '-rotate-90'}`}>
+                                               {/* 分组条：干净的圆角白卡，左折叠箭头 + 组名 + 数量胶囊，右侧 ">" 指示可展开 */}
+                                               <button onClick={() => toggleGroupExpanded(section.id)}
+                                                   className={`w-full h-14 flex items-center gap-3 px-5 rounded-2xl bg-white border transition-colors active:scale-[0.99] ${expanded ? 'border-violet-200' : 'border-slate-100 hover:border-violet-200'} shadow-[0_2px_10px_rgba(140,120,200,0.07)]`}>
+                                                   <svg viewBox="0 0 12 12" className={`w-3 h-3 text-violet-400 transition-transform ${expanded ? '' : '-rotate-90'}`}>
                                                        <path d="M2 4l4 5 4-5z" fill="currentColor" />
                                                    </svg>
-                                                   <span className="relative z-10 text-violet-400 text-xs select-none">✦</span>
-                                                   <span className="relative z-10 font-serif text-[15px] font-bold text-indigo-950 tracking-widest truncate">{section.name}</span>
-                                                   <span className="relative z-10 min-w-[30px] px-2 py-0.5 rounded-full bg-white border border-violet-200/80 text-[11px] text-violet-500 text-center font-medium tabular-nums shadow-sm">{section.chars.length}</span>
-                                                   <span className="relative z-10 ml-auto text-violet-300/80 text-[10px] tracking-[0.3em] select-none">✦ ✧</span>
+                                                   <span className="text-base font-bold text-slate-700 tracking-wide truncate">{section.name}</span>
+                                                   <span className="min-w-[26px] px-2 py-0.5 rounded-full bg-violet-100/70 text-[12px] text-violet-500 text-center font-medium tabular-nums">{section.chars.length}</span>
+                                                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className={`w-4 h-4 ml-auto text-slate-300 transition-transform ${expanded ? 'rotate-90' : ''}`}><path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
                                                </button>
                                                {expanded && (
-                                                   <div className="flex flex-col gap-3 mt-2">
+                                                   <div className="flex flex-col gap-3 mt-3">
                                                        {section.chars.map(char => (
                                                            <CharacterCard
                                                                key={char.id}
@@ -1164,8 +1117,8 @@ ${isInitialGeneration ? `
                                            </div>
                                        );
                                    })}
-                                   <button onClick={addCharacter} className="w-full py-4 rounded-[26px] border border-dashed border-violet-300/80 text-violet-400 text-sm bg-white/30 hover:bg-white/60 transition-all flex items-center justify-center gap-2 shrink-0">
-                                       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>新建链接 <span className="text-violet-300 text-xs select-none">✦</span>
+                                   <button onClick={handleAddCharacter} className="w-full py-4 rounded-3xl border border-dashed border-violet-300/70 text-violet-400 text-sm bg-white/50 hover:bg-white transition-colors flex items-center justify-center gap-2 shrink-0">
+                                       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>新建链接
                                    </button>
                                </>
                            );
@@ -1188,8 +1141,8 @@ ${isInitialGeneration ? `
                                        }}
                                    />
                                ))}
-                               <button onClick={addCharacter} className="w-full py-4 rounded-[26px] border border-dashed border-violet-300/80 text-violet-400 text-sm bg-white/30 hover:bg-white/60 transition-all flex items-center justify-center gap-2 shrink-0">
-                                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>新建链接 <span className="text-violet-300 text-xs select-none">✦</span>
+                               <button onClick={handleAddCharacter} className="w-full py-4 rounded-3xl border border-dashed border-violet-300/70 text-violet-400 text-sm bg-white/50 hover:bg-white transition-colors flex items-center justify-center gap-2 shrink-0">
+                                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>新建链接
                                </button>
                                {totalPages > 1 && (
                                    <div className="flex items-center justify-center gap-3 pt-2 shrink-0">
