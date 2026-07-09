@@ -6,6 +6,7 @@
  */
 
 import { ShoppingDB, type ShopOrder } from './shoppingDb';
+import { sweepFoodDeliveries } from './shoppingDeliverySweep';
 
 function isEtaDateReached(etaTimestamp: number): boolean {
   const eta = new Date(etaTimestamp);
@@ -17,6 +18,8 @@ function isEtaDateReached(etaTimestamp: number): boolean {
 
 export async function buildShoppingDeliveryContext(charId: string): Promise<string | null> {
   try {
+    // 外卖到点自动收货+发卡片（先于读订单，保证下面读到的状态是最新的）
+    await sweepFoodDeliveries();
     const [orders, products] = await Promise.all([ShoppingDB.getOrders(), ShoppingDB.getProducts()]);
     const now = Date.now();
 

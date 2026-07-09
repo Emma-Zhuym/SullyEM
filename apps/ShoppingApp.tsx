@@ -9,6 +9,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { CaretLeft, CaretRight, CaretDown, Plus, Minus, House, Package, CheckCircle, ShoppingCart, Clock, PencilSimple, Trash } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { ShoppingDB, type ShopProduct, type CartItem, type ShopOrder } from '../utils/shoppingDb';
+import { sweepFoodDeliveries } from '../utils/shoppingDeliverySweep';
 import { DB } from '../utils/db';
 import { F, S, R, HUE, STATUS } from '../utils/clayTokens';
 
@@ -142,6 +143,7 @@ const ShoppingApp: React.FC = () => {
   const roles = characters.map(c => ({ id: c.id, name: c.name, avatar: c.avatar }));
 
   const refresh = useCallback(async () => {
+    await sweepFoodDeliveries();
     const [p, c, o] = await Promise.all([ShoppingDB.getProducts(), ShoppingDB.getCart(), ShoppingDB.getOrders()]);
     setProducts(p);
     setCart(c);
@@ -557,7 +559,7 @@ const ShoppingApp: React.FC = () => {
       if (!p) return null;
       const cp = pal(p.type);
       return { ...c, p, cp };
-    }).filter(Boolean) as { id: string; qty: number; p: ShopProduct; cp: typeof TEAL }[];
+    }).filter(Boolean) as { id: string; qty: number; note?: string; p: ShopProduct; cp: typeof TEAL }[];
 
     return (
       <>
