@@ -12,6 +12,7 @@ import {
     WorldProfile, WorldEpisode
 } from '../types';
 import { exportPostOfficeLocal, importPostOfficeLocal } from './vrWorld/postOffice';
+import { exportSignalLocal, importSignalLocal } from './vrWorld/signal';
 import { exportLuckinLocal, importLuckinLocal } from './luckinMcpClient';
 import { exportMcdLocal, importMcdLocal } from './mcdMcpClient';
 import { exportWorldHomeLocal, importWorldHomeLocal } from './worldHome/localBackup';
@@ -2566,6 +2567,7 @@ export const DB = {
           vrLetters,
           vrSettings,
           vrPostOffice: exportPostOfficeLocal(), // 邮局本机配置（身份/后端地址，存 localStorage）
+          vrSignal: exportSignalLocal(),         // 信号坠落处本机记录（句子归属「你·角色」+ 反复用清单，存 localStorage）
           worlds,
           worldEpisodes,
           worldHomeLocal: exportWorldHomeLocal(), // 家园本机配置：全局 API + 文风收藏（存 localStorage）
@@ -2985,6 +2987,10 @@ export const DB = {
       await runSection('邮局身份', (data as any).vrPostOffice !== undefined, async () => {
           importPostOfficeLocal((data as any).vrPostOffice);
           (data as any).vrPostOffice = undefined;
+      }, 1);
+      await runSection('信号坠落处', (data as any).vrSignal !== undefined, async () => {
+          importSignalLocal((data as any).vrSignal);
+          (data as any).vrSignal = undefined;
       }, 1);
       await runSection('家园世界', data.worlds !== undefined, async () => {
           await clearAndAdd(STORE_WORLDS, data.worlds, '家园世界', false);

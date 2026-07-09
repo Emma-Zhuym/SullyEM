@@ -32,6 +32,7 @@ import { isEmotionEvalSkipped } from '../utils/devDebug';
 import { toMountedWorldbook } from '../utils/worldbook';
 // 备份用：把存在 localStorage 的本机配置随导出一起带走（键名须与 importFullData 对齐）
 import { exportPostOfficeLocal } from '../utils/vrWorld/postOffice';
+import { exportSignalLocal } from '../utils/vrWorld/signal';
 import { exportWorldHomeLocal } from '../utils/worldHome/localBackup';
 import { exportLuckinLocal } from '../utils/luckinMcpClient';
 import { exportMcdLocal } from '../utils/mcdMcpClient';
@@ -2906,6 +2907,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               //  · 瑞幸 / 麦当劳 MCP 的点单 token + 启用状态（用户说的「那个码」）
               //  · 邮局身份、家园全局 API + 文风收藏
               vrPostOffice: (mode === 'text_only' || mode === 'full') ? exportPostOfficeLocal() : undefined,
+              vrSignal: (mode === 'text_only' || mode === 'full') ? exportSignalLocal() : undefined, // 信号坠落处：句子归属「你·角色」+ 反复用清单
               worldHomeLocal: (mode === 'text_only' || mode === 'full') ? exportWorldHomeLocal() : undefined,
               luckinLocal: (mode === 'text_only' || mode === 'full') ? exportLuckinLocal() : undefined,
               mcdLocal: (mode === 'text_only' || mode === 'full') ? exportMcdLocal() : undefined,
