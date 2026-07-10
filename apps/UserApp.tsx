@@ -4,6 +4,11 @@ import { useOS } from '../context/OSContext';
 import { processImage } from '../utils/file';
 import LifeRecordPanel from '../components/lifeRecord/LifeRecordPanel';
 
+// [EM-START: hide-life-records] 生活记录（上游"生活统计"）入口开关——EM 用自己的 Health/BankApp，
+// 此页隐藏但代码保留（merge 零成本）。想启用改成 true 即可。
+const EM_SHOW_LIFE_RECORDS = false;
+// [EM-END: hide-life-records]
+
 const UserApp: React.FC = () => {
     const { closeApp, userProfile, updateUserProfile, addToast } = useOS();
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -36,7 +41,7 @@ const UserApp: React.FC = () => {
                 </div>
                 {/* Tab：我的档案 / 生活记录 */}
                 <div className="flex gap-1.5 px-4 pb-2.5">
-                    {([['profile', '我的档案'], ['life', '生活记录']] as const).map(([key, label]) => (
+                    {([['profile', '我的档案'], ['life', '生活记录']] as const).filter(([key]) => key !== 'life' || EM_SHOW_LIFE_RECORDS).map(([key, label]) => (
                         <button
                             key={key}
                             onClick={() => setTab(key)}

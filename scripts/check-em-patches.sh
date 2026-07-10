@@ -75,6 +75,7 @@ check "schedule 时间解析" utils/chatParser.ts "[EM-START: parse-schedule-due
 check "收藏照片处理" utils/applyAssistantPostProcessing.ts "[EM-START: fav-photo]"
 check "收藏照片教学调用点" utils/chatPrompts.ts "emFavPhotoAddon()"
 check "收藏照片标签兜底剥离" utils/sanitize.ts "[EM: fav-photo-strip]"
+check "生活记录入口隐藏开关" apps/UserApp.tsx "[EM-START: hide-life-records]"
 
 echo "── 天气 Open-Meteo ──"
 check "openMeteo 独立模块" utils/openMeteo.ts "resolveWeatherCoords"
