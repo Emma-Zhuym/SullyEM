@@ -10,7 +10,7 @@ import { Wallet, Receipt, ChartPie, CaretLeft, CaretRight, CaretDown, Plus, Tras
 import { useOS } from '../context/OSContext';
 import { FinanceDB } from '../utils/financeDb';
 import { DB } from '../utils/db';
-import { safeFetchJson } from '../utils/safeApi';
+import { safeFetchJson, extractContent } from '../utils/safeApi';
 import { normalizeUserImpression } from '../utils/impression';
 import { MemoryNodeDB, bm25Search } from '../utils/memoryPalace';
 import type { MemoryNode } from '../utils/memoryPalace/types';
@@ -1770,12 +1770,12 @@ const TransactionsTab: React.FC<{
             { role: 'user', content: '来一条情报' },
           ],
           temperature: 0.95,
-          max_tokens: 100,
+          max_tokens: 4000, // 思考型模型(Gemini等)会先吃 max_tokens 思考，给小了正文被截断
           stream: false,
         }),
       });
 
-      const reply = data?.choices?.[0]?.message?.content?.trim() || '';
+      const reply = extractContent(data).trim();
       setGossipText(reply || '今天风平浪静');
     } catch {
       setGossipText('情报网暂时断了');
@@ -2372,12 +2372,12 @@ const AnalyticsTab: React.FC<{
             { role: 'user', content: `请评价我${periodLabel}的消费。` },
           ],
           temperature: 0.85,
-          max_tokens: 800,
+          max_tokens: 4000, // 思考型模型(Gemini等)会先吃 max_tokens 思考，给小了正文被截断
           stream: false,
         }),
       });
 
-      const reply = data?.choices?.[0]?.message?.content?.trim() || '';
+      const reply = extractContent(data).trim();
       if (reply) {
         commentCache.current.set(cacheKey, reply);
         setCommentary(reply);
