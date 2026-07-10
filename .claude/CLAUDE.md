@@ -153,6 +153,8 @@ if (m.type === 'interaction' && m.metadata?.kind === 'notion_diary_nudge') {
 
 ## 架构原则
 
+0. **上游文件的纯类型瑕疵不修**（阿萌 2026-07-10 定）：上游 build 只跑 vite 不跑 tsc，他们看不见自己的类型错误（MemoryPalace 的 char 断言、vite.config 隐式 any 等 ~60 个）。修了只会给未来 merge 埋散点冲突。tsc 错误数只修 EM 自己文件的，数字跟自己比。真影响运行时行为的 bug（如 healthDb openDB 笔误）不在此限。
+
 1. **个人新功能尽量做成独立文件**（新 App、新 util），减少对上游文件的侵入
 2. **必须改上游文件时**，改动越小越好——加一行 import、加一个 case、加一个 hook 调用
 3. **不要大面积重写上游文件**，否则每次合并都痛苦
