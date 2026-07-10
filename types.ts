@@ -380,6 +380,10 @@ export interface RealtimeConfig {
     latitude: number;
     longitude: number;
   };
+  /** @deprecated 旧 OpenWeatherMap 时代字段，仅为老备份导入兼容保留，逻辑不再读取 */
+  weatherApiKey?: string;
+  /** @deprecated 同上 */
+  weatherCity?: string;
   // [EM-END: weather-openmeteo]
 
   // 新闻配置
@@ -2086,6 +2090,7 @@ export interface CharMusicProfile {
 export interface CharacterProfile {
   id: string;
   name: string;
+  themeColor?: number; // [EM: theme-color] 小小窝日程小组件主题色相 (hsl hue 0-360)，undefined=默认260紫
   avatar: string;
   description: string;
   systemPrompt: string;
@@ -3441,6 +3446,12 @@ export interface FullBackupData {
     emFinanceTransactions?: FinanceTransaction[];
     emFinanceTAComments?: { id: string; text: string; createdAt: number }[];
     emFinanceSettings?: { key: string; value: unknown }[];
+    // EM 健康/购物系统备份（独立 IndexedDB；结构见 utils/healthDb.ts / utils/shoppingDb.ts）
+    emHealthEvents?: any[];
+    emShoppingProducts?: any[];
+    emShoppingCart?: any[];
+    emShoppingOrders?: any[];
+    emShoppingSettings?: { key: string; value: unknown }[];
     // [EM-END: finance-backup-types]
     gotchiAccentHue?: string;  // 桌面电子宠物主题主色调偏好（tama_accent_hue，账号级 localStorage）
 }

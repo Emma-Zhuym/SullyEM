@@ -5,6 +5,45 @@ import { CharacterProfile, CharPlaylistSong } from '../types';
 import { sanitizeForBubble } from './sanitize';
 import { executeLifeDirectives } from './lifeRecords';
 
+export interface MusicActionSnapshot {
+    songId: number;
+    name: string;
+    artists: string;
+    album: string;
+    albumPic: string;
+    duration: number;
+    fee: number;
+}
+
+/**
+ * 把 user 的歌加到 char 的歌单时，char 可以指定目标：
+ * - 不传 target → 默认放进第一个歌单（兼容老 [[MUSIC_ACTION:add]]）
+ * - target.kind === 'existing' → 按标题模糊匹配现有歌单；匹配不到回落到第一个
+ * - target.kind === 'new' → 现场新建一个歌单，把这首作为第一首
+ *
+ * 不论哪种，存入 char 歌单时都会打上 source: 'user' 标签，让 char 之后"听"
+ * 这首歌时知道是从 user 那里收来的（prompt 注入会用到）。
+ */
+export type AddSongTarget =
+    | { kind: 'existing'; title: string }
+    | { kind: 'new'; title: string; description?: string };
+
+export interface MusicActionHooks {
+    /** 返回 user 此刻正在听的歌快照（chatParser 自己不去碰 MusicContext） */
+    getListeningSnapshot: () => MusicActionSnapshot | null;
+    /** 将 charId 加入"一起听"名单（chatParser 不维护状态，只通知） */
+    joinListeningTogether: (charId: string) => void;
+    /**
+     * 把 song 加到 char 的歌单。
+     * 返回 { playlistTitle, created } —— created=true 表示这次是新建了歌单。
+     */
+    addSongToCharPlaylist: (
+        charId: string,
+        song: CharPlaylistSong,
+        target?: AddSongTarget,
+    ) => Promise<{ playlistTitle: string; created: boolean } | null>;
+}
+
 // [EM-START: parse-schedule-due-at]
 /** 解析 schedule_message 时间串（支持空格分隔日期时间、无 T 的 ISO） */
 function parseScheduleDueAt(timeStr: string): number | null {
@@ -94,7 +133,8 @@ export const ChatParser = {
         aiContent: string,
         charId: string,
         charName: string,
-        addToast: (msg: string, type: 'info'|'success'|'error') => void
+        addToast: (msg: string, type: 'info'|'success'|'error') => void,
+        musicHooks?: MusicActionHooks,
     ) => {
         let content = aiContent;
 

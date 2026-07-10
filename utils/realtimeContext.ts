@@ -19,6 +19,7 @@ export interface WeatherData {
     feelsLike: number;
     humidity: number;
     description: string;
+    icon?: string; // [EM: weather-openmeteo] WMO/OWM 图标码
     city: string;
 }
 
@@ -40,6 +41,10 @@ export interface RealtimeConfig {
     weatherEnabled: boolean;
     weatherMode: 'geo' | 'city';        // geo=自动定位（默认）；city=固定城市（Settings 搜索选定）
     weatherLocation?: WeatherLocation;  // city 模式选定的城市；geo 模式作定位失败的降级
+    /** @deprecated 旧 OWM 字段，仅老备份导入兼容 */
+    weatherApiKey?: string;
+    /** @deprecated 同上 */
+    weatherCity?: string;
     // [EM-END: weather-openmeteo]
 
     // 新闻配置

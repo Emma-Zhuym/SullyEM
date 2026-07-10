@@ -182,7 +182,7 @@ export async function exportAllHealthEvents(): Promise<HealthEvent[]> {
 }
 
 export async function importAllHealthEvents(events: HealthEvent[]): Promise<void> {
-  const db = await openDB();
+  const db = await openHealthDB();
   const t = db.transaction(STORE, 'readwrite');
   t.objectStore(STORE).clear();
   for (const e of events) t.objectStore(STORE).put(e);

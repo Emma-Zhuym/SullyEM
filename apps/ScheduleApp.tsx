@@ -170,7 +170,7 @@ const ScheduleApp: React.FC = () => {
         ]);
         setTasks(t.sort((a, b) => b.createdAt - a.createdAt));
         setAnniversaries(a.sort((a, b) => a.date.localeCompare(b.date)));
-        setAgendaItems(ag.sort((a, b) => a.dateTime.localeCompare(b.dateTime)));
+        setAgendaItems(ag.sort((a, b) => (a.dateTime ?? '').localeCompare(b.dateTime ?? '')));
     };
 
     // ---- AI helpers ----

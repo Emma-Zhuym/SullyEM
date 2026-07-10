@@ -730,7 +730,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         const savedOrder = JSON.parse(saved) as string[];
         const allIds = INSTALLED_APPS.map(a => a.id);
         // 过滤掉已卸载的 App，并把新安装的 App 追加到末尾
-        const filtered = savedOrder.filter(id => allIds.includes(id));
+        const filtered = savedOrder.filter(id => (allIds as string[]).includes(id));
         const newApps = allIds.filter(id => !savedOrder.includes(id));
         return [...filtered, ...newApps];
       }
