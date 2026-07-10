@@ -693,16 +693,8 @@ const WorldEditor: React.FC<{
 
       <div className="flex-1 overflow-y-auto scrollbar-none" style={{ padding: '4px 18px', paddingBottom: 'calc(40px + var(--safe-bottom, 0px))' }}>
 
-        {/* 类型 + 城市名 */}
+        {/* 城市名（类型字段保留在数据里但不再展示，阿萌 07-10 定） */}
         <div style={{ borderRadius: R.smallCard, background: F.surface, border: `1px solid ${F.borderSoft}`, boxShadow: S.raisedSoft, marginBottom: 16 }}>
-          <div className="flex items-center justify-between" style={{ height: 52, padding: '0 16px' }}>
-            <span style={{ fontSize: 14, color: F.textSecondary }} className="shrink-0">类型</span>
-            <input value={w.genre} onChange={e => update({ genre: e.target.value })}
-              className="text-right bg-transparent outline-none border-none flex-1 ml-3"
-              style={{ fontSize: 15, fontWeight: 600, color: F.textPrimary }}
-              placeholder="现代都市 / 校园 / 末世…" />
-          </div>
-          <div style={{ height: 1, background: F.divider, margin: '0 16px' }} />
           <div className="flex items-center justify-between" style={{ height: 52, padding: '0 16px' }}>
             <span style={{ fontSize: 14, color: F.textSecondary }} className="shrink-0">城市名</span>
             <input value={w.cityName || ''} onChange={e => update({ cityName: e.target.value })}
@@ -970,41 +962,37 @@ const Shelf: React.FC<{
           const sr = computeCharStatus(schedules[world.charId] || null);
           const m = STATUS_META[sr.status];
           return (
-            <div key={world.id}
-              style={{ marginTop: 20, borderRadius: R.panel, padding: 20, background: P.tint, boxShadow: S.raisedMedium }}>
-              <div className="flex items-center" style={{ gap: 14 }}>
-                <div className="relative overflow-hidden flex items-center justify-center shrink-0"
-                  style={{ width: 60, height: 60, borderRadius: R.large, background: P.main, boxShadow: `0 6px 16px ${MAPX.purpleShadow}` }}>
-                  <CharAvatar char={char} monogramSize={26} monogramColor="#fff" />
+            <div key={world.id} onClick={() => onOpenWorld(world.id)}
+              className="flex items-center cursor-pointer active:translate-y-[1px] transition-transform"
+              style={{ marginTop: 14, borderRadius: R.bigCard, padding: 14, gap: 12, background: P.tint, boxShadow: S.raisedSoft }}>
+              <div className="relative overflow-hidden flex items-center justify-center shrink-0"
+                style={{ width: 52, height: 52, borderRadius: R.medium, background: P.main, boxShadow: `0 4px 12px ${MAPX.purpleShadow}` }}>
+                <CharAvatar char={char} monogramSize={22} monogramColor="#fff" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center" style={{ gap: 8 }}>
+                  <span className="truncate" style={{ fontSize: 17, fontWeight: 700, color: F.textPrimary }}>{char.name}</span>
+                  {world.tag && (
+                    <span className="inline-flex items-center shrink-0"
+                      style={{ height: 19, padding: '0 8px', borderRadius: R.pill, background: HUE.amber.tint, color: HUE.amber.ink, fontSize: 11, fontWeight: 600 }}>
+                      {world.tag}
+                    </span>
+                  )}
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center" style={{ gap: 8 }}>
-                    <span className="truncate" style={{ fontSize: 20, fontWeight: 700, color: F.textPrimary }}>{char.name}</span>
-                    {world.tag && (
-                      <span className="inline-flex items-center shrink-0"
-                        style={{ height: 20, padding: '0 8px', borderRadius: R.pill, background: HUE.amber.tint, color: HUE.amber.ink, fontSize: 11, fontWeight: 600 }}>
-                        {world.tag}
-                      </span>
-                    )}
-                  </div>
-                  <div style={{ fontSize: 13, color: F.textSecondary, marginTop: 3 }}>
-                    {world.genre || '未设定'} · {world.regions.length} 个地点
-                  </div>
+                <div className="flex items-center" style={{ gap: 6, fontSize: 12.5, color: F.textSecondary, marginTop: 3 }}>
+                  <span className="truncate">{world.cityName || '未命名城市'} · {world.regions.length} 个地点</span>
+                </div>
+                <div className="flex items-center" style={{ gap: 6, marginTop: 4 }}>
+                  <span className="shrink-0" style={{ width: 7, height: 7, borderRadius: '50%', background: m.main }} />
+                  <span className="truncate" style={{ fontSize: 12, fontWeight: 600, color: m.ink }}>
+                    {sr.currentActivity ? `${sr.currentActivity}中` : m.text}
+                  </span>
                 </div>
               </div>
-              <div className="flex items-center justify-between" style={{ gap: 12, marginTop: 16 }}>
-                <span className="inline-flex items-center min-w-0" style={{ gap: 6, height: 30, padding: '0 12px', borderRadius: R.pill,
-                  background: F.surface, fontSize: 12, fontWeight: 600, color: m.ink, boxShadow: '0 2px 6px rgba(70,66,58,.06)' }}>
-                  <span className="shrink-0" style={{ width: 7, height: 7, borderRadius: '50%', background: m.main }} />
-                  <span className="truncate">{sr.currentActivity ? `${sr.currentActivity}中` : m.text}</span>
-                </span>
-                <button onClick={() => onOpenWorld(world.id)}
-                  className="inline-flex items-center shrink-0 active:translate-y-[1px] transition-transform"
-                  style={{ gap: 8, height: 44, padding: '0 22px', border: 'none', borderRadius: R.button,
-                           background: F.textPrimary, color: F.surface, fontSize: 15, fontWeight: 600,
-                           boxShadow: '0 2px 6px rgba(70,66,58,.12), 0 8px 18px rgba(70,66,58,.16)' }}>
-                  进入<ArrowRight size={17} weight="bold" />
-                </button>
+              <div className="flex items-center justify-center shrink-0"
+                style={{ width: 42, height: 42, borderRadius: '50%', background: F.textPrimary,
+                         boxShadow: '0 2px 6px rgba(70,66,58,.12), 0 8px 18px rgba(70,66,58,.16)' }}>
+                <ArrowRight size={18} weight="bold" style={{ color: F.surface }} />
               </div>
             </div>
           );
