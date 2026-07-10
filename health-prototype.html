@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HealthApp Prototype v2</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /*
+      Clay 调色系统 + 类别色：
+        body bg   #cfc9c0  taupe
+        phone bg  #e8e3db  暖米灰
+        card bg   #f0ede7  暖奶白
+        inset bg  #dedad3  内凹
+        shadow    #b8b3aa  底右阴影
+
+      类别色板：
+        训练 emerald  #10b981 → bg #d1fae5 / active #10b981
+        睡眠 indigo   #6366f1 → bg #e0e7ff / active #6366f1
+        饮食 amber    #f59e0b → bg #fef3c7 / active #f59e0b
+        经期 rose     #f43f5e → bg #ffe4e6 / active #f43f5e
+        症状 violet   #8b5cf6 → bg #ede9fe / active #8b5cf6
+    */
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', sans-serif;
+      background: #cfc9c0;
+      display: flex; gap: 20px; padding: 28px;
+      justify-content: flex-start; align-items: flex-start;
+      min-height: 100vh; overflow-x: auto;
+    }
+
+    .phone {
+      width: 375px; min-height: 812px;
+      background: #e8e3db;
+      border-radius: 44px; overflow: hidden;
+      box-shadow: 4px 8px 0 2px #a09890, 0 0 0 1px #c0bab2;
+      flex-shrink: 0; display: flex; flex-direction: column;
+    }
+    .screen-label {
+      text-align: center; font-size: 10px; color: #888;
+      padding: 6px 8px 4px; background: #cfc9c0; letter-spacing: 0.5px; font-weight: 500;
+    }
+    .status-bar {
+      background: #e8e3db; padding: 14px 28px 6px;
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 13px; font-weight: 600; color: #1e293b;
+    }
+
+    /* ── Top tab bar (月历/今日) ── */
+    .top-tabs {
+      display: flex; margin: 4px 16px 8px;
+      background: #dedad3; border-radius: 10px; padding: 3px;
+      box-shadow: inset 1px 2px 4px rgba(0,0,0,0.12);
+    }
+    .top-tab {
+      flex: 1; text-align: center; padding: 7px 0;
+      font-size: 13px; font-weight: 500; color: #94a3b8; border-radius: 8px;
+    }
+    .top-tab.active {
+      background: #f0ede7; color: #1e293b; font-weight: 600;
+      box-shadow: 2px 3px 0 0.5px #b8b3aa;
+    }
+
+    /* ══════════════════════════════════════
+       SCREEN 1 — 月历
+    ══════════════════════════════════════ */
+    .cal-header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 4px 20px 10px;
+    }
+    .month-title { font-size: 18px; font-weight: 700; color: #1e293b; }
+    .nav-btn {
+      width: 30px; height: 30px; background: #f0ede7;
+      border: 1px solid #d4cfc8; border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; color: #64748b;
+      box-shadow: 2px 3px 0 0.5px #b8b3aa;
+    }
+    .weekdays { display: grid; grid-template-columns: repeat(7,1fr); padding: 0 12px 2px; }
+    .wd { text-align: center; font-size: 11px; color: #94a3b8; font-weight: 500; padding: 3px 0; }
+    .cal-grid { display: grid; grid-template-columns: repeat(7,1fr); padding: 0 10px; gap: 1px; }
+    .cal-day {
+      aspect-ratio: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; border-radius: 10px; gap: 2px;
+    }
+    .cal-day.today { background: #475569; box-shadow: 2px 3px 0 0.5px #2d3748; }
+    .cal-day.today .dn { color: white; }
+    .cal-day.sel { background: #dedad3; box-shadow: inset 1px 2px 3px rgba(0,0,0,0.12); }
+    .dn { font-size: 13px; font-weight: 500; color: #334155; line-height: 1; }
+    .cal-day.dim .dn { color: #c0bcb5; }
+    .dot-row { display: flex; gap: 2px; height: 5px; align-items: center; }
+    .d  { width: 4px; height: 4px; border-radius: 50%; }
+    .dw { background: #10b981; }
+    .dp { background: #f43f5e; }
+    .ds { background: #6366f1; }
+    .do { background: #f59e0b; }
+
+    .cycle-bar {
+      margin: 10px 14px 8px; background: #dedad3; border-radius: 10px;
+      padding: 9px 13px; box-shadow: inset 1px 2px 4px rgba(0,0,0,0.1);
+    }
+    .cb-row { display: flex; justify-content: space-between; align-items: center; }
+    .cb-label { font-size: 12px; color: #64748b; font-weight: 500; }
+    .cb-val   { font-size: 13px; color: #334155; font-weight: 600; }
+    .cb-pred  { font-size: 11px; color: #94a3b8; margin-top: 3px; }
+
+    .legend { display: flex; gap: 10px; padding: 0 14px 8px; flex-wrap: wrap; }
+    .leg { font-size: 10px; color: #64748b; display: flex; align-items: center; gap: 3px; }
+
+    .day-detail {
+      margin: 0 14px 12px; background: #f0ede7;
+      border-radius: 12px; border: 1px solid #d8d3cb;
+      box-shadow: 3px 5px 0 1px #b8b3aa; padding: 10px 13px;
+    }
+    .dd-date { font-size: 11px; color: #94a3b8; font-weight: 500; margin-bottom: 7px; }
+    .dd-item { font-size: 12px; color: #475569; padding: 2px 0; display: flex; align-items: center; gap: 6px; }
+    .dd-dot  { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+
+    /* ══════════════════════════════════════
+       SCREEN 2 — 今日
+    ══════════════════════════════════════ */
+    .today-hdr {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 2px 20px 10px;
+    }
+    .today-date-str { font-size: 12px; color: #64748b; }
+    .week-btn {
+      font-size: 11px; color: #64748b; background: #f0ede7;
+      border: 1px solid #d4cfc8; border-radius: 8px; padding: 4px 10px;
+      box-shadow: 2px 3px 0 0.5px #b8b3aa;
+    }
+
+    /* 大嵌套 neumorphic 环 */
+    .ring-wrap { width: 288px; height: 288px; position: relative; margin: 0 auto 14px; }
+    .nr {
+      position: absolute; border-radius: 50%; background: #e4dfd7;
+      top: 50%; left: 50%; transform: translate(-50%,-50%);
+    }
+    .nr1 { width: 288px; height: 288px; z-index: 1;
+      box-shadow: 9px 11px 24px rgba(120,100,70,0.18), -7px -9px 18px rgba(255,253,248,0.92); }
+    .nr2 { width: 244px; height: 244px; z-index: 1;
+      box-shadow: inset 5px 7px 14px rgba(110,90,65,0.14), inset -4px -5px 10px rgba(255,253,248,0.88); }
+    .nr3 { width: 196px; height: 196px; z-index: 1;
+      box-shadow: 6px 8px 16px rgba(120,100,70,0.14), -5px -6px 12px rgba(255,253,248,0.94); }
+    .arc-svg { position: absolute; top: 0; left: 0; z-index: 2; pointer-events: none; }
+    .ring-ctr {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      z-index: 3; text-align: center;
+    }
+    .ring-ctr-lbl  { font-size: 10px; color: #94a3b8; margin-bottom: 2px; }
+    .ring-ctr-num  { font-size: 28px; font-weight: 700; color: #1e293b; line-height: 1; }
+    .ring-ctr-unit { font-size: 10px; color: #94a3b8; margin-top: 3px; }
+
+    /* 三环图例 chips — 各自类别色 */
+    .stat-row { display: flex; justify-content: center; gap: 8px; padding: 0 12px 12px; }
+    .sc {
+      border-radius: 20px; padding: 5px 10px;
+      font-size: 11px; font-weight: 500;
+      box-shadow: 2px 3px 0 0.5px #b8b3aa;
+      display: flex; align-items: center; gap: 5px;
+    }
+    .sc b { font-weight: 700; }
+    .sc-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    /* 类别色 chips */
+    .sc-sleep  { background: #e0e7ff; color: #3730a3; border: 1px solid #c7d2fe; }
+    .sc-workout{ background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
+    .sc-diet   { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+
+    .rt { text-anchor: middle; dominant-baseline: middle; }
+
+    /* ── 今日记录 cards ── */
+    .sec-title { font-size: 12px; font-weight: 600; color: #94a3b8; padding: 0 16px 6px; letter-spacing: 0.3px; }
+
+    .rec-card {
+      margin: 0 14px 8px; background: #f0ede7; border-radius: 12px;
+      box-shadow: 3px 5px 0 1px #b8b3aa;
+      padding: 10px 12px; display: flex; align-items: center; gap: 10px;
+    }
+    /* 每种卡片左边色条 */
+    .rec-card.rc-w { border-left: 4px solid #10b981; }
+    .rec-card.rc-s { border-left: 4px solid #6366f1; }
+    .rec-card.rc-d { border-left: 4px solid #f59e0b; }
+    .rec-card.rc-p { border-left: 4px solid #f43f5e; }
+
+    .rec-icon {
+      width: 36px; height: 36px; border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 700; flex-shrink: 0;
+    }
+    .ri-w { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
+    .ri-s { background: #e0e7ff; color: #3730a3; border: 1px solid #c7d2fe; }
+    .ri-d { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+    .ri-p { background: #ffe4e6; color: #9f1239; border: 1px solid #fecdd3; }
+    .rec-body { flex: 1; }
+    .rec-title { font-size: 13px; font-weight: 600; color: #1e293b; }
+    .rec-sub   { font-size: 10.5px; color: #94a3b8; margin-top: 2px; }
+    .del-btn {
+      width: 22px; height: 22px; border-radius: 6px;
+      background: #dedad3; border: 1px solid #c8c3bb; color: #94a3b8; font-size: 12px;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 1px 2px 0 0.5px #b0aba2;
+    }
+
+    /* 快速记录 — 每个带颜色 */
+    .quick-row { display: flex; gap: 7px; padding: 6px 14px 14px; }
+    .qa-btn {
+      flex: 1; border-radius: 10px; padding: 8px 2px 6px; text-align: center;
+      font-size: 10px; font-weight: 600;
+      box-shadow: 2px 3px 0 0.5px #b8b3aa;
+    }
+    .qa-plus { font-size: 15px; display: block; margin-bottom: 2px; }
+    .qa-w { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
+    .qa-s { background: #e0e7ff; color: #3730a3; border: 1px solid #c7d2fe; }
+    .qa-d { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+    .qa-p { background: #ffe4e6; color: #9f1239; border: 1px solid #fecdd3; }
+
+    /* ══════════════════════════════════════
+       MODAL — 弹窗公共
+    ══════════════════════════════════════ */
+    .modal-bg { background: rgba(30,25,20,0.30); flex: 1; min-height: 80px; }
+    .modal-sheet {
+      background: #e8e3db; border-radius: 24px 24px 0 0; padding: 12px 0 28px;
+    }
+    .handle { width: 36px; height: 4px; background: #c8c3bb; border-radius: 2px; margin: 0 auto 14px; }
+
+    /* 5-tab 记录选择条 — 各自类别色 */
+    .modal-tabs { display: flex; gap: 4px; padding: 0 14px 14px; overflow-x: auto; }
+    .mt {
+      padding: 6px 13px; border-radius: 20px; font-size: 11px; font-weight: 500;
+      white-space: nowrap;
+      box-shadow: inset 1px 2px 3px rgba(0,0,0,0.06);
+    }
+    /* inactive: 各自淡色 bg */
+    .mt-w        { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
+    .mt-s        { background: #e0e7ff; color: #3730a3; border: 1px solid #c7d2fe; }
+    .mt-d        { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+    .mt-p        { background: #ffe4e6; color: #9f1239; border: 1px solid #fecdd3; }
+    .mt-v        { background: #ede9fe; color: #5b21b6; border: 1px solid #ddd6fe; }
+    /* active: 实心类别色 */
+    .mt-w.active { background: #10b981; color: white; border-color: #059669; box-shadow: 2px 3px 0 0.5px #047857; }
+    .mt-s.active { background: #6366f1; color: white; border-color: #4f46e5; box-shadow: 2px 3px 0 0.5px #4338ca; }
+    .mt-d.active { background: #f59e0b; color: white; border-color: #d97706; box-shadow: 2px 3px 0 0.5px #b45309; }
+    .mt-p.active { background: #f43f5e; color: white; border-color: #e11d48; box-shadow: 2px 3px 0 0.5px #be123c; }
+    .mt-v.active { background: #8b5cf6; color: white; border-color: #7c3aed; box-shadow: 2px 3px 0 0.5px #6d28d9; }
+
+    .mc { padding: 0 14px; }
+    .fl { font-size: 11px; color: #64748b; font-weight: 500; margin-bottom: 5px; margin-top: 12px; }
+    .fl:first-child { margin-top: 0; }
+
+    .fi {
+      width: 100%; background: #dedad3; border: 1px solid #c8c3bb;
+      border-radius: 10px; padding: 9px 12px; font-size: 13px; color: #334155;
+      box-shadow: inset 1px 2px 4px rgba(0,0,0,0.1); outline: none;
+    }
+    textarea.fi { resize: none; line-height: 1.5; }
+
+    /* AI 按钮行 — amber 饮食色 */
+    .ai-btn-row { display: flex; gap: 8px; margin-top: 8px; }
+    .ai-btn {
+      flex: 1; background: #f59e0b; color: white; border: none;
+      border-radius: 10px; padding: 10px 12px; font-size: 13px; font-weight: 600;
+      box-shadow: 2px 4px 0 0.5px #b45309; cursor: pointer;
+    }
+    .photo-btn {
+      width: 44px; background: #fef3c7; color: #92400e;
+      border: 1px solid #fde68a; border-radius: 10px;
+      font-size: 18px; display: flex; align-items: center; justify-content: center;
+      box-shadow: 2px 3px 0 0.5px #b8b3aa;
+    }
+
+    /* AI 结果块 */
+    .ai-result {
+      margin-top: 12px; background: #f0ede7; border-radius: 12px;
+      border: 1px solid #d4cfc8;
+      box-shadow: 3px 5px 0 1px #b8b3aa; overflow: hidden;
+    }
+    .ai-result-hdr {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 8px 12px 7px; border-bottom: 1px solid #d8d3cb;
+    }
+    .ai-result-hdr-lbl { font-size: 11px; color: #64748b; font-weight: 600; }
+    .re-btn { font-size: 10px; color: #d97706; font-weight: 500; }
+    .kcal-row {
+      padding: 10px 12px; border-bottom: 1px solid #d8d3cb;
+      display: flex; align-items: baseline; gap: 6px;
+    }
+    .kcal-big { font-size: 22px; font-weight: 700; color: #1e293b; background: transparent; border: none; outline: none; width: 60px; }
+    .kcal-unit { font-size: 11px; color: #94a3b8; }
+
+    .macro-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: #d4cfc8; }
+    .mg-cell { background: #f0ede7; padding: 8px 12px; }
+    .mg-cell label { font-size: 10px; color: #94a3b8; display: flex; align-items: center; gap: 4px; margin-bottom: 3px; }
+    .mg-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+    .mg-val { font-size: 16px; font-weight: 700; color: #1e293b; background: transparent; border: none; width: 40px; outline: none; }
+    .mg-unit { font-size: 10px; color: #94a3b8; }
+
+    /* Time row */
+    .time-row { display: flex; gap: 8px; align-items: flex-end; }
+    .tf { flex: 1; }
+    .tf-label { font-size: 10px; color: #94a3b8; margin-bottom: 3px; }
+    .ti {
+      width: 100%; background: #dedad3; border: 1px solid #c8c3bb;
+      border-radius: 10px; padding: 9px 10px; font-size: 15px; font-weight: 700;
+      color: #334155; text-align: center;
+      box-shadow: inset 1px 2px 4px rgba(0,0,0,0.1);
+    }
+    .arr-sep { font-size: 14px; color: #94a3b8; padding-bottom: 10px; }
+    .dur-display { text-align: center; font-size: 26px; font-weight: 700; color: #1e293b; padding: 10px 0 14px; line-height: 1; }
+    .dur-sub { font-size: 11px; color: #94a3b8; font-weight: 400; margin-top: 3px; }
+
+    /* 质量选择 — indigo 睡眠色 */
+    .qual-row { display: flex; gap: 6px; }
+    .qb {
+      flex: 1; padding: 8px 4px; border-radius: 10px;
+      font-size: 12px; text-align: center;
+      background: #e0e7ff; color: #3730a3; border: 1px solid #c7d2fe;
+      box-shadow: inset 1px 2px 3px rgba(0,0,0,0.06);
+    }
+    .qb.active {
+      background: #6366f1; color: white; font-weight: 600;
+      border-color: #4f46e5;
+      box-shadow: 2px 3px 0 0.5px #4338ca;
+    }
+
+    /* Save button — 跟随类别色 */
+    .save-btn {
+      width: 100%; color: white; border: none;
+      border-radius: 10px; padding: 12px; font-size: 14px; font-weight: 600;
+      margin-top: 12px; cursor: pointer;
+    }
+    .save-amber  { background: #f59e0b; box-shadow: 2px 4px 0 0.5px #b45309; }
+    .save-indigo { background: #6366f1; box-shadow: 2px 4px 0 0.5px #4338ca; }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════
+     Screen 1 · 月历
+═══════════════════════════════════════════════ -->
+<div class="phone">
+  <div class="screen-label">Screen 1 · 月历</div>
+  <div class="status-bar"><span>09:41</span><span>▪▪▪</span></div>
+  <div class="top-tabs">
+    <div class="top-tab active">月历</div>
+    <div class="top-tab">今日</div>
+  </div>
+
+  <div class="cal-header">
+    <div class="nav-btn">‹</div>
+    <div class="month-title">2026年 6月</div>
+    <div class="nav-btn">›</div>
+  </div>
+  <div class="weekdays">
+    <div class="wd">日</div><div class="wd">一</div><div class="wd">二</div>
+    <div class="wd">三</div><div class="wd">四</div><div class="wd">五</div><div class="wd">六</div>
+  </div>
+  <div class="cal-grid">
+    <div class="cal-day dim"><div class="dn">25</div></div>
+    <div class="cal-day"><div class="dn">1</div><div class="dot-row"><div class="d dw"></div></div></div>
+    <div class="cal-day"><div class="dn">2</div><div class="dot-row"><div class="d dp"></div></div></div>
+    <div class="cal-day"><div class="dn">3</div><div class="dot-row"><div class="d dp"></div></div></div>
+    <div class="cal-day"><div class="dn">4</div><div class="dot-row"><div class="d dw"></div><div class="d ds"></div></div></div>
+    <div class="cal-day today"><div class="dn">5</div><div class="dot-row"><div class="d dw" style="background:rgba(255,255,255,0.7)"></div></div></div>
+    <div class="cal-day"><div class="dn">6</div></div>
+
+    <div class="cal-day"><div class="dn">7</div><div class="dot-row"><div class="d dw"></div></div></div>
+    <div class="cal-day"><div class="dn">8</div></div>
+    <div class="cal-day"><div class="dn">9</div><div class="dot-row"><div class="d dw"></div><div class="d ds"></div></div></div>
+    <div class="cal-day"><div class="dn">10</div></div>
+    <div class="cal-day"><div class="dn">11</div><div class="dot-row"><div class="d do"></div></div></div>
+    <div class="cal-day"><div class="dn">12</div><div class="dot-row"><div class="d do"></div></div></div>
+    <div class="cal-day"><div class="dn">13</div></div>
+
+    <div class="cal-day"><div class="dn">14</div><div class="dot-row"><div class="d dw"></div></div></div>
+    <div class="cal-day"><div class="dn">15</div></div>
+    <div class="cal-day"><div class="dn">16</div><div class="dot-row"><div class="d dw"></div><div class="d ds"></div></div></div>
+    <div class="cal-day"><div class="dn">17</div></div>
+    <div class="cal-day"><div class="dn">18</div></div>
+    <div class="cal-day sel"><div class="dn">19</div><div class="dot-row"><div class="d ds"></div></div></div>
+    <div class="cal-day"><div class="dn">20</div></div>
+
+    <div class="cal-day"><div class="dn">21</div><div class="dot-row"><div class="d dw"></div></div></div>
+    <div class="cal-day"><div class="dn">22</div></div>
+    <div class="cal-day"><div class="dn">23</div></div>
+    <div class="cal-day"><div class="dn">24</div></div>
+    <div class="cal-day"><div class="dn">25</div></div>
+    <div class="cal-day"><div class="dn">26</div></div>
+    <div class="cal-day"><div class="dn">27</div></div>
+
+    <div class="cal-day"><div class="dn">28</div></div>
+    <div class="cal-day"><div class="dn">29</div></div>
+    <div class="cal-day"><div class="dn">30</div></div>
+    <div class="cal-day dim"><div class="dn">1</div></div>
+    <div class="cal-day dim"><div class="dn">2</div></div>
+    <div class="cal-day dim"><div class="dn">3</div></div>
+    <div class="cal-day dim"><div class="dn">4</div></div>
+  </div>
+
+  <div class="cycle-bar">
+    <div class="cb-row">
+      <span class="cb-label">周期第 9 天</span>
+      <span class="cb-val">卵泡期</span>
+    </div>
+    <div class="cb-pred">预测下次经期：6月28日（±3天）</div>
+  </div>
+  <div class="legend">
+    <div class="leg"><div class="d dw" style="display:inline-block"></div> 训练</div>
+    <div class="leg"><div class="d dp" style="display:inline-block"></div> 经期</div>
+    <div class="leg"><div class="d ds" style="display:inline-block"></div> 睡眠</div>
+    <div class="leg"><div class="d do" style="display:inline-block"></div> 排卵期</div>
+  </div>
+  <div class="day-detail">
+    <div class="dd-date">6月19日 · 周五</div>
+    <div class="dd-item"><div class="dd-dot" style="background:#6366f1;"></div>睡眠  23:15 → 07:20 · 8h05m · 良好</div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════
+     Screen 2 · 今日
+═══════════════════════════════════════════════ -->
+<div class="phone">
+  <div class="screen-label">Screen 2 · 今日</div>
+  <div class="status-bar"><span>09:41</span><span>▪▪▪</span></div>
+  <div class="top-tabs">
+    <div class="top-tab">月历</div>
+    <div class="top-tab active">今日</div>
+  </div>
+  <div class="today-hdr">
+    <div class="today-date-str">2026年6月5日 · 星期五</div>
+    <div class="week-btn">周报</div>
+  </div>
+
+  <div class="ring-wrap">
+    <div class="nr nr1"></div>
+    <div class="nr nr2"></div>
+    <div class="nr nr3"></div>
+    <svg class="arc-svg" width="288" height="288" viewBox="0 0 288 288">
+      <circle cx="144" cy="144" r="125" fill="none" stroke="#c4bfb7" stroke-width="11"/>
+      <circle cx="144" cy="144" r="125" fill="none" stroke="#6366f1" stroke-width="11"
+        stroke-dasharray="736.3 49.1" stroke-linecap="round" transform="rotate(-90 144 144)"/>
+      <circle cx="144" cy="144" r="99" fill="none" stroke="#c4bfb7" stroke-width="11"/>
+      <circle cx="144" cy="144" r="99" fill="none" stroke="#10b981" stroke-width="11"
+        stroke-dasharray="597.1 24.9" stroke-linecap="round" transform="rotate(-90 144 144)"/>
+      <circle cx="144" cy="144" r="73" fill="none" stroke="#c4bfb7" stroke-width="11"/>
+      <circle cx="144" cy="144" r="73" fill="none" stroke="#14b8a6" stroke-width="11"
+        stroke-dasharray="58 400.7" stroke-linecap="round" transform="rotate(-90 144 144)"/>
+      <circle cx="144" cy="144" r="73" fill="none" stroke="#f59e0b" stroke-width="11"
+        stroke-dasharray="200 258.7" stroke-linecap="round" transform="rotate(-42 144 144)"/>
+      <circle cx="144" cy="144" r="73" fill="none" stroke="#f43f5e" stroke-width="11"
+        stroke-dasharray="75 383.7" stroke-linecap="round" transform="rotate(117 144 144)"/>
+      <circle cx="144" cy="144" r="73" fill="none" stroke="#94a3b8" stroke-width="11"
+        stroke-dasharray="30 428.7" stroke-linecap="round" transform="rotate(179 144 144)"/>
+    </svg>
+    <div class="ring-ctr">
+      <div class="ring-ctr-lbl">饮食摄入</div>
+      <div class="ring-ctr-num">1840</div>
+      <div class="ring-ctr-unit">kcal</div>
+    </div>
+  </div>
+
+  <div class="stat-row">
+    <div class="sc sc-sleep"><span class="sc-dot" style="background:#6366f1"></span>睡眠 <b>7.5h</b></div>
+    <div class="sc sc-workout"><span class="sc-dot" style="background:#10b981"></span>训练 <b>480k</b></div>
+    <div class="sc sc-diet"><span class="sc-dot" style="background:#f59e0b"></span>饮食 <b>1840k</b></div>
+  </div>
+
+  <div class="sec-title">今日记录</div>
+  <div class="rec-card rc-w">
+    <div class="rec-icon ri-w">训</div>
+    <div class="rec-body"><div class="rec-title">背部 + 腿部训练</div><div class="rec-sub">60min · 消耗 480kcal</div></div>
+    <div class="del-btn">×</div>
+  </div>
+  <div class="rec-card rc-s">
+    <div class="rec-icon ri-s">眠</div>
+    <div class="rec-body"><div class="rec-title">睡眠  23:00 → 07:30</div><div class="rec-sub">7.5h · 良好</div></div>
+    <div class="del-btn">×</div>
+  </div>
+  <div class="rec-card rc-d">
+    <div class="rec-icon ri-d">食</div>
+    <div class="rec-body"><div class="rec-title">今日饮食  1840kcal</div><div class="rec-sub">蛋白35g · 碳水120g · 脂肪45g</div></div>
+    <div class="del-btn">×</div>
+  </div>
+
+  <div class="quick-row">
+    <div class="qa-btn qa-w"><span class="qa-plus">+</span>训练</div>
+    <div class="qa-btn qa-s"><span class="qa-plus">+</span>睡眠</div>
+    <div class="qa-btn qa-d"><span class="qa-plus">+</span>饮食</div>
+    <div class="qa-btn qa-p"><span class="qa-plus">+</span>经期</div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════
+     Screen 3 · 饮食弹窗
+═══════════════════════════════════════════════ -->
+<div class="phone">
+  <div class="screen-label">Screen 3 · 饮食记录</div>
+  <div class="status-bar"><span>09:41</span><span>▪▪▪</span></div>
+  <div class="modal-bg"></div>
+  <div class="modal-sheet">
+    <div class="handle"></div>
+    <div class="modal-tabs">
+      <div class="mt mt-w">训练</div>
+      <div class="mt mt-s">睡眠</div>
+      <div class="mt mt-d active">饮食</div>
+      <div class="mt mt-p">经期</div>
+      <div class="mt mt-v">症状</div>
+    </div>
+    <div class="mc">
+      <div class="fl">描述今天吃了什么</div>
+      <textarea class="fi" rows="3">午餐：红烧肉半份、白米饭一碗、清炒青菜。晚餐：鸡胸肉沙拉、全麦面包两片。</textarea>
+      <div class="ai-btn-row">
+        <button class="ai-btn">AI 估算</button>
+        <div class="photo-btn">📷</div>
+      </div>
+      <div class="ai-result">
+        <div class="ai-result-hdr">
+          <span class="ai-result-hdr-lbl">估算结果  ·  可直接修改</span>
+          <span class="re-btn">重新估算</span>
+        </div>
+        <div class="kcal-row">
+          <input class="kcal-big" value="842">
+          <span class="kcal-unit">kcal 总热量</span>
+        </div>
+        <div class="macro-grid">
+          <div class="mg-cell"><label><i class="mg-dot" style="background:#14b8a6"></i>蛋白质</label><input class="mg-val" value="58"><span class="mg-unit">g</span></div>
+          <div class="mg-cell"><label><i class="mg-dot" style="background:#f59e0b"></i>碳水化合物</label><input class="mg-val" value="94"><span class="mg-unit">g</span></div>
+          <div class="mg-cell"><label><i class="mg-dot" style="background:#f43f5e"></i>脂肪</label><input class="mg-val" value="28"><span class="mg-unit">g</span></div>
+          <div class="mg-cell"><label><i class="mg-dot" style="background:#94a3b8"></i>膳食纤维</label><input class="mg-val" value="12"><span class="mg-unit">g</span></div>
+        </div>
+      </div>
+      <button class="save-btn save-amber">保存</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════
+     Screen 4 · 睡眠弹窗
+═══════════════════════════════════════════════ -->
+<div class="phone">
+  <div class="screen-label">Screen 4 · 睡眠记录</div>
+  <div class="status-bar"><span>09:41</span><span>▪▪▪</span></div>
+  <div class="modal-bg"></div>
+  <div class="modal-sheet">
+    <div class="handle"></div>
+    <div class="modal-tabs">
+      <div class="mt mt-w">训练</div>
+      <div class="mt mt-s active">睡眠</div>
+      <div class="mt mt-d">饮食</div>
+      <div class="mt mt-p">经期</div>
+      <div class="mt mt-v">症状</div>
+    </div>
+    <div class="mc">
+      <div class="fl">入睡 / 起床时间</div>
+      <div class="time-row">
+        <div class="tf"><div class="tf-label">入睡</div><div class="ti">23:00</div></div>
+        <div class="arr-sep">→</div>
+        <div class="tf"><div class="tf-label">起床</div><div class="ti">07:30</div></div>
+      </div>
+      <div class="dur-display">8h 30m<div class="dur-sub">睡眠时长</div></div>
+      <div class="fl">睡眠质量</div>
+      <div class="qual-row">
+        <div class="qb active">很好</div>
+        <div class="qb">还行</div>
+        <div class="qb">不太好</div>
+      </div>
+      <div class="fl">备注（可选）</div>
+      <input class="fi" placeholder="做梦、失眠...">
+      <button class="save-btn save-indigo">保存</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

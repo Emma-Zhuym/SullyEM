@@ -1,7 +1,7 @@
 # SullyEM // 手抓糯米机
 
 <div align="center">
-<img width="800" alt="banner" src="https://sharkpan.xyz/f/ylWpfN/sDN.png" />
+<img width="800" alt="banner" src="https://cdn.jsdelivr.net/gh/qegj567-cloud/SullyOS-assets@main/bgm/SULLY/sDN.png" />
 </div>
 
 基于 [SullyOS](https://github.com/qegj567-cloud/SullyOS) 的个人二改。一个装在浏览器里的虚拟手机系统——React + TypeScript + Vite，local-first，数据全存 IndexedDB。

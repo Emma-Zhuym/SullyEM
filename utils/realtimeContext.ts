@@ -98,6 +98,100 @@ export const defaultRealtimeConfig: RealtimeConfig = {
 let weatherCache: { data: WeatherData | null; timestamp: number } = { data: null, timestamp: 0 };
 let newsCache: { data: NewsItem[]; timestamp: number } = { data: [], timestamp: 0 };
 
+// Open-Meteo 地名解析缓存：城市名 → 坐标，避免每次取天气都多打一次 geocoding
+const geocodeCache = new Map<string, { latitude: number; longitude: number; name: string }>();
+
+// WMO weather code（Open-Meteo 返回的 weather_code）→ 中文描述 + 近似 OWM icon 码
+// 完整码表见 https://open-meteo.com/en/docs（WMO Weather interpretation codes）
+const WMO_WEATHER_CODES: Record<number, { description: string; icon: string }> = {
+    0: { description: '晴', icon: '01d' },
+    1: { description: '大致晴朗', icon: '02d' },
+    2: { description: '局部多云', icon: '03d' },
+    3: { description: '阴', icon: '04d' },
+    45: { description: '雾', icon: '50d' },
+    48: { description: '雾凇', icon: '50d' },
+    51: { description: '轻微毛毛雨', icon: '09d' },
+    53: { description: '毛毛雨', icon: '09d' },
+    55: { description: '浓密毛毛雨', icon: '09d' },
+    56: { description: '冻毛毛雨', icon: '09d' },
+    57: { description: '强冻毛毛雨', icon: '09d' },
+    61: { description: '小雨', icon: '10d' },
+    63: { description: '中雨', icon: '10d' },
+    65: { description: '大雨', icon: '10d' },
+    66: { description: '冻雨', icon: '13d' },
+    67: { description: '强冻雨', icon: '13d' },
+    71: { description: '小雪', icon: '13d' },
+    73: { description: '中雪', icon: '13d' },
+    75: { description: '大雪', icon: '13d' },
+    77: { description: '雪粒', icon: '13d' },
+    80: { description: '小阵雨', icon: '09d' },
+    81: { description: '阵雨', icon: '09d' },
+    82: { description: '强阵雨', icon: '09d' },
+    85: { description: '小阵雪', icon: '13d' },
+    86: { description: '强阵雪', icon: '13d' },
+    95: { description: '雷阵雨', icon: '11d' },
+    96: { description: '雷阵雨伴小冰雹', icon: '11d' },
+    99: { description: '雷阵雨伴大冰雹', icon: '11d' },
+};
+
+/**
+ * OpenWeatherMap 源（需要 API Key）。失败时抛错，由调用方决定是否回落。
+ */
+export const fetchOwmWeather = async (city: string, apiKey: string): Promise<WeatherData> => {
+    const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(city)}&appid=${apiKey}&units=metric&lang=zh_cn`;
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`OpenWeatherMap HTTP ${response.status}`);
+    }
+    const data = await safeResponseJson(response);
+    return {
+        temp: Math.round(data.main.temp),
+        feelsLike: Math.round(data.main.feels_like),
+        humidity: data.main.humidity,
+        description: data.weather[0]?.description || '未知',
+        icon: data.weather[0]?.icon || '01d',
+        city: data.name
+    };
+};
+
+/**
+ * Open-Meteo 源（免费、免 key、CORS 友好）。城市名先过官方 geocoding（支持中文），失败时抛错。
+ */
+export const fetchOpenMeteoWeather = async (city: string): Promise<WeatherData> => {
+    let geo = geocodeCache.get(city);
+    if (!geo) {
+        const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=zh&format=json`;
+        const geoRes = await fetch(geoUrl);
+        if (!geoRes.ok) {
+            throw new Error(`Open-Meteo geocoding HTTP ${geoRes.status}`);
+        }
+        const geoData = await safeResponseJson(geoRes);
+        const hit = geoData.results?.[0];
+        if (!hit) {
+            throw new Error(`Open-Meteo 找不到城市: ${city}`);
+        }
+        geo = { latitude: hit.latitude, longitude: hit.longitude, name: hit.name };
+        geocodeCache.set(city, geo);
+    }
+
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${geo.latitude}&longitude=${geo.longitude}&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code&timezone=auto`;
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`Open-Meteo HTTP ${response.status}`);
+    }
+    const data = await safeResponseJson(response);
+    const current = data.current;
+    const wmo = WMO_WEATHER_CODES[current.weather_code] || { description: '未知', icon: '01d' };
+    return {
+        temp: Math.round(current.temperature_2m),
+        feelsLike: Math.round(current.apparent_temperature),
+        humidity: Math.round(current.relative_humidity_2m),
+        description: wmo.description,
+        icon: wmo.icon,
+        city: geo.name
+    };
+};
+
 // 特殊日期表
 const SPECIAL_DATES: Record<string, string> = {
     '01-01': '元旦',
@@ -120,7 +214,7 @@ const SPECIAL_DATES: Record<string, string> = {
 export const RealtimeContextManager = {
 
     /**
-     * 获取天气信息
+     * 获取天气信息。填了 OpenWeatherMap key 优先走 OWM，失败或没填 key 时回落免费的 Open-Meteo。
      */
     fetchWeather: async (config: RealtimeConfig): Promise<WeatherData | null> => {
         // [EM-START: weather-openmeteo] OpenWeatherMap → Open-Meteo（免 key，坐标查天气）
@@ -617,6 +711,7 @@ export const RealtimeContextManager = {
     clearCache: () => {
         weatherCache = { data: null, timestamp: 0 };
         newsCache = { data: [], timestamp: 0 };
+        geocodeCache.clear();
     },
 
     /**

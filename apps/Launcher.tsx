@@ -9,6 +9,7 @@ import { ScheduleHomeWidget, ScheduleFullscreenViewer } from '../components/sche
 import NowPlayingSquareWidget from '../components/os/NowPlayingSquareWidget';
 import { useCharStatus } from '../hooks/useCharStatus';
 import MobileGameHome from '../components/os/MobileGameHome';
+import TamagotchiHome from '../components/os/TamagotchiHome';
 
 // --- Isolated Components to prevent full re-renders ---
 
@@ -814,6 +815,11 @@ const Launcher: React.FC = () => {
   // 手游主题：整页换成二次元手游首页布局（独立组件自渲染），不走下面的默认/动森启动器。
   if (theme.skin === 'mobilegame') {
     return <MobileGameHome />;
+  }
+
+  // 电子宠物主题：桌面即养成机——角色真实小屋做舞台 + 四颗糖果实体键（独立组件自渲染）。
+  if (theme.skin === 'tamagotchi') {
+    return <TamagotchiHome />;
   }
 
   return (

@@ -6,6 +6,7 @@ import { DB } from '../../utils/db';
 import DateSettings from './DateSettings';
 import ObserveHUD from './ObserveHUD';
 import { extractObservation, hasObservation } from '../../utils/datePrompts';
+import { clearDateResumeAttempt } from '../../utils/dateSessionRecovery';
 import { cleanTextForTts, VALID_EMOTIONS } from '../../utils/minimaxTts';
 import { synthesizeSpeech, characterHasVoice } from '../../utils/ttsRouter';
 import { resolveTtsProvider } from '../../utils/ttsProvider';
@@ -271,7 +272,7 @@ const DateSession: React.FC<DateSessionProps> = ({
             setGalVoiceLoading(true);
             url = await translateAndSpeak(dialogueText, currentLineEmotionRef.current) || '';
             setGalVoiceLoading(false);
-            if (!url) return;
+            if (!url) { addToast('语音合成失败，请稍后重试', 'error'); return; }
             voiceCacheRef.current[cacheKey] = url;
         }
         if (!dateAudioRef.current) dateAudioRef.current = new Audio();
@@ -282,7 +283,10 @@ const DateSession: React.FC<DateSessionProps> = ({
     };
 
     // Novel/Reading mode: play a specific dialogue line (shares voiceCacheRef with GAL mode)
-    const handleNovelLinePlay = async (lineKey: string, dialogueText: string) => {
+    // voiceEmotion（[v:xxx]）跟立绘模式保持一致地传给 TTS：这样两种模式合成的音频完全相同，
+    // 且命中同一条持久缓存（ttsCache/IndexedDB）——退出见面再进来点旧台词也能从本地缓存秒取，
+    // 不必按不同的 key 重新联网合成。
+    const handleNovelLinePlay = async (lineKey: string, dialogueText: string, voiceEmotion?: string) => {
         const cachedUrl = voiceCacheRef.current[dialogueText];
         if (cachedUrl) {
             // Already have URL (from GAL or previous novel play), just play/pause
@@ -299,9 +303,9 @@ const DateSession: React.FC<DateSessionProps> = ({
             return;
         }
         setNovelVoiceLoading(prev => new Set(prev).add(lineKey));
-        const url = await translateAndSpeak(dialogueText);
+        const url = await translateAndSpeak(dialogueText, voiceEmotion);
         setNovelVoiceLoading(prev => { const n = new Set(prev); n.delete(lineKey); return n; });
-        if (!url) return;
+        if (!url) { addToast('语音合成失败，请稍后重试', 'error'); return; }
         voiceCacheRef.current[dialogueText] = url;
         if (!dateAudioRef.current) dateAudioRef.current = new Audio();
         dateAudioRef.current.src = url;
@@ -346,14 +350,15 @@ const DateSession: React.FC<DateSessionProps> = ({
     // Initialization
     useEffect(() => {
         if (initialState) {
-            // Resume
-            setBgImage(initialState.bgImage);
-            setCurrentSprite(initialState.currentSprite);
-            setCurrentText(initialState.currentText);
-            setDisplayedText(initialState.currentText);
-            setDialogueQueue(initialState.dialogueQueue);
-            setDialogueBatch(initialState.dialogueBatch);
-            setIsNovelMode(initialState.isNovelMode);
+            // Resume — 防御性回填：老快照 / 落库竞态可能缺字段，缺数组兜底成 []，
+            // 否则后续 dialogueQueue.length 等取值会抛异常连累整个会话渲染。
+            setBgImage(initialState.bgImage || '');
+            setCurrentSprite(initialState.currentSprite || '');
+            setCurrentText(initialState.currentText || '');
+            setDisplayedText(initialState.currentText || '');
+            setDialogueQueue(Array.isArray(initialState.dialogueQueue) ? initialState.dialogueQueue : []);
+            setDialogueBatch(Array.isArray(initialState.dialogueBatch) ? initialState.dialogueBatch : []);
+            setIsNovelMode(!!initialState.isNovelMode);
         } else {
             // New Session - pick initial sprite from active skin set or default sprites
             const s = (() => {
@@ -456,6 +461,29 @@ const DateSession: React.FC<DateSessionProps> = ({
         }
         setDialogueQueue(remaining);
     };
+
+    // 立绘引擎（dialogueQueue / currentText / dialogueBatch）默认只在进会话或收到新回复时解析一次。
+    // 若用户在阅读模式里编辑 / 重新生成了「最后一条 AI 回复」，messages 会更新、阅读模式即时反映，
+    // 但立绘引擎不会自动重解析 —— 于是立绘停在旧文字、旧语音，感觉「没同步」。这里监听最后一条
+    // assistant 消息的内容，变了就把当前批次重解析同步过来。首帧跳过（含 initialState 恢复的播放
+    // 位置），isTyping 时也跳过（新回复交给 handleSend / handleRerollClick 处理，避免重复解析）。
+    const lastAssistantContent = React.useMemo(() => {
+        for (let i = messages.length - 1; i >= 0; i--) {
+            if (messages[i]?.role === 'assistant') return messages[i].content || '';
+        }
+        return '';
+    }, [messages]);
+    const dialogueSyncMountRef = useRef(false);
+    useEffect(() => {
+        if (!dialogueSyncMountRef.current) { dialogueSyncMountRef.current = true; return; }
+        if (isTyping || !lastAssistantContent) return;
+        const { rest } = extractObservation(lastAssistantContent, { lenient: observeEnabled, custom: char.dateObserve?.custom });
+        const items = parseDialogue(rest, 'normal');
+        if (items.length === 0) return;
+        setDialogueBatch(items);
+        processNextDialogue(items[0], items.slice(1));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [lastAssistantContent]);
 
     const handleScreenClick = (e: React.MouseEvent) => {
         if ((e.target as HTMLElement).closest('button, input, textarea, .control-panel')) return;
@@ -584,10 +612,19 @@ addToast('重播对话', 'info');
         // Periodic auto-save every 30s
         const interval = setInterval(saveStateToDB, 30000);
 
+        // 见面「继续上次」崩溃自愈：只要会话稳定挂载并渲染了一小段时间没崩，
+        // 就撤销 DateApp 在恢复前武装的哨兵——证明这份快照能安全加载。若 iOS WebKit
+        // 在此之前把内容进程撑崩（进程级崩溃，不会跑下面的卸载 cleanup），哨兵留存，
+        // 下次进见面即被检出并丢弃这份有毒快照。新会话（无 initialState）无哨兵，clear 为空操作。
+        const settleTimer = setTimeout(() => clearDateResumeAttempt(), 2500);
+
         return () => {
             window.removeEventListener('beforeunload', handleBeforeUnload);
             document.removeEventListener('visibilitychange', handleVisibilityChange);
             clearInterval(interval);
+            clearTimeout(settleTimer);
+            // 干净卸载（SPA 内导航离开会话）= 非崩溃，撤销哨兵。
+            clearDateResumeAttempt();
             // 卸载时只把进度直接落库，绝不调用 onExit。onExit 会执行「用户主动退出」的
             // 导航（setMode('select') + 弹「进度已保存」），而卸载在很多非用户意图的场景
             // 都会发生 —— 尤其 React.StrictMode (dev) 的「挂载→卸载→重挂载」探测：
@@ -859,7 +896,7 @@ addToast('重播对话', 'info');
                                                         {/* Voice button: only for dialogue lines, not opening */}
                                                         {voiceEnabled && lineIsDialogue && !isOpeningMsg && (
                                                             <button
-                                                                onClick={(e) => { e.stopPropagation(); handleNovelLinePlay(lineKey, extractDialogueText(line)); }}
+                                                                onClick={(e) => { e.stopPropagation(); const { voiceEmotion: lineVoiceEmotion, rest: lineRest } = extractVoiceEmotionTag(line); handleNovelLinePlay(lineKey, extractDialogueText(lineRest), lineVoiceEmotion); }}
                                                                 className={`shrink-0 mt-2 w-7 h-7 rounded-full flex items-center justify-center transition-all active:scale-90 select-none ${
                                                                     novelPlayingId === lineKey
                                                                         ? (char.dateLightReading ? 'bg-emerald-100 text-emerald-600' : 'bg-emerald-500/20 text-emerald-300')

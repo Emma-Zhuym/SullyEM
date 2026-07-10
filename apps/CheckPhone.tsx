@@ -14,6 +14,7 @@ import {
 import PersonaSim, { LifeLog, generatePersonaScript } from './PersonaSim';
 import { usePersonaSim, personaSimStore } from '../utils/personaSimStore';
 import { getLastInnerState } from '../utils/emotionApply';
+import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
 import {
     User, Phone, ChatCircleDots, ChatCircle, ShoppingBag, Hamburger, Compass, GearSix,
     Plus, SignOut, CaretLeft, CaretRight, Cloud, ImagesSquare, LockSimple, Package,
@@ -284,7 +285,7 @@ const HomeCard: React.FC<{
 );
 
 const CheckPhone: React.FC = () => {
-    const { closeApp, characters, activeCharacterId, updateCharacter, apiConfig, addToast, userProfile } = useOS();
+    const { closeApp, characters, activeCharacterId, updateCharacter, apiConfig, addToast, userProfile, characterGroups } = useOS();
     const [view, setView] = useState<'select' | 'phone'>('select');
     // activeAppId: 'home' | 'chat_detail' | 'app_id'
     const [activeAppId, setActiveAppId] = useState<string>('home');
@@ -292,6 +293,7 @@ const CheckPhone: React.FC = () => {
     const [isLoading, setIsLoading] = useState(false);
     const [page, setPage] = useState(0); // 0 = home, 1 = custom apps
     const [selectPage, setSelectPage] = useState(0); // Target Device 选人界面的翻页（每页 6 人）
+    const [selectGroupId, setSelectGroupId] = useState(GROUP_FILTER_ALL); // 选人界面的分组筛选
 
     // Gallery widget images (for home screen photo widget)
     const [galleryPhotos, setGalleryPhotos] = useState<GalleryImage[]>([]);
@@ -3323,12 +3325,16 @@ ${olderText}
                 </div>
                 {(() => {
                     const PER_PAGE = 6;
-                    const pageCount = Math.max(1, Math.ceil(characters.length / PER_PAGE));
+                    const groupChars = filterCharactersByGroup(characters, characterGroups, selectGroupId);
+                    const pageCount = Math.max(1, Math.ceil(groupChars.length / PER_PAGE));
                     const cur = Math.min(selectPage, pageCount - 1);
-                    const pageChars = characters.slice(cur * PER_PAGE, cur * PER_PAGE + PER_PAGE);
+                    const pageChars = groupChars.slice(cur * PER_PAGE, cur * PER_PAGE + PER_PAGE);
                     return (
                         <div className="flex-1 min-h-0 flex flex-col">
-                            <div className="flex-1 min-h-0 px-5 grid grid-cols-2 grid-rows-3 gap-3 content-center pb-4 pt-2">
+                            <CharacterGroupFilterBar characters={characters} groups={characterGroups} dark
+                                value={selectGroupId} onChange={(id) => { setSelectGroupId(id); setSelectPage(0); }}
+                                className="px-5 pt-1 shrink-0" />
+                            <div className="flex-1 min-h-0 px-5 grid grid-cols-2 grid-rows-3 gap-4 content-center pb-4 pt-2">
                                 {pageChars.map(c => (
                                     <div key={c.id} onClick={() => handleSelectChar(c)}
                                         className="min-h-0 rounded-2xl p-4 flex flex-col items-center justify-center gap-2.5 cursor-pointer active:scale-95 transition shadow-sm"

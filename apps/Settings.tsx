@@ -8,7 +8,7 @@ import { Share } from '@capacitor/share';
 import { safeResponseJson } from '../utils/safeApi';
 import { EXPORT_CHUNK_SIZE, sliceRanges } from '../utils/backupExport';
 import Modal from '../components/os/Modal';
-import { NotionManager, FeishuManager } from '../utils/realtimeContext';
+import { NotionManager, FeishuManager, RealtimeContextManager } from '../utils/realtimeContext';
 import { searchCities, fetchOpenMeteoCurrent, resolveWeatherCoords, formatLocationLabel, type WeatherLocation } from '../utils/openMeteo'; // [EM: weather-openmeteo]
 import { XhsMcpClient } from '../utils/xhsMcpClient';
 import { getMcdToken, setMcdToken as saveMcdToken, isMcdEnabled, setMcdEnabled as saveMcdEnabled, testMcdConnection, resetMcdSession } from '../utils/mcdMcpClient';
@@ -566,6 +566,16 @@ const Settings: React.FC = () => {
 
   const handleExport = async (mode: 'text_only' | 'media_only' | 'full') => {
       try {
+          // 二次确认：整包备份（full / text_only）本就包含你的 API 密钥等设置——这是预期行为，
+          // 但绝不能发给别人。media_only 只有媒体、不含密钥，视为可分享。
+          if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+              const includesSettings = mode !== 'media_only';
+              const msg = includesSettings
+                  ? '该导出数据包含了明文密钥，请不要发送给任何人'
+                  : '该导出内容安全，可以用于分享';
+              if (!window.confirm(`${msg}\n\n点「确定」继续导出，「取消」中止。`)) return;
+          }
+
           // Trigger export (Context handles loading state UI)
           const blob = await exportSystem(mode);
           
@@ -877,6 +887,7 @@ const Settings: React.FC = () => {
               userXsecToken: realtimeConfig.xhsMcpConfig?.userXsecToken, // 保留自动获取的 token
           }
       });
+      RealtimeContextManager.clearCache(); // 城市/来源改了就别再吐旧缓存
       addToast('实时感知配置已保存', 'success');
       setShowRealtimeModal(false);
   };

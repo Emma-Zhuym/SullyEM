@@ -9,6 +9,11 @@ import Modal from '../components/os/Modal';
 import { ContextBuilder } from '../utils/context';
 import { safeResponseJson } from '../utils/safeApi';
 import { sortAnniversariesByNextOccurrence } from '../utils/anniversaryNext';
+import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
+import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
+
+const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
+const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
 
 type ThemeMode = 'cyber' | 'soft' | 'minimal';
 
@@ -99,8 +104,7 @@ const defaultDateTimeValue = (): string => {
 // ---- Component ----
 
 const ScheduleApp: React.FC = () => {
-    const { closeApp, characters, activeCharacterId, apiConfig, addToast, userProfile } = useOS();
-
+    const { closeApp, characters, activeCharacterId, apiConfig, addToast, userProfile, characterGroups } = useOS();
     const [tasks, setTasks] = useState<Task[]>([]);
     const [anniversaries, setAnniversaries] = useState<Anniversary[]>([]);
     const [agendaItems, setAgendaItems] = useState<AgendaItem[]>([]);
@@ -142,6 +146,8 @@ const ScheduleApp: React.FC = () => {
     const [selectedCalDate, setSelectedCalDate] = useState<string | null>(null);
 
     // ---- Lifecycle ----
+    const [supervisorGroupId, setSupervisorGroupId] = useState<string>(GROUP_FILTER_ALL); // 选监督人的分组筛选
+    const [anniCharGroupId, setAnniCharGroupId] = useState<string>(GROUP_FILTER_ALL); // 纪念日关联对象的分组筛选
 
     useEffect(() => {
         loadData();
@@ -850,9 +856,12 @@ const ScheduleApp: React.FC = () => {
                     <input autoFocus value={newTaskTitle} onChange={e => setNewTaskTitle(e.target.value)} placeholder="任务目标 (例如: 背单词)" className={`w-full px-4 py-3 text-sm focus:outline-none ${theme.input}`} />
                     <div>
                         <label className="text-[10px] font-bold text-slate-400 uppercase mb-2 block tracking-widest">选择监督人</label>
+                        {/* 分组筛选（没建分组时不渲染）。Modal 恒为白底，走浅色配色 */}
+                        <CharacterGroupFilterBar characters={characters} groups={characterGroups}
+                            value={supervisorGroupId} onChange={setSupervisorGroupId} className="mb-2" />
                         <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2">
-                            {characters.map(c => (
-                                <button key={c.id} onClick={() => setNewTaskSupervisor(c.id)} className={`flex flex-col items-center gap-2 p-2 rounded-lg border transition-all min-w-[60px] ${newTaskSupervisor === c.id ? currentThemeMode === 'minimal' ? 'shadow-[inset_2px_2px_5px_#d1d9e6,inset_-2px_-2px_5px_#ffffff]' : 'border-current' : 'border-transparent opacity-50'}`}>
+                            {filterCharactersByGroup(characters, characterGroups, supervisorGroupId).map(c => (
+                                <button key={c.id} onClick={() => setNewTaskSupervisor(c.id)} className={`flex flex-col items-center gap-2 p-2 rounded-lg border transition-all min-w-[60px] ${newTaskSupervisor === c.id ? `${currentThemeMode === 'minimal' ? 'shadow-[inset_2px_2px_5px_#d1d9e6,inset_-2px_-2px_5px_#ffffff]' : 'border-current'}` : 'border-transparent opacity-50'}`}>
                                     <img src={c.avatar} className="w-10 h-10 rounded-md object-cover" />
                                     <span className={`text-[10px] font-bold whitespace-nowrap ${theme.text}`}>{c.name}</span>
                                 </button>
@@ -882,9 +891,12 @@ const ScheduleApp: React.FC = () => {
                     <input type="date" value={newAnniDate} onChange={e => setNewAnniDate(e.target.value)} className={`w-full px-4 py-3 text-sm focus:outline-none ${theme.input}`} />
                     <div>
                         <label className="text-[10px] font-bold text-slate-400 uppercase mb-2 block tracking-widest">关联对象</label>
+                        {/* 分组筛选（没建分组时不渲染）。Modal 恒为白底，走浅色配色 */}
+                        <CharacterGroupFilterBar characters={characters} groups={characterGroups}
+                            value={anniCharGroupId} onChange={setAnniCharGroupId} className="mb-2" />
                         <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2">
-                            {characters.map(c => (
-                                <button key={c.id} onClick={() => setNewAnniChar(c.id)} className={`flex flex-col items-center gap-2 p-2 rounded-lg border transition-all min-w-[60px] ${newAnniChar === c.id ? currentThemeMode === 'minimal' ? 'shadow-[inset_2px_2px_5px_#d1d9e6,inset_-2px_-2px_5px_#ffffff]' : 'border-current' : 'border-transparent opacity-50'}`}>
+                            {filterCharactersByGroup(characters, characterGroups, anniCharGroupId).map(c => (
+                                <button key={c.id} onClick={() => setNewAnniChar(c.id)} className={`flex flex-col items-center gap-2 p-2 rounded-lg border transition-all min-w-[60px] ${newAnniChar === c.id ? `${currentThemeMode === 'minimal' ? 'shadow-[inset_2px_2px_5px_#d1d9e6,inset_-2px_-2px_5px_#ffffff]' : 'border-current'}` : 'border-transparent opacity-50'}`}>
                                     <img src={c.avatar} className="w-10 h-10 rounded-md object-cover" />
                                     <span className={`text-[10px] font-bold whitespace-nowrap ${theme.text}`}>{c.name}</span>
                                 </button>

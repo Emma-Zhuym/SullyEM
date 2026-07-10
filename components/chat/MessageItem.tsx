@@ -338,6 +338,89 @@ const SullyPayMark: React.FC<{ className?: string }> = ({ className }) => (
     </svg>
 );
 
+// ─── 生活记录代记卡（角色 [[LIFE:...]] 落库后插入；用户可确认 / 否决）───
+const LIFE_CARD_STYLE: Record<string, { icon: string; ring: string; bg: string; label: string }> = {
+    period: { icon: '🌙', ring: '#fda4af', bg: 'linear-gradient(135deg,#fff1f2 0%,#ffe4e6 100%)', label: '生理期' },
+    med: { icon: '💊', ring: '#7dd3fc', bg: 'linear-gradient(135deg,#f0f9ff 0%,#e0f2fe 100%)', label: '药盒' },
+    expense: { icon: '🧾', ring: '#fcd34d', bg: 'linear-gradient(135deg,#fffbeb 0%,#fef3c7 100%)', label: '记账' },
+    exercise: { icon: '🏃', ring: '#6ee7b7', bg: 'linear-gradient(135deg,#ecfdf5 0%,#d1fae5 100%)', label: '锻炼' },
+};
+
+const LifeRecordCard: React.FC<{
+    m: Message;
+    charName: string;
+    commonLayout: (content: React.ReactNode) => JSX.Element;
+    selectionMode: boolean;
+    onResolveLifeRecord?: (m: Message, action: 'confirmed' | 'rejected') => void;
+}> = ({ m, charName, commonLayout, selectionMode, onResolveLifeRecord }) => {
+    const meta = m.metadata || {};
+    const style = LIFE_CARD_STYLE[meta.module as string] || LIFE_CARD_STYLE.exercise;
+    const summary: string = meta.summary || '生活记录';
+    const isDuplicate: boolean = !!meta.duplicate;
+    const reviewStatus: 'active' | 'confirmed' | 'rejected' = meta.reviewStatus || 'active';
+    const canResolve = !isDuplicate && reviewStatus === 'active' && !!onResolveLifeRecord && !selectionMode;
+    const dateLabel = (() => {
+        const d = (meta.dateStr || '').split('-');
+        return d.length === 3 ? `${parseInt(d[1], 10)}月${parseInt(d[2], 10)}日` : '';
+    })();
+
+    return commonLayout(
+        <div className="w-64 rounded-2xl overflow-hidden shadow-sm border border-white/70" style={{ background: style.bg }}>
+            <div className="px-3.5 pt-3 pb-2.5">
+                <div className="flex items-center gap-2.5">
+                    <div className="shrink-0 w-9 h-9 rounded-full bg-white/80 flex items-center justify-center text-lg shadow-sm"
+                        style={{ boxShadow: `0 0 0 2px ${style.ring}55` }}>
+                        {style.icon}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                        <div className={`text-xs font-bold text-slate-700 truncate ${reviewStatus === 'rejected' ? 'line-through opacity-50' : ''}`}>
+                            {summary}
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">
+                            {style.label}{dateLabel ? ` · ${dateLabel}` : ''} · {meta.recordedByName || charName} 代记
+                        </div>
+                    </div>
+                </div>
+
+                {isDuplicate ? (
+                    <div className="mt-2 flex items-center gap-1.5 text-[10px] text-slate-500 bg-white/60 rounded-xl px-2.5 py-1.5">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" strokeWidth={2.5} stroke="currentColor" className="w-3 h-3 text-emerald-500 shrink-0"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
+                        <span>此前已由「{meta.duplicateBy || '其他角色'}」记录，无需重复</span>
+                    </div>
+                ) : reviewStatus === 'confirmed' ? (
+                    <div className="mt-2 flex items-center gap-1.5 text-[10px] text-emerald-600 font-semibold px-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" strokeWidth={3} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
+                        已确认
+                    </div>
+                ) : reviewStatus === 'rejected' ? (
+                    <div className="mt-2 flex items-center gap-1.5 text-[10px] text-slate-400 font-semibold px-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" strokeWidth={2.5} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+                        已否决（记录已撤销，TA 下次会知道弄错了）
+                    </div>
+                ) : canResolve ? (
+                    <div className="mt-2.5 flex gap-2">
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onResolveLifeRecord?.(m, 'confirmed'); }}
+                            className="flex-1 py-1.5 rounded-xl bg-white/85 text-emerald-600 text-[11px] font-bold shadow-sm active:scale-95 transition-transform"
+                        >
+                            ✓ 确认
+                        </button>
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onResolveLifeRecord?.(m, 'rejected'); }}
+                            className="flex-1 py-1.5 rounded-xl bg-white/60 text-slate-500 text-[11px] font-bold shadow-sm active:scale-95 transition-transform"
+                        >
+                            ✗ 否决
+                        </button>
+                    </div>
+                ) : null}
+            </div>
+            <div className="px-3.5 py-1.5 bg-white/40 border-t border-white/60 text-[9px] text-slate-400">
+                📋 生活记录
+            </div>
+        </div>
+    );
+};
+
 const TransferCard: React.FC<{
     m: Message;
     isUser: boolean;
@@ -852,6 +935,8 @@ interface MessageItemProps {
     onLuckinCandidate?: (item: import('./LuckinCard').LuckinCartItem) => void;
     /** 用户点「收到的转账」卡 → 接收 / 退回 */
     onResolveTransfer?: (m: Message, action: 'accepted' | 'returned') => void;
+    /** 用户点「生活记录」卡 → 确认 / 否决（角色代记的记录） */
+    onResolveLifeRecord?: (m: Message, action: 'confirmed' | 'rejected') => void;
     /** 思考链卡片视觉与交互 */
     thinkingChainOptions?: {
         styleId?: ThinkingChainStyleId;
@@ -897,6 +982,7 @@ avatarShape = 'circle',
     onLuckinSendCart,
     onLuckinCandidate,
     onResolveTransfer,
+    onResolveLifeRecord,
     thinkingChainOptions,
     voiceMode = false,
 }: MessageItemProps) => {
@@ -908,6 +994,13 @@ avatarShape = 'circle',
     const avatarRadiusClass = avatarShape === 'square' ? 'rounded-sm' : avatarShape === 'rounded' ? 'rounded-xl' : 'rounded-full';
     const avatarSizePx = avatarSize === 'small' ? 28 : avatarSize === 'large' ? 48 : 36;
     const shouldShowAvatar = avatarMode === 'every_message' || isLastInGroup;
+    // 头像绝对定位在气泡底部尖角处。只有 isLastInGroup 才会在气泡下方渲染时间戳，
+    // 时间戳预留了约 1.25rem 的竖向空间——头像的 bottom 偏移正是为对齐那种情况。
+    // 但 every_message 模式下每条都有头像，非组末条没有时间戳，气泡底就落在行底，
+    // 此时仍用 1.25rem 会让头像浮在气泡尖角上方（就是用户反馈的没对齐）。
+    // 所以：有时间戳 → 抬高 1.25rem 对齐气泡底；没时间戳 → 贴到行底与气泡尖角平齐。
+    const hasTimestampBelow = isLastInGroup && showTimestamp !== 'never';
+    const avatarBottomClass = hasTimestampBelow ? 'bottom-[1.25rem]' : 'bottom-0';
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const startPos = useRef({ x: 0, y: 0 });
     const activePointerId = useRef<number | null>(null);
@@ -1398,7 +1491,7 @@ const timeHint = durationSec <= 240 ? '差不多是一杯咖啡的时间' : '像
 
                 {/* Avatar - Absolute Positioned */}
                 {!isUser && (
-                    <div className={`absolute bottom-[1.25rem] z-0 ${selectionMode ? 'left-14' : 'left-3'} transition-all duration-300`}>
+                    <div className={`absolute ${avatarBottomClass} z-0 ${selectionMode ? 'left-14' : 'left-3'} transition-all duration-300`}>
                         {renderAvatar(charAvatar)}
                     </div>
                 )}
@@ -1479,7 +1572,7 @@ const timeHint = durationSec <= 240 ? '差不多是一杯咖啡的时间' : '像
 
                 {/* User Avatar - Absolute Positioned (top-aligned so it stays put when bubble expands) */}
                 {isUser && (
-                    <div className="absolute right-3 top-0 z-0">
+                    <div className={`absolute right-3 ${avatarBottomClass} z-0 transition-all duration-300`}>
                         {renderAvatar(userAvatar)}
                     </div>
                 )}
@@ -2160,6 +2253,34 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
         return commonLayout(card);
     }
 
+    if (m.type === 'room_card') {
+        // 小屋「生活动态」轻量卡片：情绪评估顺风车偶尔捎带的一句小变化（utils/roomAmbient.ts）。
+        // content 进上下文，角色自然记得自己干过啥——不额外建 feed，卡片即记录。
+        const md: any = m.metadata || {};
+        const timeStr = new Date(m.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        const card = (
+            <div className="w-56">
+                <div
+                    className="relative rounded-2xl overflow-hidden border border-amber-200/70 shadow-[0_4px_14px_rgba(200,160,90,0.18)]"
+                    style={{ background: 'linear-gradient(160deg,#fffcf5 0%,#fdf6e8 60%,#faf0dc 100%)' }}
+                >
+                    <div className="relative px-3 pt-2 pb-1.5 flex items-center gap-2 border-b border-amber-200/50">
+                        <span className="text-sm leading-none">{md.emoji || '🏠'}</span>
+                        <span className="flex-1 text-[9px] tracking-[0.25em] text-amber-500/90 font-bold uppercase">小屋 · 生活动态</span>
+                        <span className="text-[9px] text-amber-400/70">{timeStr}</span>
+                    </div>
+                    <div className="relative px-3 py-2">
+                        <p className="text-[12px] leading-[1.6] text-[#6b5636]">
+                            <span className="font-bold text-amber-600">{charName || 'Ta'}</span>
+                            {md.text || String(m.content || '').replace(/^\[小屋动态\]\s*/, '')}
+                        </p>
+                    </div>
+                </div>
+            </div>
+        );
+        return commonLayout(card);
+    }
+
     if (m.type === 'world_card') {
         const md: any = m.metadata || {};
         const timeStr = new Date(m.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
@@ -2348,7 +2469,11 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
         }
         // 沙盒 iframe：禁用脚本 / 同源 / 表单提交，避免任意 HTML 越权访问父页面。
         // srcDoc 用一个全宽中心化的 wrapper, 让 270px 的卡片在 iframe 里居中、背景透明。
-        const srcDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;padding:0;background:transparent;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#334155;}body{display:flex;justify-content:center;padding:0;}*{box-sizing:border-box;}img{max-width:100%;}</style></head><body>${html}</body></html>`;
+        // body>* 强制清掉最外层元素的 box-shadow/filter: 模型经常给卡片外层加柔和阴影,
+        // 但 iframe 只比卡片宽一点 + 外层 overflow-hidden, 阴影会被裁成一圈"若隐若现的
+        // 假边框"贴在卡片周围 —— 聊天里卡片约定是直接贴在聊天背景上、无背景无边框,
+        // 这里在渲染端兜底 (对已落库的旧卡片同样生效), 提示词端同步不再教模型加外层阴影。
+        const srcDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;padding:0;background:transparent;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#334155;}body{display:flex;justify-content:center;padding:0;}*{box-sizing:border-box;}img{max-width:100%;}body>*{box-shadow:none!important;filter:none!important;}</style></head><body>${html}</body></html>`;
         return commonLayout(
             <div className="rounded-[18px] overflow-hidden bg-transparent max-w-[280px]">
                 <iframe
@@ -2637,6 +2762,10 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
         return <TransferCard m={m} isUser={isUser} charName={charName} commonLayout={commonLayout} selectionMode={selectionMode} onResolveTransfer={onResolveTransfer} />;
     }
 
+    if (m.type === 'life_card') {
+        return <LifeRecordCard m={m} charName={charName} commonLayout={commonLayout} selectionMode={selectionMode} onResolveLifeRecord={onResolveLifeRecord} />;
+    }
+
     if (m.type === 'emoji') {
         return commonLayout(
             m.content ? (
@@ -2790,7 +2919,11 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
 // Residual action/system tags that may have leaked through
         .replace(/\[\[(?:ACTION|RECALL|SEARCH|DIARY|READ_DIARY|FS_DIARY|FS_READ_DIARY|SEND_EMOJI|DIARY_START|DIARY_END|FS_DIARY_START|FS_DIARY_END)[:\s][\s\S]*?\]\]/g, '')
         .replace(/\[schedule_message[^\]]*\]/g, '')
-        .replace(/<[语語]音[^>]*>[\s\S]*?<\/[语語]音>/g, '')  // strip <语音 ...>...</语音> voice tags (tolerate emotion attr)
+        .replace(/<[语語]音[^>]*>[\s\S]*?<\/\s*[语語]音\s*>/g, '')  // strip <语音 ...>...</语音> voice tags (tolerate emotion attr / spaced close)
+        .replace(/<[语語]音[^>]*>[\s\S]*$/g, '')             // 未闭合开标签 (历史坏数据): 标签到末尾都是语音内容, 不当正文显示
+        .replace(/<\/\s*[语語]音\s*>/g, '')                  // 孤儿闭合标签 (历史坏数据): 剥标签留正文
+        .replace(/<字幕>([\s\S]*?)<\/字幕>/g, '$1')          // <字幕>: 剥标签留中文 (字幕就是气泡里该显示的文字)
+        .replace(/<\/?字幕>/g, '')                           // 落单字幕标签兜底
         .replace(/^\s*---\s*$/gm, '')                // standalone --- lines
         .replace(/``+/g, '')                          // empty/stray backtick pairs
         .replace(/(^|\s)`(\s|$)/gm, '$1$2')         // lone backticks at boundaries
@@ -2823,12 +2956,19 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
     const displayContent = (isShowingTarget && langBContent) ? langBContent : langAContent;
     const showTranslateButton = translationEnabled && hasBilingual && langBContent;
 
-    // Check if raw content has a <语音> tag (voice-only message that hasn't been TTS'd yet)
-    const hasVoiceTag = !isUser && /<[语語]音[^>]*>[\s\S]*?<\/[语語]音>/.test(m.content);
+    // Check if raw content has a <语音> tag (voice-only message that hasn't been TTS'd yet).
+    // 未闭合的开标签也算 (历史坏数据: 语音块曾被 chunkText 切碎, 开标签落单) —
+    // 当语音条渲染 + 转文字兜底, 而不是把原始标签漏给用户看。
+    const hasVoiceTag = !isUser && /<[语語]音[^>]*>/.test(m.content);
     // Spoken text inside the <语音> tag — lets the placeholder bar offer a 转文字 toggle
     // even when no audio was synthesized (e.g. character has no MiniMax voice configured),
     // so fake voice messages stay readable just like real ones.
-    const voiceTagText = hasVoiceTag ? cleanVoiceText(m.content.match(/<[语語]音[^>]*>([\s\S]*?)<\/[语語]音>/)?.[1]?.trim() || '') : '';
+    // 配对优先; 配不上 (未闭合) 就取开标签之后的全部内容。
+    const voiceTagText = hasVoiceTag ? cleanVoiceText((
+        m.content.match(/<[语語]音[^>]*>([\s\S]*?)<\/\s*[语語]音\s*>/)?.[1]
+        ?? m.content.match(/<[语語]音[^>]*>([\s\S]*)$/)?.[1]
+        ?? ''
+    ).replace(/<字幕>[\s\S]*?<\/字幕>/g, '').trim()) : '';
     const hasVoiceContent = voiceData?.url || voiceLoading || hasVoiceTag || (!isUser && !!voiceMode); // [EM: voice-mode-triggers-voice-bar] 声音模式复用上游语音条路径
     // Don't render empty bubbles (e.g. messages that were just "---"), unless voice data exists or pending
     if (!displayContent && !hasVoiceContent) return null;
@@ -2933,6 +3073,11 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
         );
     }
     // [EM-END: user-voice-bubble]
+    // 外语语音消息：语音条展开区（转文字）本身就完整呈现「口播原文 + 中文翻译」两行，
+    // 顶部气泡再渲染一遍 displayContent 就成了重复——翻译模式下顶部是中文、语音条翻译行
+    // 也是中文，用户看到两份一样的翻译。这类消息把双语文字统一收进语音条，
+    // 顶部不再重复渲染正文，也不再显示（此时已无意义的）译/原文切换按钮。
+    const isForeignVoiceMsg = !isUser && m.type === 'text' && !!voiceData?.url && !!voiceData?.lang && !!cleanVoiceText(voiceData?.spokenText);
 
     return commonLayout(
         <>
@@ -2970,15 +3115,15 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
 
             {/* Layer 3: Reply/Quote — moved outside bubble, rendered above as quoteBlock */}
 
-            {/* [EM: voice-mode-hide-text] Layer 4: Text Content — hidden in voiceMode (text accessible via 转文字 toggle on voice bar) */}
-            {displayContent && !(voiceMode && !isUser) && (
+            {/* [EM: voice-mode-hide-text] Layer 4 — 外语语音消息不重复正文；EM 声音模式下角色消息文字收进语音条 */}
+            {displayContent && !isForeignVoiceMsg && !(voiceMode && !isUser) && (
             <div className="relative z-10 text-[15px] leading-relaxed whitespace-pre-wrap break-all select-text" style={{ color: styleConfig.textColor }}>
                 {renderContent(displayContent)}
             </div>
             )}
 
             {/* Layer 5: Per-bubble Translate Toggle (AI bilingual messages only) */}
-            {showTranslateButton && displayContent && (
+            {showTranslateButton && displayContent && !isForeignVoiceMsg && (
                 <div className="relative z-10 mt-2 flex justify-end">
                     <button
                         onClick={(e) => { e.stopPropagation(); e.preventDefault(); onTranslateToggle?.(m.id); }}
@@ -3011,8 +3156,9 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
                 const vbBtn = styleConfig.voiceBarBtnColor;
                 const vbWave = styleConfig.voiceBarWaveColor;
                 const vbText = styleConfig.voiceBarTextColor;
-                // Voice-only mode: no visible text, voice bar is primary content
-                const isVoiceOnly = !!voiceData?.url && !displayContent;
+                // Voice-only mode: no visible text, voice bar is primary content.
+                // 外语语音消息顶部正文已隐藏（交给语音条渲染），同样按纯语音处理，去掉多余上间距。
+                const isVoiceOnly = !!voiceData?.url && (!displayContent || isForeignVoiceMsg);
                 return (
                 <div className={`relative z-10 ${isVoiceOnly ? '' : 'mt-2.5'}`}>
                     {voiceData?.url ? (
@@ -3189,6 +3335,12 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
 }, (prev, next) => {
     return prev.msg.id === next.msg.id &&
            prev.msg.content === next.msg.content &&
+           // 可交互卡片的状态活在 metadata 里（生活记录卡确认/否决、转账卡收退款）。
+           // 这里不深比整个 metadata（可能含大对象），只盯这几个会改变渲染的状态位——
+           // 否则用户点了「确认」，DB 已更新、消息已重载，卡片却因 memo 判等而纹丝不动。
+           prev.msg.metadata?.reviewStatus === next.msg.metadata?.reviewStatus &&
+           prev.msg.metadata?.status === next.msg.metadata?.status &&
+           prev.msg.metadata?.receipt === next.msg.metadata?.receipt &&
            prev.isFirstInGroup === next.isFirstInGroup &&
            prev.isLastInGroup === next.isLastInGroup &&
            prev.activeTheme === next.activeTheme &&
