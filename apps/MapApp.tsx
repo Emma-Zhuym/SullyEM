@@ -1,17 +1,42 @@
 /**
- * MapApp.tsx — 地图系统（可编辑版 v3）
+ * MapApp.tsx — 地图×日程（Clay 版 v4）
  *
  * EM 独有功能。角色按日程 slot.location 在自定义地图上移动。
- * 世界配置存 IndexedDB，用户可增删改。
- * 每个区域可在地图上手动选位置。
+ * 世界配置存 IndexedDB，用户可增删改，每个区域可在地图上手动选位置。
+ *
+ * UI 按 2026-07-09 design handoff（design_prototype/mapsystem/mapnew）重建：
+ * 暖白 Clay + 紫色主题。三屏 = 主页(彼此的世界) / 地图(凹陷井画布) / 编辑世界，
+ * 地图页底部上拉 sheet 展示今日时间线（含内心独白展开）。
  */
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { CaretLeft, ChatTeardrop, Plus, Trash, PencilSimple, Check, X, Crosshair, MapPin } from '@phosphor-icons/react';
+import {
+  CaretLeft, CaretUp, CaretDown, Plus, Check, GearSix, Buildings,
+  MapPin, ChatTeardrop, Crosshair, MagnifyingGlass, ArrowRight, Sparkle,
+} from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { AppID, CharacterProfile, DailySchedule, ScheduleSlot } from '../types';
 import { DB } from '../utils/db';
-import { computeCharStatus, CharAvailability } from '../utils/charStatus';
+import { computeCharStatus, getSlotAvailability, CharAvailability } from '../utils/charStatus';
+import { F, S, R, HUE, STATUS } from '../utils/clayTokens';
+import { safeFetchJson, extractContent, extractJson } from '../utils/safeApi';
+
+const P = HUE.purple; // Product Color = 紫
+
+// 以下取值来自 handoff README（design_handoff_character_map_schedule），
+// 是本功能设计稿指定、clayTokens 尚未收录的专用值。不要在别的 App 复用。
+const MAPX = {
+  well: '#E7E2DA',                       // 地图凹陷井底色
+  grid: 'rgba(120,108,88,.11)',          // 街道网格线
+  road: 'rgba(247,246,242,.8)',          // 主干道
+  roadDiag: 'rgba(247,246,242,.72)',     // 斜向大道
+  nowCardBg: '#F7F0FF',                  // 时间线"进行中"卡底
+  nowCardBorder: '#E4D6FB',              // 时间线"进行中"卡边
+  handle: '#E0D8CE',                     // sheet 把手
+  purpleShadow: 'rgba(94,60,184,.28)',   // 紫色投影（Ink 的 rgb）
+  sheetShadow: '0 -8px 30px rgba(70,66,58,.16)',
+  dangerBorder: '#F3D3DB',
+};
 
 // ══════════════════════════════════════════════════════════════
 //  Types
@@ -21,26 +46,26 @@ interface MapRegion {
   id: string;
   name: string;
   glyph: string;
-  color: string;
-  x: number; // 0-100 percentage
-  y: number; // 0-100 percentage
+  color: string;          // legacy（旧版彩色圆点），Clay 版不再使用但保留存量数据
+  x: number;              // 0-100 归一化坐标
+  y: number;
   isHome?: boolean;       // "你" 的默认位置
   isCharDefault?: boolean; // 角色的默认位置
   locationKeys?: string[];
+  description?: string;   // 一句话地点描述（供展示 + 未来注入日程生成）
 }
-
-type MapTheme = 'lilac' | 'peach' | 'mint' | 'dusk' | 'rainbow';
 
 interface MapWorld {
   id: string;
   charId: string;
   genre: string;
   tag: string;
-  tagColor: string;
-  tagBg: string;
-  theme: MapTheme;
+  tagColor: string;       // legacy
+  tagBg: string;          // legacy
+  theme?: string;         // legacy（旧版主题皮肤），Clay 版统一暖白
   regions: MapRegion[];
   homeRegionId?: string;
+  cityName?: string;      // 虚拟城市名，地图页标题
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -48,7 +73,7 @@ interface MapWorld {
 // ══════════════════════════════════════════════════════════════
 
 const MAP_DB = 'SullyEM_Map';
-const MAP_DB_VER = 2; // bumped for schema change
+const MAP_DB_VER = 2;
 const STORE = 'worlds';
 
 function openMapDB(): Promise<IDBDatabase> {
@@ -97,51 +122,40 @@ const MapDB = {
 //  Default / Template data
 // ══════════════════════════════════════════════════════════════
 
-const REGION_COLORS = ['#cfdcef', '#ddd2ec', '#f4d7c2', '#c9e3cd', '#efd0db', '#f1e5c8', '#b6b8d6', '#d6e3c6'];
-
 const SEED_WORLD: Omit<MapWorld, 'charId'> & { charNameMatch: string } = {
   id: 'chenzhao_default',
   charNameMatch: '陈照',
   genre: '现代都市',
+  cityName: '星澜市',
   tag: '同居',
   tagColor: '#8a3251',
   tagBg: '#ffd7e1',
-  theme: 'lilac',
   homeRegionId: 'home',
   regions: [
-    { id: 'office', name: '星澜大厦', glyph: '🏢', color: '#cfdcef',
-      x: 70, y: 20, isCharDefault: true,
-      locationKeys: ['公司', '会议室', '星澜', '办公', '大厦'] },
     { id: 'home', name: '你们的家', glyph: '🏠', color: '#ddd2ec',
-      x: 20, y: 50, isHome: true,
+      x: 20, y: 32, isHome: true,
+      description: '你们同居的公寓，窗台上养着他随手买的绿植。',
       locationKeys: ['家', '卧室', '客厅', '厨房'] },
     { id: 'dinner', name: '街角餐厅', glyph: '🍷', color: '#f4d7c2',
-      x: 55, y: 70,
+      x: 76, y: 28,
+      description: '楼下开了很多年的小馆子，他惦记的水煮鱼在这。',
       locationKeys: ['餐厅', '吃饭', '晚餐', '约会'] },
     { id: 'gym', name: '健身房', glyph: '💪', color: '#c9e3cd',
-      x: 85, y: 55,
+      x: 86, y: 52,
+      description: '下班后固定来撸铁的地方，器械区放着他的歌单。',
       locationKeys: ['健身', '跑步', '运动'] },
+    { id: 'studio', name: '棱镜游戏工作室', glyph: '🏢', color: '#cfdcef',
+      x: 44, y: 78, isCharDefault: true,
+      description: '他所在的独立游戏团队，熬夜赶版本的战场。',
+      locationKeys: ['工作室', '棱镜', '晨会', '版本', '开发', '加班', '团队'] },
+    { id: 'office', name: '星澜大厦', glyph: '🏙️', color: '#cfdcef',
+      x: 56, y: 56,
+      description: '客户方的写字楼，数值平衡会常在 27 层会议室。',
+      locationKeys: ['公司', '会议', '星澜', '大厦', '客户'] },
   ],
 };
 
-const THEMES: { id: MapTheme; label: string; color: string }[] = [
-  { id: 'lilac', label: '紫雾', color: '#d8d2e8' },
-  { id: 'peach', label: '蜜桃', color: '#f3dccc' },
-  { id: 'mint', label: '薄荷', color: '#cee2d2' },
-  { id: 'dusk', label: '暮色', color: '#b4b6cf' },
-  { id: 'rainbow', label: '彩虹', color: '#efd0db' },
-];
-
-const TAG_PRESETS = [
-  { tag: '暧昧', bg: '#ffe5b3', color: '#7a5320' },
-  { tag: '恋爱', bg: '#ffd7e1', color: '#8a3251' },
-  { tag: '同居', bg: '#f4d2e8', color: '#8a3271' },
-  { tag: '订婚', bg: '#e8d2f4', color: '#6b3a8a' },
-  { tag: '结婚', bg: '#d6e7ff', color: '#284a82' },
-  { tag: '朋友', bg: '#f1e5c8', color: '#6b5230' },
-  { tag: '同事', bg: '#ddd2ec', color: '#5b4a8a' },
-  { tag: '助手', bg: '#d2ecd3', color: '#2c6c3a' },
-];
+const TAG_OPTIONS = ['暧昧', '恋爱', '同居', '订婚', '结婚', '朋友', '同事', '助手'];
 
 // ══════════════════════════════════════════════════════════════
 //  Helpers
@@ -162,156 +176,163 @@ function getCurrentSlot(schedule: DailySchedule | null): ScheduleSlot | undefine
   return current;
 }
 
-const THEME_BG: Record<string, string> = {
-  lilac: 'linear-gradient(180deg, #d8d2e8 0%, #e3dcef 55%, #ece6f3 100%)',
-  peach: 'linear-gradient(180deg, #f3dccc 0%, #f6e3d3 55%, #faecdc 100%)',
-  mint: 'linear-gradient(180deg, #cee2d2 0%, #dceadc 55%, #e6f0e4 100%)',
-  dusk: 'linear-gradient(180deg, #b4b6cf 0%, #c6c5da 55%, #d7d4e3 100%)',
-  rainbow: 'linear-gradient(135deg, #efd0db 0%, #f4d7c2 26%, #d6e3c6 55%, #cfdcef 80%, #ddd2ec 100%)',
-};
-
-const STATUS_DOT: Record<CharAvailability, string> = { online: '#3aa763', busy: '#ff9466', offline: '#8a8ab1' };
-const STATUS_LABEL: Record<CharAvailability, string> = { online: '在线', busy: '忙碌', offline: '离线' };
-
-/** Auto-generate dashed path lines connecting regions */
-function generatePaths(regions: MapRegion[]): string[] {
-  if (regions.length < 2) return [];
-  const paths: string[] = [];
-  // Connect each region to the next (simple chain)
-  for (let i = 0; i < regions.length - 1; i++) {
-    const a = regions[i], b = regions[i + 1];
-    // Use quadratic curve with midpoint offset for organic feel
-    const mx = (a.x + b.x) / 2 + (Math.random() * 10 - 5);
-    const my = (a.y + b.y) / 2 + (Math.random() * 10 - 5);
-    paths.push(`M${a.x} ${a.y} Q${mx} ${my} ${b.x} ${b.y}`);
-  }
-  // Also connect last to first if 3+ regions
-  if (regions.length >= 3) {
-    const a = regions[regions.length - 1], b = regions[0];
-    const mx = (a.x + b.x) / 2 + 5;
-    const my = (a.y + b.y) / 2 - 5;
-    paths.push(`M${a.x} ${a.y} Q${mx} ${my} ${b.x} ${b.y}`);
-  }
-  return paths;
+function worldTitle(world: MapWorld, char?: CharacterProfile): string {
+  return world.cityName || world.genre || `${char?.name || ''}的世界`;
 }
 
+/** 状态色映射（busy=amber / 空闲=success绿 / offline=gray，均来自 tokens） */
+const STATUS_META: Record<CharAvailability, { text: string; tint: string; main: string; ink: string }> = {
+  busy:    { text: '忙碌中', tint: HUE.amber.tint, main: HUE.amber.main, ink: HUE.amber.ink },
+  online:  { text: '空闲中', tint: STATUS.success.tint, main: STATUS.success.main, ink: HUE.green.ink },
+  offline: { text: '离线',   tint: HUE.gray.tint,  main: HUE.gray.main,  ink: HUE.gray.ink },
+};
+
+const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+
 // ══════════════════════════════════════════════════════════════
-//  Map Canvas — shared between MapView and Editor
+//  Shared small components
 // ══════════════════════════════════════════════════════════════
 
-const MapCanvas: React.FC<{
+/** 44px 圆形凸起图标钮（APP_CONVENTIONS §0.3） */
+const CircleBtn: React.FC<{ onClick: () => void; children: React.ReactNode; style?: React.CSSProperties }> =
+  ({ onClick, children, style }) => (
+    <button onClick={onClick}
+      className="flex items-center justify-center active:translate-y-[1px] transition-transform shrink-0"
+      style={{ width: 44, height: 44, borderRadius: R.pill, background: F.surfaceRaised,
+               border: `1px solid ${F.borderSoft}`, boxShadow: S.raisedSoft, ...style }}>
+      {children}
+    </button>
+  );
+
+/** 状态小徽章：tint 底 + ink 字 + 状态色圆点 */
+const StatusBadge: React.FC<{ status: CharAvailability; text?: string; pulse?: boolean }> =
+  ({ status, text, pulse }) => {
+    const m = STATUS_META[status];
+    return (
+      <span className="inline-flex items-center gap-[5px] shrink-0"
+        style={{ height: 22, padding: '0 9px', borderRadius: R.pill, background: m.tint,
+                 color: m.ink, fontSize: 11, fontWeight: 600 }}>
+        <span style={{ width: 6, height: 6, borderRadius: '50%', background: m.main,
+                       animation: pulse ? 'mapnowpulse 2s infinite' : undefined }} />
+        {text || m.text}
+      </span>
+    );
+  };
+
+// ══════════════════════════════════════════════════════════════
+//  Map Well — 凹陷井地图画布（地图页 + 编辑器预览共用）
+// ══════════════════════════════════════════════════════════════
+
+const MapWell: React.FC<{
   regions: MapRegion[];
-  theme: MapTheme;
-  charAvatar?: string;
-  charName?: string;
-  charRegionId?: string; // which region the character is at
-  homeRegionId?: string;
+  char?: CharacterProfile;
+  charRegionId?: string;
   status?: CharAvailability;
-  highlightRegionId?: string; // editor: which region is selected
-  placingRegionId?: string;   // editor: which region is being placed
+  cityName?: string;
+  showPanels?: boolean;       // 地图页：左上"当前地图"面板 + 右上"虚拟城市" pill
+  highlightRegionId?: string; // 编辑器：选中高亮
+  placingRegionId?: string;   // 编辑器：定位模式
   onTapMap?: (x: number, y: number) => void;
   onTapRegion?: (id: string) => void;
   className?: string;
-}> = ({ regions, theme, charAvatar, charName, charRegionId, homeRegionId, status, highlightRegionId, placingRegionId, onTapMap, onTapRegion, className }) => {
+  style?: React.CSSProperties;
+}> = ({ regions, char, charRegionId, status, cityName, showPanels, highlightRegionId,
+        placingRegionId, onTapMap, onTapRegion, className, style }) => {
   const canvasRef = useRef<HTMLDivElement>(null);
 
-  const handleTap = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+  const handleTap = useCallback((e: React.MouseEvent) => {
     if (!onTapMap || !canvasRef.current) return;
     const rect = canvasRef.current.getBoundingClientRect();
-    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
-    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
-    const x = Math.round(((clientX - rect.left) / rect.width) * 100);
-    const y = Math.round(((clientY - rect.top) / rect.height) * 100);
+    const x = Math.round(((e.clientX - rect.left) / rect.width) * 100);
+    const y = Math.round(((e.clientY - rect.top) / rect.height) * 100);
     onTapMap(Math.max(5, Math.min(95, x)), Math.max(5, Math.min(95, y)));
   }, [onTapMap]);
 
-  const paths = useMemo(() => generatePaths(regions), [regions]);
-
   const charRegion = regions.find(r => r.id === charRegionId);
-  const homeRegion = regions.find(r => r.id === homeRegionId) || regions.find(r => r.isHome);
 
   return (
-    <div ref={canvasRef}
-      className={`relative overflow-hidden bg-white/30 border border-white/60 shadow-[inset_0_1px_0_rgba(255,255,255,0.6),0_4px_22px_rgba(80,60,140,0.08)] ${className || ''}`}
-      style={{ background: THEME_BG[theme] || THEME_BG.lilac }}
-      onClick={handleTap}
-      onTouchStart={onTapMap ? (e) => { e.preventDefault(); handleTap(e); } : undefined}>
+    <div ref={canvasRef} onClick={handleTap}
+      className={`overflow-hidden ${className || ''}`}
+      style={{
+        position: 'relative',
+        background: MAPX.well,
+        backgroundImage: `repeating-linear-gradient(0deg,transparent 0 46px,${MAPX.grid} 46px 48px),repeating-linear-gradient(90deg,transparent 0 52px,${MAPX.grid} 52px 54px)`,
+        boxShadow: 'inset 2px 2px 6px rgba(70,66,58,.12), inset -2px -2px 6px rgba(255,255,255,.65)',
+        ...style,
+      }}>
 
-      {/* Dashed connection lines */}
-      <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
-        <g stroke="rgba(28,22,38,0.10)" strokeWidth="0.4" strokeDasharray="1 2" fill="none">
-          {paths.map((d, i) => <path key={i} d={d} />)}
-        </g>
-      </svg>
+      {/* 主干道 ×3 */}
+      <span className="absolute pointer-events-none" style={{ left: 0, right: 0, top: '21%', height: 8, background: MAPX.road, zIndex: 1 }} />
+      <span className="absolute pointer-events-none" style={{ top: 0, bottom: 0, left: '61%', width: 8, background: MAPX.road, zIndex: 1 }} />
+      <span className="absolute pointer-events-none" style={{ left: -60, top: '42%', width: '160%', height: 11, background: MAPX.roadDiag, transform: 'rotate(-22deg)', transformOrigin: 'left center', zIndex: 1 }} />
 
-      {/* Placing mode crosshair */}
+      {/* 左上"当前地图"面板 + 右上"虚拟城市" pill */}
+      {showPanels && (
+        <>
+          <div className="absolute" style={{ left: 14, top: 14, zIndex: 4, padding: '11px 13px', borderRadius: R.smallCard,
+            background: 'rgba(255,254,252,.85)', backdropFilter: 'blur(6px)',
+            border: `1px solid ${F.borderSoft}`, boxShadow: S.raisedSoft }}>
+            <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '.14em', color: P.ink }}>当前地图</div>
+            <div style={{ fontSize: 19, fontWeight: 700, color: F.textPrimary, marginTop: 1 }}>{cityName}</div>
+          </div>
+          <div className="absolute inline-flex items-center" style={{ right: 14, top: 14, zIndex: 4, height: 30, padding: '0 12px',
+            borderRadius: R.pill, background: F.surface, fontSize: 12, fontWeight: 600, color: P.ink,
+            boxShadow: '0 2px 6px rgba(70,66,58,.08)' }}>
+            虚拟城市
+          </div>
+        </>
+      )}
+
+      {/* 定位模式提示 */}
       {placingRegionId && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
-          <div className="bg-violet-500/90 text-white text-xs font-bold px-3 py-1.5 rounded-full animate-pulse">
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ zIndex: 30 }}>
+          <div className="animate-pulse" style={{ background: P.main, color: '#fff', fontSize: 12, fontWeight: 700,
+            padding: '6px 14px', borderRadius: R.pill, boxShadow: `0 4px 10px ${MAPX.purpleShadow}` }}>
             点击地图放置位置
           </div>
         </div>
       )}
 
-      {/* Region markers */}
-      {regions.map(r => {
-        const isHighlighted = r.id === highlightRegionId;
-        const isCharHere = r.id === charRegionId;
-        const isPlacing = r.id === placingRegionId;
+      {/* 地点圆点：白心 + 3px 紫描边 + 地名 pill（角色所在地点由角色标记代显） */}
+      {regions.filter(r => r.id !== charRegionId).map(r => {
+        const isHi = r.id === highlightRegionId || r.id === placingRegionId;
         return (
           <div key={r.id}
-            className="absolute -translate-x-1/2 -translate-y-1/2 select-none transition-all duration-300 ease-out"
-            style={{ left: `${r.x}%`, top: `${r.y}%`, zIndex: isHighlighted || isCharHere ? 20 : 10 }}
+            className="absolute -translate-x-1/2 -translate-y-1/2 select-none flex flex-col items-center transition-all duration-300"
+            style={{ left: `${r.x}%`, top: `${r.y}%`, gap: 5, zIndex: isHi ? 20 : 2 }}
             onClick={(e) => { if (onTapRegion && !placingRegionId) { e.stopPropagation(); onTapRegion(r.id); } }}>
-            {/* Glow ring for highlighted/placing */}
-            {(isHighlighted || isPlacing) && (
-              <div className="absolute inset-0 -m-2 rounded-full animate-pulse" style={{ background: `${r.color}55`, boxShadow: `0 0 20px ${r.color}88` }} />
-            )}
-            {/* Main circle */}
-            <div className={`w-11 h-11 rounded-full flex items-center justify-center text-lg transition-transform ${
-              isHighlighted ? 'scale-125 ring-2 ring-violet-500' : ''
-            }`} style={{ background: r.color, boxShadow: `0 4px 12px ${r.color}66` }}>
-              {r.glyph}
-            </div>
-            {/* Name label */}
-            <div className={`absolute left-1/2 top-full -translate-x-1/2 mt-1 whitespace-nowrap text-center ${
-              isHighlighted ? 'font-bold text-[12px]' : 'text-[10.5px]'
-            }`}>
-              <span className="bg-white/80 backdrop-blur-sm px-2 py-0.5 rounded-full text-[#1c1626]/80 font-semibold shadow-sm">
-                {r.name}
-              </span>
-            </div>
-            {/* Home badge */}
-            {r.isHome && (
-              <div className="absolute -right-1 -top-1 w-4 h-4 rounded-full bg-violet-500 text-white text-[8px] flex items-center justify-center font-bold shadow-sm">你</div>
-            )}
-            {r.isCharDefault && !isCharHere && (
-              <div className="absolute -right-1 -top-1 w-4 h-4 rounded-full bg-slate-500 text-white text-[8px] flex items-center justify-center font-bold shadow-sm">★</div>
-            )}
+            <span style={{ width: 15, height: 15, borderRadius: '50%', background: F.surface,
+              border: `3px solid ${P.main}`, boxShadow: `0 2px 6px ${MAPX.purpleShadow}`,
+              outline: isHi ? `3px solid ${P.soft}` : undefined }} />
+            <span className="whitespace-nowrap" style={{ padding: '2px 9px', borderRadius: R.pill, background: F.surface,
+              fontSize: 11.5, fontWeight: 600, color: F.textPrimary, boxShadow: '0 2px 6px rgba(70,66,58,.1)' }}>
+              {r.name}
+            </span>
           </div>
         );
       })}
 
-      {/* Character avatar pin — overlaid on the matched region */}
-      {charAvatar && charRegion && (
-        <div className="absolute -translate-x-1/2 -translate-y-1/2 z-20 select-none transition-all duration-500 ease-out pointer-events-none"
-          style={{ left: `${charRegion.x}%`, top: `${charRegion.y - 10}%` }}>
-          <div className="w-10 h-10 rounded-full bg-white p-[2px] shadow-[0_0_0_3px_#6f5cd9,0_6px_14px_rgba(111,92,217,0.4)]">
-            <img src={charAvatar} className="w-full h-full rounded-full object-cover" />
+      {/* 角色标记：圆头像 + 状态点 + pin 尾 + 地名 pill */}
+      {char && charRegion && (
+        <div className="absolute -translate-x-1/2 -translate-y-1/2 select-none pointer-events-none flex flex-col items-center transition-all duration-500"
+          style={{ left: `${charRegion.x}%`, top: `${charRegion.y}%`, gap: 7, zIndex: 3 }}>
+          <div className="relative" style={{ width: 60, height: 60 }}>
+            <div className="overflow-hidden flex items-center justify-center"
+              style={{ width: 60, height: 60, borderRadius: '50%', border: `3px solid ${P.main}`,
+                       background: P.tint, boxShadow: `0 6px 16px ${MAPX.purpleShadow}` }}>
+              {char.avatar
+                ? <img src={char.avatar} className="w-full h-full object-cover" />
+                : <span style={{ fontSize: 24, fontWeight: 700, color: P.ink }}>{char.name.slice(0, 1)}</span>}
+            </div>
+            <span className="absolute" style={{ right: -1, top: 1, width: 15, height: 15, borderRadius: '50%',
+              background: STATUS_META[status || 'offline'].main, border: `2.5px solid ${MAPX.well}` }} />
+            <span className="absolute" style={{ left: '50%', bottom: -7, transform: 'translateX(-50%)', width: 0, height: 0,
+              borderLeft: '7px solid transparent', borderRight: '7px solid transparent', borderTop: `10px solid ${P.main}` }} />
           </div>
-          <div className="absolute -right-0.5 top-0 w-3 h-3 rounded-full border-2 border-white" style={{ background: STATUS_DOT[status || 'offline'] }} />
-          <div className="w-2.5 h-2.5 bg-white mx-auto -mt-[5px] rotate-45 rounded-sm shadow-sm" />
-        </div>
-      )}
-
-      {/* "Me" pin at home region */}
-      {homeRegion && !charRegionId && (
-        <div className="absolute -translate-x-1/2 -translate-y-1/2 z-15 select-none pointer-events-none"
-          style={{ left: `${homeRegion.x}%`, top: `${homeRegion.y - 10}%` }}>
-          <div className="w-9 h-9 rounded-full p-[2px] animate-pulse"
-            style={{ background: '#6f5cd9', boxShadow: '0 0 0 3px rgba(111,92,217,0.20), 0 4px 10px rgba(111,92,217,0.45)' }}>
-            <div className="w-full h-full rounded-full flex items-center justify-center text-white text-[11px] font-bold" style={{ background: '#6f5cd9' }}>你</div>
-          </div>
+          <span className="whitespace-nowrap" style={{ padding: '3px 11px', borderRadius: R.pill, background: F.surface,
+            fontSize: 12, fontWeight: 700, color: F.textPrimary, boxShadow: '0 3px 10px rgba(70,66,58,.14)' }}>
+            {charRegion.name}
+          </span>
         </div>
       )}
     </div>
@@ -319,68 +340,186 @@ const MapCanvas: React.FC<{
 };
 
 // ══════════════════════════════════════════════════════════════
-//  Bottom Sheet
+//  Schedule Sheet — 今日日程底部上拉 sheet
 // ══════════════════════════════════════════════════════════════
 
-const BottomSheet: React.FC<{
-  char: CharacterProfile; region?: MapRegion; status: CharAvailability;
-  activity?: string; location?: string; lastMsg?: string; onGoChat: () => void;
-}> = ({ char, region, status, activity, location, lastMsg, onGoChat }) => (
-  <div className="mx-3.5 mb-3 bg-white/[0.86] rounded-3xl p-4 shadow-[0_6px_22px_rgba(80,60,140,0.10)] border border-white/70">
-    <div className="w-10 h-1 rounded-full bg-black/[0.18] mx-auto -mt-1 mb-2.5" />
-    <div className="flex items-center gap-2.5">
-      {region && (
-        <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg shrink-0" style={{ background: region.color }}>{region.glyph}</div>
-      )}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5 font-bold text-[15px] text-[#1c1626] flex-wrap">
-          {char.name}
-          {region && <span className="font-normal text-[#1c1626]/60"> · {region.name}</span>}
-          <span className="text-[9.5px] px-[7px] py-[1px] rounded-full font-bold ml-1"
-            style={{ background: status === 'online' ? '#d2ecd3' : status === 'busy' ? '#ffe5b3' : '#e0dfe6',
-              color: status === 'online' ? '#2c6c3a' : status === 'busy' ? '#7a5320' : '#55526a' }}>
-            {activity ? `${activity}中` : STATUS_LABEL[status]}
-          </span>
-        </div>
-        <div className="text-[11.5px] text-[#1c1626]/60 mt-0.5 truncate">
-          {location && activity ? `${location} · ${activity}` : activity || '暂无日程'}
-        </div>
-      </div>
-      <button className="bg-[#1c1626] text-white font-semibold text-xs px-3.5 py-2 rounded-full shrink-0 active:scale-95 transition-transform flex items-center gap-1.5"
-        onClick={onGoChat}>
-        <ChatTeardrop size={14} weight="fill" />去找TA
-      </button>
-    </div>
-    {lastMsg && (
-      <div className="mt-2.5 px-3 py-2.5 bg-white/55 border border-white/60 rounded-xl text-[12.5px] leading-relaxed text-[#1c1626] relative pl-5">
-        <span className="absolute left-1.5 -top-1 text-2xl text-[#1c1626]/30 font-serif">&ldquo;</span>
-        <span className="line-clamp-2">{lastMsg}</span>
-        <span className="block text-[11px] text-[#1c1626]/50 font-semibold mt-1">— {char.name}</span>
-      </div>
-    )}
-  </div>
-);
+const ScheduleSheet: React.FC<{
+  char: CharacterProfile;
+  regionName?: string;
+  status: CharAvailability;
+  schedule: DailySchedule | null;
+  currentSlot?: ScheduleSlot;
+  expanded: boolean;
+  onToggle: () => void;
+  onGoChat: () => void;
+  onGenerate: () => void;
+}> = ({ char, regionName, status, schedule, currentSlot, expanded, onToggle, onGoChat, onGenerate }) => {
+  const slots = schedule?.slots || [];
+  const [open, setOpen] = useState<Record<string, boolean>>({});
 
-// ══════════════════════════════════════════════════════════════
-//  Map View
-// ══════════════════════════════════════════════════════════════
-
-const MapView: React.FC<{
-  world: MapWorld; char: CharacterProfile;
-  onBack: () => void; onEdit: () => void;
-}> = ({ world, char, onBack, onEdit }) => {
-  const { openApp } = useOS();
-  const [schedule, setSchedule] = useState<DailySchedule | null>(null);
-  const [lastMsg, setLastMsg] = useState<string | undefined>();
-
+  // 默认展开"进行中"时段的内心独白
   useEffect(() => {
-    const today = new Date().toISOString().split('T')[0];
-    DB.getDailySchedule(char.id, today).then(s => setSchedule(s)).catch(() => {});
-    DB.getRecentMessagesByCharId(char.id, 5).then(msgs => {
-      const aiMsg = msgs.find(m => m.role === 'assistant' && m.type === 'text');
-      if (aiMsg) setLastMsg(typeof aiMsg.content === 'string' ? aiMsg.content.slice(0, 120) : '');
-    }).catch(() => {});
-  }, [char.id]);
+    if (currentSlot?.innerThought) setOpen({ [currentSlot.startTime]: true });
+  }, [schedule?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const now = new Date();
+  const currentEnd = currentSlot
+    ? slots[slots.indexOf(currentSlot) + 1]?.startTime
+    : undefined;
+
+  return (
+    <div className="absolute flex flex-col overflow-hidden"
+      style={{
+        left: 0, right: 0, bottom: 0, zIndex: 6,
+        height: 'calc(100% - var(--chrome-top) - 72px)',
+        borderRadius: `${R.sheet}px ${R.sheet}px 0 0`,
+        background: F.surface, border: `1px solid ${F.borderSoft}`, boxShadow: MAPX.sheetShadow,
+        transform: expanded ? 'translateY(0)' : 'translateY(calc(100% - 208px))',
+        transition: 'transform .36s cubic-bezier(.2,.8,.2,1)',
+      }}>
+
+      {/* 把手 */}
+      <div onClick={onToggle} className="flex flex-col items-center shrink-0 cursor-pointer" style={{ padding: '10px 0 8px' }}>
+        <span style={{ width: 38, height: 5, borderRadius: R.pill, background: MAPX.handle }} />
+      </div>
+
+      {/* 当前状态头（peek 常驻） */}
+      <div onClick={onToggle} className="shrink-0 cursor-pointer" style={{ padding: '2px 18px 14px' }}>
+        <div className="flex items-center" style={{ gap: 12 }}>
+          <div className="flex items-center justify-center shrink-0"
+            style={{ width: 46, height: 46, borderRadius: R.medium, background: P.main, boxShadow: `0 4px 10px ${MAPX.purpleShadow}` }}>
+            <Buildings size={24} color="#fff" weight="bold" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="truncate" style={{ fontSize: 16, fontWeight: 600, color: F.textPrimary }}>
+              {char.name} · {regionName || '未知地点'}
+            </div>
+            <div className="flex items-center" style={{ gap: 8, marginTop: 3 }}>
+              <StatusBadge status={status} pulse={status === 'busy'} />
+              {currentSlot && (
+                <span style={{ fontSize: 12, color: F.textTertiary }}>
+                  {currentSlot.startTime}{currentEnd ? `–${currentEnd}` : ''}
+                </span>
+              )}
+            </div>
+          </div>
+          <CaretUp size={20} weight="bold" style={{ color: F.textTertiary, transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform .3s' }} />
+        </div>
+        <button onClick={(e) => { e.stopPropagation(); onGoChat(); }}
+          className="w-full flex items-center justify-center active:translate-y-[1px] transition-transform"
+          style={{ marginTop: 14, height: 48, border: 'none', borderRadius: R.button, gap: 8,
+                   background: F.textPrimary, color: F.surface, fontSize: 15, fontWeight: 600,
+                   boxShadow: '0 2px 6px rgba(70,66,58,.12), 0 8px 18px rgba(70,66,58,.16)' }}>
+          <ChatTeardrop size={17} weight="bold" />去找 TA
+        </button>
+      </div>
+
+      <div className="shrink-0" style={{ height: 1, background: F.divider, margin: '0 18px' }} />
+
+      {/* 可滚动时间线区 */}
+      <div className="flex-1 overflow-y-auto scrollbar-none" style={{ padding: '14px 18px 24px', paddingBottom: 'calc(24px + var(--safe-bottom, 0px))' }}>
+        <div className="flex items-center justify-between" style={{ gap: 12, marginBottom: 14 }}>
+          <div style={{ lineHeight: 1.2 }}>
+            <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-.01em', color: F.textPrimary }}>
+              {now.getMonth() + 1}月{now.getDate()}日 今日行程
+            </div>
+            <div style={{ fontSize: 12, color: F.textTertiary, marginTop: 3 }}>
+              {WEEKDAYS[now.getDay()]}{slots.length ? ` · ${slots.length} 个时段` : ' · 暂无日程'}
+            </div>
+          </div>
+          <button onClick={onGenerate}
+            className="inline-flex items-center shrink-0 whitespace-nowrap active:translate-y-[1px] transition-transform"
+            style={{ gap: 7, height: 42, padding: '0 16px', border: 'none', borderRadius: R.button,
+                     background: P.tint, color: P.ink, fontSize: 13, fontWeight: 600 }}>
+            <Sparkle size={16} weight="bold" style={{ color: P.main }} />生成计划
+          </button>
+        </div>
+
+        {slots.length === 0 && (
+          <div className="flex flex-col items-center justify-center"
+            style={{ padding: '36px 16px', borderRadius: R.bigCard, background: F.surfaceSunken, boxShadow: S.sunken, gap: 10 }}>
+            <MapPin size={18} weight="bold" style={{ color: F.textTertiary }} />
+            <div style={{ fontSize: 13, color: F.textTertiary }}>今天还没有日程，去日程 App 生成一份吧</div>
+          </div>
+        )}
+
+        {slots.map((slot, i) => {
+          const avail = getSlotAvailability(slot);
+          const m = STATUS_META[avail];
+          const isNow = slot === currentSlot;
+          const end = slots[i + 1]?.startTime;
+          const hasMono = !!slot.innerThought;
+          const isOpen = !!open[slot.startTime];
+          return (
+            <div key={slot.startTime + i} className="flex" style={{ gap: 12 }}>
+              {/* 左侧竖轴：状态色圆点 + 虚线 */}
+              <div className="flex flex-col items-center shrink-0" style={{ width: 14, paddingTop: 8 }}>
+                <span className="shrink-0" style={{ width: 13, height: 13, borderRadius: '50%', background: m.main,
+                  boxShadow: `0 0 0 4px ${F.surface}, 0 1px 3px rgba(70,66,58,.2)` }} />
+                {i < slots.length - 1 && (
+                  <span className="flex-1" style={{ width: 0, minHeight: 20, borderLeft: `2px dashed ${F.borderStrong}`, marginTop: 4 }} />
+                )}
+              </div>
+              {/* 时间线卡 */}
+              <div onClick={() => { if (hasMono) setOpen(prev => ({ ...prev, [slot.startTime]: !prev[slot.startTime] })); }}
+                className="flex-1"
+                style={{ marginBottom: 12, borderRadius: R.bigCard, padding: '14px 15px',
+                         background: isNow ? MAPX.nowCardBg : F.surface,
+                         border: `1px solid ${isNow ? MAPX.nowCardBorder : F.borderSoft}`,
+                         borderLeft: isNow ? `4px solid ${P.main}` : `1px solid ${F.borderSoft}`,
+                         boxShadow: '0 2px 6px rgba(70,66,58,.05)',
+                         cursor: hasMono ? 'pointer' : 'default' }}>
+                <div className="flex items-center justify-between" style={{ gap: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: P.ink, letterSpacing: '.01em' }}>
+                    {slot.startTime}{end ? `–${end}` : ''}
+                  </span>
+                  <StatusBadge status={avail} />
+                </div>
+                <div style={{ fontSize: 16, fontWeight: 600, marginTop: 6, color: F.textPrimary }}>
+                  {slot.emoji ? `${slot.emoji} ` : ''}{slot.activity}
+                </div>
+                <div className="flex items-center" style={{ gap: 8, marginTop: 8 }}>
+                  {slot.location && (
+                    <span className="inline-flex items-center" style={{ gap: 5, height: 26, padding: '0 10px',
+                      borderRadius: R.pill, background: P.tint, color: P.ink, fontSize: 12, fontWeight: 600 }}>
+                      <MapPin size={11} weight="bold" style={{ color: P.main }} />{slot.location}
+                    </span>
+                  )}
+                  {hasMono && (
+                    <span className="inline-flex items-center ml-auto" style={{ gap: 4, fontSize: 12, fontWeight: 600, color: P.main }}>
+                      {isOpen ? '收起' : '内心独白'}
+                      <CaretDown size={13} weight="bold" style={{ transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform .2s' }} />
+                    </span>
+                  )}
+                </div>
+                {hasMono && isOpen && (
+                  <div className="relative" style={{ marginTop: 12, borderRadius: R.medium, padding: '13px 14px 13px 30px',
+                    background: F.surfaceSunken, boxShadow: S.sunken }}>
+                    <span className="absolute" style={{ left: 11, top: 7, fontSize: 26, lineHeight: 1, color: '#B7AFA4', fontFamily: 'Georgia,serif' }}>“</span>
+                    <span style={{ fontSize: 13.5, fontStyle: 'italic', lineHeight: 1.65, color: F.textSecondary }}>
+                      {slot.innerThought}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════
+//  Map Screen — 地图页
+// ══════════════════════════════════════════════════════════════
+
+const MapScreen: React.FC<{
+  world: MapWorld; char: CharacterProfile; schedule: DailySchedule | null;
+  onBack: () => void; onEdit: () => void;
+}> = ({ world, char, schedule, onBack, onEdit }) => {
+  const { openApp } = useOS();
+  const [expanded, setExpanded] = useState(false);
 
   const statusResult = useMemo(() => computeCharStatus(schedule), [schedule]);
   const currentSlot = useMemo(() => getCurrentSlot(schedule), [schedule]);
@@ -391,54 +530,57 @@ const MapView: React.FC<{
   }, [world, currentSlot]);
 
   return (
-    <div className="flex flex-col h-full" style={{ background: THEME_BG[world.theme] || THEME_BG.lilac }}>
-      <div className="flex items-center gap-2.5 px-4 py-3 shrink-0">
-        <button className="w-9 h-9 rounded-xl bg-white/45 border border-white/50 flex items-center justify-center active:scale-92 transition-transform" onClick={onBack}>
-          <CaretLeft size={18} weight="bold" />
-        </button>
-        <div className="flex-1 text-center min-w-0">
-          <div className="font-bold text-[17px] tracking-tight truncate">{char.name}</div>
-          <div className="text-[11px] text-[#1c1626]/60 mt-0.5">{world.genre} · {world.tag}</div>
+    <div className="relative h-full overflow-hidden" style={{ background: F.appBg }}>
+      {/* 浮动导航 */}
+      <div className="absolute left-0 right-0" style={{ top: 0, zIndex: 9, paddingTop: 'var(--chrome-top)' }}>
+        <div className="flex items-center justify-between" style={{ padding: '8px 18px' }}>
+          <CircleBtn onClick={onBack}><CaretLeft size={20} weight="bold" style={{ color: F.textSecondary }} /></CircleBtn>
+          <div style={{ fontSize: 16, fontWeight: 600, color: F.textPrimary }}>{worldTitle(world, char)}</div>
+          <CircleBtn onClick={onEdit}><GearSix size={20} weight="bold" style={{ color: F.textSecondary }} /></CircleBtn>
         </div>
-        <button className="w-9 h-9 rounded-xl bg-white/45 border border-white/50 flex items-center justify-center active:scale-92 transition-transform" onClick={onEdit}>
-          <PencilSimple size={16} weight="bold" />
-        </button>
       </div>
 
-      <MapCanvas
-        className="flex-1 mx-3.5 rounded-[28px]"
+      {/* 地图画布：凹陷井 */}
+      <MapWell
         regions={world.regions}
-        theme={world.theme}
-        charAvatar={char.avatar}
-        charName={char.name}
+        char={char}
         charRegionId={matchedRegion?.id}
-        homeRegionId={world.homeRegionId}
         status={statusResult.status}
+        cityName={worldTitle(world, char)}
+        showPanels
+        style={{ position: 'absolute', top: 'calc(var(--chrome-top) + 60px)', left: 18, right: 18, bottom: 0, borderRadius: R.panel }}
       />
 
-      {/* Status bar overlay */}
-      <div className="absolute left-7 top-[72px] bg-white/[0.86] rounded-full px-3 py-1.5 flex items-center gap-2 text-[11.5px] font-semibold text-[#1c1626] shadow-[0_4px_14px_rgba(80,60,140,0.10)] z-30">
-        <span className="w-2 h-2 rounded-full shadow-[0_0_0_4px_rgba(58,167,99,0.18)]" style={{ background: STATUS_DOT[statusResult.status] }} />
-        {char.name} · {statusResult.currentActivity || STATUS_LABEL[statusResult.status]}
-      </div>
+      {/* 暗色遮罩 */}
+      <div onClick={() => setExpanded(false)}
+        className="absolute inset-0"
+        style={{ zIndex: 5, background: F.textPrimary, opacity: expanded ? 0.26 : 0,
+                 pointerEvents: expanded ? 'auto' : 'none', transition: 'opacity .3s' }} />
 
-      <BottomSheet char={char} region={matchedRegion} status={statusResult.status}
-        activity={statusResult.currentActivity} location={currentSlot?.location} lastMsg={lastMsg}
-        onGoChat={() => openApp(AppID.Chat, { messageWidgetCharId: char.id })} />
+      {/* 今日日程 sheet */}
+      <ScheduleSheet
+        char={char}
+        regionName={matchedRegion?.name}
+        status={statusResult.status}
+        schedule={schedule}
+        currentSlot={currentSlot}
+        expanded={expanded}
+        onToggle={() => setExpanded(v => !v)}
+        onGoChat={() => openApp(AppID.Chat, { messageWidgetCharId: char.id })}
+        onGenerate={() => openApp(AppID.Schedule)}
+      />
     </div>
   );
 };
 
 // ══════════════════════════════════════════════════════════════
-//  World Editor
+//  World Editor — 编辑世界
 // ══════════════════════════════════════════════════════════════
 
-const FormRow: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
-  <div className="flex items-center justify-between py-3 px-4 border-b border-slate-100 last:border-b-0">
-    <span className="text-sm text-slate-600 shrink-0 mr-3">{label}</span>
-    <div className="flex-1 text-right">{children}</div>
-  </div>
-);
+const sunkenInput: React.CSSProperties = {
+  background: F.surfaceSunken, boxShadow: S.sunken, borderRadius: R.input,
+  border: 'none', outline: 'none', color: F.textPrimary,
+};
 
 const WorldEditor: React.FC<{
   world: MapWorld;
@@ -449,14 +591,15 @@ const WorldEditor: React.FC<{
   isNew?: boolean;
   apiConfig: { baseUrl: string; apiKey: string; model: string };
 }> = ({ world: initial, char, onSave, onDelete, onBack, isNew, apiConfig }) => {
+  const { addToast } = useOS();
   const [w, setW] = useState<MapWorld>({ ...initial });
   const [editingRegion, setEditingRegion] = useState<string | null>(null);
   const [placingRegionId, setPlacingRegionId] = useState<string | null>(null);
-  const [importedLocations, setImportedLocations] = useState<{ name: string; emoji: string; keywords: string[] }[]>([]);
+  const [importedLocations, setImportedLocations] = useState<{ name: string; emoji: string; keywords: string[]; description?: string }[]>([]);
   const [importLoading, setImportLoading] = useState(false);
   const [importDone, setImportDone] = useState(false);
 
-  // Use LLM to extract locations from character profile + chat history + schedules
+  // LLM 从人设 + 聊天记录 + 近期日程里提取地点
   const handleImportLocations = useCallback(async () => {
     setImportLoading(true);
     try {
@@ -494,49 +637,55 @@ const WorldEditor: React.FC<{
       } catch {}
 
       const allText = textParts.join('\n\n').slice(0, 12000);
-      const resp = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
-        body: JSON.stringify({
-          model: apiConfig.model,
-          temperature: 0.3,
-          messages: [
-            {
-              role: 'system',
-              content: `你是地点提取助手。从下面关于虚构角色"${char.name}"的文本中，提取所有出现过的**具体地点/场所**。
+      const data = await safeFetchJson(
+        `${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
+          body: JSON.stringify({
+            model: apiConfig.model,
+            temperature: 0.3,
+            max_tokens: 4000,
+            messages: [
+              {
+                role: 'system',
+                content: `你是地点提取助手。从下面关于虚构角色"${char.name}"的文本中，提取所有出现过的**具体地点/场所**。
 
 规则：
 - 只提取具体的场所名（如"星澜大厦""家""健身房""梧桐苑""露台"），不要提取模糊词（如"这里""那边""外面"）
 - 同一个地方的不同说法合并（如"家/卧室/客厅"算同一个地点"家"，但可以把"卧室""客厅"作为 keywords）
 - 每个地点给一个合适的 emoji
 - 每个地点给出用于匹配日程 location 字段的关键词列表
+- 每个地点写一句 12–20 字的描述（这个地方对角色意味着什么）
 - 按重要性排序（角色最常出现的地方排前面）
 
 返回 JSON 数组，格式：
-[{"name":"地点名","emoji":"🏢","keywords":["关键词1","关键词2"]}]
+[{"name":"地点名","emoji":"🏢","keywords":["关键词1","关键词2"],"description":"一句描述"}]
 
 只返回 JSON，不要其他文字。`,
-            },
-            { role: 'user', content: allText },
-          ],
-        }),
-      });
+              },
+              { role: 'user', content: allText },
+            ],
+          }),
+        },
+        2, 90000,
+        { appId: 'map', appName: '地图', charId: char.id, charName: char.name },
+      );
 
-      if (!resp.ok) throw new Error('API error');
-      const data = await resp.json();
-      const raw = data.choices?.[0]?.message?.content || '';
-      const jsonMatch = raw.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]) as { name: string; emoji: string; keywords: string[] }[];
-        setImportedLocations(parsed.filter((p: any) => p.name && p.emoji));
+      const raw = extractContent(data);
+      const parsed = extractJson(raw);
+      if (Array.isArray(parsed)) {
+        setImportedLocations(parsed.filter((p: any) => p?.name && p?.emoji));
+      } else {
+        addToast('AI 返回的地点列表没解析出来，可以再试一次', 'error');
       }
       setImportDone(true);
-    } catch (e) {
-      console.error('Location import failed:', e);
+    } catch (e: any) {
+      addToast(`地点扫描失败：${String(e?.message || e).slice(0, 120)}`, 'error');
       setImportDone(true);
     }
     setImportLoading(false);
-  }, [char, apiConfig]);
+  }, [char, apiConfig, addToast]);
 
   const update = (patch: Partial<MapWorld>) => setW(prev => ({ ...prev, ...patch }));
   const updateRegion = (regionId: string, patch: Partial<MapRegion>) => {
@@ -546,21 +695,19 @@ const WorldEditor: React.FC<{
     }));
   };
 
-  const addRegionFromImport = (loc: { name: string; emoji: string; keywords: string[] }) => {
+  const addRegionFromImport = (loc: { name: string; emoji: string; keywords: string[]; description?: string }) => {
     const idx = w.regions.length;
-    // Auto-distribute in a circle pattern
     const angle = (idx / Math.max(idx + 1, 6)) * Math.PI * 2 - Math.PI / 2;
     const cx = 50, cy = 50, radius = 30;
-    const x = Math.round(cx + Math.cos(angle) * radius);
-    const y = Math.round(cy + Math.sin(angle) * radius);
     const newRegion: MapRegion = {
       id: `r_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
       name: loc.name,
       glyph: loc.emoji,
-      color: REGION_COLORS[idx % REGION_COLORS.length],
-      x: Math.max(10, Math.min(90, x)),
-      y: Math.max(10, Math.min(90, y)),
+      color: '',
+      x: Math.max(10, Math.min(90, Math.round(cx + Math.cos(angle) * radius))),
+      y: Math.max(10, Math.min(90, Math.round(cy + Math.sin(angle) * radius))),
       locationKeys: loc.keywords,
+      description: loc.description,
     };
     setW(prev => ({ ...prev, regions: [...prev.regions, newRegion] }));
   };
@@ -571,15 +718,15 @@ const WorldEditor: React.FC<{
     const cx = 50, cy = 50, radius = 30;
     const newRegion: MapRegion = {
       id: `r_${Date.now()}`,
-      name: `新地点`,
+      name: '新地点',
       glyph: '📍',
-      color: REGION_COLORS[idx % REGION_COLORS.length],
+      color: '',
       x: Math.max(10, Math.min(90, Math.round(cx + Math.cos(angle) * radius))),
       y: Math.max(10, Math.min(90, Math.round(cy + Math.sin(angle) * radius))),
       locationKeys: [],
     };
     setW(prev => ({ ...prev, regions: [...prev.regions, newRegion] }));
-    // Auto-enter placing mode for the new region
+    setEditingRegion(newRegion.id);
     setPlacingRegionId(newRegion.id);
   };
 
@@ -594,239 +741,270 @@ const WorldEditor: React.FC<{
       updateRegion(placingRegionId, { x, y });
       setPlacingRegionId(null);
     }
-  }, [placingRegionId]);
+  }, [placingRegionId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const SectionLabel: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+    <div style={{ fontSize: 13, fontWeight: 600, color: P.ink, letterSpacing: '.06em', margin: '0 2px 10px' }}>{children}</div>
+  );
 
   return (
-    <div className="flex flex-col h-full" style={{ background: THEME_BG.lilac }}>
-      {/* Header */}
-      <div className="flex items-center gap-2.5 px-4 py-3 shrink-0">
-        <button className="w-9 h-9 rounded-xl bg-white/45 border border-white/50 flex items-center justify-center active:scale-92 transition-transform" onClick={onBack}>
-          <CaretLeft size={18} weight="bold" />
-        </button>
-        <div className="flex-1 text-center font-bold text-[17px]">{isNew ? '创建世界' : '编辑世界'}</div>
-        <button className="w-9 h-9 rounded-xl bg-violet-500 text-white flex items-center justify-center active:scale-92 transition-transform" onClick={() => onSave(w)}>
-          <Check size={18} weight="bold" />
-        </button>
+    <div className="flex flex-col h-full" style={{ background: F.appBg }}>
+      {/* 顶栏（§0.2）：返回 + 居中标题 + 保存 */}
+      <div className="shrink-0" style={{ paddingTop: 'var(--chrome-top)' }}>
+        <div className="relative flex items-center" style={{ padding: '12px 18px' }}>
+          <CircleBtn onClick={onBack}><CaretLeft size={20} weight="bold" style={{ color: F.textSecondary }} /></CircleBtn>
+          <span className="absolute left-0 right-0 flex justify-center pointer-events-none"
+            style={{ fontSize: 16, fontWeight: 600, color: F.textPrimary }}>
+            {isNew ? '创建世界' : '编辑世界'}
+          </span>
+          <button onClick={() => onSave(w)}
+            className="ml-auto flex items-center justify-center active:translate-y-[1px] transition-transform shrink-0"
+            style={{ width: 44, height: 44, border: 'none', borderRadius: R.pill, background: P.main,
+                     boxShadow: `0 4px 10px ${MAPX.purpleShadow}` }}>
+            <Check size={18} weight="bold" color="#fff" />
+          </button>
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto pb-8 scrollbar-none">
-        {/* Map Preview — interactive positioning */}
-        <div className="px-4 mb-4">
-          <div className="text-xs font-semibold text-slate-500 mb-2 px-1 flex items-center gap-1.5">
-            <MapPin size={12} weight="bold" />
-            地图预览
-            {placingRegionId && (
-              <span className="text-violet-500 animate-pulse ml-1">· 点击放置「{w.regions.find(r => r.id === placingRegionId)?.name}」</span>
-            )}
-          </div>
-          <MapCanvas
-            className="rounded-[22px] aspect-square"
-            regions={w.regions}
-            theme={w.theme}
-            highlightRegionId={editingRegion || undefined}
-            placingRegionId={placingRegionId || undefined}
-            onTapMap={handleMapTap}
-            onTapRegion={(id) => {
-              if (!placingRegionId) {
-                setEditingRegion(editingRegion === id ? null : id);
-              }
-            }}
-          />
-          {placingRegionId && (
-            <button onClick={() => setPlacingRegionId(null)}
-              className="mt-2 w-full py-2 text-center text-sm text-slate-400 font-semibold bg-white/60 rounded-xl active:bg-white/80">
-              取消定位
-            </button>
-          )}
-        </div>
+      <div className="flex-1 overflow-y-auto scrollbar-none" style={{ padding: '4px 18px', paddingBottom: 'calc(40px + var(--safe-bottom, 0px))' }}>
 
-        {/* Character info */}
-        <div className="flex items-center gap-3 px-4 py-2">
-          <img src={char.avatar} className="w-10 h-10 rounded-2xl object-cover shadow-md" />
-          <div>
-            <div className="font-bold text-[15px]">{char.name}</div>
-            <div className="text-[11px] text-slate-400">{w.regions.length} 个地点</div>
-          </div>
-        </div>
-
-        {/* Basic info */}
-        <div className="mx-4 bg-white rounded-2xl shadow-sm mb-4">
-          <FormRow label="类型">
+        {/* 类型 + 城市名 */}
+        <div style={{ borderRadius: R.smallCard, background: F.surface, border: `1px solid ${F.borderSoft}`, boxShadow: S.raisedSoft, marginBottom: 16 }}>
+          <div className="flex items-center justify-between" style={{ height: 52, padding: '0 16px' }}>
+            <span style={{ fontSize: 14, color: F.textSecondary }} className="shrink-0">类型</span>
             <input value={w.genre} onChange={e => update({ genre: e.target.value })}
-              className="text-sm text-right w-full outline-none bg-transparent" placeholder="现代都市 / 校园 / 末世 / ..." />
-          </FormRow>
-        </div>
-
-        {/* Tag */}
-        <div className="px-4 mb-4">
-          <div className="text-xs font-semibold text-slate-500 mb-2 px-1">关系</div>
-          <div className="flex flex-wrap gap-2">
-            {TAG_PRESETS.map(t => (
-              <button key={t.tag} onClick={() => update({ tag: t.tag, tagBg: t.bg, tagColor: t.color })}
-                className={`text-xs px-3 py-1.5 rounded-full font-bold transition-all ${w.tag === t.tag ? 'ring-2 ring-violet-400 scale-105' : ''}`}
-                style={{ background: t.bg, color: t.color }}>
-                {t.tag}
-              </button>
-            ))}
+              className="text-right bg-transparent outline-none border-none flex-1 ml-3"
+              style={{ fontSize: 15, fontWeight: 600, color: F.textPrimary }}
+              placeholder="现代都市 / 校园 / 末世…" />
+          </div>
+          <div style={{ height: 1, background: F.divider, margin: '0 16px' }} />
+          <div className="flex items-center justify-between" style={{ height: 52, padding: '0 16px' }}>
+            <span style={{ fontSize: 14, color: F.textSecondary }} className="shrink-0">城市名</span>
+            <input value={w.cityName || ''} onChange={e => update({ cityName: e.target.value })}
+              className="text-right bg-transparent outline-none border-none flex-1 ml-3"
+              style={{ fontSize: 15, fontWeight: 600, color: F.textPrimary }}
+              placeholder="星澜市" />
           </div>
         </div>
 
-        {/* Theme */}
-        <div className="px-4 mb-4">
-          <div className="text-xs font-semibold text-slate-500 mb-2 px-1">主题色</div>
-          <div className="flex gap-3">
-            {THEMES.map(t => (
-              <button key={t.id} onClick={() => update({ theme: t.id })}
-                className={`flex flex-col items-center gap-1 transition-transform ${w.theme === t.id ? 'scale-110' : ''}`}>
-                <div className={`w-8 h-8 rounded-full border-2 ${w.theme === t.id ? 'border-violet-500' : 'border-white'}`}
-                  style={{ background: t.color }} />
-                <span className="text-[10px] text-slate-500">{t.label}</span>
+        {/* 关系 chips：单选，选中紫 Main，未选紫 Tint */}
+        <SectionLabel>关系</SectionLabel>
+        <div className="flex flex-wrap" style={{ gap: 8, marginBottom: 16 }}>
+          {TAG_OPTIONS.map(t => {
+            const sel = w.tag === t;
+            return (
+              <button key={t} onClick={() => update({ tag: t })}
+                className="inline-flex items-center active:translate-y-[1px] transition-transform"
+                style={{ height: 34, padding: '0 15px', border: 'none', borderRadius: R.pill,
+                         background: sel ? P.main : P.tint,
+                         color: sel ? '#fff' : P.ink,
+                         fontSize: 13, fontWeight: sel ? 700 : 600,
+                         boxShadow: sel ? `0 3px 8px ${MAPX.purpleShadow}` : 'none' }}>
+                {t}
               </button>
-            ))}
-          </div>
+            );
+          })}
         </div>
 
-        {/* Location Import */}
-        <div className="px-4 mb-4">
-          <div className="text-xs font-semibold text-slate-500 mb-2 px-1">从记忆导入地点</div>
-          <div className="bg-white rounded-2xl shadow-sm p-3">
-            {!importDone ? (
-              <button onClick={handleImportLocations} disabled={importLoading}
-                className="w-full py-2.5 text-center text-sm font-semibold text-violet-500 bg-violet-50 rounded-xl active:bg-violet-100 disabled:opacity-50 transition-colors">
-                {importLoading ? '✨ AI 正在扫描聊天记录 + 人设...' : '🔍 AI 扫描记忆中的地名'}
-              </button>
-            ) : importedLocations.length === 0 ? (
-              <div className="text-center text-sm text-slate-400 py-2">没有找到地名，可手动添加</div>
+        {/* 地图预览：定位地点用 */}
+        <SectionLabel>
+          地图预览{placingRegionId && <span style={{ color: P.main }}>　· 点击放置「{w.regions.find(r => r.id === placingRegionId)?.name}」</span>}
+        </SectionLabel>
+        <MapWell
+          regions={w.regions}
+          highlightRegionId={editingRegion || undefined}
+          placingRegionId={placingRegionId || undefined}
+          onTapMap={handleMapTap}
+          onTapRegion={(id) => { if (!placingRegionId) setEditingRegion(editingRegion === id ? null : id); }}
+          className="aspect-square"
+          style={{ borderRadius: R.bigCard, marginBottom: placingRegionId ? 8 : 18 }}
+        />
+        {placingRegionId && (
+          <button onClick={() => setPlacingRegionId(null)}
+            className="w-full active:translate-y-[1px] transition-transform"
+            style={{ marginBottom: 18, height: 40, border: `1px solid ${F.borderSoft}`, borderRadius: R.button,
+                     background: F.surface, fontSize: 13, fontWeight: 600, color: F.textSecondary, boxShadow: S.raisedSoft }}>
+            取消定位
+          </button>
+        )}
+
+        {/* 从记忆导入地点：凹陷井按钮 */}
+        <SectionLabel>从记忆导入地点</SectionLabel>
+        {!importDone ? (
+          <button onClick={handleImportLocations} disabled={importLoading}
+            className="w-full flex items-center justify-center disabled:opacity-60"
+            style={{ ...sunkenInput, height: 56, borderRadius: R.smallCard, gap: 9, marginBottom: 18, cursor: 'pointer' }}>
+            <MagnifyingGlass size={18} weight="bold" style={{ color: P.main }} />
+            <span style={{ fontSize: 14, fontWeight: 600, color: P.ink }}>
+              {importLoading ? 'AI 正在扫描聊天记录 + 人设…' : 'AI 扫描记忆中的地名'}
+            </span>
+          </button>
+        ) : (
+          <div style={{ borderRadius: R.smallCard, background: F.surface, border: `1px solid ${F.borderSoft}`, boxShadow: S.raisedSoft, padding: 12, marginBottom: 18 }}>
+            {importedLocations.length === 0 ? (
+              <div className="text-center" style={{ fontSize: 13, color: F.textTertiary, padding: '8px 0' }}>没有找到地名，可手动添加</div>
             ) : (
-              <div>
-                <div className="text-[11px] text-slate-400 mb-2">点击添加到地图（添加后可在地图上定位）：</div>
-                <div className="flex flex-col gap-1.5">
+              <>
+                <div style={{ fontSize: 11, color: F.textTertiary, marginBottom: 8 }}>点击添加到地图（添加后可在预览里定位）：</div>
+                <div className="flex flex-col" style={{ gap: 6 }}>
                   {importedLocations.map(loc => {
-                    const alreadyAdded = w.regions.some(r => r.name === loc.name || r.locationKeys?.some(k => loc.keywords.includes(k)));
+                    const added = w.regions.some(r => r.name === loc.name || r.locationKeys?.some(k => loc.keywords.includes(k)));
                     return (
-                      <button key={loc.name} disabled={alreadyAdded}
+                      <button key={loc.name} disabled={added}
                         onClick={() => addRegionFromImport(loc)}
-                        className={`flex items-center gap-2 px-3 py-2 rounded-xl text-left transition-all ${
-                          alreadyAdded ? 'bg-slate-50 opacity-40' : 'bg-violet-50 active:bg-violet-100'
-                        }`}>
-                        <span className="text-base shrink-0">{loc.emoji}</span>
+                        className="flex items-center text-left"
+                        style={{ gap: 10, padding: '8px 12px', border: 'none', borderRadius: R.medium,
+                                 background: added ? F.surfaceSunken : P.tint, opacity: added ? 0.5 : 1, cursor: added ? 'default' : 'pointer' }}>
+                        <span style={{ fontSize: 17 }} className="shrink-0">{loc.emoji}</span>
                         <div className="flex-1 min-w-0">
-                          <div className={`text-sm font-semibold ${alreadyAdded ? 'text-slate-300 line-through' : 'text-violet-700'}`}>{loc.name}</div>
-                          <div className="text-[10px] text-slate-400 truncate">{loc.keywords.join('、')}</div>
+                          <div className="truncate" style={{ fontSize: 14, fontWeight: 600, color: added ? F.textTertiary : P.ink, textDecoration: added ? 'line-through' : 'none' }}>{loc.name}</div>
+                          <div className="truncate" style={{ fontSize: 10, color: F.textTertiary }}>{loc.keywords.join('、')}</div>
                         </div>
-                        {!alreadyAdded && <Plus size={14} weight="bold" className="text-violet-400 shrink-0" />}
-                        {alreadyAdded && <Check size={14} weight="bold" className="text-slate-300 shrink-0" />}
+                        {added
+                          ? <Check size={14} weight="bold" style={{ color: F.textTertiary }} className="shrink-0" />
+                          : <Plus size={14} weight="bold" style={{ color: P.main }} className="shrink-0" />}
                       </button>
                     );
                   })}
                 </div>
-              </div>
+              </>
             )}
           </div>
+        )}
+
+        {/* 地点列表 */}
+        <div className="flex items-center justify-between" style={{ margin: '0 2px 12px' }}>
+          <span style={{ fontSize: 18, fontWeight: 600, color: F.textPrimary }}>
+            地点 <span style={{ color: F.textTertiary }}>{w.regions.length}</span>
+          </span>
+          <button onClick={addBlankRegion}
+            className="inline-flex items-center bg-transparent border-none"
+            style={{ gap: 5, fontSize: 14, fontWeight: 600, color: P.main, cursor: 'pointer' }}>
+            <Plus size={16} weight="bold" />添加
+          </button>
         </div>
 
-        {/* Regions list */}
-        <div className="px-4 mb-4">
-          <div className="flex items-center justify-between mb-2 px-1">
-            <span className="text-xs font-semibold text-slate-500">地点 ({w.regions.length})</span>
-            <button onClick={addBlankRegion} className="text-xs text-violet-500 font-semibold flex items-center gap-0.5">
-              <Plus size={12} weight="bold" />添加
-            </button>
-          </div>
-
-          <div className="flex flex-col gap-2">
-            {w.regions.map(r => (
-              <div key={r.id} className={`bg-white rounded-2xl shadow-sm overflow-hidden transition-all ${
-                editingRegion === r.id ? 'ring-2 ring-violet-400' : ''
-              }`}>
-                <div className="flex items-center gap-2.5 p-3 cursor-pointer" onClick={() => setEditingRegion(editingRegion === r.id ? null : r.id)}>
-                  <div className="w-8 h-8 rounded-lg flex items-center justify-center text-base" style={{ background: r.color }}>{r.glyph}</div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold truncate">{r.name}</div>
-                    <div className="text-[10px] text-slate-400">({r.x}, {r.y}) · {r.locationKeys?.length || 0} 个关键词</div>
+        <div className="flex flex-col" style={{ gap: 12 }}>
+          {w.regions.map(r => {
+            const isEditing = editingRegion === r.id;
+            return (
+              <div key={r.id}
+                style={{ borderRadius: R.bigCard, padding: '15px 16px', background: F.surface,
+                         border: `1px solid ${isEditing ? P.soft : F.borderSoft}`, boxShadow: S.raisedSoft }}>
+                {/* 头部行：emoji 座 + 地名 + 你/TA 徽章 + 坐标 pill */}
+                <div className="flex items-start justify-between" style={{ gap: 10 }}>
+                  <div className="flex items-center min-w-0" style={{ gap: 10 }}>
+                    <div className="flex items-center justify-center shrink-0"
+                      style={{ width: 40, height: 40, borderRadius: 12, background: P.tint, fontSize: 21 }}>
+                      {r.glyph}
+                    </div>
+                    <div className="flex items-center min-w-0 flex-wrap" style={{ gap: 6 }}>
+                      <span className="truncate" style={{ fontSize: 15, fontWeight: 700, color: F.textPrimary }}>{r.name}</span>
+                      {r.isHome && (
+                        <span className="inline-flex items-center shrink-0" style={{ height: 18, padding: '0 7px', borderRadius: R.pill, background: P.tint, color: P.ink, fontSize: 10, fontWeight: 700 }}>你</span>
+                      )}
+                      {r.isCharDefault && (
+                        <span className="inline-flex items-center shrink-0" style={{ height: 18, padding: '0 7px', borderRadius: R.pill, background: P.tint, color: P.ink, fontSize: 10, fontWeight: 700 }}>TA</span>
+                      )}
+                    </div>
                   </div>
-                  {r.isHome && <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-600 font-bold">你</span>}
-                  {r.isCharDefault && <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-600 font-bold">TA</span>}
-                  {w.regions.length > 1 && (
-                    <button onClick={e => { e.stopPropagation(); removeRegion(r.id); }} className="text-slate-300 active:text-rose-400">
-                      <Trash size={16} />
-                    </button>
-                  )}
+                  <span className="inline-flex items-center shrink-0" style={{ gap: 4, height: 24, padding: '0 9px', borderRadius: R.pill, background: P.tint, fontSize: 11, fontWeight: 600, color: P.ink }}>
+                    <MapPin size={11} weight="bold" style={{ color: P.main }} />{r.x}, {r.y}
+                  </span>
                 </div>
 
-                {/* Expanded edit */}
-                {editingRegion === r.id && (
-                  <div className="border-t border-slate-100 p-3 space-y-2.5">
-                    <div className="flex gap-2">
-                      <input value={r.glyph} onChange={e => updateRegion(r.id, { glyph: e.target.value.slice(0, 2) })}
-                        className="w-10 text-center text-base bg-slate-50 rounded-lg p-1 outline-none" />
-                      <input value={r.name} onChange={e => updateRegion(r.id, { name: e.target.value })}
-                        className="flex-1 text-sm bg-slate-50 rounded-lg px-2 py-1 outline-none" placeholder="地点名" />
-                    </div>
+                {r.description && (
+                  <div style={{ fontSize: 12.5, lineHeight: 1.5, color: F.textSecondary, marginTop: 8 }}>{r.description}</div>
+                )}
 
-                    {/* Position button */}
-                    <button onClick={() => setPlacingRegionId(r.id)}
-                      className={`w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold transition-colors ${
-                        placingRegionId === r.id
-                          ? 'bg-violet-500 text-white'
-                          : 'bg-violet-50 text-violet-600 active:bg-violet-100'
-                      }`}>
-                      <Crosshair size={14} weight="bold" />
-                      {placingRegionId === r.id ? '点击地图放置...' : '在地图上定位'}
+                {/* 底部行：关键词数 + 编辑/删除 */}
+                <div className="flex items-center justify-between" style={{ marginTop: 10 }}>
+                  <span style={{ fontSize: 11, color: F.textTertiary }}>{r.locationKeys?.length || 0} 个关键词</span>
+                  <div className="flex" style={{ gap: 8 }}>
+                    <button onClick={() => setEditingRegion(isEditing ? null : r.id)}
+                      className="inline-flex items-center active:translate-y-[1px] transition-transform"
+                      style={{ height: 28, padding: '0 13px', borderRadius: R.pill, background: F.surface,
+                               border: `1px solid ${F.borderSoft}`, fontSize: 12, fontWeight: 600, color: F.textPrimary }}>
+                      {isEditing ? '收起' : '编辑'}
                     </button>
+                    {w.regions.length > 1 && (
+                      <button onClick={() => removeRegion(r.id)}
+                        className="inline-flex items-center active:translate-y-[1px] transition-transform"
+                        style={{ height: 28, padding: '0 13px', border: 'none', borderRadius: R.pill,
+                                 background: '#FFE6EA', fontSize: 12, fontWeight: 600, color: '#8F2443' }}>
+                        删除
+                      </button>
+                    )}
+                  </div>
+                </div>
 
+                {/* 展开编辑区 */}
+                {isEditing && (
+                  <div style={{ borderTop: `1px solid ${F.divider}`, marginTop: 12, paddingTop: 12 }} className="flex flex-col gap-2.5">
+                    <div className="flex" style={{ gap: 8 }}>
+                      <input value={r.glyph} onChange={e => updateRegion(r.id, { glyph: e.target.value.slice(0, 2) })}
+                        className="text-center shrink-0"
+                        style={{ ...sunkenInput, width: 44, height: 40, fontSize: 17 }} />
+                      <input value={r.name} onChange={e => updateRegion(r.id, { name: e.target.value })}
+                        className="flex-1 min-w-0"
+                        style={{ ...sunkenInput, height: 40, padding: '0 12px', fontSize: 14, fontWeight: 600 }}
+                        placeholder="地点名" />
+                    </div>
+                    <textarea value={r.description || ''} onChange={e => updateRegion(r.id, { description: e.target.value })}
+                      rows={2} className="w-full resize-none"
+                      style={{ ...sunkenInput, padding: '9px 12px', fontSize: 12.5, lineHeight: 1.5 }}
+                      placeholder="一句话描述这个地方（对 TA 意味着什么）" />
                     <div>
-                      <div className="text-[10px] text-slate-400 mb-1">位置关键词（逗号分隔，匹配日程 location）</div>
+                      <div style={{ fontSize: 10, color: F.textTertiary, marginBottom: 4 }}>位置关键词（逗号分隔，匹配日程 location）</div>
                       <input value={(r.locationKeys || []).join(', ')}
                         onChange={e => updateRegion(r.id, { locationKeys: e.target.value.split(/[,，]/).map(s => s.trim()).filter(Boolean) })}
-                        className="w-full text-xs bg-slate-50 rounded-lg px-2 py-1.5 outline-none" placeholder="公司, 会议室, 星澜" />
+                        className="w-full"
+                        style={{ ...sunkenInput, height: 38, padding: '0 12px', fontSize: 12 }}
+                        placeholder="公司, 会议室, 星澜" />
                     </div>
-                    <div className="flex gap-2">
-                      <div className="text-[10px] text-slate-400 mt-1 shrink-0">颜色</div>
-                      <div className="flex gap-1.5 flex-wrap">
-                        {REGION_COLORS.map(c => (
-                          <button key={c} onClick={() => updateRegion(r.id, { color: c })}
-                            className={`w-5 h-5 rounded-full border-2 ${r.color === c ? 'border-violet-500 scale-110' : 'border-transparent'}`}
-                            style={{ background: c }} />
-                        ))}
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                      <button onClick={() => {
-                        // Clear other isCharDefault, set this one
-                        setW(prev => ({
+                    <button onClick={() => setPlacingRegionId(placingRegionId === r.id ? null : r.id)}
+                      className="w-full flex items-center justify-center active:translate-y-[1px] transition-transform"
+                      style={{ gap: 6, height: 40, border: 'none', borderRadius: R.button,
+                               background: placingRegionId === r.id ? P.main : P.tint,
+                               color: placingRegionId === r.id ? '#fff' : P.ink,
+                               fontSize: 13, fontWeight: 600 }}>
+                      <Crosshair size={14} weight="bold" />
+                      {placingRegionId === r.id ? '在上方预览图点击放置…' : '在地图上定位'}
+                    </button>
+                    <div className="flex" style={{ gap: 8 }}>
+                      <button onClick={() => setW(prev => ({
                           ...prev,
                           regions: prev.regions.map(reg => ({ ...reg, isCharDefault: reg.id === r.id })),
-                        }));
-                      }}
-                        className={`text-[10px] px-2 py-1 rounded-full font-bold ${r.isCharDefault ? 'bg-indigo-500 text-white' : 'bg-slate-100 text-slate-500'}`}>
-                        TA的默认位
+                        }))}
+                        style={{ height: 28, padding: '0 12px', border: 'none', borderRadius: R.pill, fontSize: 11, fontWeight: 700,
+                                 background: r.isCharDefault ? P.main : P.tint, color: r.isCharDefault ? '#fff' : P.ink }}>
+                        TA 的默认位
                       </button>
-                      <button onClick={() => {
-                        setW(prev => ({
+                      <button onClick={() => setW(prev => ({
                           ...prev,
                           regions: prev.regions.map(reg => ({ ...reg, isHome: reg.id === r.id })),
                           homeRegionId: r.id,
-                        }));
-                      }}
-                        className={`text-[10px] px-2 py-1 rounded-full font-bold ${r.isHome ? 'bg-violet-500 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                        }))}
+                        style={{ height: 28, padding: '0 12px', border: 'none', borderRadius: R.pill, fontSize: 11, fontWeight: 700,
+                                 background: r.isHome ? P.main : P.tint, color: r.isHome ? '#fff' : P.ink }}>
                         你的默认位
                       </button>
                     </div>
                   </div>
                 )}
               </div>
-            ))}
-          </div>
+            );
+          })}
         </div>
 
-        {/* Delete world */}
+        {/* 删除这个世界 */}
         {!isNew && onDelete && (
-          <div className="px-4 mt-4">
-            <button onClick={onDelete} className="w-full py-3 text-center text-sm text-rose-400 font-semibold bg-white rounded-2xl shadow-sm active:bg-rose-50">
-              删除这个世界
-            </button>
-          </div>
+          <button onClick={onDelete}
+            className="w-full active:translate-y-[1px] transition-transform"
+            style={{ marginTop: 16, height: 50, border: `1px solid ${MAPX.dangerBorder}`, borderRadius: R.smallCard,
+                     background: '#FFE6EA', color: '#8F2443', fontSize: 14, fontWeight: 700 }}>
+            删除这个世界
+          </button>
         )}
       </div>
     </div>
@@ -834,76 +1012,7 @@ const WorldEditor: React.FC<{
 };
 
 // ══════════════════════════════════════════════════════════════
-//  World Card (Shelf item — with world)
-// ══════════════════════════════════════════════════════════════
-
-const WorldCard: React.FC<{
-  world: MapWorld; char: CharacterProfile; status: CharAvailability; activity?: string; onClick: () => void;
-}> = ({ world, char, status, activity, onClick }) => {
-  const colors = world.regions.slice(0, 3).map(r => r.color);
-  return (
-    <div className="relative rounded-[22px] overflow-hidden p-3.5 border border-white/70 shadow-[0_10px_26px_rgba(80,60,140,0.12),inset_0_1px_0_rgba(255,255,255,0.7)] cursor-pointer active:scale-[0.985] transition-transform" onClick={onClick}>
-      <div className="absolute inset-0 pointer-events-none">
-        <svg viewBox="0 0 200 100" preserveAspectRatio="none" className="w-full h-full opacity-95">
-          <circle cx={world.regions[0]?.x ?? 40} cy={world.regions[0]?.y ?? 40} r="35" fill={colors[0] || '#ddd'} opacity="0.6" />
-          <circle cx={world.regions[1]?.x ? world.regions[1].x * 2 : 130} cy={world.regions[1]?.y ?? 50} r="30" fill={colors[1] || '#eee'} opacity="0.6" />
-          {colors[2] && <circle cx={world.regions[2]?.x ? world.regions[2].x * 1.5 : 80} cy="70" r="25" fill={colors[2]} opacity="0.6" />}
-        </svg>
-      </div>
-      <div className="absolute inset-0 bg-white/30 backdrop-blur-[4px]" />
-      <div className="relative z-10">
-        <div className="flex items-center gap-3">
-          <div className="w-[52px] h-[52px] rounded-[18px] bg-white p-[3px] shadow-[0_6px_14px_rgba(20,10,40,0.18)] shrink-0">
-            <img src={char.avatar} className="w-full h-full rounded-[16px] object-cover" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[17px] font-bold tracking-tight text-[#1c1626]">{char.name}</span>
-              <span className="text-[9.5px] px-[7px] py-[1px] rounded-full font-bold" style={{ background: world.tagBg, color: world.tagColor }}>{world.tag}</span>
-            </div>
-            <div className="text-[11.5px] text-[#1c1626]/60 mt-0.5">{world.genre} · {world.regions.length} 个地点</div>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 mt-2.5 text-[11px] text-[#1c1626]/60">
-          <span className="bg-white/65 px-2.5 py-1 rounded-full border border-white/50">
-            <b className="text-[#1c1626]">{char.name}</b> · {activity ? `${activity}中` : STATUS_LABEL[status]}
-          </span>
-          <span className="flex-1" />
-          <span className="bg-[#1c1626] text-white font-bold text-[11.5px] px-3 py-1.5 rounded-full">进入 →</span>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// ══════════════════════════════════════════════════════════════
-//  Character Row (Shelf item — without world)
-// ══════════════════════════════════════════════════════════════
-
-const CharRow: React.FC<{
-  char: CharacterProfile; status: CharAvailability; activity?: string;
-  onCreateWorld: () => void; onGoChat: () => void;
-}> = ({ char, status, activity, onCreateWorld, onGoChat }) => (
-  <div className="flex items-center gap-3 bg-white/60 rounded-2xl p-3 border border-white/50">
-    <img src={char.avatar} className="w-10 h-10 rounded-full object-cover shrink-0 shadow-sm" />
-    <div className="flex-1 min-w-0">
-      <div className="text-[14px] font-bold text-[#1c1626] flex items-center gap-1.5">
-        {char.name}
-        <span className="w-2 h-2 rounded-full inline-block" style={{ background: STATUS_DOT[status] }} />
-      </div>
-      <div className="text-[11px] text-[#1c1626]/50 truncate">{activity || STATUS_LABEL[status]}</div>
-    </div>
-    <button onClick={onCreateWorld} className="text-[11px] text-violet-500 font-bold px-2.5 py-1.5 rounded-full bg-violet-50 active:bg-violet-100 shrink-0">
-      创建世界
-    </button>
-    <button onClick={onGoChat} className="text-[11px] text-slate-400 font-semibold px-2 py-1.5 rounded-full bg-slate-50 active:bg-slate-100 shrink-0">
-      聊天
-    </button>
-  </div>
-);
-
-// ══════════════════════════════════════════════════════════════
-//  Shelf — All Characters
+//  Shelf — 主页「彼此的世界」
 // ══════════════════════════════════════════════════════════════
 
 const Shelf: React.FC<{
@@ -912,48 +1021,117 @@ const Shelf: React.FC<{
   schedules: Record<string, DailySchedule | null>;
   onOpenWorld: (worldId: string) => void;
   onCreateWorld: (charId: string) => void;
-  onGoChat: (charId: string) => void;
-}> = ({ worlds, characters, schedules, onOpenWorld, onCreateWorld, onGoChat }) => {
+}> = ({ worlds, characters, schedules, onOpenWorld, onCreateWorld }) => {
   const { closeApp } = useOS();
   const charsWithWorld = new Set(worlds.map(w => w.charId));
   const charsWithout = characters.filter(c => !charsWithWorld.has(c.id));
 
   return (
-    <div className="flex flex-col h-full" style={{ background: THEME_BG.lilac }}>
-      <div className="flex items-center gap-2.5 px-4 py-3 shrink-0">
-        <button className="w-9 h-9 rounded-xl bg-white/45 border border-white/50 flex items-center justify-center active:scale-92 transition-transform" onClick={() => closeApp()}>
-          <CaretLeft size={18} weight="bold" />
-        </button>
-        <div className="flex-1" />
+    <div className="flex flex-col h-full" style={{ background: F.appBg }}>
+      <div className="shrink-0" style={{ paddingTop: 'var(--chrome-top)' }}>
+        <div className="flex items-center" style={{ padding: '12px 20px 0' }}>
+          <CircleBtn onClick={() => closeApp()}><CaretLeft size={20} weight="bold" style={{ color: F.textSecondary }} /></CircleBtn>
+        </div>
       </div>
 
-      <div className="px-5 pb-3 shrink-0">
-        <h2 className="text-2xl font-bold tracking-tight text-[#1c1626]">彼此的世界</h2>
-        <p className="text-[12.5px] text-[#1c1626]/60 mt-1">你和他们各自的生活 · 每个人有自己的小世界</p>
-      </div>
+      <div className="flex-1 overflow-y-auto scrollbar-none" style={{ padding: '10px 20px', paddingBottom: 'calc(40px + var(--safe-bottom, 0px))' }}>
+        <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: '-.02em', color: F.textPrimary }}>彼此的世界</div>
+        <div style={{ fontSize: 13, color: F.textTertiary, marginTop: 4 }}>你和他们各自的生活 · 每个人有自己的小世界</div>
 
-      <div className="flex-1 overflow-y-auto px-4 pb-6 flex flex-col gap-3 scrollbar-none">
-        {worlds.map(w => {
-          const char = characters.find(c => c.id === w.charId);
+        {/* 精选角色卡（hero）×每个已建世界 */}
+        {worlds.map(world => {
+          const char = characters.find(c => c.id === world.charId);
           if (!char) return null;
-          const sr = computeCharStatus(schedules[w.charId] || null);
-          return <WorldCard key={w.id} world={w} char={char} status={sr.status} activity={sr.currentActivity} onClick={() => onOpenWorld(w.id)} />;
+          const sr = computeCharStatus(schedules[world.charId] || null);
+          const m = STATUS_META[sr.status];
+          return (
+            <div key={world.id}
+              style={{ marginTop: 20, borderRadius: R.panel, padding: 20, background: P.tint, boxShadow: S.raisedMedium }}>
+              <div className="flex items-center" style={{ gap: 14 }}>
+                <div className="overflow-hidden flex items-center justify-center shrink-0"
+                  style={{ width: 60, height: 60, borderRadius: R.large, background: P.main, boxShadow: `0 6px 16px ${MAPX.purpleShadow}` }}>
+                  {char.avatar
+                    ? <img src={char.avatar} className="w-full h-full object-cover" />
+                    : <span style={{ fontSize: 26, fontWeight: 700, color: '#fff' }}>{char.name.slice(0, 1)}</span>}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center" style={{ gap: 8 }}>
+                    <span className="truncate" style={{ fontSize: 20, fontWeight: 700, color: F.textPrimary }}>{char.name}</span>
+                    {world.tag && (
+                      <span className="inline-flex items-center shrink-0"
+                        style={{ height: 20, padding: '0 8px', borderRadius: R.pill, background: HUE.amber.tint, color: HUE.amber.ink, fontSize: 11, fontWeight: 600 }}>
+                        {world.tag}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 13, color: F.textSecondary, marginTop: 3 }}>
+                    {world.genre || '未设定'} · {world.regions.length} 个地点
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center justify-between" style={{ gap: 12, marginTop: 16 }}>
+                <span className="inline-flex items-center min-w-0" style={{ gap: 6, height: 30, padding: '0 12px', borderRadius: R.pill,
+                  background: F.surface, fontSize: 12, fontWeight: 600, color: m.ink, boxShadow: '0 2px 6px rgba(70,66,58,.06)' }}>
+                  <span className="shrink-0" style={{ width: 7, height: 7, borderRadius: '50%', background: m.main }} />
+                  <span className="truncate">{sr.currentActivity ? `${sr.currentActivity}中` : m.text}</span>
+                </span>
+                <button onClick={() => onOpenWorld(world.id)}
+                  className="inline-flex items-center shrink-0 active:translate-y-[1px] transition-transform"
+                  style={{ gap: 8, height: 44, padding: '0 22px', border: 'none', borderRadius: R.button,
+                           background: F.textPrimary, color: F.surface, fontSize: 15, fontWeight: 600,
+                           boxShadow: '0 2px 6px rgba(70,66,58,.12), 0 8px 18px rgba(70,66,58,.16)' }}>
+                  进入<ArrowRight size={17} weight="bold" />
+                </button>
+              </div>
+            </div>
+          );
         })}
 
-        {worlds.length > 0 && charsWithout.length > 0 && (
-          <div className="text-[11px] text-[#1c1626]/40 font-semibold px-1 pt-2 tracking-wide">其他角色</div>
+        {/* 其他角色 */}
+        {charsWithout.length > 0 && (
+          <>
+            <div style={{ fontSize: 13, fontWeight: 600, color: F.textTertiary, letterSpacing: '.06em', margin: '22px 2px 12px' }}>其他角色</div>
+            <div className="overflow-hidden" style={{ borderRadius: R.bigCard, background: F.surface, border: `1px solid ${F.borderSoft}`, boxShadow: S.raisedSoft }}>
+              {charsWithout.map((c, i) => {
+                const sr = computeCharStatus(schedules[c.id] || null);
+                const m = STATUS_META[sr.status];
+                return (
+                  <React.Fragment key={c.id}>
+                    {i > 0 && <div style={{ height: 1, background: F.divider, margin: '0 16px' }} />}
+                    <div className="flex items-center" style={{ gap: 12, padding: '14px 16px' }}>
+                      <div className="overflow-hidden flex items-center justify-center shrink-0"
+                        style={{ width: 46, height: 46, borderRadius: R.medium, background: P.tint }}>
+                        {c.avatar
+                          ? <img src={c.avatar} className="w-full h-full object-cover" />
+                          : <span style={{ fontSize: 20, fontWeight: 700, color: P.ink }}>{c.name.slice(0, 1)}</span>}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center" style={{ gap: 6 }}>
+                          <span className="truncate" style={{ fontSize: 15, fontWeight: 600, color: F.textPrimary }}>{c.name}</span>
+                          <span className="shrink-0" style={{ width: 8, height: 8, borderRadius: '50%', background: m.main }} />
+                        </div>
+                        <div className="truncate" style={{ fontSize: 12, color: F.textTertiary, marginTop: 2 }}>
+                          {sr.currentActivity ? `${sr.currentActivity}中` : m.text}
+                        </div>
+                      </div>
+                      <button onClick={() => onCreateWorld(c.id)}
+                        className="bg-transparent border-none shrink-0"
+                        style={{ fontSize: 13, fontWeight: 600, color: P.main, cursor: 'pointer' }}>
+                        创建世界
+                      </button>
+                    </div>
+                  </React.Fragment>
+                );
+              })}
+            </div>
+          </>
         )}
 
-        {charsWithout.map(c => {
-          const sr = computeCharStatus(schedules[c.id] || null);
-          return <CharRow key={c.id} char={c} status={sr.status} activity={sr.currentActivity}
-            onCreateWorld={() => onCreateWorld(c.id)} onGoChat={() => onGoChat(c.id)} />;
-        })}
-
         {characters.length === 0 && (
-          <div className="text-center py-16">
-            <div className="text-4xl mb-3">🗺️</div>
-            <div className="text-sm text-[#1c1626]/40">还没有角色</div>
+          <div className="flex flex-col items-center justify-center"
+            style={{ marginTop: 24, padding: '48px 16px', borderRadius: R.bigCard, background: F.surfaceSunken, boxShadow: S.sunken, gap: 10 }}>
+            <MapPin size={18} weight="bold" style={{ color: F.textTertiary }} />
+            <div style={{ fontSize: 13, color: F.textTertiary }}>还没有角色</div>
           </div>
         )}
       </div>
@@ -972,7 +1150,7 @@ type View =
   | { type: 'create'; charId: string };
 
 export default function MapApp() {
-  const { characters, openApp, apiConfig } = useOS();
+  const { characters, apiConfig } = useOS();
   const [view, setView] = useState<View>({ type: 'shelf' });
   const [worlds, setWorlds] = useState<MapWorld[]>([]);
   const [schedules, setSchedules] = useState<Record<string, DailySchedule | null>>({});
@@ -983,11 +1161,11 @@ export default function MapApp() {
     (async () => {
       let stored = await MapDB.getAll().catch(() => [] as MapWorld[]);
 
-      // Seed default 陈照 world if first run
       if (stored.length === 0) {
         const char = characters.find(c => c.name.includes(SEED_WORLD.charNameMatch));
         if (char) {
-          const seeded: MapWorld = { ...SEED_WORLD, charId: char.id };
+          const { charNameMatch: _m, ...seedBase } = SEED_WORLD;
+          const seeded: MapWorld = { ...seedBase, charId: char.id };
           await MapDB.save(seeded).catch(() => {});
           stored = [seeded];
         }
@@ -998,7 +1176,7 @@ export default function MapApp() {
     })();
   }, [characters]);
 
-  // Load schedules for all characters
+  // Load today's schedules for all characters
   useEffect(() => {
     if (characters.length === 0) return;
     const today = new Date().toISOString().split('T')[0];
@@ -1026,13 +1204,10 @@ export default function MapApp() {
     setView({ type: 'shelf' });
   }, []);
 
-  const handleCreateWorld = useCallback((charId: string) => {
-    setView({ type: 'create', charId });
-  }, []);
-
   if (!loaded) return null;
 
-  // ─── Create new world ───
+  let screen: React.ReactNode;
+
   if (view.type === 'create') {
     const char = characters.find(c => c.id === view.charId);
     if (!char) { setView({ type: 'shelf' }); return null; }
@@ -1041,36 +1216,38 @@ export default function MapApp() {
       charId: char.id,
       genre: '',
       tag: '朋友',
-      tagColor: '#6b5230',
-      tagBg: '#f1e5c8',
-      theme: 'lilac',
-      regions: [], // start empty — user imports from memory or adds manually
+      tagColor: '',
+      tagBg: '',
+      regions: [],
       homeRegionId: undefined,
     };
-    return <WorldEditor world={newWorld} char={char} isNew apiConfig={apiConfig} onSave={handleSaveWorld} onBack={() => setView({ type: 'shelf' })} />;
-  }
-
-  // ─── Edit existing world ───
-  if (view.type === 'editor') {
+    screen = <WorldEditor world={newWorld} char={char} isNew apiConfig={apiConfig}
+      onSave={handleSaveWorld} onBack={() => setView({ type: 'shelf' })} />;
+  } else if (view.type === 'editor') {
     const world = worlds.find(w => w.id === view.worldId);
     const char = world ? characters.find(c => c.id === world.charId) : undefined;
     if (!world || !char) { setView({ type: 'shelf' }); return null; }
-    return <WorldEditor world={world} char={char} apiConfig={apiConfig} onSave={handleSaveWorld} onDelete={() => handleDeleteWorld(world.id)} onBack={() => setView({ type: 'map', worldId: world.id })} />;
-  }
-
-  // ─── Map view ───
-  if (view.type === 'map') {
+    screen = <WorldEditor world={world} char={char} apiConfig={apiConfig}
+      onSave={handleSaveWorld} onDelete={() => handleDeleteWorld(world.id)}
+      onBack={() => setView({ type: 'map', worldId: world.id })} />;
+  } else if (view.type === 'map') {
     const world = worlds.find(w => w.id === view.worldId);
     const char = world ? characters.find(c => c.id === world.charId) : undefined;
     if (!world || !char) { setView({ type: 'shelf' }); return null; }
-    return <MapView world={world} char={char} onBack={() => setView({ type: 'shelf' })} onEdit={() => setView({ type: 'editor', worldId: world.id, isNew: false })} />;
-  }
-
-  // ─── Shelf ───
-  return (
-    <Shelf worlds={worlds} characters={characters} schedules={schedules}
+    screen = <MapScreen world={world} char={char} schedule={schedules[world.charId] || null}
+      onBack={() => setView({ type: 'shelf' })}
+      onEdit={() => setView({ type: 'editor', worldId: world.id, isNew: false })} />;
+  } else {
+    screen = <Shelf worlds={worlds} characters={characters} schedules={schedules}
       onOpenWorld={id => setView({ type: 'map', worldId: id })}
-      onCreateWorld={handleCreateWorld}
-      onGoChat={charId => openApp(AppID.Chat, { messageWidgetCharId: charId })} />
+      onCreateWorld={charId => setView({ type: 'create', charId })} />;
+  }
+
+  return (
+    <div className="h-full">
+      {/* 忙碌圆点呼吸动画（amber 光晕，handoff 指定） */}
+      <style>{`@keyframes mapnowpulse{0%{box-shadow:0 0 0 0 rgba(245,169,20,.5)}70%{box-shadow:0 0 0 9px rgba(245,169,20,0)}100%{box-shadow:0 0 0 0 rgba(245,169,20,0)}}`}</style>
+      {screen}
+    </div>
   );
 }

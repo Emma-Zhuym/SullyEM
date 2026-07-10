@@ -100,6 +100,12 @@ EM 的大段提示词（发照片教学、引用教学、Notion日记/飞书/笔
 ### 8. 默认壁纸
 - `context/OSContext.tsx` 里 `export const DEFAULT_WALLPAPER = 'linear-gradient(...)'`
 
+### 13. 地图×日程 Clay 版（2026-07-10 重写）
+- `apps/MapApp.tsx` — EM 独有文件，按 `Design_prototype/mapsystem/mapnew` handoff 重写为暖白 Clay + 紫主题
+- 三屏：彼此的世界（hero 卡）/ 地图（凹陷井画布 + 角色 pin）/ 编辑世界；地图页底部日程上拉 sheet（时间线 + 内心独白）
+- `utils/safeAreaApps.ts` 加了 `AppID.Map`（哨兵 `[EM: map-schedule-clay]`，check 脚本有锚点）
+- MapWorld.cityName / MapRegion.description 为可选新字段，旧 IndexedDB 数据零迁移
+
 ## 合并时常见坑（踩过的 bug）
 
 ### PhoneShell.tsx — messageSubView 必须解构

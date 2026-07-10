@@ -88,6 +88,9 @@ check "DB 收藏更新方法" utils/db.ts "updateGalleryImageFavorite"
 check "相册星标" apps/Gallery.tsx "[EM-START: photo-favorites]"
 check "查手机轮播组件" apps/CheckPhone.tsx "PhotoCarouselWidget"
 
+echo "── 地图×日程 Clay UI ──"
+check "Map safe-area 自理" utils/safeAreaApps.ts "[EM: map-schedule-clay]"
+
 echo "── Token 面板召回展示 ──"
 check "召回简报模块" utils/memoryPalace/recallBrief.ts "getLastRecallBriefs"
 check "formatter 简报写入" utils/memoryPalace/formatter.ts "setLastRecallBriefs"

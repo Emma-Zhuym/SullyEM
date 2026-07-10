@@ -46,6 +46,7 @@ export const SELF_SAFE_AREA_APPS: ReadonlySet<AppID> = new Set<AppID>([
     AppID.SpecialMoments,
     AppID.Health,
     AppID.Shopping,
+    AppID.Map, // [EM: map-schedule-clay] 地图×日程 Clay 版顶栏自理 chrome-top
 ]);
 
 // 外壳是否需要替这个 App 让出安全区：不在自理名单里的才需要。
