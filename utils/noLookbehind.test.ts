@@ -15,7 +15,8 @@ import { join, extname } from 'path';
 const ROOT = join(__dirname, '..');
 const SRC_DIRS = ['utils', 'hooks', 'apps', 'components', 'worker'];
 const SRC_EXT = new Set(['.ts', '.tsx', '.js', '.mjs']);
-const SKIP_FILE = /(lookbehindFree\.test\.ts|noLookbehind\.test\.ts)$/;
+const SKIP_FILE = /(lookbehindFree\.test\.ts|noLookbehind\.test\.ts)$/; // 上游原版
+const SKIP_ICLOUD_DUP = /\s\d+\.[^/]+$/; // [EM: skip-icloud-dup] iCloud 同步冲突副本 "xxx 2.ts"，不入库也不该被扫
 const SKIP_DIR = /node_modules|\.worktrees|dist/;
 const BUNDLE_FILES = [
   'public/instant-worker.bundle.js',
@@ -49,7 +50,7 @@ function walk(dir: string, out: string[] = []): string[] {
     }
     if (st.isDirectory()) {
       walk(full, out);
-    } else if (SRC_EXT.has(extname(name)) && !SKIP_FILE.test(full) && !/\.bundle\.js$/.test(name)) {
+    } else if (SRC_EXT.has(extname(name)) && !SKIP_FILE.test(full) && !SKIP_ICLOUD_DUP.test(full) && !/\.bundle\.js$/.test(name)) {
       out.push(full);
     }
   }

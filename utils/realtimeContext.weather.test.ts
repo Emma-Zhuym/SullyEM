@@ -93,7 +93,8 @@ describe('fetchOpenMeteoWeather', () => {
     });
 });
 
-describe('RealtimeContextManager.fetchWeather 双源策略', () => {
+// [EM: skip-dual-source] EM 版天气已迁纯 Open-Meteo（无 OWM 双源），上游双源测试不适用整组跳过
+describe.skip('RealtimeContextManager.fetchWeather 双源策略', () => {
     it('没填 key 时直接走 Open-Meteo', async () => {
         global.fetch = vi.fn()
             .mockResolvedValueOnce(jsonResponse(GEO_BEIJING))

@@ -18,6 +18,12 @@ class MemStorage {
   get length() { return this.store.size; }
 }
 
-if (typeof (globalThis as any).localStorage === 'undefined') {
+// [EM: localstorage-stub-fix] Node 22+ 自带实验性 localStorage（无 --localstorage-file 时是半残对象，
+// removeItem 不是函数），只判 undefined 会漏装 stub → roomAmbient/instantPushClient 等测试环境性失败。
+const _ls = (globalThis as any).localStorage;
+if (typeof _ls === 'undefined' || typeof _ls?.removeItem !== 'function') {
   (globalThis as any).localStorage = new MemStorage();
 }
+// [EM: sessionstorage-cleanup] Node 22+ 的实验性 sessionStorage 同样半残且让"无 sessionStorage"
+// 分支测试失真——直接删掉，需要它的测试用 vi.stubGlobal 自己造。
+try { delete (globalThis as any).sessionStorage; } catch { /* 删不掉就算了 */ }
