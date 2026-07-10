@@ -270,6 +270,9 @@ const MapWell: React.FC<{
 //  Schedule Sheet — 今日日程底部上拉 sheet
 // ══════════════════════════════════════════════════════════════
 
+/** sheet 收起(peek)时露出的高度。地图画布只画到 sheet 上沿，地点 pin 永远不被挡。 */
+const SHEET_PEEK = 208;
+
 const ScheduleSheet: React.FC<{
   char: CharacterProfile;
   regionName?: string;
@@ -300,7 +303,7 @@ const ScheduleSheet: React.FC<{
         height: 'calc(100% - var(--chrome-top) - 72px)',
         borderRadius: `${R.sheet}px ${R.sheet}px 0 0`,
         background: F.surface, border: `1px solid ${F.borderSoft}`, boxShadow: MAPX.sheetShadow,
-        transform: expanded ? 'translateY(0)' : 'translateY(calc(100% - 208px))',
+        transform: expanded ? 'translateY(0)' : `translateY(calc(100% - ${SHEET_PEEK}px))`,
         transition: 'transform .36s cubic-bezier(.2,.8,.2,1)',
       }}>
 
@@ -470,7 +473,8 @@ const MapScreen: React.FC<{
         status={statusResult.status}
         cityName={worldTitle(world, char)}
         showPanels
-        style={{ position: 'absolute', top: 'calc(var(--chrome-top) + 60px)', left: 18, right: 18, bottom: 0, borderRadius: R.panel }}
+        style={{ position: 'absolute', top: 'calc(var(--chrome-top) + 60px)', left: 18, right: 18,
+                 bottom: `calc(${SHEET_PEEK}px + var(--safe-bottom, 0px) + 12px)`, borderRadius: R.panel }}
       />
 
       {/* 暗色遮罩 */}
