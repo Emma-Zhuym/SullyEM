@@ -996,7 +996,7 @@ const ShoppingApp: React.FC = () => {
       </div>
 
       {/* bottom area */}
-      <div className="shrink-0" style={{ padding: '0 20px 18px' }}>
+      <div className="shrink-0" style={{ padding: '0 20px', paddingBottom: 'calc(18px + var(--safe-bottom))' }}>{/* [EM: safe-bottom] */}
         {showCartFooter && (
           <div className="flex items-center gap-3.5" style={{ padding: '12px 16px', borderRadius: R.bigCard, background: F.surface, border: `1px solid ${F.borderSoft}`, boxShadow: S.raisedMedium }}>
             <div className="flex-1">

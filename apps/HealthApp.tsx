@@ -935,7 +935,7 @@ const HealthApp: React.FC = () => {
           <div className="shrink-0 mx-5 mt-3 h-px" style={{ background: F.divider }} />
 
           {/* Detail Section */}
-          <div className="flex-1 overflow-y-auto px-5 py-4">
+          <div className="flex-1 overflow-y-auto px-5 pt-4" style={{ paddingBottom: 'calc(1rem + var(--safe-bottom))' }}>{/* [EM: safe-bottom] */}
             {!selectedDate ? (
               <div className="flex items-center justify-center gap-2 mt-8"
                 style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken, padding: '20px 24px' }}>
@@ -1093,7 +1093,7 @@ const HealthApp: React.FC = () => {
           TAB: 今日
       ════════════════════════════════════════════════════ */}
       {topTab === 'today' && (
-        <div className="flex-1 overflow-y-auto px-5 pb-4">
+        <div className="flex-1 overflow-y-auto px-5" style={{ paddingBottom: 'calc(1rem + var(--safe-bottom))' }}>{/* [EM: safe-bottom] */}
 
           {/* Big nested clay donut ring */}
           <div className="relative mx-auto" style={{ width: 248, height: 248 }}>
@@ -1454,8 +1454,9 @@ const HealthApp: React.FC = () => {
       {recordMode && (
         <div className="absolute inset-0 bg-black/15 backdrop-blur-sm z-50 flex items-end"
           onClick={(e) => { if (e.target === e.currentTarget) closeRecord(); }}>
-          <div className="w-full px-5 pt-2 pb-10 flex flex-col"
+          <div className="w-full px-5 pt-2 flex flex-col"
             style={{
+              paddingBottom: 'calc(1.5rem + var(--safe-bottom))', /* [EM: safe-bottom] 原 pb-10 */
               background: clay.bg, borderRadius: `${R.sheet}px ${R.sheet}px 0 0`,
               boxShadow: S.floating,
               height: `${modalHeight}px`,
@@ -1580,23 +1581,20 @@ const HealthApp: React.FC = () => {
                     <span className="text-xs font-bold" style={{ color: F.textTertiary }}>消耗热量</span>
                       <input type="number" value={workoutCalories} onChange={e => setWorkoutCalories(e.target.value ? Number(e.target.value) : '')}
                         placeholder="kcal"
-                          className="mt-1 w-full px-4 py-2.5 text-sm focus:outline-none" style={{ color: F.textPrimary }}
-                        style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
+                          className="mt-1 w-full px-4 py-2.5 text-sm focus:outline-none" style={{ color: F.textPrimary, background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
                     </div>
                     <div className="flex-1">
                     <span className="text-xs font-bold" style={{ color: F.textTertiary }}>时长（分钟）</span>
                       <input type="number" value={workoutDuration} onChange={e => setWorkoutDuration(e.target.value ? Number(e.target.value) : '')}
                         placeholder="60"
-                          className="mt-1 w-full px-4 py-2.5 text-sm focus:outline-none" style={{ color: F.textPrimary }}
-                        style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
+                          className="mt-1 w-full px-4 py-2.5 text-sm focus:outline-none" style={{ color: F.textPrimary, background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
                     </div>
                   </div>
 
                   <span className="text-xs font-bold uppercase tracking-wider mt-3" style={{ color: F.textTertiary }}>备注（可选）</span>
                   <textarea value={recordText} onChange={e => setRecordText(e.target.value)}
                     placeholder="杠铃划船三组、深蹲三组..."
-                      className="mt-1.5 w-full px-4 py-3 text-sm placeholder:text-[#9E9891] resize-none focus:outline-none leading-relaxed" style={{ color: F.textPrimary }}
-                    style={{ background: F.surfaceSunken, borderRadius: R.input, boxShadow: S.sunken, border: `1px solid ${F.borderSoft}`, minHeight: '60px' }} />
+                      className="mt-1.5 w-full px-4 py-3 text-sm placeholder:text-[#9E9891] resize-none focus:outline-none leading-relaxed" style={{ color: F.textPrimary, background: F.surfaceSunken, borderRadius: R.input, boxShadow: S.sunken, border: `1px solid ${F.borderSoft}`, minHeight: '60px' }} />
 
                   <button onClick={handleSubmitWorkout} disabled={(workoutActivities.length === 0 && !recordText.trim() && !workoutCalories) || isSubmitting}
                     className={`w-full shrink-0 text-white font-bold py-3.5 mt-4 disabled:opacity-40 ${clay.press}`}
@@ -1614,15 +1612,13 @@ const HealthApp: React.FC = () => {
                     <div className="flex-1">
                     <label className="text-[10px]" style={{ color: F.textTertiary }}>入睡</label>
                       <input type="time" value={sleepBedtime} onChange={e => setSleepBedtime(e.target.value)}
-                        className="w-full px-3 py-2.5 text-center text-base font-bold focus:outline-none" style={{ color: F.textPrimary }}
-                        style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
+                        className="w-full px-3 py-2.5 text-center text-base font-bold focus:outline-none" style={{ color: F.textPrimary, background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
                     </div>
                     <span className="pb-3" style={{ color: F.textTertiary }}>→</span>
                     <div className="flex-1">
                     <label className="text-[10px]" style={{ color: F.textTertiary }}>起床</label>
                       <input type="time" value={sleepWakeTime} onChange={e => setSleepWakeTime(e.target.value)}
-                        className="w-full px-3 py-2.5 text-center text-base font-bold focus:outline-none" style={{ color: F.textPrimary }}
-                        style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
+                        className="w-full px-3 py-2.5 text-center text-base font-bold focus:outline-none" style={{ color: F.textPrimary, background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
                     </div>
                   </div>
                   <div className="text-center py-3">
@@ -1649,8 +1645,7 @@ const HealthApp: React.FC = () => {
 
                   <span className="text-xs font-bold uppercase tracking-wider mt-4" style={{ color: F.textTertiary }}>备注（可选）</span>
                   <input value={sleepNote} onChange={e => setSleepNote(e.target.value)} placeholder="做梦、失眠..."
-                    className="mt-1.5 w-full px-4 py-2.5 text-sm focus:outline-none" style={{ color: F.textPrimary }}
-                    style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
+                    className="mt-1.5 w-full px-4 py-2.5 text-sm focus:outline-none" style={{ color: F.textPrimary, background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
 
                   <button onClick={handleSubmitSleep} disabled={isSubmitting}
                     className={`w-full text-white font-bold py-3.5 mt-4 disabled:opacity-50 ${clay.press}`}
@@ -1670,8 +1665,7 @@ const HealthApp: React.FC = () => {
                       if (!editingId) saveDietDraft(periodDate, e.target.value); // 实时存草稿，关弹窗不丢
                     }}
                     placeholder="随手记：包子两个、麻辣烫...（晚上一起估算）"
-                      className="mt-1.5 w-full px-4 py-3 text-sm placeholder:text-[#9E9891] resize-none focus:outline-none leading-relaxed" style={{ color: F.textPrimary }}
-                    style={{ background: F.surfaceSunken, borderRadius: R.input, boxShadow: S.sunken, border: `1px solid ${F.borderSoft}`, minHeight: '80px' }} />
+                      className="mt-1.5 w-full px-4 py-3 text-sm placeholder:text-[#9E9891] resize-none focus:outline-none leading-relaxed" style={{ color: F.textPrimary, background: F.surfaceSunken, borderRadius: R.input, boxShadow: S.sunken, border: `1px solid ${F.borderSoft}`, minHeight: '80px' }} />
 
                   <div className="flex gap-2 mt-2">
                     <button onClick={handleDietEstimate} disabled={!dietText.trim() || isSubmitting}
@@ -1736,8 +1730,7 @@ const HealthApp: React.FC = () => {
 
                   <span className="text-xs font-bold uppercase tracking-wider mt-4" style={{ color: F.textTertiary }}>标签（可选）</span>
                   <input value={dietNote} onChange={e => setDietNote(e.target.value)} placeholder="早餐、午餐、晚餐..."
-                    className="mt-1.5 w-full px-4 py-2.5 text-sm focus:outline-none" style={{ color: F.textPrimary }}
-                    style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
+                    className="mt-1.5 w-full px-4 py-2.5 text-sm focus:outline-none" style={{ color: F.textPrimary, background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
 
                   <button onClick={handleSubmitDiet} disabled={!dietCalories || isSubmitting}
                     className={`w-full text-white font-bold py-3.5 mt-4 disabled:opacity-40 ${clay.press}`}
@@ -1842,14 +1835,12 @@ const HealthApp: React.FC = () => {
               <div className="flex-1">
               <span className="text-[10px]" style={{ color: F.textTertiary }}>身高(cm)</span>
                 <input type="number" value={pfHeight} onChange={e => setPfHeight(e.target.value ? Number(e.target.value) : '')}
-                placeholder="165" className="mt-1 w-full px-3 py-2 text-sm font-bold focus:outline-none" style={{ color: F.textPrimary }}
-                  style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
+                placeholder="165" className="mt-1 w-full px-3 py-2 text-sm font-bold focus:outline-none" style={{ color: F.textPrimary, background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
               </div>
               <div className="flex-1">
               <span className="text-[10px]" style={{ color: F.textTertiary }}>体重(kg)</span>
                 <input type="number" step="0.1" value={pfWeight} onChange={e => setPfWeight(e.target.value ? Number(e.target.value) : '')}
-                placeholder="55" className="mt-1 w-full px-3 py-2 text-sm font-bold focus:outline-none" style={{ color: F.textPrimary }}
-                  style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
+                placeholder="55" className="mt-1 w-full px-3 py-2 text-sm font-bold focus:outline-none" style={{ color: F.textPrimary, background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
               </div>
             </div>
 
@@ -1857,8 +1848,7 @@ const HealthApp: React.FC = () => {
               <div className="flex-1">
               <span className="text-[10px]" style={{ color: F.textTertiary }}>年龄</span>
                 <input type="number" value={pfAge} onChange={e => setPfAge(e.target.value ? Number(e.target.value) : '')}
-                placeholder="24" className="mt-1 w-full px-3 py-2 text-sm font-bold focus:outline-none" style={{ color: F.textPrimary }}
-                  style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
+                placeholder="24" className="mt-1 w-full px-3 py-2 text-sm font-bold focus:outline-none" style={{ color: F.textPrimary, background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
               </div>
               <div className="flex-1">
               <span className="text-[10px]" style={{ color: F.textTertiary }}>性别</span>
@@ -1882,8 +1872,7 @@ const HealthApp: React.FC = () => {
             <div>
             <span className="text-[10px]" style={{ color: F.textTertiary }}>体脂率 %（可选，有的话 BMR 更准）</span>
               <input type="number" step="0.1" value={pfBf} onChange={e => setPfBf(e.target.value ? Number(e.target.value) : '')}
-              placeholder="如 22.5" className="mt-1 w-full px-3 py-2 text-sm font-bold focus:outline-none" style={{ color: F.textPrimary }}
-                style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
+              placeholder="如 22.5" className="mt-1 w-full px-3 py-2 text-sm font-bold focus:outline-none" style={{ color: F.textPrimary, background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
             </div>
 
             <div className="h-px" style={{ background: F.divider }} />
@@ -1921,8 +1910,7 @@ const HealthApp: React.FC = () => {
               <span className="text-[10px]" style={{ color: F.textTertiary }}>每日摄入目标(kcal)</span>
                 <input type="number" value={pfCalTarget} onChange={e => setPfCalTarget(e.target.value ? Number(e.target.value) : '')}
                   placeholder={pfHeight && pfWeight && pfAge ? String(recommendCalories(calcBMR({ heightCm: Number(pfHeight), weightKg: Number(pfWeight), age: Number(pfAge), sex: pfSex, bodyFatPct: pfBf ? Number(pfBf) : undefined }), pfGoal)) : '1800'}
-                    className="mt-1 w-full px-3 py-2 text-sm font-bold focus:outline-none" style={{ color: F.textPrimary }}
-                  style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
+                    className="mt-1 w-full px-3 py-2 text-sm font-bold focus:outline-none" style={{ color: F.textPrimary, background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
               </div>
             </div>
 
@@ -1931,15 +1919,13 @@ const HealthApp: React.FC = () => {
               <span className="text-[10px]" style={{ color: F.textTertiary }}>训练目标(kcal)</span>
                 <input type="number" value={pfWorkoutTarget} onChange={e => setPfWorkoutTarget(e.target.value ? Number(e.target.value) : '')}
                   placeholder="500"
-                    className="mt-1 w-full px-3 py-2 text-sm font-bold focus:outline-none" style={{ color: F.textPrimary }}
-                  style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
+                    className="mt-1 w-full px-3 py-2 text-sm font-bold focus:outline-none" style={{ color: F.textPrimary, background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
               </div>
               <div className="flex-1">
               <span className="text-[10px]" style={{ color: F.textTertiary }}>睡眠目标(小时)</span>
                 <input type="number" step="0.5" value={pfSleepTarget} onChange={e => setPfSleepTarget(e.target.value ? Number(e.target.value) : '')}
                   placeholder="8"
-                    className="mt-1 w-full px-3 py-2 text-sm font-bold focus:outline-none" style={{ color: F.textPrimary }}
-                  style={{ background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
+                    className="mt-1 w-full px-3 py-2 text-sm font-bold focus:outline-none" style={{ color: F.textPrimary, background: F.surfaceSunken, borderRadius: R.bigCard, boxShadow: S.sunken }} />
               </div>
             </div>
 

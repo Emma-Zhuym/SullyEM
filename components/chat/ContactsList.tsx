@@ -160,7 +160,7 @@ const ContactsList: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto no-scrollbar px-3 pt-3 pb-8">
+      <div className="flex-1 overflow-y-auto no-scrollbar px-3 pt-3" style={{ paddingBottom: 'calc(2rem + var(--safe-bottom))' }}>{/* [EM: safe-bottom] */}
         {loading && characters.length > 0 && (
           <div className="flex justify-center py-12 text-slate-400 text-sm">加载中…</div>
         )}

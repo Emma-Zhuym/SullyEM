@@ -243,8 +243,8 @@ const BankApp: React.FC = () => {
 
       {/* 底部 Tab Bar — floating pill */}
       <div
-        className="shrink-0 flex items-center justify-around mx-5 mb-2 p-1.5"
-        style={{ background: F.surfaceRaised, borderRadius: R.panel, boxShadow: S.raisedMedium }}
+        className="shrink-0 flex items-center justify-around mx-5 p-1.5"
+        style={{ background: F.surfaceRaised, borderRadius: R.panel, boxShadow: S.raisedMedium, marginBottom: 'calc(0.5rem + var(--safe-bottom))' /* [EM: safe-bottom] */ }}
       >
         {TABS.map(tab => {
           const isActive = activeTab === tab.id;
