@@ -546,6 +546,7 @@ export interface ScheduleSlot {
     description?: string; // "在河边慢跑"
     emoji?: string;       // "🏃"
     location?: string;    // "河边"
+    regionId?: string;    // [EM: map-region-id] 生成日程时直接绑定地图地点 id，地图匹配优先于关键词
     innerThought?: string; // 该时段的内心独白，生成时由AI写好，运行时直接注入
     /** EM: 手动覆盖该时段的在线状态（不填则根据关键词自动推断） */
     availability?: 'online' | 'busy' | 'offline';

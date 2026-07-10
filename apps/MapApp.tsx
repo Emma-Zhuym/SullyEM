@@ -12,7 +12,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   CaretLeft, CaretUp, CaretDown, Plus, Check, GearSix, Buildings,
-  MapPin, ChatTeardrop, Crosshair, MagnifyingGlass, ArrowRight, Sparkle,
+  MapPin, ChatTeardrop, Crosshair, MagnifyingGlass, ArrowRight,
 } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { AppID, CharacterProfile, DailySchedule, ScheduleSlot } from '../types';
@@ -20,6 +20,7 @@ import { DB } from '../utils/db';
 import { computeCharStatus, getSlotAvailability, CharAvailability } from '../utils/charStatus';
 import { F, S, R, HUE, STATUS } from '../utils/clayTokens';
 import { safeFetchJson, extractContent, extractJson } from '../utils/safeApi';
+import { MapWorld, MapRegion, MapDB, matchRegionForSlot } from '../utils/mapWorlds';
 
 const P = HUE.purple; // Product Color = 紫
 
@@ -38,85 +39,7 @@ const MAPX = {
   dangerBorder: '#F3D3DB',
 };
 
-// ══════════════════════════════════════════════════════════════
-//  Types
-// ══════════════════════════════════════════════════════════════
-
-interface MapRegion {
-  id: string;
-  name: string;
-  glyph: string;
-  color: string;          // legacy（旧版彩色圆点），Clay 版不再使用但保留存量数据
-  x: number;              // 0-100 归一化坐标
-  y: number;
-  isHome?: boolean;       // "你" 的默认位置
-  isCharDefault?: boolean; // 角色的默认位置
-  locationKeys?: string[];
-  description?: string;   // 一句话地点描述（供展示 + 未来注入日程生成）
-}
-
-interface MapWorld {
-  id: string;
-  charId: string;
-  genre: string;
-  tag: string;
-  tagColor: string;       // legacy
-  tagBg: string;          // legacy
-  theme?: string;         // legacy（旧版主题皮肤），Clay 版统一暖白
-  regions: MapRegion[];
-  homeRegionId?: string;
-  cityName?: string;      // 虚拟城市名，地图页标题
-}
-
-// ══════════════════════════════════════════════════════════════
-//  IndexedDB — Map worlds storage
-// ══════════════════════════════════════════════════════════════
-
-const MAP_DB = 'SullyEM_Map';
-const MAP_DB_VER = 2;
-const STORE = 'worlds';
-
-function openMapDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(MAP_DB, MAP_DB_VER);
-    req.onerror = () => reject(req.error);
-    req.onsuccess = () => resolve(req.result);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'id' });
-    };
-  });
-}
-
-const MapDB = {
-  getAll: async (): Promise<MapWorld[]> => {
-    const db = await openMapDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, 'readonly');
-      const req = tx.objectStore(STORE).getAll();
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
-  },
-  save: async (w: MapWorld) => {
-    const db = await openMapDB();
-    return new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE, 'readwrite');
-      tx.objectStore(STORE).put(w);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-  },
-  remove: async (id: string) => {
-    const db = await openMapDB();
-    return new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE, 'readwrite');
-      tx.objectStore(STORE).delete(id);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-  },
-};
+// 类型与存储在 utils/mapWorlds.ts（scheduleGenerator 也要读地点清单注入 prompt）
 
 // ══════════════════════════════════════════════════════════════
 //  Default / Template data
@@ -161,12 +84,6 @@ const TAG_OPTIONS = ['暧昧', '恋爱', '同居', '订婚', '结婚', '朋友',
 //  Helpers
 // ══════════════════════════════════════════════════════════════
 
-function matchRegion(world: MapWorld, location?: string): MapRegion | undefined {
-  if (!location) return undefined;
-  const loc = location.toLowerCase();
-  return world.regions.find(r => r.locationKeys?.some(k => loc.includes(k.toLowerCase())));
-}
-
 function getCurrentSlot(schedule: DailySchedule | null): ScheduleSlot | undefined {
   if (!schedule?.slots?.length) return undefined;
   const now = new Date();
@@ -202,6 +119,18 @@ const CircleBtn: React.FC<{ onClick: () => void; children: React.ReactNode; styl
                border: `1px solid ${F.borderSoft}`, boxShadow: S.raisedSoft, ...style }}>
       {children}
     </button>
+  );
+
+/** 头像：img 盖在首字 monogram 上，加载失败自动露出 monogram 兜底。父容器需 flex 居中。 */
+const CharAvatar: React.FC<{ char: CharacterProfile; monogramSize: number; monogramColor: string }> =
+  ({ char, monogramSize, monogramColor }) => (
+    <>
+      <span style={{ fontSize: monogramSize, fontWeight: 700, color: monogramColor }}>{char.name.slice(0, 1)}</span>
+      {char.avatar && (
+        <img src={char.avatar} className="absolute inset-0 w-full h-full object-cover"
+          onError={e => { e.currentTarget.style.display = 'none'; }} />
+      )}
+    </>
   );
 
 /** 状态小徽章：tint 底 + ink 字 + 状态色圆点 */
@@ -317,12 +246,10 @@ const MapWell: React.FC<{
         <div className="absolute -translate-x-1/2 -translate-y-1/2 select-none pointer-events-none flex flex-col items-center transition-all duration-500"
           style={{ left: `${charRegion.x}%`, top: `${charRegion.y}%`, gap: 7, zIndex: 3 }}>
           <div className="relative" style={{ width: 60, height: 60 }}>
-            <div className="overflow-hidden flex items-center justify-center"
+            <div className="relative overflow-hidden flex items-center justify-center"
               style={{ width: 60, height: 60, borderRadius: '50%', border: `3px solid ${P.main}`,
                        background: P.tint, boxShadow: `0 6px 16px ${MAPX.purpleShadow}` }}>
-              {char.avatar
-                ? <img src={char.avatar} className="w-full h-full object-cover" />
-                : <span style={{ fontSize: 24, fontWeight: 700, color: P.ink }}>{char.name.slice(0, 1)}</span>}
+              <CharAvatar char={char} monogramSize={24} monogramColor={P.ink} />
             </div>
             <span className="absolute" style={{ right: -1, top: 1, width: 15, height: 15, borderRadius: '50%',
               background: STATUS_META[status || 'offline'].main, border: `2.5px solid ${MAPX.well}` }} />
@@ -352,8 +279,7 @@ const ScheduleSheet: React.FC<{
   expanded: boolean;
   onToggle: () => void;
   onGoChat: () => void;
-  onGenerate: () => void;
-}> = ({ char, regionName, status, schedule, currentSlot, expanded, onToggle, onGoChat, onGenerate }) => {
+}> = ({ char, regionName, status, schedule, currentSlot, expanded, onToggle, onGoChat }) => {
   const slots = schedule?.slots || [];
   const [open, setOpen] = useState<Record<string, boolean>>({});
 
@@ -418,28 +344,22 @@ const ScheduleSheet: React.FC<{
 
       {/* 可滚动时间线区 */}
       <div className="flex-1 overflow-y-auto scrollbar-none" style={{ padding: '14px 18px 24px', paddingBottom: 'calc(24px + var(--safe-bottom, 0px))' }}>
-        <div className="flex items-center justify-between" style={{ gap: 12, marginBottom: 14 }}>
-          <div style={{ lineHeight: 1.2 }}>
-            <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-.01em', color: F.textPrimary }}>
-              {now.getMonth() + 1}月{now.getDate()}日 今日行程
-            </div>
-            <div style={{ fontSize: 12, color: F.textTertiary, marginTop: 3 }}>
-              {WEEKDAYS[now.getDay()]}{slots.length ? ` · ${slots.length} 个时段` : ' · 暂无日程'}
-            </div>
+        <div style={{ lineHeight: 1.2, marginBottom: 14 }}>
+          <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-.01em', color: F.textPrimary }}>
+            {now.getMonth() + 1}月{now.getDate()}日 今日行程
           </div>
-          <button onClick={onGenerate}
-            className="inline-flex items-center shrink-0 whitespace-nowrap active:translate-y-[1px] transition-transform"
-            style={{ gap: 7, height: 42, padding: '0 16px', border: 'none', borderRadius: R.button,
-                     background: P.tint, color: P.ink, fontSize: 13, fontWeight: 600 }}>
-            <Sparkle size={16} weight="bold" style={{ color: P.main }} />生成计划
-          </button>
+          <div style={{ fontSize: 12, color: F.textTertiary, marginTop: 3 }}>
+            {WEEKDAYS[now.getDay()]}{slots.length ? ` · ${slots.length} 个时段` : ' · 暂无日程'}
+          </div>
         </div>
 
         {slots.length === 0 && (
           <div className="flex flex-col items-center justify-center"
             style={{ padding: '36px 16px', borderRadius: R.bigCard, background: F.surfaceSunken, boxShadow: S.sunken, gap: 10 }}>
             <MapPin size={18} weight="bold" style={{ color: F.textTertiary }} />
-            <div style={{ fontSize: 13, color: F.textTertiary }}>今天还没有日程，去日程 App 生成一份吧</div>
+            <div style={{ fontSize: 13, color: F.textTertiary, textAlign: 'center', lineHeight: 1.6 }}>
+              今天还没有日程<br />点「去找 TA」在聊天工具栏的「日程/情绪」里生成
+            </div>
           </div>
         )}
 
@@ -525,7 +445,9 @@ const MapScreen: React.FC<{
   const currentSlot = useMemo(() => getCurrentSlot(schedule), [schedule]);
 
   const matchedRegion = useMemo(() => {
-    if (currentSlot?.location) { const m = matchRegion(world, currentSlot.location); if (m) return m; }
+    // regionId（生成时直出）优先，老日程回退地点名/关键词匹配，都没有则站默认位
+    const m = matchRegionForSlot(world, currentSlot);
+    if (m) return m;
     return world.regions.find(r => r.isCharDefault) || world.regions[0];
   }, [world, currentSlot]);
 
@@ -567,7 +489,6 @@ const MapScreen: React.FC<{
         expanded={expanded}
         onToggle={() => setExpanded(v => !v)}
         onGoChat={() => openApp(AppID.Chat, { messageWidgetCharId: char.id })}
-        onGenerate={() => openApp(AppID.Schedule)}
       />
     </div>
   );
@@ -1048,11 +969,9 @@ const Shelf: React.FC<{
             <div key={world.id}
               style={{ marginTop: 20, borderRadius: R.panel, padding: 20, background: P.tint, boxShadow: S.raisedMedium }}>
               <div className="flex items-center" style={{ gap: 14 }}>
-                <div className="overflow-hidden flex items-center justify-center shrink-0"
+                <div className="relative overflow-hidden flex items-center justify-center shrink-0"
                   style={{ width: 60, height: 60, borderRadius: R.large, background: P.main, boxShadow: `0 6px 16px ${MAPX.purpleShadow}` }}>
-                  {char.avatar
-                    ? <img src={char.avatar} className="w-full h-full object-cover" />
-                    : <span style={{ fontSize: 26, fontWeight: 700, color: '#fff' }}>{char.name.slice(0, 1)}</span>}
+                  <CharAvatar char={char} monogramSize={26} monogramColor="#fff" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center" style={{ gap: 8 }}>
@@ -1099,11 +1018,9 @@ const Shelf: React.FC<{
                   <React.Fragment key={c.id}>
                     {i > 0 && <div style={{ height: 1, background: F.divider, margin: '0 16px' }} />}
                     <div className="flex items-center" style={{ gap: 12, padding: '14px 16px' }}>
-                      <div className="overflow-hidden flex items-center justify-center shrink-0"
+                      <div className="relative overflow-hidden flex items-center justify-center shrink-0"
                         style={{ width: 46, height: 46, borderRadius: R.medium, background: P.tint }}>
-                        {c.avatar
-                          ? <img src={c.avatar} className="w-full h-full object-cover" />
-                          : <span style={{ fontSize: 20, fontWeight: 700, color: P.ink }}>{c.name.slice(0, 1)}</span>}
+                        <CharAvatar char={c} monogramSize={20} monogramColor={P.ink} />
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center" style={{ gap: 6 }}>

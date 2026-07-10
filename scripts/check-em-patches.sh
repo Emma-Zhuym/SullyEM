@@ -90,6 +90,9 @@ check "查手机轮播组件" apps/CheckPhone.tsx "PhotoCarouselWidget"
 
 echo "── 地图×日程 Clay UI ──"
 check "Map safe-area 自理" utils/safeAreaApps.ts "[EM: map-schedule-clay]"
+check "地图世界存储模块" utils/mapWorlds.ts "matchRegionForSlot"
+check "ScheduleSlot.regionId 字段" types.ts "regionId?: string;    // [EM: map-region-id]"
+check "日程生成注入地点清单" utils/scheduleGenerator.ts "[EM-START: map-region-id]"
 
 echo "── Token 面板召回展示 ──"
 check "召回简报模块" utils/memoryPalace/recallBrief.ts "getLastRecallBriefs"

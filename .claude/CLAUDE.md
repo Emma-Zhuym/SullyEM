@@ -102,9 +102,14 @@ EM 的大段提示词（发照片教学、引用教学、Notion日记/飞书/笔
 
 ### 13. 地图×日程 Clay 版（2026-07-10 重写）
 - `apps/MapApp.tsx` — EM 独有文件，按 `Design_prototype/mapsystem/mapnew` handoff 重写为暖白 Clay + 紫主题
-- 三屏：彼此的世界（hero 卡）/ 地图（凹陷井画布 + 角色 pin）/ 编辑世界；地图页底部日程上拉 sheet（时间线 + 内心独白）
+- 三屏：彼此的世界（hero 卡）/ 地图（凹陷井画布 + 角色头像 pin）/ 编辑世界；地图页底部日程上拉 sheet（时间线 + 内心独白）
+- `utils/mapWorlds.ts` — EM 独有：地图世界 IndexedDB 存储 + `matchRegionForSlot`（regionId → 地点名 → 关键词三级匹配）
+- **regionId 数据链**：`utils/scheduleGenerator.ts` 生成日程时把地图地点清单注入 lifestyle prompt，slot 直出
+  `location`/`regionId`/`innerThought`（哨兵 `[EM-START: map-region-id]`）；`types.ts` ScheduleSlot 加 `regionId?`（行尾哨兵）。
+  解析时校验 regionId 必须存在于清单，防幻觉。mindful 风格不注入（AI 存在体无物理位置）
 - `utils/safeAreaApps.ts` 加了 `AppID.Map`（哨兵 `[EM: map-schedule-clay]`，check 脚本有锚点）
 - MapWorld.cityName / MapRegion.description 为可选新字段，旧 IndexedDB 数据零迁移
+- 日程生成入口在聊天工具栏「日程/情绪」，地图 sheet 不放生成按钮（去找 TA 即达）
 
 ## 合并时常见坑（踩过的 bug）
 
