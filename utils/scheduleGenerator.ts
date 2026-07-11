@@ -84,7 +84,8 @@ function buildMapRegionsBlock(world: MapWorld | null): string {
 #### 角色的地图地点（用户为「${world.cityName || 'ta 的世界'}」维护的地点清单）
 ${lines.join('\n')}
 
-**尽量把日常活动安排在这些地点里**（外出办事等确实不在清单里的活动除外）；发生在清单地点的 slot 必须带上对应地点的 regionId。
+**日常活动尽量安排在这些地点里**，发生在清单地点的 slot 必须带上对应地点的 regionId。
+但去清单之外的地方（新餐厅、商场、朋友家、路上……）**完全允许也很自然**——这种 slot 把 location 写成实际地点名（如"烧鸟店""万象城"），regionId 省略，**不要为了凑清单硬把地点改成清单里的**（比如明明出门约会吃饭却写成"家"）。
 `;
 }
 // [EM-END: map-region-id]

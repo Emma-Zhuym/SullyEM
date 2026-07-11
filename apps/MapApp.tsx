@@ -158,6 +158,7 @@ const MapWell: React.FC<{
   charRegionId?: string;
   status?: CharAvailability;
   cityName?: string;
+  outsideLocation?: string;   // 当前时段在地图外的地点（如"烧鸟店"）：角色 pin 挂到画布角落显示"在外面"
   showPanels?: boolean;       // 地图页：左上"当前地图"面板 + 右上"虚拟城市" pill
   highlightRegionId?: string; // 编辑器：选中高亮
   placingRegionId?: string;   // 编辑器：定位模式
@@ -165,7 +166,7 @@ const MapWell: React.FC<{
   onTapRegion?: (id: string) => void;
   className?: string;
   style?: React.CSSProperties;
-}> = ({ regions, char, charRegionId, status, cityName, showPanels, highlightRegionId,
+}> = ({ regions, char, charRegionId, status, cityName, outsideLocation, showPanels, highlightRegionId,
         placingRegionId, onTapMap, onTapRegion, className, style }) => {
   const canvasRef = useRef<HTMLDivElement>(null);
 
@@ -241,10 +242,10 @@ const MapWell: React.FC<{
         );
       })}
 
-      {/* 角色标记：圆头像 + 状态点 + pin 尾 + 地名 pill */}
-      {char && charRegion && (
+      {/* 角色标记：圆头像 + 状态点 + pin 尾 + 地名 pill。在清单外的地点时挂画布右下角显示"在外面" */}
+      {char && (charRegion || outsideLocation) && (
         <div className="absolute -translate-x-1/2 -translate-y-1/2 select-none pointer-events-none flex flex-col items-center transition-all duration-500"
-          style={{ left: `${charRegion.x}%`, top: `${charRegion.y}%`, gap: 7, zIndex: 3 }}>
+          style={{ left: `${charRegion?.x ?? 82}%`, top: `${charRegion?.y ?? 84}%`, gap: 7, zIndex: 3 }}>
           <div className="relative" style={{ width: 60, height: 60 }}>
             <div className="relative overflow-hidden flex items-center justify-center"
               style={{ width: 60, height: 60, borderRadius: '50%', border: `3px solid ${P.main}`,
@@ -257,8 +258,8 @@ const MapWell: React.FC<{
               borderLeft: '7px solid transparent', borderRight: '7px solid transparent', borderTop: `10px solid ${P.main}` }} />
           </div>
           <span className="whitespace-nowrap" style={{ padding: '3px 11px', borderRadius: R.pill, background: F.surface,
-            fontSize: 12, fontWeight: 700, color: F.textPrimary, boxShadow: '0 3px 10px rgba(70,66,58,.14)' }}>
-            {charRegion.name}
+            fontSize: 12, fontWeight: 700, color: charRegion ? F.textPrimary : F.textSecondary, boxShadow: '0 3px 10px rgba(70,66,58,.14)' }}>
+            {charRegion ? charRegion.name : `在外面 · ${outsideLocation}`}
           </span>
         </div>
       )}
@@ -447,11 +448,12 @@ const MapScreen: React.FC<{
   const statusResult = useMemo(() => computeCharStatus(schedule), [schedule]);
   const currentSlot = useMemo(() => getCurrentSlot(schedule), [schedule]);
 
-  const matchedRegion = useMemo(() => {
-    // regionId（生成时直出）优先，老日程回退地点名/关键词匹配，都没有则站默认位
+  // 三态：匹配到清单地点→站那 / 有 location 但不在清单（烧鸟店等）→"在外面" / 没 location→站默认位
+  const { matchedRegion, outsideLocation } = useMemo(() => {
     const m = matchRegionForSlot(world, currentSlot);
-    if (m) return m;
-    return world.regions.find(r => r.isCharDefault) || world.regions[0];
+    if (m) return { matchedRegion: m, outsideLocation: undefined };
+    if (currentSlot?.location) return { matchedRegion: undefined, outsideLocation: currentSlot.location };
+    return { matchedRegion: world.regions.find(r => r.isCharDefault) || world.regions[0], outsideLocation: undefined };
   }, [world, currentSlot]);
 
   return (
@@ -470,6 +472,7 @@ const MapScreen: React.FC<{
         regions={world.regions}
         char={char}
         charRegionId={matchedRegion?.id}
+        outsideLocation={outsideLocation}
         status={statusResult.status}
         cityName={worldTitle(world, char)}
         showPanels
@@ -486,7 +489,7 @@ const MapScreen: React.FC<{
       {/* 今日日程 sheet */}
       <ScheduleSheet
         char={char}
-        regionName={matchedRegion?.name}
+        regionName={outsideLocation || matchedRegion?.name}
         status={statusResult.status}
         schedule={schedule}
         currentSlot={currentSlot}
