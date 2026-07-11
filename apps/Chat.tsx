@@ -14,6 +14,7 @@ import { XhsMcpClient, extractNotesFromMcpData, normalizeNote } from '../utils/x
 import { extractWebpageContent, detectFirstUrl, isXhsUrl, expandShortUrl } from '../utils/webpageExtractor';
 import { isDevDebugAvailable } from '../utils/devDebug';
 import { resolveLifeRecordCard } from '../utils/lifeRecords';
+import { resolveEmScribeCard } from '../utils/emScribe'; // [EM: em-scribe]
 import { isMcdConfigured } from '../utils/mcdMcpClient';
 import { isMcdActivatedInMessages, MCD_ACTIVATE_TRIGGER, MCD_DEACTIVATE_TRIGGER } from '../utils/mcdToolBridge';
 import { isLuckinConfigured } from '../utils/luckinMcpClient';
@@ -1165,7 +1166,13 @@ const Chat: React.FC = () => {
         // 只处理仍待复核的卡片，避免重复点击。
         if (msg.metadata?.reviewStatus && msg.metadata.reviewStatus !== 'active') return;
         try {
-            await resolveLifeRecordCard(msg, action);
+            // [EM-START: em-scribe] emRec 卡片分流到 EM 代记的回滚逻辑（Health/Bank）
+            if (msg.metadata?.emRec) {
+                await resolveEmScribeCard(msg, action);
+            } else {
+                await resolveLifeRecordCard(msg, action);
+            }
+            // [EM-END: em-scribe]
             addToast(action === 'confirmed' ? '已确认记录' : '已否决，记录撤销', action === 'confirmed' ? 'success' : 'info');
         } catch (e) {
             console.error('[LifeRecord] resolve failed:', e);

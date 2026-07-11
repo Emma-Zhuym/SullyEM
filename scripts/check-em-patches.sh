@@ -95,6 +95,13 @@ check "地图世界存储模块" utils/mapWorlds.ts "matchRegionForSlot"
 check "ScheduleSlot.regionId 字段" types.ts "regionId?: string;    // [EM: map-region-id]"
 check "日程生成注入地点清单" utils/scheduleGenerator.ts "[EM-START: map-region-id]"
 
+echo "── EM 角色代记 ──"
+check "代记核心模块" utils/emScribe.ts "executeEmScribeDirectives"
+check "chatPrompts 注入" utils/chatPrompts.ts "[EM-START: em-scribe]"
+check "chatParser 解析" utils/chatParser.ts "[EM-START: em-scribe]"
+check "Chat 卡片分流" apps/Chat.tsx "[EM-START: em-scribe]"
+check "卡片样式 symptom/sleep" components/chat/MessageItem.tsx "[EM-START: em-scribe]"
+
 echo "── Token 面板召回展示 ──"
 check "召回简报模块" utils/memoryPalace/recallBrief.ts "getLastRecallBriefs"
 check "formatter 简报写入" utils/memoryPalace/formatter.ts "setLastRecallBriefs"

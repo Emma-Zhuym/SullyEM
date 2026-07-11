@@ -17,6 +17,7 @@ import { resolveCharTimeZone, nowInTimeZone } from './timezone';
 import { emSendPhotoAddon, emQuoteSection, emNotionDiarySection, emFeishuDiarySection, emUserNotesSection, emXhsSection, emNotionDiaryNudgePrompt, emFavPhotoAddon } from './emPromptAddons';
 // [EM-END: prompt-addons]
 import { buildLifeRecordInjection } from './lifeRecords';
+import { buildEmScribeInjection } from './emScribe'; // [EM: em-scribe]
 
 // 语音格式指导按当前 TTS 服务商二选一：用 MiniMax 才注入 MiniMax 那套（含 <#秒#> 停顿标记），
 // 用鱼声则注入鱼声版（去掉 MiniMax 专属标记，改用标点 / 省略号控制停顿）。
@@ -385,6 +386,9 @@ export const ChatPrompts = {
         baseSystemPrompt += feishuDiaryText;
         baseSystemPrompt += notionNotesText;
         baseSystemPrompt += lifeRecordText;
+        // [EM-START: em-scribe] EM 版角色代记：[[REC:...]] 指令教学 + 否决反馈（写 Health/Bank，独立于上游 lifeRecords）
+        try { baseSystemPrompt += buildEmScribeInjection(char, userProfile.name); } catch (e) { console.error('Failed to inject em-scribe:', e); }
+        // [EM-END: em-scribe]
 
         // 彼方常驻设定：仅对启用了「彼方」的角色注入。让角色在聊天里始终知道彼方是什么，
         // 不再依赖累积的 vr_card 动态 / 记忆总结（那些会被压缩、丢掉"彼方=VR游戏"的框定，

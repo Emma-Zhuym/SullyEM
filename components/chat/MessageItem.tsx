@@ -344,6 +344,10 @@ const LIFE_CARD_STYLE: Record<string, { icon: string; ring: string; bg: string; 
     med: { icon: '💊', ring: '#7dd3fc', bg: 'linear-gradient(135deg,#f0f9ff 0%,#e0f2fe 100%)', label: '药盒' },
     expense: { icon: '🧾', ring: '#fcd34d', bg: 'linear-gradient(135deg,#fffbeb 0%,#fef3c7 100%)', label: '记账' },
     exercise: { icon: '🏃', ring: '#6ee7b7', bg: 'linear-gradient(135deg,#ecfdf5 0%,#d1fae5 100%)', label: '锻炼' },
+    // [EM-START: em-scribe] EM 代记新增的两类卡片样式（症状/睡眠 → Health App）
+    symptom: { icon: '🤒', ring: '#fdba74', bg: 'linear-gradient(135deg,#fff7ed 0%,#ffedd5 100%)', label: '症状' },
+    sleep: { icon: '😴', ring: '#c4b5fd', bg: 'linear-gradient(135deg,#f5f3ff 0%,#ede9fe 100%)', label: '睡眠' },
+    // [EM-END: em-scribe]
 };
 
 const LifeRecordCard: React.FC<{

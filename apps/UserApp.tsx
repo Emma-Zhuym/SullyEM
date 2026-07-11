@@ -5,7 +5,7 @@ import { processImage } from '../utils/file';
 import LifeRecordPanel from '../components/lifeRecord/LifeRecordPanel';
 
 // [EM-START: hide-life-records] 生活记录（上游"生活统计"）入口开关——EM 用自己的 Health/BankApp，
-// 此页隐藏但代码保留（merge 零成本）。想启用改成 true 即可。
+// 此页隐藏但代码保留（merge 零成本）。角色代记走 EM 自己的实现（写 Health/Bank），不启用这套。
 const EM_SHOW_LIFE_RECORDS = false;
 // [EM-END: hide-life-records]
 

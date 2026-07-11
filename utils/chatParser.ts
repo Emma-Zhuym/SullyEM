@@ -4,6 +4,7 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 import { CharacterProfile, CharPlaylistSong } from '../types';
 import { sanitizeForBubble } from './sanitize';
 import { executeLifeDirectives } from './lifeRecords';
+import { executeEmScribeDirectives } from './emScribe'; // [EM: em-scribe]
 
 export interface MusicActionSnapshot {
     songId: number;
@@ -347,6 +348,21 @@ export const ChatParser = {
                 content = content.replace(/\[\[LIFE:[^\]]*\]\]/g, '').trim();
             }
         }
+
+        // [EM-START: em-scribe] EM 版角色代记：[[REC:...]] → 写 Health/Bank + life_card(emRec)
+        if (content.includes('[[REC:')) {
+            try {
+                const chars = await DB.getAllCharacters();
+                const charProfile = chars.find(c => c.id === charId);
+                content = charProfile
+                    ? await executeEmScribeDirectives(content, charProfile, addToast)
+                    : content.replace(/\[\[REC:[^\]]*\]\]/g, '').trim();
+            } catch (e) {
+                console.error('[EmScribe] parse failed:', e);
+                content = content.replace(/\[\[REC:[^\]]*\]\]/g, '').trim();
+            }
+        }
+        // [EM-END: em-scribe]
 
         // RECALL tag removal (handling done in main loop logic, but cleaning here just in case)
         content = content.replace(/\[\[RECALL:.*?\]\]/g, '').trim();
