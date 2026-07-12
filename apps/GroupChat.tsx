@@ -13,7 +13,7 @@ import { processImage } from '../utils/file';
 import { stickerNameFromUrl } from '../utils/messageFormat';
 import { PRESET_THEMES } from '../components/chat/ChatConstants';
 import { resolveChatTheme } from '../utils/groupChat/theme';
-import { parseDirectorActions, stripSkipMarker } from '../utils/groupChat/parse';
+import { parseDirectorActions, stripSkipMarker, parseGroupTopicBox } from '../utils/groupChat/parse';
 import { GroupPacketMeta, PacketReceiptMeta, ClaimResult, claimPacket, effectivePacketStatus, makePacketMeta } from '../utils/groupChat/redpacket';
 import { messageLogText } from '../utils/groupChat/format';
 import { buildMemberTimeline, DEFAULT_MEMBER_TIMELINE_CAP } from '../utils/groupChat/timeline';
@@ -511,14 +511,17 @@ const GroupChat: React.FC = () => {
         const now = Date.now();
         const diffHours = Math.floor((now - lastMsgTimestamp) / (1000 * 60 * 60));
         const diffMins = Math.floor((now - lastMsgTimestamp) / (1000 * 60));
-        
+        const diffDays = Math.floor(diffHours / 24);
+
         const currentHour = new Date().getHours();
         const isNight = currentHour >= 23 || currentHour <= 6;
 
         if (diffMins < 10) return '聊天正在火热进行中，大家都很活跃。';
         if (diffMins < 60) return `距离上次发言过了 ${diffMins} 分钟，话题可能有点冷场。`;
         if (diffHours < 12) return `距离上次发言过了 ${diffHours} 小时。${isNight ? '现在是深夜。' : ''}`;
-        return `大家已经 ${diffHours} 小时没说话了，群里很安静。`;
+        if (diffHours < 24) return `距离上次发言过了 ${diffHours} 小时，群里安静了大半天。`;
+        // 隔天以上：明确"日子已经过去了"，别把上一条当作刚刚发生、无缝续上旧话题。
+        return `距离群里上一条消息已经过了 ${diffDays} 天（${diffHours} 小时）。这段时间是真实流逝的——各自都过了好几天的生活，之前那个话题早就不是"刚才"的事了。除非有人明确重新提起，别当无事发生、直接续上几天前那句话；更自然的是有种"好久没聊了"的重启感，或者干脆聊点新的。`;
     };
 
     // New: Calculate private chat gap
@@ -961,7 +964,11 @@ const GroupChat: React.FC = () => {
     const buildGroupSystemHeader = (currentMsgs: Message[], groupMembers: CharacterProfile[]) => {
         const lastMsg = currentMsgs[currentMsgs.length - 1];
         const timeGapInfo = lastMsg ? getTimeGapHint(lastMsg.timestamp) : "这是群聊的第一条消息。";
-        const currentTimeStr = `${virtualTime.hours.toString().padStart(2, '0')}:${virtualTime.minutes.toString().padStart(2, '0')}`;
+        // 带上完整日期（年月日 + 星期），只给 HH:MM 时角色感知不到"过了几天"——
+        // 这正是"很久以后还无缝续上旧话题"的一个来源。virtualTime 只有时分，日期取真实当天。
+        const nowDate = new Date();
+        const weekNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+        const currentTimeStr = `${nowDate.getFullYear()}年${nowDate.getMonth() + 1}月${nowDate.getDate()}日 ${weekNames[nowDate.getDay()]} ${virtualTime.hours.toString().padStart(2, '0')}:${virtualTime.minutes.toString().padStart(2, '0')}`;
         const liveMsgs = currentMsgs.filter(m => m.id > (activeGroup?.archivedThroughMessageId || 0));
         const sharedScene = ContextBuilder.buildGroupSharedScene(groupMembers, userProfile, liveMsgs);
 
@@ -1060,22 +1067,6 @@ ${memberTimeline || '(暂无互动记录)'}
               ]
             : prompt;
 
-    const parseTopicBoxResponse = (raw: string): { title: string; summary: string } | null => {
-        const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
-        try {
-            const parsed = JSON.parse(cleaned);
-            if (parsed?.summary) return { title: String(parsed.title || '一段群聊回忆'), summary: String(parsed.summary) };
-        } catch {}
-        const match = cleaned.match(/\{[\s\S]*\}/);
-        if (match) {
-            try {
-                const parsed = JSON.parse(match[0]);
-                if (parsed?.summary) return { title: String(parsed.title || '一段群聊回忆'), summary: String(parsed.summary) };
-            } catch {}
-        }
-        return null;
-    };
-
     /** 群公共话题盒：每群只调用一次总结 API，不再按开启记忆宫殿的成员分别复制。 */
     const createNextGroupTopicBox = async (force: boolean = false): Promise<boolean> => {
         if (!activeGroup || topicArchiveLockRef.current || !apiConfig.apiKey) return false;
@@ -1100,7 +1091,7 @@ ${memberTimeline || '(暂无互动记录)'}
             });
             if (!response.ok) throw new Error(`API 返回 ${response.status}`);
             const data = await safeResponseJson(response);
-            const parsed = parseTopicBoxResponse(data.choices?.[0]?.message?.content || '');
+            const parsed = parseGroupTopicBox(data.choices?.[0]?.message?.content || '');
             if (!parsed) throw new Error('总结格式无法解析');
 
             const box = makeGroupTopicBox(groupForArchive, batchPlan.messages, parsed.title, parsed.summary);
