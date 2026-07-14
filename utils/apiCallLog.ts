@@ -103,11 +103,56 @@ function hostOf(url: string): string {
  * `(按次)gemini-3.1-pro-preview` 和 `gemini-3.1-pro-preview` 是同一个（只是渠道标签），
  * `gemini-3.1-pro-preview` 和 `gemini-3.1-pro-preview-c` 才是真的换了后端。
  */
+/**
+ * 已知模型家族开头（gemini-…/gpt-…/claude-…）。渠道前缀的花样穷举不完，
+ * 但家族名是个短且稳定的清单——把它当锚点：名字开头若不是家族名、且剥掉
+ * 一段裸前缀（`gcli-` / `vertex-ai/`）后就是，则认定那段是渠道标签。
+ * 这样「两头贴了不同裸前缀」（gcli-X vs vertex-X）也能对上核心名。
+ */
+const MODEL_FAMILY_RE = /^(gemini|gemma|gpt|chatgpt|o\d|claude|deepseek|qwen|qwq|glm|llama|grok|kimi|moonshot|mistral|mixtral|doubao|hunyuan|minimax|ernie|command|nova|phi)[-_.\d]/i;
+
+function stripBareChannelPrefixes(s: string): string {
+    let cur = s;
+    // 最多剥 3 层（渠道套渠道），每刀都必须让剩余部分以已知家族名开头才算数
+    for (let i = 0; i < 3; i++) {
+        if (MODEL_FAMILY_RE.test(cur)) return cur;
+        // 非贪婪取最短首段：'chatgpt-4o' 不会被误劈成 'chatgpt-4o' + …
+        const m = cur.match(/^[a-z0-9_.]{1,24}?[-/](.+)$/i);
+        if (!m || !MODEL_FAMILY_RE.test(m[1])) return cur;
+        cur = m[1];
+    }
+    return cur;
+}
+
 export function coreModelName(m: string): string {
-    return (m || '')
+    const stripped = (m || '')
         .replace(/\[[^\]]*\]|\([^)]*\)|（[^）]*）/g, '')
         .replace(/\s+/g, '')
         .toLowerCase();
+    return stripBareChannelPrefixes(stripped);
+}
+
+/**
+ * 「请求的模型」和「后端自报的模型」是否应视为同一个（＝不该报琥珀 ⚠️）。
+ *
+ * 贩子的渠道标签格式穷举不完（[方括号]、(按次)、gcli- 裸前缀…），所以不枚举格式，
+ * 改用方向性判定——核心名归一后：
+ *   - 完全相等 → 同一个
+ *   - 一方是另一方**去掉开头一截**的结果（endsWith）→ 同一个。
+ *     覆盖两个方向：请求带渠道前缀（gcli-X ↔ X）、后端带路径/前缀（X ↔ models/X）。
+ *     「开头多一截」只是运营商贴标签，不改变模型本体。
+ *   - 其余（尤其**尾巴多一截**：X ↔ X-c / X-lite）→ 不同。缩水变体都长在尾巴上，
+ *     这正是要抓的降级信号，绝不放行。
+ * 短名（<8 字符）不做 endsWith 宽容，防止病态短串误匹配。
+ */
+export function isSameCoreModel(requested: string, backend: string): boolean {
+    const a = coreModelName(requested);
+    const b = coreModelName(backend);
+    if (!a || !b) return true;   // 有一方空：无从比较，不报警
+    if (a === b) return true;
+    const shorter = a.length < b.length ? a : b;
+    if (shorter.length < 8) return false;
+    return a.endsWith(b) || b.endsWith(a);
 }
 
 /** 从请求体里抠出 model 字段（body 可能是 JSON 字符串或对象）。 */
