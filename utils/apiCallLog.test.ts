@@ -233,3 +233,29 @@ describe('buildPromptBreakdown · 围栏感知与固定块', () => {
         expect(isFixedPromptBlockLabel('[Background Context: Recent Group Activi')).toBe(false);
     });
 });
+
+// 落单围栏防吞噬：用户数据里奇数个 ``` 不能把后面所有块头吞进上一块
+// （实测事故：记忆摘要带半个围栏 → 62K「记忆系统」行吞掉对话历史+评估框架）。
+describe('buildPromptBreakdown · 落单围栏', () => {
+    it('奇数个 ``` 时最后一个不算开栏，后续块头照常识别', () => {
+        const sys = [
+            '### 记忆系统 (Memory Bank)',
+            '- 某条记忆里带了半个围栏 ```',
+            '### 表达底线 (Anti-Filler)',
+            '正文',
+            '## 任务',
+            '评估任务说明',
+        ].join('\n');
+        const labels = buildPromptBreakdown({ messages: [{ role: 'system', content: sys }, { role: 'user', content: 'hi' }] })!
+            .map(b => b.label);
+        expect(labels).toContain('表达底线 (Anti-Filler)');
+        expect(labels).toContain('任务');
+    });
+
+    it('成对围栏仍然屏蔽示例块头', () => {
+        const sys = '### 规则\n```\n## 示例标题\n```\n### 下一块\n正文';
+        const labels = buildPromptBreakdown({ messages: [{ role: 'system', content: sys }, { role: 'user', content: 'hi' }] })!
+            .map(b => b.label);
+        expect(labels).toEqual(['规则', '下一块', '聊天历史·用户消息 ×1']);
+    });
+});

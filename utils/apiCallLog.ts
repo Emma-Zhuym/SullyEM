@@ -268,6 +268,18 @@ const matchBlockHeader = (line: string): string | null => {
 };
 
 /**
+ * 计算哪些行是有效的 ``` 围栏开合线。围栏必须**成对**才生效：用户数据（记忆
+ * 摘要等）里落单的半个 ``` 会把围栏状态永久翻转，后面所有块头全被吞进上一块
+ * （实测：62K 的「记忆系统」行吞掉了对话历史+评估框架）。奇数个时最后一个不算。
+ */
+function fenceToggleLines(lines: string[]): Set<number> {
+    const indices: number[] = [];
+    lines.forEach((line, i) => { if (/^\s*```/.test(line)) indices.push(i); });
+    if (indices.length % 2 === 1) indices.pop();
+    return new Set(indices);
+}
+
+/**
  * 把一条 system 消息按块头切开。``` 围栏内的行不算块头——行为规范里的日记
  * 示例（`## 今天的小确幸` 等）都在代码块里，不加围栏感知会被误切成独立块。
  * 一个块头都没有的短消息（双语 / MCP 尾部提醒等）整条算一块，取首行当名字。
@@ -278,8 +290,11 @@ function splitSystemBlocks(text: string): PromptBlockStat[] {
     let chars = 0;
     let sawHeader = false;
     let inFence = false;
-    for (const line of text.split('\n')) {
-        if (/^\s*```/.test(line)) inFence = !inFence;
+    const lines = text.split('\n');
+    const fenceAt = fenceToggleLines(lines);
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (fenceAt.has(i)) inFence = !inFence;
         const header = inFence ? null : matchBlockHeader(line);
         if (header) {
             if (chars > 0) out.push({ label, chars });
@@ -350,9 +365,11 @@ export function buildPromptBreakdown(body: unknown): PromptBlockStat[] | undefin
         const HUGE_USER_MSG_SPLIT_CHARS = 8000;
         const countBlockHeaders = (text: string): number => {
             let n = 0, inFence = false;
-            for (const line of text.split('\n')) {
-                if (/^\s*```/.test(line)) inFence = !inFence;
-                if (!inFence && matchBlockHeader(line)) n++;
+            const lines = text.split('\n');
+            const fenceAt = fenceToggleLines(lines);
+            for (let i = 0; i < lines.length; i++) {
+                if (fenceAt.has(i)) inFence = !inFence;
+                if (!inFence && matchBlockHeader(lines[i])) n++;
             }
             return n;
         };
