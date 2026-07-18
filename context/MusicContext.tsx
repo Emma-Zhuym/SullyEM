@@ -136,6 +136,17 @@ export const loadMusicCfgStandalone = (): MusicCfg => loadCfg();
  * 实时播放快照 — 给 OSContext 主动消息流程读，避免 OSProvider 在 MusicProvider
  * 外层导致拿不到 useMusic()。MusicProvider mount 后会持续把当前播放状态写到这里。
  */
+/**
+ * 最近一次「一起听途中换歌」的记录 — 切歌本身不触发任何主动消息，
+ * 只把信息留在这里，等 char 下一轮正常回复时经 prompt 注入"察觉"到换歌。
+ */
+export interface RecentTrackChange {
+  previousSong: { id: number; name: string; artists: string };
+  /** 换歌那一刻正在"一起听"的 char（只有这些 char 需要被提示） */
+  charIds: string[];
+  at: number;
+}
+
 export interface MusicPlaybackSnapshot {
   current: Song | null;
   playing: boolean;
@@ -143,6 +154,7 @@ export interface MusicPlaybackSnapshot {
   activeLyricIdx: number;
   listeningTogetherWith: string[];
   cfg: MusicCfg;
+  recentTrackChange?: RecentTrackChange | null;
 }
 let __musicPlaybackSnapshot: MusicPlaybackSnapshot | null = null;
 export const loadMusicPlaybackSnapshot = (): MusicPlaybackSnapshot | null => __musicPlaybackSnapshot;
@@ -336,6 +348,8 @@ interface MusicContextType {
   addListeningPartner: (charId: string) => void;
   removeListeningPartner: (charId: string) => void;
   clearListeningPartners: () => void;
+  /** 最近一次一起听途中换歌的记录（供 prompt 注入"察觉换歌"，不触发主动消息） */
+  recentTrackChange: RecentTrackChange | null;
 
   // toast 转发 (解耦)
   toast: (msg: string, type?: 'info' | 'success' | 'error') => void;
@@ -538,11 +552,23 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   // 切歌后清空上一首的"一起听"。只结束状态，不触发主动消息 ——
-  // char 会在下一轮正常回复里通过播放快照看到新歌，自行决定是否重新加入。
+  // 换歌信息记进 recentTrackChange，char 下一轮正常回复时经 prompt 注入察觉，
+  // 自行决定是否重新加入。
   const previousSongRef = useRef<Song | null>(null);
+  const listeningTogetherRef = useRef(listeningTogetherWith);
+  listeningTogetherRef.current = listeningTogetherWith;
+  const [recentTrackChange, setRecentTrackChange] = useState<RecentTrackChange | null>(null);
   useEffect(() => {
     const previousSong = previousSongRef.current;
     if (previousSong && previousSong.id !== current?.id) {
+      const wasListening = listeningTogetherRef.current;
+      if (wasListening.length > 0) {
+        setRecentTrackChange({
+          previousSong: { id: previousSong.id, name: previousSong.name, artists: previousSong.artists },
+          charIds: [...wasListening],
+          at: Date.now(),
+        });
+      }
       setListeningTogetherWith([]);
     }
     previousSongRef.current = current;
@@ -821,8 +847,9 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       activeLyricIdx,
       listeningTogetherWith,
       cfg,
+      recentTrackChange,
     };
-  }, [current, playing, lyric, activeLyricIdx, listeningTogetherWith, cfg]);
+  }, [current, playing, lyric, activeLyricIdx, listeningTogetherWith, cfg, recentTrackChange]);
 
   // 把整组 musicHooks 写到模块级 slot — useChatAI 和 instant push activeMsgRuntime 都从这里取.
   // current / addListeningPartner 变化时刷新闭包, 保证读到的是最新 React state.
@@ -927,6 +954,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     playMode, setPlayMode,
     liked, toggleLike,
     listeningTogetherWith, addListeningPartner, removeListeningPartner, clearListeningPartners,
+    recentTrackChange,
     toast, setToastHandler,
     localAlbumSongs, addLocalSong, removeLocalSong,
     regeneratingId, regeneratingStatus, markRegenerating,
