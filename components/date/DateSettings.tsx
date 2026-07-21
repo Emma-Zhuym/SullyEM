@@ -4,6 +4,7 @@ import { useOS } from '../../context/OSContext';
 import { CharacterProfile, SpriteConfig, SkinSet, DateStyleConfig } from '../../types';
 import { processImage } from '../../utils/file';
 import { DATE_WRITING_STYLE_PRESETS } from '../../utils/dateWritingStyle';
+import { pickDateFallbackSprite } from '../../utils/dateSprites';
 import { DATE_STYLE_PRESETS } from '../../utils/datePrompts';
 import ObserveSettings from './ObserveSettings';
 
@@ -83,7 +84,11 @@ const DateSettings: React.FC<DateSettingsProps> = ({ char, onBack }) => {
         }
         return sprites;
     }, [activeSkinId, skinSets, sprites]);
-    const currentSpriteImg = previewSprites['normal'] || previewSprites['default'] || Object.values(previewSprites)[0] || char.avatar;
+    const currentSpriteImg = pickDateFallbackSprite(
+        previewSprites,
+        [...REQUIRED_EMOTIONS, ...(char.customDateSprites || [])],
+        char.avatar,
+    );
 
     const triggerUpload = (target: 'bg' | 'sprite', emotionKey?: string) => {
         setUploadTarget(target);

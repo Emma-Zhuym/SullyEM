@@ -11,6 +11,8 @@ import { safeResponseJson } from '../utils/safeApi';
 import { sortAnniversariesByNextOccurrence } from '../utils/anniversaryNext';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
+import { getCalendarDayDifference, getLocalDateKey } from '../utils/localDate';
+import { useLocalDateKey } from '../hooks/useLocalDateKey';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
 const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
@@ -105,6 +107,7 @@ const defaultDateTimeValue = (): string => {
 
 const ScheduleApp: React.FC = () => {
     const { closeApp, characters, activeCharacterId, apiConfig, addToast, userProfile, characterGroups } = useOS();
+    const localDateKey = useLocalDateKey();
     const [tasks, setTasks] = useState<Task[]>([]);
     const [anniversaries, setAnniversaries] = useState<Anniversary[]>([]);
     const [agendaItems, setAgendaItems] = useState<AgendaItem[]>([]);
@@ -225,10 +228,22 @@ const ScheduleApp: React.FC = () => {
     const generateAnniversaryThought = async (anni: Anniversary) => {
         const char = characters.find(c => c.id === anni.charId);
         if (!char || !apiConfig.apiKey) return;
-        if (anni.aiThought && anni.lastThoughtGeneratedAt && Date.now() - anni.lastThoughtGeneratedAt < 24 * 3600 * 1000) return;
-        if (Date.now() - (anni.lastThoughtGeneratedAt || 0) > 10000) addToast(`${char.name} 正在查阅日历...`, 'info');
-        const daysDiff = Math.ceil((new Date(anni.date).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-        const dayText = daysDiff > 0 ? `还有 ${daysDiff} 天` : daysDiff === 0 ? '就是今天!' : `已经过去 ${Math.abs(daysDiff)} 天了`;
+
+        // Check cache (24h)
+        if (anni.aiThought && anni.lastThoughtGeneratedAt && (Date.now() - anni.lastThoughtGeneratedAt < 24 * 60 * 60 * 1000)) {
+            return;
+        }
+
+        // FEEDBACK: Show loading state if explicit call
+        if (Date.now() - (anni.lastThoughtGeneratedAt || 0) > 10000) {
+             addToast(`${char.name} 正在查阅日历...`, 'info');
+        }
+
+        const daysDiff = getCalendarDayDifference(getLocalDateKey(), anni.date) ?? 0;
+        const dayText = daysDiff > 0 ? `还有 ${daysDiff} 天` : (daysDiff === 0 ? '就是今天!' : `已经过去 ${Math.abs(daysDiff)} 天了`);
+
+        // RESTORED: Full context
+        await injectMemoryPalace(char, undefined, anni.title);
         const baseContext = ContextBuilder.buildCoreContext(char, userProfile);
         const userPrompt = `
 ### 场景：纪念日提醒

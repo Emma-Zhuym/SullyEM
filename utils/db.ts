@@ -15,6 +15,7 @@ import { exportPostOfficeLocal, importPostOfficeLocal } from './vrWorld/postOffi
 import { exportSignalLocal, importSignalLocal } from './vrWorld/signal';
 import { exportLuckinLocal, importLuckinLocal } from './luckinMcpClient';
 import { exportMcdLocal, importMcdLocal } from './mcdMcpClient';
+import { exportMcpLocal, importMcpLocal } from './mcpClient';
 import { exportWorldHomeLocal, importWorldHomeLocal } from './worldHome/localBackup';
 import { exportDesktopSkinLocal, importDesktopSkinLocal } from './desktopSkinBackup';
 
@@ -729,9 +730,26 @@ export const DB = {
     return new Promise((resolve, reject) => {
         const transaction = db.transaction(STORE_MESSAGES, 'readwrite');
         const store = transaction.objectStore(STORE_MESSAGES);
-        const { timestamp, ...rest } = msg;
-        const request = store.add({ ...rest, timestamp: timestamp ?? Date.now() });
-        request.onsuccess = () => resolve(request.result as number);
+        const timestamp = typeof msg.timestamp === 'number' ? msg.timestamp : Date.now();
+        const { timestamp: _ignored, ...payload } = msg;
+        const request = store.add({ ...payload, timestamp });
+        request.onsuccess = () => {
+            const newId = request.result as number;
+            // 水位线自愈：新消息的自增 id 必然大于既有一切消息 id，也就必然大于水位线
+            // （水位线本身是某条旧消息的 id）。出现 newId ≤ 水位线，只有一种可能——
+            // IndexedDB 被浏览器清过、自增计数器归零，而 localStorage 里的记忆宫殿水位
+            // 是清库前残留的。不清掉它，该角色所有新消息都会被 hwm 过滤挡在 AI 上下文
+            // 之外（请求只剩 system → 上游 400）。此处直接移除失效水位。
+            try {
+                const staleKeys = [`mp_lastMsgId_${msg.charId}`];
+                if (msg.groupId) staleKeys.push(`mp_lastMsgId_group_${msg.groupId}`);
+                for (const key of staleKeys) {
+                    const hwm = parseInt(localStorage.getItem(key) || '0', 10) || 0;
+                    if (hwm >= newId) localStorage.removeItem(key);
+                }
+            } catch { /* localStorage 不可用时静默跳过 */ }
+            resolve(newId);
+        };
         request.onerror = () => reject(request.error);
     });
   },
@@ -1004,6 +1022,64 @@ export const DB = {
       });
   },
 
+  // 「幽灵表情包」清理：删角色不会级联清理表情分类，导致只对已删角色可见的
+  // 专属分类在单聊面板里被过滤掉（看不到也删不掉），却仍会出现在群聊表情面板
+  // 和 AI 提示词里。按「现存角色 id 白名单」做三件事：
+  //   1. 分类绑定里指向已删角色的 id → 剔除（部分失效只修绑定，不动表情）
+  //   2. 剔除后一个角色都不剩的非系统分类 → 整个删除，连同分类下所有表情
+  //   3. categoryId 指向已不存在分类的表情 → 删除（无主表情）
+  // dryRun=true 只扫描统计、不落库，供 UI 做「先扫描再确认」。
+  cleanupEmojiResidue: async (
+      validCharacterIds: string[],
+      options: { dryRun?: boolean } = {}
+  ): Promise<{
+      removedCategories: { id: string; name: string }[];
+      fixedCategories: { id: string; name: string }[];
+      removedEmojiCount: number;
+  }> => {
+      const validIds = new Set(validCharacterIds);
+      const [categories, emojis] = await Promise.all([DB.getEmojiCategories(), DB.getEmojis()]);
+
+      const removedCategories: { id: string; name: string }[] = [];
+      const fixedCategories: EmojiCategory[] = [];
+      for (const cat of categories) {
+          if (!cat.allowedCharacterIds || cat.allowedCharacterIds.length === 0) continue; // 全员可见，不动
+          const alive = cat.allowedCharacterIds.filter(cid => validIds.has(cid));
+          if (alive.length === cat.allowedCharacterIds.length) continue; // 绑定全部有效
+          if (alive.length === 0 && !cat.isSystem) {
+              removedCategories.push({ id: cat.id, name: cat.name });
+          } else {
+              // 系统分类绑定全失效时也走这里：清空绑定回落「全员可见」，绝不删系统分类
+              fixedCategories.push({ ...cat, allowedCharacterIds: alive });
+          }
+      }
+
+      const removedCatIds = new Set(removedCategories.map(c => c.id));
+      const remainingCatIds = new Set(categories.map(c => c.id).filter(id => !removedCatIds.has(id)));
+      const emojisToDelete = emojis.filter(e => e.categoryId && !remainingCatIds.has(e.categoryId));
+
+      if (!options.dryRun && (removedCategories.length || fixedCategories.length || emojisToDelete.length)) {
+          const db = await openDB();
+          const tx = db.transaction([STORE_EMOJI_CATEGORIES, STORE_EMOJIS], 'readwrite');
+          const catStore = tx.objectStore(STORE_EMOJI_CATEGORIES);
+          const emojiStore = tx.objectStore(STORE_EMOJIS);
+          removedCategories.forEach(c => catStore.delete(c.id));
+          fixedCategories.forEach(c => catStore.put(c));
+          emojisToDelete.forEach(e => emojiStore.delete(e.name));
+          await new Promise<void>((resolve, reject) => {
+              tx.oncomplete = () => resolve();
+              tx.onerror = () => reject(tx.error);
+              tx.onabort = () => reject(tx.error);
+          });
+      }
+
+      return {
+          removedCategories,
+          fixedCategories: fixedCategories.map(c => ({ id: c.id, name: c.name })),
+          removedEmojiCount: emojisToDelete.length,
+      };
+  },
+
   initializeEmojiData: async (): Promise<void> => {
       const cats = await DB.getEmojiCategories();
       // 巧妙利用 UI 强制保留 default 分类的特性：
@@ -1068,8 +1144,15 @@ export const DB = {
 
   saveAsset: async (id: string, data: string): Promise<void> => {
     const db = await openDB();
-    const transaction = db.transaction(STORE_ASSETS, 'readwrite');
-    transaction.objectStore(STORE_ASSETS).put({ id, data });
+    // 等事务真正落盘并把失败抛出去：旧实现发完 put 就返回，配额不足（iOS Safari 常见）
+    // 时写入静默丢失，调用方还以为保存成功了。
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_ASSETS, 'readwrite');
+        transaction.objectStore(STORE_ASSETS).put({ id, data });
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error);
+        transaction.onabort = () => reject(transaction.error || new Error('IndexedDB transaction aborted'));
+    });
   },
 
   getAssetRaw: async (id: string): Promise<any | null> => {
@@ -1091,8 +1174,13 @@ export const DB = {
 
   deleteAsset: async (id: string): Promise<void> => {
     const db = await openDB();
-    const transaction = db.transaction(STORE_ASSETS, 'readwrite');
-    transaction.objectStore(STORE_ASSETS).delete(id);
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_ASSETS, 'readwrite');
+      transaction.objectStore(STORE_ASSETS).delete(id);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error || new Error('deleteAsset aborted'));
+    });
   },
 
   // ─── Blob 资源（图片二进制，见 utils/blobRef.ts）───────────────
@@ -1124,8 +1212,13 @@ export const DB = {
   deleteBlobAsset: async (id: string): Promise<void> => {
       const db = await openDB();
       if (!db.objectStoreNames.contains(STORE_BLOB_ASSETS)) return;
-      const transaction = db.transaction(STORE_BLOB_ASSETS, 'readwrite');
-      transaction.objectStore(STORE_BLOB_ASSETS).delete(id);
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_BLOB_ASSETS, 'readwrite');
+          transaction.objectStore(STORE_BLOB_ASSETS).delete(id);
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+          transaction.onabort = () => reject(transaction.error || new Error('deleteBlobAsset aborted'));
+      });
   },
 
   getJournalStickers: async (): Promise<{name: string, url: string}[]> => {
@@ -2634,6 +2727,7 @@ export const DB = {
           worldHomeLocal: exportWorldHomeLocal(), // 家园本机配置：全局 API + 文风收藏（存 localStorage）
           luckinLocal: exportLuckinLocal(),       // 瑞幸 token + 启用状态（存 localStorage）
           mcdLocal: exportMcdLocal(),             // 麦当劳 token + 启用状态（存 localStorage）
+          mcpLocal: exportMcpLocal(),             // 通用 MCP 服务器配置（存 localStorage）
           desktopSkinLocal: await exportDesktopSkinLocal(), // 桌面皮肤：界面配色 + 看板 banner（看板图令牌解析为 data URL）
       };
   },
@@ -3078,6 +3172,10 @@ export const DB = {
       await runSection('麦当劳配置', (data as any).mcdLocal !== undefined, async () => {
           importMcdLocal((data as any).mcdLocal); // token + 启用状态
           (data as any).mcdLocal = undefined;
+      }, 1);
+      await runSection('MCP 服务器配置', (data as any).mcpLocal !== undefined, async () => {
+          importMcpLocal((data as any).mcpLocal); // 用户自配的 MCP 服务器列表
+          (data as any).mcpLocal = undefined;
       }, 1);
       await runSection('桌面皮肤偏好', (data as any).desktopSkinLocal !== undefined, async () => {
           await importDesktopSkinLocal((data as any).desktopSkinLocal); // 界面配色 + 看板 banner（data URL→本机 blob）

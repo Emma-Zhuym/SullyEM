@@ -1,9 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CaretLeft, House, Lightning, X } from '@phosphor-icons/react';
+import { CaretLeft, House, Lightning, X, Stop } from '@phosphor-icons/react'; // [EM: House/X icons]
 import { CharacterBuff, CharacterProfile } from '../../types';
 import type { ContextComposition } from '../../hooks/useChatAI';
 import type { CharAvailability } from '../../utils/charStatus';
+
+/** header 实际只用到这些字段——放宽类型让群聊传合成对象（群名/群头像）复用本组件 */
+type HeaderCharacter = Pick<CharacterProfile, 'id' | 'name' | 'avatar'> & { activeBuffs?: CharacterBuff[] };
 
 interface TokenBreakdown {
     prompt: number;
@@ -17,9 +20,13 @@ interface ChatHeaderShellProps {
     selectionMode: boolean;
     selectedCount: number;
     onCancelSelection: () => void;
-    activeCharacter: CharacterProfile;
+    activeCharacter: HeaderCharacter;
     isTyping: boolean;
     isSummarizing: boolean;
+    /** 覆盖状态区的 "Online" 文案（群聊传 "N 成员"）。不传 = 原行为 */
+    statusText?: string;
+    /** 触发按钮图标：生成中想显示"停止"时传 'stop'。不传 = 原行为（闪电） */
+    triggerIcon?: 'lightning' | 'stop';
     isEmotionEvaluating?: boolean;
     isInstantSending?: boolean;
     isMemoryPalaceProcessing?: boolean;
@@ -83,6 +90,8 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     onTriggerAI,
     onShowCharsPanel,
     onDeleteBuff,
+    statusText,
+    triggerIcon = 'lightning',
     hideBuffs = false,
     headerStyle = 'default',
     avatarShape = 'circle',
@@ -277,6 +286,10 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
             <div className={`text-[10px] uppercase ${secondaryTextClass}`}>{statusConfig.label}</div>
         );
 
+    const triggerIconNode = triggerIcon === 'stop'
+        ? <Stop className="w-5 h-5" weight="fill" />
+        : <Lightning className="w-5 h-5" weight="bold" />;
+
     const renderBuffRow = (centered: boolean) => {
         if (buffs.length === 0) return null;
         return (
@@ -458,8 +471,8 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                         {renderCenteredInfo()}
                     </div>
 
-                    <button onClick={onTriggerAI} className={`sully-chat-trigger absolute right-0 bottom-2 p-2 ${actionButtonClass}`} title="触发 AI">
-                        <Lightning className="w-5 h-5" weight="bold" />
+                    <button onClick={onTriggerAI} className={`sully-chat-trigger absolute right-0 bottom-2 p-2 ${actionButtonClass}`} title={triggerIcon === 'stop' ? '停止生成' : '触发 AI'}>
+                        {triggerIconNode}
                     </button>
                 </div>
             ) : (
@@ -489,8 +502,8 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                         {renderStandardInfo()}
                     </div>
 
-                    <button onClick={onTriggerAI} className={`sully-chat-trigger p-2 ml-auto ${actionButtonClass}`} title="触发 AI">
-                        <Lightning className="w-5 h-5" weight="bold" />
+                    <button onClick={onTriggerAI} className={`sully-chat-trigger p-2 ml-auto ${actionButtonClass}`} title={triggerIcon === 'stop' ? '停止生成' : '触发 AI'}>
+                        {triggerIconNode}
                     </button>
                 </div>
             )}

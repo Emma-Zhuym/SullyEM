@@ -25,7 +25,7 @@ import { safeFetchJson } from '../safeApi';
 import { processNewMessages } from '../memoryPalace/pipeline';
 import { loadMusicCfgStandalone } from '../../context/MusicContext';
 import { getCharLyricSnippet } from '../charLyricCache';
-import { getRoom, VR_DEFAULT_INTERVAL_MIN, rollPoemLines, signalActFor } from './constants';
+import { getRoom, VR_DEFAULT_INTERVAL_MIN, rollPoemLines, signalActFor, SIGNAL_EVENT_ENDED } from './constants';
 import { getVRApi, logVRApiCall } from './vrApi';
 import { PostOffice } from './postOffice';
 import { Signal, SignalState, recordMyLine, getMyRecentLines, takeSignalWhisper } from './signal';
@@ -124,10 +124,13 @@ function nameLine(name: string, act: string): string {
 }
 
 /** roll 一个房间：图书馆需有书；听歌房需有歌单或正在放歌；留言簿/娱乐室/邮局/剧院恒可去。 */
-function rollRoom(char: CharacterProfile, novels: VRWorldNovel[], musicState: VRMusicRoomState | null, prefer?: VRRoomId): VRRoomId | null {
+export function rollRoom(char: CharacterProfile, novels: VRWorldNovel[], musicState: VRMusicRoomState | null, prefer?: VRRoomId): VRRoomId | null {
     // 信号坠落处【不进随机池】——它是用户自发参与的特殊活动，只在用户点「参与→指定角色」
     // 时以 forcedRoom='signal' 进入，角色不会自己随机逛过去。
     if (prefer === 'signal') return 'signal';
+    // 用户手动点“听歌房”时必须尊重选择。即使当前没有歌，听歌房提示词也支持
+    // 角色戴着耳机放空；不能因为没有歌单就悄悄随机跳去剧院等其他房间。
+    if (prefer === 'music') return 'music';
     const pool: VRRoomId[] = ['guestbook', 'gym', 'postoffice', 'theater'];
     if (novels.length > 0) pool.push('library');
     if (gatherCharSongs(char).length > 0 || musicState?.nowPlaying) pool.push('music');
@@ -200,6 +203,13 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
         // 抢到 → 读到锁内最新全文往下写；被打回（别人正在写 / 本首配额满 / 已暂停）→ 本轮作罢，
         // 并广播事件给面板温柔提示用户（此时一个 token 都还没花）。
         if (room.id === 'signal') {
+            // 活动已落幕：任何写入在抢锁/调 LLM 之前直接打回（零 token）。诗集仍永远可读。
+            if (SIGNAL_EVENT_ENDED) {
+                try {
+                    window.dispatchEvent(new CustomEvent('vr-signal-blocked', { detail: { charId: char.id, charName: char.name, reason: 'signal-ended' } }));
+                } catch { /* SSR */ }
+                return { ok: false, room: 'signal', reason: 'signal-ended' };
+            }
             let lk: Awaited<ReturnType<typeof Signal.lock>>;
             try { lk = await Signal.lock(); }
             catch { return { ok: false, room: 'signal', reason: 'signal-offline' }; }
@@ -345,6 +355,9 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
         const payload = await buildChatRequestPayload({
             char, userProfile, groups, emojis, categories,
             historyMsgs, contextLimit, realtimeConfig, recallQueryHint,
+            // 彼方可配独立 API（可能不支持视觉，如 DeepSeek 对 image_url 直接 400），
+            // 且纯文本情景里历史图片只是撑爆上下文的噪声 → 压平成文本占位
+            stripImages: true,
         });
         const systemPrompt = payload.systemPrompt + buildVRSystemAddendum(room, char.name);
 

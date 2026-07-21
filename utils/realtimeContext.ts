@@ -8,6 +8,7 @@ import { DB } from './db';
 import type { NotionDiaryExtraProperty, NotionExtraDatabase } from '../types';
 import { getProxyWorkerUrl } from './proxyWorker';
 import { nowInTimeZone } from './timezone';
+import { getLocalDateKey } from './localDate';
 import { getMotionContextLine } from './deviceMotion';
 // [EM-START: weather-openmeteo]
 import { fetchOpenMeteoCurrent, resolveWeatherCoords, type WeatherLocation } from './openMeteo';
@@ -961,7 +962,13 @@ export const NotionManager = {
                 return { success: false, message: '返回格式错误' };
             }
         } catch (e: any) {
-            return { success: false, message: `网络错误: ${e.message}` };
+            const msg = String(e?.message || e);
+            // fetch 在请求根本没到达服务器时抛 TypeError（Safari 报 "Load failed"、
+            // Chrome 报 "Failed to fetch"），说明是代理 Worker 不可达，不是 Notion 拒绝了 Key
+            if (/load failed|failed to fetch|networkerror/i.test(msg)) {
+                return { success: false, message: `无法连接到代理服务器 ${NotionManager.WORKER_URL}：请先在浏览器里试试能否直接打开该地址。打不开说明当前网络访问不了它（换网络/开代理后重试），或在「设置 → 网络代理 (Worker)」填入自部署的 Worker 地址` };
+            }
+            return { success: false, message: `网络错误: ${msg}` };
         }
     },
 
@@ -992,7 +999,7 @@ export const NotionManager = {
     ): Promise<{ success: boolean; pageId?: string; url?: string; message: string; appliedExtrasHint?: string }> => {
         try {
             const now = new Date();
-            const dateStr = entry.date || now.toISOString().split('T')[0];
+            const dateStr = entry.date || getLocalDateKey(now);
 
             // 使用 markdown 解析器生成丰富的 Notion blocks
             const children = parseMarkdownToNotionBlocks(entry.content, entry.mood, entry.characterName);
@@ -2364,7 +2371,7 @@ export const FeishuManager = {
             }
 
             const now = new Date();
-            const dateStr = entry.date || now.toISOString().split('T')[0];
+            const dateStr = entry.date || getLocalDateKey(now);
             const dateTimestamp = new Date(dateStr).getTime();
             const titlePrefix = entry.characterName ? `[${entry.characterName}] ` : '';
 
@@ -2474,7 +2481,17 @@ export const FeishuManager = {
                 const rawTitle = (Array.isArray(fields['标题']) ? fields['标题']?.[0]?.text : fields['标题']) || '无标题';
                 const cleanTitle = String(rawTitle).replace(/^\[.*?\]\s*/, '');
                 const rawDate = fields['日期'];
-                const dateStr = rawDate ? new Date(typeof rawDate === 'number' ? rawDate : rawDate).toISOString().split('T')[0] : '';
+                const rawDateText = typeof rawDate === 'string' ? rawDate.trim() : '';
+                const parsedDate = rawDate && !/^\d{4}-\d{2}-\d{2}$/.test(rawDateText)
+                    ? new Date(rawDate)
+                    : null;
+                const dateStr = rawDate
+                    ? /^\d{4}-\d{2}-\d{2}$/.test(rawDateText)
+                        ? rawDateText
+                        : parsedDate && !Number.isNaN(parsedDate.getTime())
+                            ? getLocalDateKey(parsedDate)
+                            : ''
+                    : '';
 
                 return {
                     recordId: item.record_id,

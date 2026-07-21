@@ -26,6 +26,7 @@ export const CARD_STRIPPED_FIELDS = [
   // 2) 美化
   'embeddedTheme',           // CharacterExportData 上的内嵌主题（导入侧一并剥离）
   'bubbleStyle',
+  'chatFineTune',            // 聊天装扮（细节微调的角色级覆盖）：发卡人的界面偏好，接收方用自己的
   'chromeCustomCss',
   'chatSound',
   'chatSoundBound',
@@ -34,6 +35,7 @@ export const CARD_STRIPPED_FIELDS = [
   'thinkingChainStyle',
   'thinkingChainCustomColors',
   'thinkingChainCustomPrompt',
+  'thinkingChainCustomCss',
 
   // 3) 语言 / 语音 / 组织类本地偏好
   'groupId',                 // 角色分组是发卡人自己的整理方式，指向的分组 id 在接收方本地也不存在

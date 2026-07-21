@@ -1,15 +1,16 @@
 import React, { useMemo, useEffect, useLayoutEffect, useState, useRef, useCallback } from 'react';
-import { useOS } from '../context/OSContext';
+import { isPaperWallpaper, useOS } from '../context/OSContext';
 import { INSTALLED_APPS, DOCK_APPS } from '../constants';
 import { isDevDebugAvailable, subscribeDevDebugAvailability } from '../utils/devDebug';
 import AppIcon from '../components/os/AppIcon';
 import { DB } from '../utils/db';
-import { AppConfig, CharacterProfile, Anniversary, AppID, DailySchedule } from '../types';
+import { CharacterProfile, Anniversary, AppID, DailySchedule } from '../types';
 import { ScheduleHomeWidget, ScheduleFullscreenViewer } from '../components/schedule/ScheduleHomeWidget';
 import NowPlayingSquareWidget from '../components/os/NowPlayingSquareWidget';
-import { useCharStatus } from '../hooks/useCharStatus';
 import MobileGameHome from '../components/os/MobileGameHome';
 import TamagotchiHome from '../components/os/TamagotchiHome';
+import { getLocalDailySchedule } from '../utils/dailySchedule';
+import { useLocalDateKey } from '../hooks/useLocalDateKey';
 
 // --- Isolated Components to prevent full re-renders ---
 
@@ -17,6 +18,7 @@ import TamagotchiHome from '../components/os/TamagotchiHome';
 const DesktopClock = React.memo(() => {
     const { virtualTime, theme } = useOS();
     const contentColor = theme.contentColor || '#ffffff';
+    const paper = theme.skin !== 'animalcrossing' && theme.skin !== 'mobilegame' && theme.skin !== 'tamagotchi' && isPaperWallpaper(theme.wallpaper);
 
     const days = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
     const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
@@ -55,15 +57,15 @@ const DesktopClock = React.memo(() => {
     }
 
     return (
-        <div className="flex flex-col mb-4 mt-5 relative animate-fade-in" style={{ color: contentColor }}>
+        <div className="flex flex-col mb-5 mt-5 relative animate-fade-in" style={{ color: contentColor }}>
             {/* 顶部装饰 — 状态胶囊 + 细线 */}
             <div className="flex items-center gap-2 mb-3 opacity-90">
                 <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full"
                     style={{
-                        background: 'rgba(255,255,255,0.28)',
-                        border: '1px solid rgba(255,255,255,0.18)',
+                        background: paper ? 'rgba(224,221,215,0.30)' : 'rgba(255,255,255,0.28)',
+                        border: paper ? '1px solid rgba(91,72,51,0.07)' : '1px solid rgba(255,255,255,0.18)',
                     }}>
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" style={{ boxShadow: '0 0 6px #4ade80' }} />
+                    <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: paper ? '#788369' : '#4ade80', boxShadow: paper ? 'none' : '0 0 6px #4ade80' }} />
                     <span className="text-[9px] font-bold tracking-[0.2em] uppercase">System Online</span>
                 </div>
                 <div className="h-[1px] flex-1 bg-gradient-to-r from-current to-transparent opacity-30" />
@@ -78,15 +80,15 @@ const DesktopClock = React.memo(() => {
             {/* 主时钟 */}
             <div className="flex items-end gap-4">
                 <div className="relative">
-                    <div className="text-[6.25rem] leading-[0.82] font-black tracking-tighter drop-shadow-2xl"
-                        style={{ fontFamily: `'Space Grotesk', 'SF Pro Display', sans-serif`, fontFeatureSettings: '"tnum"' }}>
+                    <div className={`${paper ? 'text-[5.65rem] font-semibold tracking-[-0.055em] drop-shadow-[0_2px_0_rgba(255,255,255,0.34)]' : 'text-[6.25rem] font-black tracking-tighter drop-shadow-2xl'} leading-[0.84]`}
+                        style={{ fontFamily: paper ? `'Iowan Old Style', 'Baskerville', 'Times New Roman', serif` : `'Space Grotesk', 'SF Pro Display', sans-serif`, fontFeatureSettings: '"tnum"' }}>
                         <span>{virtualTime.hours.toString().padStart(2, '0')}</span>
                         <span className="opacity-35 font-thin mx-0.5 animate-pulse">:</span>
                         <span>{virtualTime.minutes.toString().padStart(2, '0')}</span>
                     </div>
                     {/* 细光斑 */}
-                    <div className="absolute -top-2 -right-3 w-8 h-8 rounded-full pointer-events-none"
-                        style={{ background: 'radial-gradient(circle, rgba(255,255,255,0.4), transparent 70%)' }} />
+                    {!paper && <div className="absolute -top-2 -right-3 w-8 h-8 rounded-full pointer-events-none"
+                        style={{ background: 'radial-gradient(circle, rgba(255,255,255,0.4), transparent 70%)' }} />}
                 </div>
 
                 <div className="flex flex-col justify-end pb-2.5 gap-0.5">
@@ -102,29 +104,21 @@ const DesktopClock = React.memo(() => {
 });
 
 // 2. Character Widget (Consumes Character Data & Messages)
-const CharacterWidget = React.memo(({
-    char,
-    unreadCount,
-    lastMessage,
-    onClick,
+const CharacterWidget = React.memo(({ 
+    char, 
+    unreadCount, 
+    lastMessage, 
+    onClick, 
     contentColor,
-    schedule,
-}: {
-    char: CharacterProfile | null,
-    unreadCount: number,
-    lastMessage: string,
+    paper = false,
+}: { 
+    char: CharacterProfile | null, 
+    unreadCount: number, 
+    lastMessage: string, 
     onClick: () => void,
     contentColor: string,
-    schedule: DailySchedule | null,
+    paper?: boolean,
 }) => {
-    const { status, activity } = useCharStatus(schedule);
-
-    const statusConfig = {
-        online:  { dotClass: 'bg-emerald-400', glow: '0 0 6px #4ade80', label: 'Online',  pillBg: 'rgba(52,211,153,0.18)' },
-        busy:    { dotClass: 'bg-amber-400',   glow: '0 0 6px #fbbf24', label: activity ? `${activity}中` : 'Busy', pillBg: 'rgba(251,191,36,0.18)' },
-        offline: { dotClass: 'bg-slate-400',   glow: 'none',            label: activity ?? 'Offline',               pillBg: 'rgba(148,163,184,0.18)' },
-    }[status];
-
     const { theme } = useOS();
     const acnh = theme.skin === 'animalcrossing'; // 动森彩蛋：会"说话"的村民卡
 
@@ -169,7 +163,11 @@ const CharacterWidget = React.memo(({
              <div
                 className="relative h-24 w-full overflow-hidden rounded-3xl cursor-pointer transition-transform duration-300 active:scale-[0.98]"
                 onClick={onClick}
-                style={acnh ? {
+                style={paper ? {
+                    background: 'rgba(224,221,215,0.40)',
+                    border: '1px solid rgba(91,72,51,0.07)',
+                    boxShadow: '0 5px 16px rgba(91,72,51,0.055)',
+                } : acnh ? {
                     background: 'rgb(247,243,223)',
                     border: '2px solid #e8e2d6',
                     boxShadow: '0 8px 24px 0 rgba(61,52,40,0.14)',
@@ -182,7 +180,7 @@ const CharacterWidget = React.memo(({
                 }}
              >
                  {/* 背景虚化角色头像（动森模式下省略，避免糊在奶油底上） */}
-                 {!acnh && char?.avatar && (
+                 {!acnh && !paper && char?.avatar && (
                      <div className="absolute inset-0 opacity-25 pointer-events-none"
                          style={{
                              backgroundImage: `url(${char.avatar})`,
@@ -195,10 +193,10 @@ const CharacterWidget = React.memo(({
 
                  <div className="relative flex items-center p-3 gap-3 h-full">
                      {/* 头像 */}
-                     <div className="w-[68px] h-[68px] shrink-0 rounded-2xl overflow-hidden relative bg-slate-800"
+                     <div className={`w-[68px] h-[68px] shrink-0 rounded-2xl overflow-hidden relative ${paper ? 'bg-[#ded2c1]' : 'bg-slate-800'}`}
                          style={{
-                             border: acnh ? '2px solid #e8e2d6' : '1.5px solid rgba(255,255,255,0.25)',
-                             boxShadow: acnh ? '0 4px 12px -4px rgba(61,52,40,0.25)' : '0 4px 14px rgba(0,0,0,0.25)',
+                             border: paper ? '1px solid rgba(91,72,51,0.14)' : acnh ? '2px solid #e8e2d6' : '1.5px solid rgba(255,255,255,0.25)',
+                             boxShadow: paper ? '0 5px 14px rgba(91,72,51,0.13)' : acnh ? '0 4px 12px -4px rgba(61,52,40,0.25)' : '0 4px 14px rgba(0,0,0,0.25)',
                          }}>
                          {char ? (
                              <img src={char.avatar} className="w-full h-full object-cover" alt="char" loading="lazy" />
@@ -208,14 +206,14 @@ const CharacterWidget = React.memo(({
                                 {unreadCount > 9 ? '9+' : unreadCount}
                             </div>
                          ) : (
-                            <div className={`absolute bottom-1 right-1 w-2.5 h-2.5 ${statusConfig.dotClass} rounded-full border-2 border-white/30`} style={{ boxShadow: statusConfig.glow }}></div>
+                            <div className="absolute bottom-1 right-1 w-2.5 h-2.5 rounded-full border-2 border-white/60" style={{ background: paper ? '#788369' : '#4ade80', boxShadow: paper ? 'none' : '0 0 6px #4ade80' }}></div>
                          )}
                      </div>
 
                      {/* 文本 */}
                      <div className="flex-1 min-w-0 flex flex-col justify-center gap-1" style={{ color: contentColor }}>
                          <div className="flex items-center gap-1.5">
-                             <h3 className="text-[15px] font-bold tracking-wide drop-shadow-md truncate">
+                             <h3 className={`text-[15px] font-bold tracking-wide truncate ${paper ? '' : 'drop-shadow-md'}`}>
                                  {char?.name || 'NO SIGNAL'}
                              </h3>
                              {unreadCount > 0 ? (
@@ -223,12 +221,16 @@ const CharacterWidget = React.memo(({
                                      style={{ background: 'rgba(239,68,68,0.9)', color: 'white' }}>NEW</div>
                              ) : (
                                  <div className="px-1.5 py-px rounded-full text-[8px] font-bold uppercase tracking-[0.15em]"
-                                     style={acnh ? { background: '#7cba4c', color: 'white' } : { background: statusConfig.pillBg, color: contentColor }}>{statusConfig.label}</div>
+                                     style={paper ? { background: 'rgba(120,131,105,0.16)', color: '#68725b' } : acnh ? { background: '#7cba4c', color: 'white' } : { background: 'rgba(255,255,255,0.18)' }}>Online</div>
                              )}
                          </div>
-                         <div className="text-xs line-clamp-2 font-medium leading-relaxed opacity-85">
-                            <span className="opacity-50 mr-1 text-[10px]">▶</span>
-                            {lastMessage}
+                         <div className="text-xs font-medium leading-relaxed opacity-85 flex items-start gap-1.5">
+                            <span
+                                aria-hidden="true"
+                                className="shrink-0 mt-[0.42em] opacity-45"
+                                style={{ width: 0, height: 0, borderTop: '3px solid transparent', borderBottom: '3px solid transparent', borderLeft: '4px solid currentColor' }}
+                            />
+                            <span className="line-clamp-2">{lastMessage}</span>
                          </div>
                      </div>
                  </div>
@@ -237,78 +239,45 @@ const CharacterWidget = React.memo(({
     );
 });
 
-// 3. Grid Page Component — supports edit mode with ghost drag
+// 3. Grid Page Component
 const AppGridPage = React.memo(({
-    apps, openApp, onLongPress,
-    isEditMode = false, pageStartIndex = 0,
-    draggingIdx, hoverIdx: hoverGlobalIdx, onIconPointerDown,
+    apps,
+    openApp,
     acnh = false,
+    editing = false,
 }: {
-    apps: AppConfig[];
-    openApp: (id: AppID) => void;
-    onLongPress?: () => void;
-    isEditMode?: boolean;
-    pageStartIndex?: number;
-    draggingIdx?: number | null;
-    hoverIdx?: number | null;
-    onIconPointerDown?: (e: React.PointerEvent, globalIdx: number) => void;
-    acnh?: boolean;
+    apps: typeof INSTALLED_APPS,
+    openApp: (id: AppID) => void,
+    acnh?: boolean,
+    editing?: boolean,
 }) => {
-    const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const startPress = () => {
-        if (!onLongPress) return;
-        timerRef.current = setTimeout(onLongPress, 600);
-    };
-    const cancelPress = () => {
-        if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-    };
-
     return (
-        <div className="grid grid-cols-4 gap-y-6 gap-x-2 place-items-center animate-fade-in relative">
-            {apps.map((app, localIdx) => {
-                const globalIdx = pageStartIndex + localIdx;
-                const isDragging = draggingIdx === globalIdx;
-                const isHover = hoverGlobalIdx === globalIdx && hoverGlobalIdx !== draggingIdx;
-                return (
-                    <div
-                        key={app.id}
-                        data-global-idx={globalIdx}
-                        className={[
-                            'relative transition-all duration-150',
-                            isEditMode ? 'animate-icon-wobble cursor-grab' : 'active:scale-95',
-                            isDragging ? 'opacity-0 pointer-events-none' : '',
-                            isHover ? 'scale-110 drop-shadow-lg' : '',
-                        ].join(' ')}
-                        style={{ touchAction: isEditMode ? 'none' : 'auto' }}
-                        onMouseDown={!isEditMode ? startPress : undefined}
-                        onMouseUp={!isEditMode ? cancelPress : undefined}
-                        onMouseLeave={!isEditMode ? cancelPress : undefined}
-                        onTouchStart={!isEditMode ? startPress : undefined}
-                        onTouchEnd={!isEditMode ? cancelPress : undefined}
-                        onTouchMove={!isEditMode ? cancelPress : undefined}
-                        onPointerDown={isEditMode ? (e) => {
-                            e.preventDefault();
-                            onIconPointerDown?.(e, globalIdx);
-                        } : undefined}
-                    >
-                        <AppIcon
-                            app={app}
-                            onClick={isEditMode ? () => {} : () => openApp(app.id)}
-                        />
-                    </div>
-                );
-            })}
+        <div className={`grid place-items-center animate-fade-in relative ${acnh ? 'grid-cols-4 gap-y-6 gap-x-2' : 'grid-cols-4 gap-y-6 gap-x-2'}`}>
+             {apps.map(app => (
+                 <div
+                    key={app.id}
+                    data-launcher-item={app.id}
+                    data-launcher-kind="app"
+                    className={`relative transition-transform duration-200 active:scale-95 ${editing ? 'launcher-edit-item' : ''}`}
+                 >
+                     <AppIcon
+                        app={app}
+                        onClick={() => { if (!editing) openApp(app.id); }}
+                        size="md"
+                     />
+                 </div>
+             ))}
         </div>
     );
 });
 
 // 3b. Small 2x2 app grid for pinwheel cells
-const AppQuadGrid = React.memo(({ apps, openApp }: { apps: typeof INSTALLED_APPS, openApp: (id: AppID) => void }) => {
+const AppQuadGrid = React.memo(({ apps, openApp, editing = false }: { apps: typeof INSTALLED_APPS, openApp: (id: AppID) => void, editing?: boolean }) => {
     return (
         <div className="w-full h-full grid grid-cols-2 grid-rows-2 place-items-center gap-x-2 gap-y-3">
             {apps.map(app => (
-                <div key={app.id} className="relative transition-transform duration-200 active:scale-95">
-                    <AppIcon app={app} onClick={() => openApp(app.id)} />
+                <div key={app.id} data-launcher-item={app.id} data-launcher-kind="app" className={`relative transition-transform duration-200 active:scale-95 ${editing ? 'launcher-edit-item' : ''}`}>
+                    <AppIcon app={app} onClick={() => { if (!editing) openApp(app.id); }} />
                 </div>
             ))}
         </div>
@@ -322,11 +291,18 @@ const DesktopSquareImage = React.memo(({ image, contentColor, onClick, acnh = fa
     onClick: () => void,
     acnh?: boolean,
 }) => {
+    const { theme } = useOS();
+    const paper = theme.skin !== 'animalcrossing' && theme.skin !== 'mobilegame' && theme.skin !== 'tamagotchi' && isPaperWallpaper(theme.wallpaper);
     return (
         <div
             onClick={onClick}
             className="relative w-full h-full rounded-[1.75rem] overflow-hidden cursor-pointer animate-fade-in transition-transform active:scale-[0.98]"
-            style={acnh ? {
+            style={paper ? {
+                background: image ? 'rgba(224,221,215,0.26)' : 'rgba(224,221,215,0.38)',
+                border: '1px solid rgba(91,72,51,0.07)',
+                boxShadow: '0 5px 16px rgba(91,72,51,0.055)',
+                color: contentColor,
+            } : acnh ? {
                 background: image ? 'rgb(247,243,223)' : 'rgb(247,243,223)',
                 border: '2px solid #e8e2d6',
                 boxShadow: '0 6px 18px rgba(61,52,40,0.12)',
@@ -343,7 +319,7 @@ const DesktopSquareImage = React.memo(({ image, contentColor, onClick, acnh = fa
             ) : (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-3 text-center">
                     <div className="w-9 h-9 rounded-full flex items-center justify-center"
-                        style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.16)' }}>
+                        style={{ background: paper ? 'rgba(120,131,105,0.10)' : 'rgba(255,255,255,0.1)', border: paper ? '1px solid rgba(91,72,51,0.12)' : '1px solid rgba(255,255,255,0.16)' }}>
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor" className="w-4 h-4 opacity-70">
                             <path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
                         </svg>
@@ -367,7 +343,7 @@ const CALENDAR_WEEKDAYS = [
 ] as const;
 
 // 4. Widget Page Component (Calendar + Events)
-const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, characters, acnh = false }: any) => {
+const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, characters, acnh = false, paper = false }: any) => {
     // 动森：奶油卡片样式（替代暗色玻璃）
     const acCard = acnh ? { background: 'rgb(247,243,223)', border: '2px solid #e8e2d6', boxShadow: '0 6px 18px rgba(61,52,40,0.12)' } : undefined;
     const acDot = acnh ? '#6fba2c' : undefined;
@@ -375,13 +351,13 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, characte
     const currentYear = now.getFullYear();
     const currentMonth = now.getMonth();
     const monthName = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'][currentMonth];
-
+    
     const getDaysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
     const getFirstDayOfMonth = (year: number, month: number) => new Date(year, month, 1).getDay();
-
+    
     const totalDays = getDaysInMonth(currentYear, currentMonth);
     const startOffset = getFirstDayOfMonth(currentYear, currentMonth);
-
+    
     const calendarDays = Array.from({ length: totalDays }, (_, i) => i + 1);
     const paddingDays = Array.from({ length: startOffset }, () => null);
 
@@ -404,47 +380,51 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, characte
 
     return (
         <div className="w-full flex-shrink-0 snap-center snap-always flex flex-col px-6 pt-24 pb-8 space-y-6 h-full overflow-y-auto no-scrollbar">
-              <div className={`rounded-3xl p-6 ${acnh ? 'shadow-sm' : 'bg-white/10 backdrop-blur-2xl border border-white/20 shadow-2xl'}`} style={acCard}>
+              <div className={`rounded-3xl p-6 ${acnh ? 'shadow-sm' : paper ? '' : 'bg-white/25 border border-white/25 shadow-xl'}`} style={paper ? { background: 'rgba(224,221,215,0.36)', border: '1px solid rgba(91,72,51,0.07)', boxShadow: '0 5px 16px rgba(91,72,51,0.05)' } : acCard}>
                   <div className="flex justify-between items-center mb-4" style={{ color: contentColor }}>
                       <h3 className="text-xl font-bold tracking-widest">{monthName} {currentYear}</h3>
-                      <div onClick={() => openApp('schedule')} className={`p-2 rounded-full cursor-pointer transition-colors ${acnh ? 'bg-[#82D5BB]/30 hover:bg-[#82D5BB]/50' : 'bg-white/20 hover:bg-white/40'}`}>
+                      <div onClick={() => openApp('schedule')} className={`p-2 rounded-full cursor-pointer transition-colors ${acnh ? 'bg-[#82D5BB]/30 hover:bg-[#82D5BB]/50' : paper ? 'bg-[#788369]/10 hover:bg-[#788369]/20' : 'bg-white/20 hover:bg-white/40'}`}>
                           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
                       </div>
                   </div>
+                  
                   <div className="grid grid-cols-7 gap-y-3 gap-x-1 text-center mb-2">
                       {CALENDAR_WEEKDAYS.map(day => <div key={day.key} className="text-[10px] font-bold opacity-40" style={{ color: contentColor }}>{day.label}</div>)}
                   </div>
+                  
                   <div className="grid grid-cols-7 gap-y-2 gap-x-1 text-center">
                       {paddingDays.map((_, i) => <div key={`pad-${i}`} />)}
                       {calendarDays.map(day => {
                           const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                           const isToday = day === now.getDate();
                           const hasEvent = anniversaries.some((a: any) => a.date === dateStr);
+                          
                           return (
                               <div key={day} className="flex flex-col items-center justify-center h-8 relative">
                                   <div
-                                    className={`w-8 h-8 flex items-center justify-center rounded-full text-sm font-medium ${isToday ? (acnh ? 'text-white font-bold' : 'bg-white text-black font-bold shadow-lg') : 'opacity-80'}`}
-                                    style={isToday ? (acnh ? { background: '#19c8b9' } : {}) : { color: contentColor }}
+                                    className={`w-8 h-8 flex items-center justify-center rounded-full text-sm font-medium ${isToday ? (acnh ? 'text-white font-bold' : paper ? 'text-white font-bold' : 'bg-white text-black font-bold shadow-lg') : 'opacity-80'}`}
+                                    style={isToday ? (acnh ? { background: '#19c8b9' } : paper ? { background: '#788369', boxShadow: '0 4px 10px rgba(91,72,51,0.14)' } : {}) : { color: contentColor }}
                                   >
                                       {day}
                                   </div>
-                                  {hasEvent && <div className="w-1.5 h-1.5 rounded-full absolute bottom-0 shadow-sm border border-black/20" style={{ background: acDot || '#c084fc' }}></div>}
+                                  {hasEvent && <div className="w-1.5 h-1.5 rounded-full absolute bottom-0 shadow-sm border border-black/10" style={{ background: acDot || (paper ? '#a66f52' : '#c084fc') }}></div>}
                               </div>
                           );
                       })}
                   </div>
               </div>
-              <div className={`rounded-3xl p-5 flex flex-col flex-1 min-h-[200px] ${acnh ? 'shadow-sm' : 'bg-white/10 backdrop-blur-2xl border border-white/20 shadow-2xl'}`} style={acCard}>
+
+              <div className={`rounded-3xl p-5 flex flex-col flex-1 min-h-[200px] ${acnh ? 'shadow-sm' : paper ? '' : 'bg-white/25 border border-white/25 shadow-xl'}`} style={paper ? { background: 'rgba(224,221,215,0.36)', border: '1px solid rgba(91,72,51,0.07)', boxShadow: '0 5px 16px rgba(91,72,51,0.05)' } : acCard}>
                   <div className="flex items-center justify-between mb-4">
                       <h3 className="text-xs font-bold opacity-60 uppercase tracking-widest flex items-center gap-2" style={{ color: contentColor }}>
-                          <span className="w-2 h-2 rounded-full" style={{ background: acDot || '#c084fc' }}></span> Upcoming Events
+                          <span className="w-2 h-2 rounded-full" style={{ background: acDot || (paper ? '#a66f52' : '#c084fc') }}></span> Upcoming Events
                       </h3>
                       {eventPageCount > 1 && (
                           <div className="flex items-center gap-2 shrink-0" style={{ color: contentColor }}>
                               <button
                                   onClick={(e) => { e.stopPropagation(); setEventPage(p => Math.max(0, p - 1)); }}
                                   disabled={eventPage === 0}
-                                  className="w-6 h-6 rounded-full bg-white/15 flex items-center justify-center disabled:opacity-25 hover:bg-white/30 transition-colors active:scale-90"
+                                  className={`w-6 h-6 rounded-full flex items-center justify-center disabled:opacity-25 transition-colors active:scale-90 ${paper ? 'bg-[#788369]/10 hover:bg-[#788369]/20' : 'bg-white/15 hover:bg-white/30'}`}
                                   aria-label="Previous events"
                               >
                                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" /></svg>
@@ -453,7 +433,7 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, characte
                               <button
                                   onClick={(e) => { e.stopPropagation(); setEventPage(p => Math.min(eventPageCount - 1, p + 1)); }}
                                   disabled={eventPage >= eventPageCount - 1}
-                                  className="w-6 h-6 rounded-full bg-white/15 flex items-center justify-center disabled:opacity-25 hover:bg-white/30 transition-colors active:scale-90"
+                                  className={`w-6 h-6 rounded-full flex items-center justify-center disabled:opacity-25 transition-colors active:scale-90 ${paper ? 'bg-[#788369]/10 hover:bg-[#788369]/20' : 'bg-white/15 hover:bg-white/30'}`}
                                   aria-label="Next events"
                               >
                                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg>
@@ -463,8 +443,8 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, characte
                   </div>
                   <div className="space-y-3">
                       {upcomingEvents.length > 0 ? pagedEvents.map((anni: any) => (
-                          <div key={anni.id} className={`flex items-center gap-3 p-3 rounded-xl ${acnh ? 'bg-[#efe7d4] border border-[#e0d6c0]' : 'bg-white/5 border border-white/10'}`}>
-                              <div className={`w-10 h-10 shrink-0 rounded-lg flex flex-col items-center justify-center ${acnh ? 'bg-[#82D5BB] text-white border border-[#6cc0a6]' : 'bg-purple-500/20 text-purple-200 border border-purple-500/30'}`}>
+                          <div key={anni.id} className={`flex items-center gap-3 p-3 rounded-xl ${acnh ? 'bg-[#efe7d4] border border-[#e0d6c0]' : paper ? 'bg-[#f3ecdf]/70 border border-[#5b4833]/10' : 'bg-white/5 border border-white/10'}`}>
+                              <div className={`w-10 h-10 shrink-0 rounded-lg flex flex-col items-center justify-center ${acnh ? 'bg-[#82D5BB] text-white border border-[#6cc0a6]' : paper ? 'bg-[#a66f52]/12 text-[#8c5d46] border border-[#a66f52]/15' : 'bg-purple-500/20 text-purple-200 border border-purple-500/30'}`}>
                                   <span className="text-[9px] opacity-70">{anni.date.split('-')[1]}</span>
                                   <span className="text-sm font-bold leading-none">{anni.date.split('-')[2]}</span>
                               </div>
@@ -488,7 +468,8 @@ let _lastPageIndex = 0;
 // --- Main Launcher ---
 
 const Launcher: React.FC = () => {
-  const { openApp, characters, activeCharacterId, theme, lastMsgTimestamp, isDataLoaded, unreadMessages, appOrder, setAppOrder } = useOS();
+  const { openApp, characters, activeCharacterId, theme, updateTheme, lastMsgTimestamp, isDataLoaded, unreadMessages } = useOS();
+  const localDateKey = useLocalDateKey();
 
   // Local state for widget data to prevent context trashing
   const [widgetChar, setWidgetChar] = useState<CharacterProfile | null>(null);
@@ -497,182 +478,116 @@ const Launcher: React.FC = () => {
   const [scheduleData, setScheduleData] = useState<DailySchedule | null>(null);
   const [scheduleCharId, setScheduleCharId] = useState<string | null>(null);
   const [scheduleViewerOpen, setScheduleViewerOpen] = useState(false);
+  const [layoutEditing, setLayoutEditing] = useState(false);
+  const layoutPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const layoutPointer = useRef<{
+      pointerId: number;
+      key: string;
+      kind: string;
+      x: number;
+      y: number;
+      active: boolean;
+      element: HTMLElement;
+      ghost?: HTMLElement;
+      grabOffsetX?: number;
+      grabOffsetY?: number;
+      lastTarget?: string;
+      targetElement?: HTMLElement;
+  } | null>(null);
+  const suppressLayoutClickUntil = useRef(0);
+  const layoutPageTurnTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const layoutPageTurnDirection = useRef<-1 | 0 | 1>(0);
 
   const [activePageIndex, setActivePageIndex] = useState(_lastPageIndex);
+  const activePageIndexRef = useRef(_lastPageIndex);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  // --- Edit Mode ---
-  const [isEditMode, setIsEditMode] = useState(false);
-
-  // --- Ghost Drag State ---
-  interface DragInfo { srcIdx: number; offsetX: number; offsetY: number; }
-  const dragStateRef = useRef<DragInfo | null>(null);
-  const [ghostInfo, setGhostInfo] = useState<{ app: AppConfig; x: number; y: number } | null>(null);
-  const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
-  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
-  const hoverIdxRef = useRef<number | null>(null);
-
-  // Edge-based page flip
-  const edgePageTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastEdgeDir = useRef<'left' | 'right' | null>(null);
-  const activePageIdxRef = useRef(activePageIndex);
-
-  // Mouse drag for page scroll (desktop, non-edit mode)
-  const isPageDragging = useRef(false);
+  // Mouse Drag Logic refs
+  const isDragging = useRef(false);
   const startX = useRef(0);
   const scrollLeftRef = useRef(0);
   const dragMoved = useRef(0);
 
-  // 跟随 DevDebug 可用性：prod 用户在设置页连点 5 下解锁后，CharCreatorDev 立刻出现。
+  // Pagination Logic
+  // 跟随 DevDebug 可用性：prod 用户在设置页连点 5 下解锁后，CharCreatorDev 立刻出现；
+  // 点「关闭」/ 刷新（prod 自动失效）也立刻消失。useMemo deps 没列 devDebugVisible
+  // 会让它锁在 mount 时的初值。
   const [devDebugVisible, setDevDebugVisible] = useState(() => isDevDebugAvailable());
   useEffect(() => subscribeDevDebugAvailability(setDevDebugVisible), []);
-  // App grid (respects user-defined appOrder)；CharCreatorDev 仅开发模式显示
-  const gridApps = useMemo(() => {
-    const dockSet = new Set<string>(DOCK_APPS);
-    const visible = (id: string) => id !== AppID.CharCreatorDev || devDebugVisible;
-    const nonDockOrder = appOrder.filter(id => !dockSet.has(id) && visible(id));
-    const ordered = nonDockOrder
-      .map(id => INSTALLED_APPS.find(a => a.id === id))
-      .filter((a): a is AppConfig => a !== undefined);
-    const orderedSet = new Set(nonDockOrder);
-    const extras = INSTALLED_APPS.filter(a => !dockSet.has(a.id) && !orderedSet.has(a.id) && visible(a.id));
-    return [...ordered, ...extras];
-  }, [appOrder, devDebugVisible]);
+  const availableGridApps = useMemo(() => {
+    return INSTALLED_APPS.filter(app =>
+      !DOCK_APPS.includes(app.id)
+      // 「捏脸·开发」仅在开发模式（右下角开发徽标可见或手动解锁时）显示
+      && (app.id !== AppID.CharCreatorDev || devDebugVisible)
+    );
+  }, [devDebugVisible]);
 
-  const handleReorder = useCallback((srcIdx: number, destIdx: number) => {
-    if (srcIdx === destIdx) return;
-    const newApps = [...gridApps];
-    const [moved] = newApps.splice(srcIdx, 1);
-    newApps.splice(destIdx, 0, moved);
-    setAppOrder(newApps.map(a => a.id));
-  }, [gridApps, setAppOrder]);
-
-  const handleReorderRef = useRef(handleReorder);
-  useEffect(() => { handleReorderRef.current = handleReorder; }, [handleReorder]);
-  useEffect(() => { activePageIdxRef.current = activePageIndex; }, [activePageIndex]);
-
-  // Jump to a page instantly
-  const scrollToPage = useCallback((pageIdx: number, totalPgs: number) => {
-    if (!scrollContainerRef.current) return;
-    const clamped = Math.max(0, Math.min(pageIdx, totalPgs - 1));
-    scrollContainerRef.current.scrollLeft = scrollContainerRef.current.clientWidth * clamped;
-    setActivePageIndex(clamped);
-    _lastPageIndex = clamped;
+  const normalizeOrder = useCallback((saved: string[] | undefined, available: string[]) => {
+      const valid = new Set(available);
+      return [...(saved || []).filter((id, index, all) => valid.has(id) && all.indexOf(id) === index), ...available.filter(id => !(saved || []).includes(id))];
   }, []);
 
-  const clearEdgeTimer = useCallback(() => {
-    if (edgePageTimer.current) { clearTimeout(edgePageTimer.current); edgePageTimer.current = null; }
-    lastEdgeDir.current = null;
-  }, []);
+  const availableGridIds = useMemo(() => availableGridApps.map(app => app.id), [availableGridApps]);
+  const [launcherAppOrder, setLauncherAppOrder] = useState<string[]>(() => normalizeOrder(theme.launcherAppOrder, INSTALLED_APPS.filter(app => !DOCK_APPS.includes(app.id)).map(app => app.id)));
+  const [launcherDockOrder, setLauncherDockOrder] = useState<string[]>(() => normalizeOrder(theme.launcherDockOrder, DOCK_APPS));
+  const [pinwheelOrder, setPinwheelOrder] = useState<Array<'music' | 'appsA' | 'appsB' | 'image'>>(() => {
+      const available = ['music', 'appsA', 'appsB', 'image'] as const;
+      const saved = theme.launcherPinwheelOrder || [];
+      return [...saved.filter((id, index) => available.includes(id) && saved.indexOf(id) === index), ...available.filter(id => !saved.includes(id))];
+  });
+  const launcherAppOrderRef = useRef(launcherAppOrder);
+  const launcherDockOrderRef = useRef(launcherDockOrder);
+  const pinwheelOrderRef = useRef(pinwheelOrder);
 
-  const scheduleEdgeFlip = useCallback((dir: 'left' | 'right', totalPgs: number) => {
-    if (lastEdgeDir.current === dir) return;
-    clearEdgeTimer();
-    lastEdgeDir.current = dir;
-    edgePageTimer.current = setTimeout(() => {
-      const next = activePageIdxRef.current + (dir === 'right' ? 1 : -1);
-      scrollToPage(next, totalPgs);
-      lastEdgeDir.current = null;
-      edgePageTimer.current = null;
-    }, 350);
-  }, [clearEdgeTimer, scrollToPage]);
-
-  const lastPointerPos = useRef({ x: 0, y: 0 });
-
-  const handleIconPointerDown = useCallback((e: React.PointerEvent, globalIdx: number) => {
-    const el = e.currentTarget as HTMLElement;
-    const rect = el.getBoundingClientRect();
-    dragStateRef.current = { srcIdx: globalIdx, offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top };
-    lastPointerPos.current = { x: e.clientX, y: e.clientY };
-    hoverIdxRef.current = globalIdx;
-    setDraggingIdx(globalIdx);
-    setHoverIdx(globalIdx);
-    setGhostInfo({ app: gridApps[globalIdx], x: rect.left, y: rect.top });
-    try { el.setPointerCapture(e.pointerId); } catch {}
-    if (scrollContainerRef.current) {
-      scrollContainerRef.current.style.scrollSnapType = 'none';
-    }
-  }, [gridApps]);
-
-  // Global pointer listeners — active while edit mode is on
   useEffect(() => {
-    if (!isEditMode) return;
-    const getTotalPages = () => {
-      if (!scrollContainerRef.current) return 99;
-      const w = scrollContainerRef.current.clientWidth;
-      return w > 0 ? Math.round(scrollContainerRef.current.scrollWidth / w) : 99;
-    };
-    const findNearestIcon = (px: number, py: number): number | null => {
-      const vw = window.innerWidth; const vh = window.innerHeight;
-      let minDist = Infinity; let nearest: number | null = null;
-      document.querySelectorAll<HTMLElement>('[data-global-idx]').forEach(el => {
-        const r = el.getBoundingClientRect();
-        if (r.right < 0 || r.left > vw || r.bottom < 0 || r.top > vh) return;
-        const dist = Math.hypot(px - (r.left + r.width / 2), py - (r.top + r.height / 2));
-        if (dist < minDist) { minDist = dist; nearest = parseInt(el.dataset.globalIdx!); }
+      setLauncherAppOrder(prev => {
+          const next = normalizeOrder(prev.length ? prev : theme.launcherAppOrder, availableGridIds);
+          launcherAppOrderRef.current = next;
+          return next;
       });
-      return nearest;
-    };
-    const handleMove = (e: PointerEvent) => {
-      if (!dragStateRef.current) return;
-      e.preventDefault();
-      const { offsetX, offsetY } = dragStateRef.current;
-      lastPointerPos.current = { x: e.clientX, y: e.clientY };
-      setGhostInfo(prev => prev ? { ...prev, x: e.clientX - offsetX, y: e.clientY - offsetY } : null);
-      const nearest = findNearestIcon(e.clientX, e.clientY);
-      if (nearest !== null) { hoverIdxRef.current = nearest; setHoverIdx(nearest); }
-      const containerRect = scrollContainerRef.current?.getBoundingClientRect();
-      const EDGE = 110;
-      if (containerRect) {
-        if (e.clientX - containerRect.left < EDGE) scheduleEdgeFlip('left', getTotalPages());
-        else if (containerRect.right - e.clientX < EDGE) scheduleEdgeFlip('right', getTotalPages());
-        else clearEdgeTimer();
-      }
-    };
-    const handleUp = (e: PointerEvent) => {
-      if (dragStateRef.current) {
-        const px = (e.clientX > 0 || e.clientY > 0) ? e.clientX : lastPointerPos.current.x;
-        const py = (e.clientX > 0 || e.clientY > 0) ? e.clientY : lastPointerPos.current.y;
-        const dest = findNearestIcon(px, py) ?? hoverIdxRef.current;
-        const src = dragStateRef.current.srcIdx;
-        if (dest !== null && dest !== src) handleReorderRef.current(src, dest);
-      }
-      dragStateRef.current = null; hoverIdxRef.current = null; lastPointerPos.current = { x: 0, y: 0 };
-      setGhostInfo(null); setDraggingIdx(null); setHoverIdx(null); clearEdgeTimer();
-      if (scrollContainerRef.current) scrollContainerRef.current.style.scrollSnapType = 'x mandatory';
-    };
-    window.addEventListener('pointermove', handleMove, { passive: false });
-    window.addEventListener('pointerup', handleUp);
-    window.addEventListener('pointercancel', handleUp);
-    return () => {
-      window.removeEventListener('pointermove', handleMove);
-      window.removeEventListener('pointerup', handleUp);
-      window.removeEventListener('pointercancel', handleUp);
-      clearEdgeTimer();
-    };
-  }, [isEditMode, scheduleEdgeFlip, clearEdgeTimer]);
+  }, [availableGridIds, normalizeOrder, theme.launcherAppOrder]);
+  useEffect(() => { launcherAppOrderRef.current = launcherAppOrder; }, [launcherAppOrder]);
+  useEffect(() => { launcherDockOrderRef.current = launcherDockOrder; }, [launcherDockOrder]);
+  useEffect(() => { pinwheelOrderRef.current = pinwheelOrder; }, [pinwheelOrder]);
+  useEffect(() => {
+      if (layoutEditing) return;
+      const next = normalizeOrder(theme.launcherDockOrder, DOCK_APPS);
+      launcherDockOrderRef.current = next;
+      setLauncherDockOrder(next);
+  }, [layoutEditing, normalizeOrder, theme.launcherDockOrder]);
+  useEffect(() => {
+      if (layoutEditing) return;
+      const available = ['music', 'appsA', 'appsB', 'image'] as const;
+      const saved = theme.launcherPinwheelOrder || [];
+      const next = [...saved.filter((id, index) => available.includes(id) && saved.indexOf(id) === index), ...available.filter(id => !saved.includes(id))];
+      pinwheelOrderRef.current = next;
+      setPinwheelOrder(next);
+  }, [layoutEditing, theme.launcherPinwheelOrder]);
 
-  const dockAppsConfig = useMemo(() =>
-    DOCK_APPS.map(id => INSTALLED_APPS.find(app => app.id === id)).filter(Boolean) as typeof INSTALLED_APPS,
-    []
-  );
+  const gridApps = useMemo(() => {
+      const byId = new Map(availableGridApps.map(app => [app.id, app]));
+      return launcherAppOrder.map(id => byId.get(id as AppID)).filter(Boolean) as typeof INSTALLED_APPS;
+  }, [availableGridApps, launcherAppOrder]);
 
-  // Page 0: 12 apps (4×3 below clock+widget); page 1: pinwheel with 8; pages 2+: 16 each
-  const PAGE0_COUNT = 12;
-  const PINWHEEL_COUNT = 8;
-  const PAGE_COUNT = 16;
+  const dockAppsConfig = useMemo(() => {
+      const byId = new Map(INSTALLED_APPS.map(app => [app.id, app]));
+      return launcherDockOrder.map(id => byId.get(id as AppID)).filter(Boolean) as typeof INSTALLED_APPS;
+  }, [launcherDockOrder]);
+
+  // Split apps into pages of 8 (4 cols x 2 rows fit comfortably below widget)
+  // Pages: 0 = clock+chat+music+grid (original), 1 = pinwheel, 2 = widget images + grid,
+  //        3+ = plain grid. Pad to at least 3 slots so the pinwheel/widget pages always exist.
+  const APPS_PER_PAGE = 8;
   const appPages = useMemo(() => {
       const pages: typeof INSTALLED_APPS[] = [];
-      pages.push(gridApps.slice(0, PAGE0_COUNT));
-      pages.push(gridApps.slice(PAGE0_COUNT, PAGE0_COUNT + PINWHEEL_COUNT));
-      for (let i = PAGE0_COUNT + PINWHEEL_COUNT; i < gridApps.length; i += PAGE_COUNT) {
-          pages.push(gridApps.slice(i, i + PAGE_COUNT));
+      for (let i = 0; i < gridApps.length; i += APPS_PER_PAGE) {
+          pages.push(gridApps.slice(i, i + APPS_PER_PAGE));
       }
       while (pages.length < 3) pages.push([]);
       return pages;
   }, [gridApps]);
 
-  // Page 1 (pinwheel) uses appPages[1]: split into two 2x2 quads
+  // Page 2 (pinwheel) uses appPages[1]: split into two 2x2 quads
   const page2Apps = appPages[1] || [];
   const page2QuadA = useMemo(() => page2Apps.slice(0, 4), [page2Apps]);
   const page2QuadB = useMemo(() => page2Apps.slice(4, 8), [page2Apps]);
@@ -680,12 +595,7 @@ const Launcher: React.FC = () => {
   // Total pages = App Pages + 1 Widget Page
   const totalPages = appPages.length + 1;
 
-  // pageStartIndex: how many global indices before page i
-  const getPageStart = (pageIdx: number) => {
-    if (pageIdx === 0) return 0;
-    if (pageIdx === 1) return PAGE0_COUNT;
-    return PAGE0_COUNT + PINWHEEL_COUNT + (pageIdx - 2) * PAGE_COUNT;
-  };
+  useEffect(() => { activePageIndexRef.current = activePageIndex; }, [activePageIndex]);
 
   useEffect(() => {
       const loadData = async () => {
@@ -738,9 +648,8 @@ const Launcher: React.FC = () => {
 
   useEffect(() => {
       if (!scheduleChar || !isDataLoaded) return;
-      const today = new Date().toISOString().split('T')[0];
-      DB.getDailySchedule(scheduleChar.id, today).then(s => setScheduleData(s)).catch(() => {});
-  }, [scheduleChar, isDataLoaded]);
+      getLocalDailySchedule(scheduleChar.id).then(s => setScheduleData(s)).catch(() => {});
+  }, [scheduleChar, isDataLoaded, localDateKey]);
 
   // Restore scroll position BEFORE paint to avoid visible flash/slide
   useLayoutEffect(() => {
@@ -760,51 +669,249 @@ const Launcher: React.FC = () => {
           const scrollLeft = scrollContainerRef.current.scrollLeft;
           const index = Math.round(scrollLeft / width);
           setActivePageIndex(index);
+          activePageIndexRef.current = index;
           _lastPageIndex = index; // Persist across remounts
       }
   };
 
-  // --- Mouse Drag Handlers (page scroll, desktop only) ---
+  // --- Mouse Drag Handlers ---
   const handleMouseDown = (e: React.MouseEvent) => {
-      if (!scrollContainerRef.current || isEditMode) return;
-      isPageDragging.current = true;
+      if (!scrollContainerRef.current || layoutEditing) return;
+      isDragging.current = true;
       dragMoved.current = 0;
       startX.current = e.pageX - scrollContainerRef.current.offsetLeft;
       scrollLeftRef.current = scrollContainerRef.current.scrollLeft;
+      
+      // Disable snap and smooth scroll for direct control
       scrollContainerRef.current.style.scrollBehavior = 'auto';
       scrollContainerRef.current.style.scrollSnapType = 'none';
       scrollContainerRef.current.style.cursor = 'grabbing';
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
-      if (!isPageDragging.current || !scrollContainerRef.current) return;
+      if (layoutEditing || !isDragging.current || !scrollContainerRef.current) return;
       e.preventDefault();
       const x = e.pageX - scrollContainerRef.current.offsetLeft;
-      scrollContainerRef.current.scrollLeft = scrollLeftRef.current - (x - startX.current);
-      dragMoved.current = Math.abs(x - (startX.current + scrollContainerRef.current.offsetLeft));
+      const walk = (x - startX.current);
+      scrollContainerRef.current.scrollLeft = scrollLeftRef.current - walk;
+      
+      dragMoved.current = Math.abs(x - (startX.current + scrollContainerRef.current.offsetLeft)); 
   };
 
   const handleMouseUp = () => {
-      if (!isPageDragging.current || !scrollContainerRef.current) return;
-      isPageDragging.current = false;
+      if (!isDragging.current || !scrollContainerRef.current) return;
+      isDragging.current = false;
+      
+      // Restore styles
       scrollContainerRef.current.style.scrollBehavior = 'smooth';
       scrollContainerRef.current.style.scrollSnapType = 'x mandatory';
       scrollContainerRef.current.style.cursor = 'grab';
   };
 
   const handleMouseLeave = () => {
-      if (isPageDragging.current) handleMouseUp();
+      if (isDragging.current) handleMouseUp();
   };
 
   const handleClickCapture = (e: React.MouseEvent) => {
-      if (dragMoved.current > 5) {
+      if (dragMoved.current > 5 || Date.now() < suppressLayoutClickUntil.current) {
           e.stopPropagation();
           e.preventDefault();
       }
   };
 
+  const reorderByTarget = useCallback((kind: string, source: string, target: string) => {
+      if (source === target) return;
+      const reorder = <T extends string>(items: T[]) => {
+          const from = items.indexOf(source as T);
+          const to = items.indexOf(target as T);
+          if (from < 0 || to < 0) return items;
+          const next = [...items];
+          const [moved] = next.splice(from, 1);
+          next.splice(to, 0, moved);
+          return next;
+      };
+      if (kind === 'app') {
+          const next = reorder(launcherAppOrderRef.current);
+          launcherAppOrderRef.current = next;
+          setLauncherAppOrder(next);
+      } else if (kind === 'dock') {
+          const next = reorder(launcherDockOrderRef.current);
+          launcherDockOrderRef.current = next;
+          setLauncherDockOrder(next);
+      } else if (kind === 'widget') {
+          const next = reorder(pinwheelOrderRef.current) as Array<'music' | 'appsA' | 'appsB' | 'image'>;
+          pinwheelOrderRef.current = next;
+          setPinwheelOrder(next);
+      }
+  }, []);
+
+  const clearLayoutPressTimer = useCallback(() => {
+      if (layoutPressTimer.current) clearTimeout(layoutPressTimer.current);
+      layoutPressTimer.current = null;
+  }, []);
+
+  const clearLayoutPageTurn = useCallback(() => {
+      if (layoutPageTurnTimer.current) clearTimeout(layoutPageTurnTimer.current);
+      layoutPageTurnTimer.current = null;
+      layoutPageTurnDirection.current = 0;
+  }, []);
+
+  const activateLayoutDrag = useCallback((pointer: NonNullable<typeof layoutPointer.current>) => {
+      if (pointer.ghost) return;
+      const rect = pointer.element.getBoundingClientRect();
+      const ghost = pointer.element.cloneNode(true) as HTMLElement;
+      ghost.removeAttribute('data-launcher-item');
+      ghost.removeAttribute('data-launcher-kind');
+      ghost.classList.remove('launcher-edit-item', 'launcher-drop-target');
+      ghost.classList.add('launcher-drag-ghost');
+      Object.assign(ghost.style, {
+          position: 'fixed',
+          left: `${rect.left}px`,
+          top: `${rect.top}px`,
+          width: `${rect.width}px`,
+          height: `${rect.height}px`,
+          margin: '0',
+          pointerEvents: 'none',
+          zIndex: '9999',
+          transform: 'scale(1.055)',
+          transformOrigin: 'center',
+          transition: 'none',
+      });
+      document.body.appendChild(ghost);
+      pointer.ghost = ghost;
+      pointer.grabOffsetX = pointer.x - rect.left;
+      pointer.grabOffsetY = pointer.y - rect.top;
+      pointer.element.classList.add('launcher-dragging');
+      pointer.element.style.pointerEvents = 'none';
+  }, []);
+
+  const queueLayoutPageTurn = useCallback((direction: -1 | 1) => {
+      if (layoutPageTurnDirection.current === direction && layoutPageTurnTimer.current) return;
+      clearLayoutPageTurn();
+      layoutPageTurnDirection.current = direction;
+      const turn = () => {
+          const pointer = layoutPointer.current;
+          const scroller = scrollContainerRef.current;
+          if (!pointer?.active || pointer.kind !== 'app' || !scroller || layoutPageTurnDirection.current !== direction) {
+              clearLayoutPageTurn();
+              return;
+          }
+          const maxAppPage = Math.max(0, appPages.length - 1);
+          const nextPage = Math.max(0, Math.min(maxAppPage, activePageIndexRef.current + direction));
+          if (nextPage === activePageIndexRef.current) {
+              clearLayoutPageTurn();
+              return;
+          }
+          pointer.targetElement?.classList.remove('launcher-drop-target');
+          pointer.targetElement = undefined;
+          pointer.lastTarget = undefined;
+          activePageIndexRef.current = nextPage;
+          setActivePageIndex(nextPage);
+          _lastPageIndex = nextPage;
+          scroller.scrollTo({ left: scroller.clientWidth * nextPage, behavior: 'smooth' });
+          layoutPageTurnTimer.current = setTimeout(turn, 760);
+      };
+      layoutPageTurnTimer.current = setTimeout(turn, 560);
+  }, [appPages.length, clearLayoutPageTurn]);
+
+  useEffect(() => () => {
+      clearLayoutPressTimer();
+      clearLayoutPageTurn();
+      layoutPointer.current?.ghost?.remove();
+  }, [clearLayoutPageTurn, clearLayoutPressTimer]);
+
+  const handleLayoutPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      const launcherRoot = e.currentTarget;
+      const item = (e.target as HTMLElement).closest<HTMLElement>('[data-launcher-item]');
+      if (!item) return;
+      const key = item.dataset.launcherItem;
+      const kind = item.dataset.launcherKind;
+      if (!key || !kind) return;
+      clearLayoutPressTimer();
+      layoutPointer.current = { pointerId: e.pointerId, key, kind, x: e.clientX, y: e.clientY, active: layoutEditing, element: item };
+      if (layoutEditing) {
+          activateLayoutDrag(layoutPointer.current);
+          launcherRoot.setPointerCapture(e.pointerId);
+          e.preventDefault();
+          return;
+      }
+      layoutPressTimer.current = setTimeout(() => {
+          if (!layoutPointer.current || layoutPointer.current.pointerId !== e.pointerId) return;
+          layoutPointer.current.active = true;
+          activateLayoutDrag(layoutPointer.current);
+          launcherRoot.setPointerCapture(e.pointerId);
+          isDragging.current = false;
+          suppressLayoutClickUntil.current = Date.now() + 700;
+          setLayoutEditing(true);
+      }, 520);
+  };
+
+  const handleLayoutPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+      const pointer = layoutPointer.current;
+      if (!pointer || pointer.pointerId !== e.pointerId) return;
+      if (!pointer.active) {
+          if (Math.hypot(e.clientX - pointer.x, e.clientY - pointer.y) > 9) {
+              clearLayoutPressTimer();
+              layoutPointer.current = null;
+          }
+          return;
+      }
+      e.preventDefault();
+      if (pointer.ghost) {
+          pointer.ghost.style.left = `${e.clientX - (pointer.grabOffsetX || 0)}px`;
+          pointer.ghost.style.top = `${e.clientY - (pointer.grabOffsetY || 0)}px`;
+      }
+      const rootRect = e.currentTarget.getBoundingClientRect();
+      if (pointer.kind === 'app' && e.clientX <= rootRect.left + 72) queueLayoutPageTurn(-1);
+      else if (pointer.kind === 'app' && e.clientX >= rootRect.right - 72) queueLayoutPageTurn(1);
+      else clearLayoutPageTurn();
+      const target = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>('[data-launcher-item]');
+      const targetKey = target?.dataset.launcherItem;
+      const targetKind = target?.dataset.launcherKind;
+      const validTarget = !!targetKey && targetKind === pointer.kind && targetKey !== pointer.key;
+      if (!validTarget) {
+          pointer.targetElement?.classList.remove('launcher-drop-target');
+          pointer.targetElement = undefined;
+          pointer.lastTarget = undefined;
+          return;
+      }
+      if (target === pointer.targetElement) return;
+      pointer.targetElement?.classList.remove('launcher-drop-target');
+      target?.classList.add('launcher-drop-target');
+      pointer.targetElement = target;
+      pointer.lastTarget = targetKey;
+  };
+
+  const finishLayoutPointer = (e?: React.PointerEvent<HTMLDivElement>) => {
+      const pointer = layoutPointer.current;
+      if (e && pointer && pointer.pointerId !== e.pointerId) return;
+      clearLayoutPressTimer();
+      clearLayoutPageTurn();
+      if (pointer?.active) {
+          suppressLayoutClickUntil.current = Date.now() + 500;
+          pointer.element.style.pointerEvents = '';
+          pointer.element.classList.remove('launcher-dragging');
+          pointer.ghost?.remove();
+          pointer.targetElement?.classList.remove('launcher-drop-target');
+          if (pointer.lastTarget) reorderByTarget(pointer.kind, pointer.key, pointer.lastTarget);
+          void updateTheme({
+              launcherAppOrder: launcherAppOrderRef.current,
+              launcherDockOrder: launcherDockOrderRef.current,
+              launcherPinwheelOrder: pinwheelOrderRef.current,
+          });
+      }
+      layoutPointer.current = null;
+  };
+
+  const finishLayoutEditing = () => {
+      finishLayoutPointer();
+      setLayoutEditing(false);
+  };
+
   const contentColor = theme.contentColor || '#ffffff';
   const acnh = theme.skin === 'animalcrossing'; // 动森彩蛋：Dock 换奶油木质底
+  const paper = theme.skin !== 'animalcrossing' && theme.skin !== 'mobilegame' && theme.skin !== 'tamagotchi' && isPaperWallpaper(theme.wallpaper);
   // 已迁移 App 外壳已收回到可见 viewport 底边，dock 仅需自留视觉间距，无需再 + safe-bottom
   // （否则会比 home 条上方多让 34px，dock 看起来悬空）。
   const launcherBottomInset = '1.25rem';
@@ -823,14 +930,55 @@ const Launcher: React.FC = () => {
   }
 
   return (
-    <div className="h-full w-full flex flex-col relative z-10 overflow-hidden font-sans select-none">
+    <div
+      className="h-full w-full flex flex-col relative z-10 overflow-hidden font-sans select-none"
+      onPointerDown={handleLayoutPointerDown}
+      onPointerMove={handleLayoutPointerMove}
+      onPointerUp={finishLayoutPointer}
+      onPointerCancel={finishLayoutPointer}
+      onContextMenu={(e) => {
+          if ((e.target as HTMLElement).closest('[data-launcher-item]')) e.preventDefault();
+      }}
+    >
+      <style>{`
+        .launcher-edit-item {
+          touch-action: none;
+          cursor: grab;
+          transition: transform 180ms cubic-bezier(.2,.75,.25,1), opacity 150ms ease, filter 150ms ease;
+          will-change: transform;
+        }
+        .launcher-dragging {
+          cursor: grabbing;
+          opacity: .18;
+        }
+        .launcher-drag-ghost {
+          opacity: .96;
+          filter: drop-shadow(0 12px 14px rgba(75,65,54,.18));
+          cursor: grabbing;
+        }
+        .launcher-drop-target {
+          transform: scale(.93);
+          opacity: .52;
+          outline: 1.5px dashed rgba(75,65,54,.36);
+          outline-offset: 5px;
+          border-radius: 1.35rem;
+        }
+      `}</style>
+
+      {layoutEditing && (
+          <div className="absolute top-[calc(var(--safe-top)+0.65rem)] left-4 right-4 z-50 flex items-center justify-between rounded-full px-3 py-2"
+              style={{ background: 'rgba(75,65,54,0.88)', color: '#fffdf8', boxShadow: '0 8px 24px rgba(75,65,54,0.20)' }}>
+              <span className="text-[10px] font-semibold tracking-wide">按住拖动，松手交换位置</span>
+              <button onClick={finishLayoutEditing} className="ml-3 px-3 py-1 rounded-full text-[10px] font-bold bg-white/15 active:scale-95">完成</button>
+          </div>
+      )}
       
       {/* Visual Elements (Decorative Background - Static, low-cost gradients instead of blur) */}
       {/* 动森模式跳过：这层冷蓝光斑会污染奶油底 */}
       {!acnh && (
       <div className="absolute inset-0 pointer-events-none">
-          <div className="absolute -top-20 -right-20 w-80 h-80 rounded-full" style={{ background: 'radial-gradient(circle, rgba(255,255,255,0.05) 0%, transparent 70%)' }}></div>
-          <div className="absolute -bottom-20 -left-20 w-80 h-80 rounded-full" style={{ background: 'radial-gradient(circle, rgba(59,130,246,0.08) 0%, transparent 70%)' }}></div>
+          <div className="absolute -top-20 -right-20 w-80 h-80 rounded-full" style={{ background: paper ? 'radial-gradient(circle, rgba(255,255,255,0.22) 0%, transparent 68%)' : 'radial-gradient(circle, rgba(255,255,255,0.05) 0%, transparent 70%)' }}></div>
+          <div className="absolute -bottom-20 -left-20 w-80 h-80 rounded-full" style={{ background: paper ? 'radial-gradient(circle, rgba(123,104,78,0.06) 0%, transparent 68%)' : 'radial-gradient(circle, rgba(59,130,246,0.08) 0%, transparent 70%)' }}></div>
       </div>
       )}
 
@@ -849,7 +997,7 @@ const Launcher: React.FC = () => {
             scrollBehavior: 'smooth',
             overscrollBehaviorX: 'contain',
             overscrollBehaviorY: 'none',
-            touchAction: 'pan-x pan-y',
+            touchAction: layoutEditing ? 'none' : 'pan-x pan-y',
             willChange: 'scroll-position',
             contain: 'layout paint',
             transform: 'translateZ(0)',
@@ -864,29 +1012,19 @@ const Launcher: React.FC = () => {
                 style={{ contentVisibility: 'auto', contain: 'layout paint', transform: 'translateZ(0)' }}
               >
                   {idx === 0 ? (
-                      // Page 1 (original): Clock + Chat + 4x3 App Grid
+                      // Page 1 (original): Clock + Chat + 4x2 App Grid
                       <>
                         <DesktopClock />
                         <CharacterWidget
                             char={widgetChar}
                             unreadCount={widgetUnread}
                             lastMessage={lastMessage}
-                            onClick={() => (widgetChar ? openApp(AppID.Chat, { messageWidgetCharId: widgetChar.id }) : openApp(AppID.Chat))}
+                            onClick={() => openApp(AppID.Chat)}
                             contentColor={contentColor}
-                            schedule={scheduleData}
+                            paper={paper}
                         />
                         <div className="flex-1">
-                            <AppGridPage
-                                apps={pageApps}
-                                openApp={openApp}
-                                onLongPress={isEditMode ? undefined : () => setIsEditMode(true)}
-                                isEditMode={isEditMode}
-                                pageStartIndex={getPageStart(idx)}
-                                draggingIdx={draggingIdx}
-                                hoverIdx={hoverIdx}
-                                onIconPointerDown={handleIconPointerDown}
-                                acnh={acnh}
-                            />
+                            <AppGridPage apps={pageApps} openApp={openApp} acnh={acnh} editing={layoutEditing} />
                         </div>
                       </>
                   ) : idx === 1 ? (
@@ -899,26 +1037,33 @@ const Launcher: React.FC = () => {
                                   contentColor={contentColor}
                                   onOpen={() => setScheduleViewerOpen(true)}
                                   acnh={acnh}
+                                  paper={paper}
                               />
                           )}
                           <div className="grid grid-cols-2 gap-x-3 gap-y-5 w-full">
-                              <div className="aspect-square min-w-0">
-                                  <NowPlayingSquareWidget contentColor={contentColor} />
-                              </div>
-                              <div className="aspect-square min-w-0">
-                                  <AppQuadGrid apps={page2QuadA} openApp={openApp} />
-                              </div>
-                              <div className="aspect-square min-w-0">
-                                  <AppQuadGrid apps={page2QuadB} openApp={openApp} />
-                              </div>
-                              <div className="aspect-square min-w-0">
-                                  <DesktopSquareImage
-                                      image={theme.launcherWidgets?.['dsq']}
-                                      contentColor={contentColor}
-                                      onClick={() => openApp(AppID.Appearance)}
-                                      acnh={acnh}
-                                  />
-                              </div>
+                              {pinwheelOrder.map(cell => (
+                                  <div
+                                      key={cell}
+                                      data-launcher-item={cell}
+                                      data-launcher-kind="widget"
+                                      className={`aspect-square min-w-0 ${layoutEditing ? 'launcher-edit-item' : ''}`}
+                                  >
+                                      {cell === 'music' ? (
+                                          <NowPlayingSquareWidget contentColor={contentColor} />
+                                      ) : cell === 'appsA' ? (
+                                          <AppQuadGrid apps={page2QuadA} openApp={openApp} editing={layoutEditing} />
+                                      ) : cell === 'appsB' ? (
+                                          <AppQuadGrid apps={page2QuadB} openApp={openApp} editing={layoutEditing} />
+                                      ) : (
+                                          <DesktopSquareImage
+                                              image={theme.launcherWidgets?.['dsq']}
+                                              contentColor={contentColor}
+                                              onClick={() => { if (!layoutEditing) openApp(AppID.Appearance); }}
+                                              acnh={acnh}
+                                          />
+                                      )}
+                                  </div>
+                              ))}
                           </div>
                       </div>
                   ) : (
@@ -978,13 +1123,8 @@ const Launcher: React.FC = () => {
                           <AppGridPage
                                 apps={pageApps}
                                 openApp={openApp}
-                                onLongPress={isEditMode ? undefined : () => setIsEditMode(true)}
-                                isEditMode={isEditMode}
-                                pageStartIndex={getPageStart(idx)}
-                                draggingIdx={draggingIdx}
-                                hoverIdx={hoverIdx}
-                                onIconPointerDown={handleIconPointerDown}
                                 acnh={acnh}
+                                editing={layoutEditing}
                           />
                           <div className="flex-1"></div>
                       </div>
@@ -999,41 +1139,10 @@ const Launcher: React.FC = () => {
             anniversaries={anniversaries}
             characters={characters}
             acnh={acnh}
+            paper={paper}
           />
 
       </div>
-
-      {/* Ghost element — follows pointer during drag */}
-      {ghostInfo && (
-        <div
-          className="fixed pointer-events-none z-[200]"
-          style={{
-            left: ghostInfo.x,
-            top: ghostInfo.y,
-            transform: 'scale(1.2)',
-            filter: 'drop-shadow(0 10px 24px rgba(0,0,0,0.55))',
-            opacity: 0.92,
-            transition: 'none',
-          }}
-        >
-          <AppIcon app={ghostInfo.app} onClick={() => {}} />
-        </div>
-      )}
-
-      {/* Edit mode: floating top bar */}
-      {isEditMode && (
-        <div className="absolute top-0 left-0 right-0 z-40 flex items-center justify-between px-6 pt-12 pb-2 pointer-events-none">
-          <div className="text-white/50 text-[10px] font-semibold tracking-widest uppercase bg-black/20 backdrop-blur-sm px-2 py-1 rounded-full">
-            {ghostInfo ? '松手放置' : '长按图标拖动'}
-          </div>
-          <button
-            className="pointer-events-auto px-4 py-1.5 bg-white/25 rounded-full text-white text-sm font-semibold border border-white/30 backdrop-blur-sm active:scale-95 transition-transform"
-            onClick={() => { setIsEditMode(false); setGhostInfo(null); setDraggingIdx(null); setHoverIdx(null); }}
-          >
-            完成
-          </button>
-        </div>
-      )}
 
       {/* Page Indicators */}
       <div
@@ -1055,12 +1164,16 @@ const Launcher: React.FC = () => {
            style={{ paddingBottom: launcherBottomInset }}
       >
            <div
-             className={`rounded-[1.75rem] px-4 py-3 flex gap-3 sm:gap-6 items-center mx-auto max-w-full justify-between overflow-x-auto no-scrollbar transform-gpu ${acnh ? '' : 'bg-white/30 border border-white/25 shadow-[0_8px_40px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.08)]'}`}
-             style={acnh ? { background: 'transparent' } : undefined}
+             className={`rounded-[1.75rem] px-4 py-3 flex gap-3 sm:gap-6 items-center mx-auto max-w-full justify-between overflow-x-auto no-scrollbar transform-gpu ${acnh || paper ? '' : 'bg-white/30 border border-white/25 shadow-[0_8px_40px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.08)]'}`}
+             style={acnh ? { background: 'transparent' } : paper ? {
+               background: 'rgba(224,221,215,0.42)',
+               border: '1px solid rgba(91,72,51,0.07)',
+               boxShadow: '0 6px 18px rgba(91,72,51,0.065)',
+             } : undefined}
            >
                {dockAppsConfig.map(app => (
-                   <div key={app.id} className="relative">
-                        <AppIcon app={app} onClick={() => openApp(app.id)} variant="dock" size="md" />
+                   <div key={app.id} data-launcher-item={app.id} data-launcher-kind="dock" className={`relative ${layoutEditing ? 'launcher-edit-item' : ''}`}>
+                        <AppIcon app={app} onClick={() => { if (!layoutEditing) openApp(app.id); }} variant="dock" size="md" />
                         {app.id === 'chat' && totalUnread > 0 && (
                             <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-white text-[9px] flex items-center justify-center border-2 border-white/20 shadow-sm font-bold pointer-events-none animate-pop-in">
                                 {totalUnread > 9 ? '9+' : totalUnread}

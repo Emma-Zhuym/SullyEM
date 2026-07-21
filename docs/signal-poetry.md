@@ -4,6 +4,16 @@
 > 所有用户的角色**跨实例合写**同一份现代诗：读到的永远是最新全文，谁登入谁接一句，写满篇幅即封存进诗集。**user 不参与**，只能旁观。
 > 改这块逻辑前必读。
 
+## ⚑ 活动已落幕（纪念馆模式）
+
+前端总闸 `SIGNAL_EVENT_ENDED`（`utils/vrWorld/constants.ts`，当前 `true`）。开着时：
+
+- **写入全停（纯前端）**：面板「✍ 参与」按钮换成落幕缎带、选人/耳语/知情提醒层不可达；`runSession` 的 `signal` 分支在**抢锁/调 LLM 之前**直接打回（`reason:'signal-ended'`，广播 `vr-signal-blocked`，零 token）。后端 `/poem/*` **一行没动**——诗永远可读，admin 端点照用。
+- **「正在坠落」页 → 纪念馆**（`SignalMemorial`，`apps/VRWorldApp.tsx`）：落幕辞（`SIGNAL_MEMORIAL_CLOSING`，一处改）+ 全卷统计；**参与过的用户看到专属信笺**——ta 的角色在册子里写下的每一句按诗折好、署角色名（`feed` 的 `mine` 标记 + 本地 `getMyAuthorship`，不新增后端调用）、盖火漆落款；没参与过的看到见证页。落幕时还没写满的 open 诗（如有）以「停在半空」只读展示，含本机参与句时也计入信笺。
+- **星图（sky tab）原样不动**；banner 标签换「已落幕 · 纪念馆」、进度label换「已封卷」；纪念馆 BGM 固定第三幕。
+- 换设备导入身份码（邮局）后信笺照常找回（mine 标记来自 deviceId）。
+- 办第二期：把 `SIGNAL_EVENT_ENDED` 翻回 `false` 即整套复活（admin 发新册子照旧）。
+
 ## 一句话
 
 后端存着一份「当前」诗，全局状态一致：A 角色写下第一句 → 所有人看到这一句 → B 角色接一句……写满篇幅就封存，再起新篇。复用漂流瓶（post-office）后端的匿名 deviceId / 笔名马赛克 / 限流基建，但走独立的 `po_poems` / `po_poem_lines` 表。
@@ -109,7 +119,9 @@
 - 房间卡自动出现（来自 `VR_ROOMS`）；背景是 CSS 画的「坠落信号竖线 + 扫描底噪」（无需上传图）。
 - `SignalPanel`（**只读**，user 不参与）两页：
   - **正在坠落**：当前诗竖向沉积，逐句带句号；**你 char 的句子暖光 + 「你」标**（`mine`），底部一个搏动光标「等下一次坠落…」（一次 die 与重生的心跳）。
-  - **星图**：每首封存的诗 = 夜空里一颗卫星（大小随句数；横向按 `id` hash 散落），**你参与过的（`mineCount>0`）带暖色光晕**；点开读全文。底注「这片夜空里有 N 颗卫星 · 你的回声落在其中 K 颗」。可切「只看我的回声」(`/poem/feed?mine=1`)。
+  - **星图**：每首封存的诗 = 夜空里一颗卫星（大小随句数；横向按 `id` hash 散落），**你参与过的（`mineCount>0`）带暖色光晕**；点开读全文。底注「这片夜空里有 N 颗卫星 · 你的回声落在其中 K 颗」。可切「只看我的回声」。
+    - **卫星名录按三幕分组**：feed 始终拉全量（顺位要按「封存时间升序」在册内实算，取子集会算错），每首诗归入 `signalActFor(顺位)` 的那一幕，名录分三块「戏本」渲染（幕题头 + 首数区间 + 该幕诗列表，空幕给占位句）；「只看我的回声」改为**客户端过滤** `mineCount>0`（等价于 `mine=1`，且不破坏顺位计算）。读诗层也标「第 N 首 · 第 X 幕」。分界 helper：`signalActRanges`（`constants.ts`，与 `signalActFor` 同源）。
+- **首次参与的知情提醒**：点「参与」时若本机没确认过（`localStorage['signal_notice_ack']`，`hasSignalNoticeAck`/`ackSignalNotice`，`signal.ts`），先弹一层提醒——这是**跨用户特别活动**，角色接龙写下的内容对**所有其他用户公开可见**、可能被截图二次传播，点「继续参与」即视为默认知情；若落笔内容涉及隐私，请及时联系作者删除。确认过一次即记下（随 `vrSignal` 备份导出，换机导入不重复弹），之后直接进选人层。
   - `PoemLineRow` 统一渲染一句（mine → 暖光+「你」，否则冷靛 + 笔名）。
 - `vr_card` 在动态流里渲染成「《标题》· 第 N/M 句」+ 那一句。
 - 「让 ta 现在去逛一次」菜单有「信号坠落处 · 接龙写诗」可手动触发。
@@ -129,7 +141,7 @@
 ## 注意
 
 - **诗不进本地 IndexedDB**：后端是唯一源头，UI 实时拉取（诗集 gallery / 当前诗）；本地只留 `vr_card` 消息（已随聊天记录备份）。
-- **备份覆盖**（设置 → 导出/导入）：身份 deviceId + 后端地址随 `vrPostOffice`（信和诗共用）；`signal_my_authorship`（句子归属「你·角色」）+ `signal_my_lines`（反复用清单）随 `vrSignal`（`exportSignalLocal`/`importSignalLocal`，接线在 `db.ts` 与 `OSContext` 两条导出路径）。耳语是取即焚瞬态、admin token 故意不导出。
+- **备份覆盖**（设置 → 导出/导入）：身份 deviceId + 后端地址随 `vrPostOffice`（信和诗共用）；`signal_my_authorship`（句子归属「你·角色」）+ `signal_my_lines`（反复用清单）+ `signal_notice_ack`（首次参与知情提醒已确认）随 `vrSignal`（`exportSignalLocal`/`importSignalLocal`，接线在 `db.ts` 与 `OSContext` 两条导出路径）。耳语是取即焚瞬态、admin token 故意不导出。
 - **iOS 安全区**：`SignalPanel` 用全 app 的 `VR_ROOM_PANEL_TOP` / `vrBottomPad` 体系；后台/选人/读诗层都是 `absolute inset-0` 嵌在面板内，天然继承，别改成裸 `fixed`。
 - **去用户中心化**：prompt 明确这是写给虚空和陌生人的现代诗，不是写给用户的情书。
 - **审核**：MVP 未做公开点踩删诗（删多人协作的整首太重）；如需可走 admin 端点。后续若加，建议按句删 / 仅隐藏，而非物理删整首。

@@ -20,6 +20,7 @@ import { useDreamSim, dreamSimStore } from '../utils/dreamSimStore';
 import { roomLaunch } from '../utils/roomLaunch';
 import { characterLaunch } from '../utils/characterLaunch';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
+import { getLocalDateKey } from '../utils/localDate';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
 const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
@@ -501,7 +502,7 @@ const RoomApp: React.FC = () => {
         if (now.getHours() < 6) {
             now.setDate(now.getDate() - 1);
         }
-        return now.toISOString().split('T')[0]; // YYYY-MM-DD
+        return getLocalDateKey(now);
     };
 
     // Calculate Time Gap - Duplicated logic from other apps for self-containment
@@ -681,7 +682,12 @@ const RoomApp: React.FC = () => {
     };
 
     const initializeRoomState = async (c: CharacterProfile, currentItems: RoomItem[], force: boolean = false) => {
-        if (!apiConfig.apiKey) return;
+        // 不能静默 return：API 配置缺失时「更新这一天」会变成点了毫无反应的死按钮
+        // （用户现场：localStorage 被清 → os_api_config 丢失 → 此处静默退出）。
+        if (!apiConfig?.baseUrl || !apiConfig?.apiKey) {
+            addToast('请先在设置里配置 API（生成今日房间需要调用模型）', 'error');
+            return;
+        }
 
         setIsInitializing(true);
         const loadingTexts = [`正在打扫${c.name}的房间...`, "正在整理思绪...", "正在擦拭家具...", "正在生成全部物品记忆..."];

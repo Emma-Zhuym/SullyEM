@@ -16,6 +16,8 @@ import { processImageToBlob } from '../../utils/file';
 import { FURNITURE_ICONS } from '../../utils/furnitureIcons';
 import { isDevDebugAvailable, subscribeDevDebugAvailability } from '../../utils/devDebug';
 import { SCHEMES, hsl, schemePreview, type TgStyle } from './gotchiScheme';
+import { getLocalDailySchedule } from '../../utils/dailySchedule';
+import { useLocalDateKey } from '../../hooks/useLocalDateKey';
 
 // ===== 电子宠物主题（tamagotchi skin）=====
 // 桌面不再是「放图标的手机」，而是一台华丽丽的二次元养成机：屏幕主体是角色
@@ -851,6 +853,7 @@ const findCurrentSlot = (schedule: DailySchedule | null): { cur: ScheduleSlot | 
 // ─── 主组件 ───────────────────────────────────────────────────
 const TamagotchiHome: React.FC = () => {
     const { openApp, characters, activeCharacterId, setActiveCharacterId, virtualTime, unreadMessages, isDataLoaded, lastMsgTimestamp, addToast, userProfile, apiConfig } = useOS();
+    const localDateKey = useLocalDateKey();
     const char: CharacterProfile | null = useMemo(
         () => characters.find(c => c.id === activeCharacterId) || characters[0] || null,
         [characters, activeCharacterId]
@@ -989,9 +992,8 @@ const TamagotchiHome: React.FC = () => {
     // 今日日程：换角色 / 有新消息（聊天会触发生成）时刷一次
     useEffect(() => {
         if (!char) { setSchedule(null); return; }
-        const today = new Date().toISOString().split('T')[0];
-        DB.getDailySchedule(char.id, today).then(s => setSchedule(s || null)).catch(() => setSchedule(null));
-    }, [char?.id, lastMsgTimestamp]);
+        getLocalDailySchedule(char.id).then(s => setSchedule(s || null)).catch(() => setSchedule(null));
+    }, [char?.id, lastMsgTimestamp, localDateKey]);
 
     // 一句心声：innerState（情绪评估落的）→ 日程意识流 → 占位
     useEffect(() => {
@@ -1001,9 +1003,8 @@ const TamagotchiHome: React.FC = () => {
         setHeartLine(inner || flow || '新的一天。');
     }, [char?.id, lastMsgTimestamp, schedule]);
 
-    // 家具就地交互：小屋 App 同款（读 savedRoomState.items 的缓存反应，零 LLM 调用），
-    // 走过去 + 念一句 + 观察旁白；这段互动照样落一条系统消息进聊天（带最近 50 条去重），
-    // 让角色记得「刚才一起看过这件东西」。
+    // 桌面小屋只做本地展示交互：走过去 + 念一句 + 观察旁白。
+    // 只有真正进入 RoomApp 后发生的家具互动才写入私聊上下文。
     const onItemTap = useCallback((item: RoomItem) => {
         if (!char) return;
         const saved = (char.savedRoomState?.items || {}) as Record<string, { description?: string; reaction?: string }>;
@@ -1013,13 +1014,6 @@ const TamagotchiHome: React.FC = () => {
         setNudge(p => ({ x: item.x, y: Math.min(92, Math.max(FLOOR_HORIZON + 5, item.y + 5)), seq: p.seq + 1 }));
         setSay(p => ({ text: reaction.length > 64 ? reaction.slice(0, 64) + '…' : reaction, seq: p.seq + 1 }));
         setObservation(desc);
-        if (cached?.description) {
-            const content = `[${char.name}的小屋]（在主屏幕看了看${item.name}）${desc}。${char.name}表示：${cached.reaction || ''}`;
-            DB.getMessagesByCharId(char.id).then(msgs => {
-                const dup = msgs.slice(-50).some(m => m.role === 'system' && m.content === content);
-                if (!dup) DB.saveMessage({ charId: char.id, role: 'system', type: 'text', content }).catch(() => {});
-            }).catch(() => {});
-        }
     }, [char]);
 
     // 小屋数据：优先角色 roomConfig，兜底镜像样板房（见文件头注释）

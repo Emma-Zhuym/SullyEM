@@ -15,6 +15,7 @@ import {
     writeDevDebugFlags,
 } from '../utils/devDebug';
 import { BUILD_LABEL } from '../utils/buildInfo';
+import { resetLoyalRecruitmentForTesting } from '../utils/loyalUserRecruitment';
 import type { DevDebugCaptureCategory, DevDebugFlags, DevDebugFloatingPosition } from '../utils/devDebug';
 
 const FLOATING_BUTTON_SIZE = 44;
@@ -197,6 +198,7 @@ const DevDebugPanel: React.FC = () => {
     const activeCount = useMemo(
         () => (flags.skipPromptBuild ? 1 : 0)
             + (flags.skipEmotionEval ? 1 : 0)
+            + (flags.mergeSystemMessages ? 1 : 0)
             // 「在录」= 总开关开 且 至少勾了一类——否则浮球红点会骗人「在录」其实 isCaptureEnabled
             // 任何类别都返 false。
             + (flags.captureEnabled && flags.captureLogs.length > 0 ? 1 : 0)
@@ -235,6 +237,11 @@ const DevDebugPanel: React.FC = () => {
         setOpen(false);
         setFloatingPosition(getDefaultFloatingPosition());
         closeDevDebug();
+    };
+    const resetRecruitment = () => {
+        if (!window.confirm('清除本机的社区迁移检测结果并刷新？仅用于测试不同数据集。')) return;
+        resetLoyalRecruitmentForTesting();
+        window.location.reload();
     };
     const copyLog = async () => {
         const text = formatDevDebugLog();
@@ -397,6 +404,13 @@ const DevDebugPanel: React.FC = () => {
                             onChange={(checked) => updateFlag('skipEmotionEval', checked)}
                         />
                         <div className="h-px bg-white/10" />
+                        <ToggleRow
+                            title="合并 system 为一条"
+                            detail="排查中转对多条 system 的计量/兼容问题；开着会让前缀缓存失效。"
+                            checked={flags.mergeSystemMessages}
+                            onChange={(checked) => updateFlag('mergeSystemMessages', checked)}
+                        />
+                        <div className="h-px bg-white/10" />
 
                         {/* 记录日志：总开关；打开后才露出 类型 / 记录完整 / 复制 / 下载 一整套 —— 关掉时整段收起。
                             true→false 时清空日志这一步在 writeDevDebugFlags 数据层做，这里走通用 updateFlag。 */}
@@ -450,6 +464,14 @@ const DevDebugPanel: React.FC = () => {
                     </div>
 
                     <div className="flex shrink-0 items-center justify-end gap-2 border-t border-white/10 px-4 py-3">
+                        <button
+                            type="button"
+                            onClick={resetRecruitment}
+                            className="flex h-8 shrink-0 items-center gap-1 rounded-full bg-amber-300/15 px-3 text-[11px] font-bold text-amber-100 active:scale-95"
+                        >
+                            <ArrowsClockwise size={13} weight="bold" />
+                            迁移重测
+                        </button>
                         <button
                             type="button"
                             onClick={handleForceClose}

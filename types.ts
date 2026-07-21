@@ -77,17 +77,27 @@ export interface OSTheme {
   saturation: number;
   lightness: number;
   wallpaper: string;
+  /** 独立锁屏壁纸；未设置时跟随桌面 wallpaper。 */
+  lockWallpaper?: string;
   darkMode: boolean;
   contentColor?: string;
   /** 桌面整体皮肤。'animalcrossing' = 动森风格（NookPhone 彩色圆角图标 + 暖色界面）；
    *  'mobilegame' = 二次元手游首页风格（角色卡 + 等级经验条 + 货币栏 + 网格卡 + 罗盘 dock）；
    *  'tamagotchi' = 电子宠物养成机（桌面即角色的小屋舞台 + 四颗糖果实体键）。默认 'default'。 */
   skin?: 'default' | 'animalcrossing' | 'mobilegame' | 'tamagotchi';
+  /** 默认桌面的视觉版本：纸感是现行默认，nostalgia 是用户主动选择的最初粉绿白玻璃界面。 */
+  desktopVariant?: 'paper' | 'nostalgia';
   /** 动森皮肤下，聊天 App 是否也跟随换成动森界面。默认 true（undefined 视为 true）。关掉则聊天保持原样式。 */
   acnhChatSync?: boolean;
   launcherWidgetImage?: string; // DEPRECATED: always stripped on load — never renders.
   launcherWidgets?: Record<string, string>; // slots: 'tl' | 'tr' | 'wide' | 'dsq' (legacy 'bl' / 'br' are banned)
-  /** 默认皮肤桌面「正在播放」音乐卡片改用浅色系样式（默认 false = 深色玻璃）。 */
+  /** 默认桌面长按编辑后的 App / Dock / 第二页风车组件顺序。 */
+  launcherAppOrder?: string[];
+  launcherDockOrder?: string[];
+  launcherPinwheelOrder?: Array<'music' | 'appsA' | 'appsB' | 'image'>;
+  /** 自定义透明图标是否保留原始轮廓并移除系统圆角底框。默认 false。 */
+  preserveCustomIconOutlines?: boolean;
+  /** 默认皮肤桌面「正在播放」音乐卡片改用浅色系样式（新安装默认 true）。 */
   nowPlayingWidgetLight?: boolean;
   desktopDecorations?: DesktopDecoration[];
   customFont?: string;
@@ -95,7 +105,29 @@ export interface OSTheme {
   // 聊天界面外观（外观 App 的「聊天界面」tab）
   chatAvatarShape?: 'circle' | 'rounded' | 'square';
   chatAvatarSize?: 'small' | 'medium' | 'large';
+  /** 聊天表情包大小三挡：小 96px（默认）/ 中 128px / 大 160px（旧版尺寸）。经 --sully-emoji-size CSS 变量生效 */
+  chatEmojiSize?: 'small' | 'medium' | 'large';
   chatAvatarMode?: 'grouped' | 'every_message';
+  // ── 聊天细节微调（外观 → 聊天细节）。收编自社区白框美化 CSS，全部可选，缺省 = 现状。
+  //    经 utils/chatFineTuneCss.ts 生成 CSS 注入 .sully-chat-root；用户自定义白框 CSS 排在其后可覆盖。
+  /** 头像显示：双侧 / 隐藏角色侧 / 隐藏用户侧 / 全部隐藏 */
+  chatAvatarVisibility?: 'both' | 'hide_ai' | 'hide_user' | 'hide_both';
+  /** 头像与气泡的对齐：底部（默认）/ 顶部 / 垂直居中 */
+  chatAvatarAlign?: 'bottom' | 'top' | 'center';
+  /** 头像垂直微调 px（负上正下），0/undefined = 不调 */
+  chatAvatarOffsetY?: number;
+  /** 气泡正文字号 px，0/undefined = 默认 */
+  chatBubbleFontSize?: number;
+  /** 气泡正文行距（如 1.35），0/undefined = 默认 */
+  chatBubbleLineHeight?: number;
+  /** 气泡与头像侧的间距 px，0/undefined = 默认（48px） */
+  chatBubbleIndent?: number;
+  /** 隐藏头像的一侧是否贴边（收回头像空位） */
+  chatSnapToEdge?: boolean;
+  /** HTML 卡片 / 心象卡片 / 音乐卡片的出现位置：缺省/'center' = 水平居中（默认），'anchor' = 贴气泡列
+   *  （头像位，不随贴边/缩进挪动，即旧版观感）。经 MessageItem 布局属性生效（不走注入 CSS），
+   *  同属聊天细节微调字段、可按角色覆盖 */
+  chatModuleAlign?: 'anchor' | 'center';
   chatBubbleStyle?: 'modern' | 'flat' | 'outline' | 'shadow' | 'wechat' | 'ios';
   chatMessageSpacing?: 'compact' | 'default' | 'spacious';
   chatShowTimestamp?: 'always' | 'hover' | 'never';
@@ -117,6 +149,19 @@ export interface OSTheme {
   chatSound?: { src: string; volume?: number };
   /** 隐藏顶栏的情绪 buff 栏。 */
   chatHideHeaderBuffs?: boolean;
+}
+
+/** 聊天细节微调的 7 个字段（外观 App「聊天细节微调」区块），可整组按角色覆盖。
+ *  与 OSTheme 同名字段一一对应，经 utils/chatFineTuneCss.ts 生成 CSS。 */
+export type ChatFineTuneFields = Pick<OSTheme,
+  'chatAvatarVisibility' | 'chatAvatarAlign' | 'chatAvatarOffsetY' |
+  'chatBubbleFontSize' | 'chatBubbleLineHeight' | 'chatBubbleIndent' | 'chatSnapToEdge' |
+  'chatModuleAlign'>;
+
+/** 角色级「聊天装扮」覆盖：enabled=true 才生效；生效时已定义的字段逐个覆盖全局，
+ *  未定义的字段跟随全局（合并规则见 utils/chatFineTuneCss.ts 的 mergeChatFineTune）。 */
+export interface ChatFineTuneOverride extends ChatFineTuneFields {
+  enabled?: boolean;
 }
 
 /** 外观预设：保存/导入导出完整桌面+聊天外观 */
@@ -2109,6 +2154,11 @@ export interface CharacterProfile {
   impression?: UserImpression;
 
   bubbleStyle?: string;
+  /** 聊天细节微调的角色级覆盖（聊天内「＋」→「聊天装扮」）。
+   *  enabled=true 时已定义的字段逐个覆盖全局 OSTheme 同名设置，未定义的字段继续跟随全局；
+   *  enabled 为 false/undefined 或整个字段缺省 = 完全跟随全局（现状零变化）。
+   *  属美化类本地偏好：随完整备份走，但角色卡分享时剥离（见 utils/characterCard.ts）。 */
+  chatFineTune?: ChatFineTuneOverride;
   chatBackground?: string;
   contextLimit?: number;
   hideSystemLogs?: boolean; 
@@ -2337,9 +2387,17 @@ export interface CharacterProfile {
    * - 'echo' (default)：暗紫底 + 暖金描边「回响」二次元卡牌
    * - 'whisper'：米色羊皮纸「心声」轻盈版
    * - 'minimal'：无装饰单色简洁版
+   * - 'ink'：宣纸底墨色 + 朱印「墨迹」水墨卷轴
+   * - 'neon'：深蓝紫底 + 青光扫描线「脑域」赛博终端
+   * - 'terminal'：黑底绿字等宽「内核」日志
+   * - 'stellar'：深空蓝缀星「星语」夜航
+   * - 'tama'：粉壳液晶点阵「心宠」拓麻歌子
+   * - 'pixel'：JRPG 白粗框硬影「任务」像素对话框
+   * - 'muji'：暖灰米白「独白」性冷淡留白
+   * - 'ins'：白卡软影「碎碎念」feed 风
    * - 'custom'：使用 thinkingChainCustomColors 给的配色
    */
-  thinkingChainStyle?: 'echo' | 'whisper' | 'minimal' | 'custom';
+  thinkingChainStyle?: 'echo' | 'whisper' | 'minimal' | 'ink' | 'neon' | 'terminal' | 'stellar' | 'tama' | 'pixel' | 'muji' | 'ins' | 'custom';
   /** 自定义风格用的配色组（仅 thinkingChainStyle === 'custom' 生效） */
   thinkingChainCustomColors?: {
     bg?: string;       // 卡片背景
@@ -2348,6 +2406,12 @@ export interface CharacterProfile {
   };
   /** 用户追加的思考提示词（不替换原生，只在最后追加一段「用户额外要求」） */
   thinkingChainCustomPrompt?: string;
+  /**
+   * 心象卡片的自定义 CSS（叠加在任意风格之上，机制同气泡工坊 customCss）。
+   * 选择器限定以 .sully-psyche 开头（子元素类：-card / -title / -preview / -body），
+   * 由 Chat.tsx 原样 <style> 注入。
+   */
+  thinkingChainCustomCss?: string;
 
   /**
    * 虚拟世界「彼方」的个人状态：是否自主登入、登入间隔、各本小说的独立书签等。
@@ -2375,11 +2439,59 @@ export interface GroupProfile {
     members: string[];
     avatar?: string;
     createdAt: number;
+    /** 群聊公共话题盒：由热区以前的群消息总结而成，所有成员共享、可编辑/删除。 */
+    topicBoxes?: GroupTopicBox[];
+    /** 公共话题盒已覆盖到的最后一条群消息 ID；仅用于防止重复成盒，不与任何角色私聊水位混用。 */
+    archivedThroughMessageId?: number;
+    /** 公共话题盒整理模式：auto 满阈值自动成盒；manual 只累计，用户手动触发。默认 auto。 */
+    topicArchiveMode?: 'auto' | 'manual';
     /**
      * 私聊里"近期群活动"上下文从这个群最多取最后多少条消息。
      * 不设默认 80。设大点能让活跃群更完整，设小点节省 token、避免某个活跃群把其他群挤掉。
      */
     privateContextCap?: number;
+    /**
+     * 群提示词里每个成员"私聊+群聊合并时间线"的条数上限（合并排序后取末 N 条）。
+     * 不设默认 40。这条时间线是角色群聊表现与私聊感情衔接的关键上下文。
+     */
+    memberTimelineCap?: number;
+    /**
+     * 群回复生成模式：director = 一次调用生成整轮（默认，快、省 token）；
+     * roundRobin = 每位成员单独调用一次 API，按成员顺序逐个发言（更真实、防串号，token ≈ 成员数倍）。
+     */
+    replyMode?: 'director' | 'roundRobin';
+    /**
+     * 成员独立气泡：true = 每位成员的气泡用其私聊 bubbleStyle 主题的 AI 侧；
+     * false/undefined = 全员统一（现状白色）。
+     */
+    memberBubbleIndependent?: boolean;
+    /** 用户在本群的气泡主题 id（预设或 customThemes，取 user 侧）；undefined = 现状紫色 */
+    userBubbleThemeId?: string;
+    /** 群聊白框自定义 CSS（.sully-chat-* 钩子），与私聊 char.chromeCustomCss 同机制 */
+    chromeCustomCss?: string;
+    /** 群提示音（未绑定白框时的独立存储）；绑定时以 chromeCustomCss 里的 @sully-sound 注释为准 */
+    chatSound?: { src: string; volume?: number };
+    /** 提示音是否绑定进白框 CSS（跟着白框分享码走） */
+    chatSoundBound?: boolean;
+    /** HTML 模块模式：开启后角色可输出 [html] 卡片 */
+    htmlModeEnabled?: boolean;
+    /** HTML 模式自定义提示词（追加在内置提示词之后） */
+    htmlModeCustomPrompt?: string;
+}
+
+export interface GroupTopicBox {
+    id: string;
+    groupId: string;
+    title: string;
+    summary: string;
+    sourceStartMessageId: number;
+    sourceEndMessageId: number;
+    messageCount: number;
+    participants: string[];
+    /** 成盒当时收到私聊卡片的成员；成员之后退群，编辑/删除仍能同步其旧卡片。 */
+    deliveredMemberIds?: string[];
+    createdAt: number;
+    updatedAt: number;
 }
 
 export interface CharacterExportData extends Omit<CharacterProfile, 'id' | 'memories' | 'refinedMemories' | 'activeMemoryMonths' | 'impression' | 'groupId'> {
@@ -2392,6 +2504,10 @@ export interface UserProfile {
     name: string;
     avatar: string;
     bio: string;
+    /** 分角色聊天头像（档案 App 设置）：charId → 头像（http(s) URL 或 data:image）。
+     *  私聊里「你」的头像取 perCharAvatars[charId] || avatar（上面的整体头像作宏观默认）；
+     *  群聊/其他场合仍用整体头像。删角色留下的孤儿键无害，读取端永远按当前 charId 取。 */
+    perCharAvatars?: Record<string, string>;
     /**
      * 用户本人接入「彼方」的状态：捏的 chibi、此刻所在房间、在干嘛。可随时改。
      * enabled=false（登出）时，聊天里给角色的"用户在彼方"提示词随之消失。
@@ -3038,7 +3154,7 @@ export interface GameSession {
     lastPlayedAt: number;
 }
 
-export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'luckin_card' | 'html_card' | 'news_card' | 'vr_card' | 'trpg_card' | 'world_card' | 'sim_card' | 'phone_card' | 'webpage_card' | 'theater_card' | 'room_card' | 'life_card';
+export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'luckin_card' | 'html_card' | 'news_card' | 'vr_card' | 'trpg_card' | 'novel_card' | 'world_card' | 'sim_card' | 'phone_card' | 'webpage_card' | 'theater_card' | 'room_card' | 'life_card' | 'group_topic_card';
 
 export interface Message {
     id: number;
@@ -3330,6 +3446,7 @@ export interface FullBackupData {
     worldHomeLocal?: Record<string, string>;   // 家园本机配置：全局 API + 文风收藏（存 localStorage）
     luckinLocal?: Record<string, string>;      // 瑞幸：token + 启用状态（存 localStorage）
     mcdLocal?: Record<string, string>;         // 麦当劳：token + 启用状态（存 localStorage）
+    mcpLocal?: Record<string, string>;         // 通用 MCP：用户自配的服务器列表（存 localStorage）
     desktopSkinLocal?: Record<string, string>; // 桌面皮肤偏好：电子宠物/手游风的界面配色 + 看板 banner（存 localStorage；看板图令牌导出时解析为 data URL）
     songs?: SongSheet[]; // Songwriting app data
     
