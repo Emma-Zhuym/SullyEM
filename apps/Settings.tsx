@@ -408,7 +408,6 @@ const Settings: React.FC = () => {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showPresetModal, setShowPresetModal] = useState(false);
   const [showApiCallLog, setShowApiCallLog] = useState(false);
-  const [showOtherApi, setShowOtherApi] = useState(false);
   const [showRealtimeModal, setShowRealtimeModal] = useState(false);
   const [showMcpModal, setShowMcpModal] = useState(false);
   const [showMcpHelp, setShowMcpHelp] = useState(false);
@@ -1801,7 +1800,7 @@ const Settings: React.FC = () => {
                 语音 / 写歌等非 LLM 类 API。这些设置 <span className="font-semibold text-slate-500">不会随预设切换</span>，通常只配置一次。
             </p>
 
-            {showOtherApi && <div className="px-5 pb-5 space-y-4">
+            <div className="px-5 pb-5 space-y-4">
                 <p className="text-[11px] text-slate-400 leading-relaxed pl-1">
                     语音 / 写歌等非 LLM 类 API。这些设置 <span className="font-semibold text-slate-500">不会随预设切换</span>，通常只配置一次。
                 </p>
