@@ -8,8 +8,9 @@ import {
 } from './loyalUserRecruitment';
 
 const LEGACY_ATTEMPT_KEY = 'sullyos_loyal_recruitment_2026-07-20-v1';
+const LEGACY_V2_ATTEMPT_KEY = 'sullyos_loyal_recruitment_2026-07-20-v2';
 
-function legacyFailedAttempt(activeDays = 2) {
+function legacyFailedAttempt(activeDays = 2, palaceNodes = 1147) {
     return {
         status: 'failed',
         criteriaVersion: '2026-07-20-v1',
@@ -34,7 +35,7 @@ function legacyFailedAttempt(activeDays = 2) {
                 memoryUnits: 15,
                 recentMemoryUnits: 5,
                 memorySpanDays: 120,
-                palaceNodes: 1147,
+                palaceNodes,
                 recentPalaceNodes: 20,
                 palaceRooms: 3,
             },
@@ -58,8 +59,8 @@ describe('忠实用户招募规则升级', () => {
         expect(localStorage.getItem(LOYAL_RECRUITMENT_ATTEMPT_KEY)).toBeNull();
     });
 
-    it('只有一个活跃日的旧结果不会因深度通道被放行', () => {
-        localStorage.setItem(LEGACY_ATTEMPT_KEY, JSON.stringify(legacyFailedAttempt(1)));
+    it('旧结果没有满足任何一个固定条件时仍保持失败', () => {
+        localStorage.setItem(LEGACY_ATTEMPT_KEY, JSON.stringify(legacyFailedAttempt(1, 0)));
 
         const attempt = readLoyalRecruitmentAttempt();
 
@@ -70,11 +71,13 @@ describe('忠实用户招募规则升级', () => {
 
     it('测试重置同时清除当前版与旧版封存状态', () => {
         localStorage.setItem(LEGACY_ATTEMPT_KEY, '{}');
+        localStorage.setItem(LEGACY_V2_ATTEMPT_KEY, '{}');
         localStorage.setItem(LOYAL_RECRUITMENT_ATTEMPT_KEY, '{}');
 
         resetLoyalRecruitmentForTesting();
 
         expect(localStorage.getItem(LEGACY_ATTEMPT_KEY)).toBeNull();
+        expect(localStorage.getItem(LEGACY_V2_ATTEMPT_KEY)).toBeNull();
         expect(localStorage.getItem(LOYAL_RECRUITMENT_ATTEMPT_KEY)).toBeNull();
     });
 

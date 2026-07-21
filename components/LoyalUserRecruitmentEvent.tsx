@@ -53,7 +53,7 @@ const DebugResult: React.FC<{ result: LoyalEligibilityResult | null }> = ({ resu
                 ACTIVE {result.breakdown.recentActivity}/50 · CHAR {result.breakdown.customCharacter}/15 · MEMORY {result.breakdown.neuralMemory}/25 · PALACE {result.breakdown.memoryPalace}/10
             </div>
             <div>
-                DAYS {result.metrics.recentActiveDays} · WEEKS {result.metrics.recentActiveWeeks} · MSG {result.metrics.recentUserMessages} · MEM {result.metrics.memoryUnits} · NODE {result.metrics.palaceNodes}
+                DAYS {result.metrics.recentActiveDays} · WEEKS {result.metrics.recentActiveWeeks} · MSG {result.metrics.recentUserMessages} · CHAR DAYS {result.metrics.maxPreCutoffCharacterActiveDays ?? 'LEGACY'} · MEM {result.metrics.memoryUnits} · NODE {result.metrics.palaceNodes}
             </div>
         </div>
     );
