@@ -1257,7 +1257,6 @@ interface MessageItemProps {
         onOpenSettings?: () => void;
     };
     /** 声音模式：角色消息也显示为语音气泡（仅控制显示，不影响存储） */
-    voiceMode?: boolean;
 }
 
 const MessageItem = React.memo(({
@@ -1299,7 +1298,6 @@ avatarShape = 'circle',
     onResolveTransfer,
     onResolveLifeRecord,
     thinkingChainOptions,
-    voiceMode = false,
 }: MessageItemProps) => {
     const isUser = m.role === 'user';
     const isSystem = m.role === 'system';
@@ -3347,7 +3345,7 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
         ?? m.content.match(/<[语語]音[^>]*>([\s\S]*)$/)?.[1]
         ?? ''
     ).replace(/<字幕>[\s\S]*?<\/字幕>/g, '').trim()) : '';
-    const hasVoiceContent = voiceData?.url || voiceLoading || hasVoiceTag || (!isUser && !!voiceMode); // [EM: voice-mode-triggers-voice-bar] 声音模式复用上游语音条路径
+    const hasVoiceContent = voiceData?.url || voiceLoading || hasVoiceTag;
     // Don't render empty bubbles (e.g. messages that were just "---"), unless voice data exists or pending
     if (!displayContent && !hasVoiceContent) return null;
 
@@ -3494,7 +3492,7 @@ fallback.innerHTML = `<div class="text-center"><div class="mb-1"><img src="https
             {/* Layer 3: Reply/Quote — moved outside bubble, rendered above as quoteBlock */}
 
             {/* [EM: voice-mode-hide-text] Layer 4 — 外语语音消息不重复正文；EM 声音模式下角色消息文字收进语音条 */}
-            {displayContent && !isForeignVoiceMsg && !(voiceMode && !isUser) && (
+            {displayContent && !isForeignVoiceMsg && (
             <div className="relative z-10 text-[15px] leading-relaxed whitespace-pre-wrap break-all select-text" style={{ color: styleConfig.textColor }}>
                 {renderContent(displayContent)}
             </div>

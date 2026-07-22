@@ -61,9 +61,6 @@ interface ChatInputAreaProps {
     /** STT 语音发送回调：文字内容 + 录音时长 */
     // [EM-START: voice-props]
     onVoiceSend?: (text: string, durationMs: number) => void;
-    /** 声音模式：角色回复也显示为语音气泡 */
-    voiceMode?: boolean;
-    onToggleVoiceMode?: () => void;
     // [EM-END: voice-props]
 }
 
@@ -89,8 +86,6 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     chromeStyle = 'soft',
     acnh = false,
     onVoiceSend,
-    voiceMode = false,
-    onToggleVoiceMode,
 }) => {
     const chatImageInputRef = useRef<HTMLInputElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -750,22 +745,6 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 <span className="text-xs font-bold">日程/情绪</span>
                             </button>
 
-                            {/* 声音模式：角色回复也显示为语音气泡 */}
-                            {/* [EM-START: voice-mode-toggle] */}
-                            {onToggleVoiceMode && (
-                                <button onClick={onToggleVoiceMode} className={`flex flex-col items-center gap-2 tool-btn relative ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
-                                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border relative ${
-                                        voiceMode
-                                            ? (isDiscordStyle ? 'bg-rose-500/20 text-rose-300 border-rose-400/30' : 'bg-rose-50 text-rose-500 border-rose-200')
-                                            : (isDiscordStyle ? 'bg-slate-800 text-slate-400 border-white/10' : 'bg-slate-50 text-slate-400 border-slate-100')
-                                    }`}>
-                                        <Waveform className="w-6 h-6" weight="bold" />
-                                        {voiceMode && <span className={`absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full border-2 ${isDiscordStyle ? 'bg-rose-400 border-slate-900' : 'bg-rose-500 border-white'}`} />}
-                                    </div>
-                                    <span className="text-xs font-bold">声音模式</span>
-                                </button>
-                            )}
-                            {/* [EM-END: voice-mode-toggle] */}
 
                           </div>
 

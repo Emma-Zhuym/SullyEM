@@ -92,7 +92,6 @@ const Chat: React.FC = () => {
     const WINDOW_RADIUS = 25;
     const [input, setInput] = useState('');
     const [showPanel, setShowPanel] = useState<'none' | 'actions' | 'emojis' | 'chars'>('none');
-    const [voiceMode, setVoiceMode] = useState(false); // [EM: voice-mode-state] 不能在这里读char（TDZ），恢复逻辑在下面useEffect
     
     // Emoji State
     const [emojis, setEmojis] = useState<Emoji[]>([]);
@@ -199,13 +198,6 @@ const Chat: React.FC = () => {
         [currentThemeId, customThemes],
     );
     const draftKey = `chat_draft_${activeCharacterId}`;
-
-    // [EM-START: voice-mode-restore] Restore voiceMode per character from localStorage
-    useEffect(() => {
-        if (!char) return;
-        setVoiceMode(localStorage.getItem(`voiceMode_${char.id}`) === 'true');
-    }, [char?.id]);
-    // [EM-END: voice-mode-restore]
 
     // Filter categories and emojis by active character's visibility (used for both AI prompt and UI)
     const visibleCategories = useMemo(() => categories.filter(cat => {
@@ -2578,13 +2570,6 @@ const Chat: React.FC = () => {
     const handleVoiceSend = useCallback((text: string, durationMs: number) => {
         handleSendText(text, 'text', { voice: true, durationMs });
     }, [char, replyTarget]);
-    const handleToggleVoiceMode = useCallback(() => {
-        setVoiceMode(prev => {
-            const next = !prev;
-            if (char) localStorage.setItem(`voiceMode_${char.id}`, String(next));
-            return next;
-        });
-    }, [char]);
     // [EM-END: voice-send-callbacks]
     const handleCharSelectCallback = useCallback((id: string) => { setActiveCharacterId(id); setShowPanel('none'); }, []);
     // 兜底：正常情况下 OSContext 启动时一定会保底一个角色，char 不该为空。
@@ -3207,7 +3192,7 @@ const Chat: React.FC = () => {
                             onResolveTransfer={handleResolveTransfer}
                             onResolveLifeRecord={handleResolveLifeRecord}
                             thinkingChainOptions={thinkingChainOptions}
-                            voiceMode={voiceMode}
+                           
                         />
                         </div>
                     );
@@ -3424,8 +3409,8 @@ const Chat: React.FC = () => {
                     chromeStyle={osTheme.chatChromeStyle}
                     acnh={acnh}
                     onVoiceSend={handleVoiceSend}
-                    voiceMode={voiceMode}
-                    onToggleVoiceMode={handleToggleVoiceMode}
+                   
+                   
                 />
             </div>
 
